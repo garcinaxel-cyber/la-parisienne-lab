@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus, BookOpen, X, Timer, Thermometer } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus, BookOpen, X, Timer, Thermometer, LogOut } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
@@ -43,6 +44,7 @@ export default function StationView({
   today: string;
 }) {
   const { lang, setLang } = useI18n();
+  const router = useRouter();
   const [assignments, setAssignments] = useState(initial);
   const [updating, setUpdating] = useState<string | null>(null);
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
@@ -106,6 +108,11 @@ export default function StationView({
   const doneQty = assignments.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
   const pct = totalQty ? Math.round(doneQty / totalQty * 100) : 0;
 
+  async function logout() {
+    await createClient().auth.signOut();
+    router.push('/login');
+  }
+
   const formatDate = (d: string) =>
     new Date(d + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
       weekday: 'long', day: 'numeric', month: 'long',
@@ -141,6 +148,14 @@ export default function StationView({
                   }`}>{l.toUpperCase()}</button>
               ))}
             </div>
+            {/* Logout */}
+            <button
+              onClick={logout}
+              title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+              className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white/80 hover:bg-white/30 hover:text-white transition-colors active:scale-95"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </div>
         {/* Progress bar */}
