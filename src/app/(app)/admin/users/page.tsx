@@ -12,12 +12,14 @@ export default async function UsersPage() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
   if (profile?.role !== 'admin') redirect('/dashboard');
 
+  // Only show lab users — catalogue users (admin/sales/viewer) stay invisible here
   const { data: users } = await supabase
     .from('profiles')
     .select(`
       id, full_name, role,
       lab_profiles(team)
     `)
+    .in('role', ['lab_manager', 'assistant', 'chef'])
     .order('full_name');
 
   // Supabase returns one-to-one joins as arrays; normalise to single object

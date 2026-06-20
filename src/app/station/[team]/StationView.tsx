@@ -1,12 +1,13 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus } from 'lucide-react';
+import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus, BookOpen, X, Timer, Thermometer } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 
 type Assignment = {
   id: string;
+  product_id: string | null;
   product_name_vi: string;
   product_name_en: string;
   image_url: string | null;
@@ -19,6 +20,14 @@ type Assignment = {
   sort_order: number;
   import_id: string;
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
+};
+
+type FicheStep = {
+  step_number: number;
+  description_vi: string;
+  description_en: string;
+  duration_minutes: number | null;
+  temperature_celsius: number | null;
 };
 
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
@@ -38,6 +47,7 @@ export default function StationView({
   const [updating, setUpdating] = useState<string | null>(null);
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
   const [qtyInput, setQtyInput] = useState(0);
+  const [ficheModal, setFicheModal] = useState<{ productId: string; productName: string } | null>(null);
   const meta = TEAM_LABELS[team];
 
   // Supabase Realtime — subscribe to changes in lab_assignments for this team's today imports
@@ -160,7 +170,7 @@ export default function StationView({
               {lang === 'vi' ? 'Đang làm' : 'In progress'} ({inProgress.length})
             </h2>
             <div className="space-y-3">
-              {inProgress.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} meta={meta} />)}
+              {inProgress.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
             </div>
           </section>
         )}
@@ -173,7 +183,7 @@ export default function StationView({
               {lang === 'vi' ? 'Chờ làm' : 'Pending'} ({pending.length})
             </h2>
             <div className="space-y-3">
-              {pending.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} meta={meta} />)}
+              {pending.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
             </div>
           </section>
         )}
@@ -186,7 +196,7 @@ export default function StationView({
               {lang === 'vi' ? 'Hoàn thành' : 'Done'} ({done.length})
             </h2>
             <div className="space-y-2 opacity-60">
-              {done.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} meta={meta} isDone />)}
+              {done.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} isDone />)}
             </div>
           </section>
         )}
@@ -199,11 +209,21 @@ export default function StationView({
               {lang === 'vi' ? 'Ngoại lệ' : 'Exceptions'} ({blocked.length})
             </h2>
             <div className="space-y-2 opacity-60">
-              {blocked.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} meta={meta} />)}
+              {blocked.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
             </div>
           </section>
         )}
       </div>
+
+      {/* Fiche modal */}
+      {ficheModal && (
+        <FicheModal
+          productId={ficheModal.productId}
+          productName={ficheModal.productName}
+          lang={lang}
+          onClose={() => setFicheModal(null)}
+        />
+      )}
 
       {/* Qty modal */}
       {qtyModal && (
@@ -245,10 +265,11 @@ export default function StationView({
 }
 
 function TaskCard({
-  a, lang, updating, onAdvance, onPartial, meta, isDone = false,
+  a, lang, updating, onAdvance, onPartial, onViewFiche, meta, isDone = false,
 }: {
   a: Assignment; lang: 'vi' | 'en'; updating: string | null;
   onAdvance: (a: Assignment) => void; onPartial: () => void;
+  onViewFiche: (() => void) | null;
   meta: typeof TEAM_LABELS[Team]; isDone?: boolean;
 }) {
   const st = STATUS_META[a.status];
@@ -310,12 +331,101 @@ function TaskCard({
         )}
       </div>
 
-      {/* Notes */}
-      {a.notes && (
-        <div className="px-4 pb-3 text-xs text-ink-light border-t border-border-soft pt-2">
-          {a.notes}
+      {/* Notes + View fiche */}
+      {(a.notes || onViewFiche) && (
+        <div className="px-4 pb-3 border-t border-border-soft pt-2 flex items-center justify-between gap-2">
+          {a.notes ? (
+            <span className="text-xs text-ink-light flex-1">{a.notes}</span>
+          ) : <span />}
+          {onViewFiche && (
+            <button
+              onClick={onViewFiche}
+              className="flex items-center gap-1 text-xs font-medium text-navy/70 hover:text-navy transition-colors shrink-0"
+            >
+              <BookOpen size={13} />
+              {lang === 'vi' ? 'Xem phiếu' : 'View recipe'}
+            </button>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function FicheModal({
+  productId, productName, lang, onClose,
+}: {
+  productId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
+}) {
+  const [steps, setSteps] = useState<FicheStep[] | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase
+      .from('lab_fiche_steps')
+      .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
+      .eq('product_id', productId)
+      .order('step_number')
+      .then(({ data }) => setSteps(data ?? []));
+  }, [productId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-soft shrink-0">
+          <div className="flex items-center gap-2">
+            <BookOpen size={18} className="text-navy" />
+            <span className="font-semibold text-navy">{productName}</span>
+          </div>
+          <button onClick={onClose} className="p-1 text-ink-light hover:text-navy transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Steps */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+          {steps === null ? (
+            <p className="text-ink-light text-sm text-center py-10">
+              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+            </p>
+          ) : steps.length === 0 ? (
+            <p className="text-ink-light text-sm text-center py-10">
+              {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
+            </p>
+          ) : steps.map(step => (
+            <div key={step.step_number} className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                {step.step_number}
+              </div>
+              <div className="flex-1 space-y-1.5">
+                <p className="text-sm text-navy leading-relaxed">
+                  {lang === 'vi'
+                    ? step.description_vi
+                    : (step.description_en || step.description_vi)}
+                </p>
+                {(step.duration_minutes || step.temperature_celsius) && (
+                  <div className="flex gap-4 text-xs text-ink-light">
+                    {step.duration_minutes && (
+                      <span className="flex items-center gap-1">
+                        <Timer size={11} /> {step.duration_minutes} {lang === 'vi' ? 'phút' : 'min'}
+                      </span>
+                    )}
+                    {step.temperature_celsius && (
+                      <span className="flex items-center gap-1">
+                        <Thermometer size={11} /> {step.temperature_celsius}°C
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

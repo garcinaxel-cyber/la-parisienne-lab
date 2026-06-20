@@ -6,8 +6,9 @@ import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 
+// Only lab roles are managed here. Catalogue roles (admin/sales/viewer) are managed in the catalogue app.
 const LAB_ROLES = ['lab_manager', 'assistant', 'chef'] as const;
-const ALL_ROLES = ['admin', 'sales', 'viewer', 'lab_manager', 'assistant', 'chef'] as const;
+const ALL_ROLES = LAB_ROLES;
 
 type UserRow = {
   id: string;

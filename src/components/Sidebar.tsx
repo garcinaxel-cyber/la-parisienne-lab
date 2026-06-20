@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, FlaskConical } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, FlaskConical, BookOpen } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -12,7 +12,8 @@ const NAV = [
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
 ];
 const ADMIN_NAV = [
-  { href: '/admin/users', icon: Users, key: 'users' as const },
+  { href: '/admin/users',   icon: Users,    key: 'users'   as const },
+  { href: '/admin/fiches',  icon: BookOpen, key: 'fiches'  as const },
 ];
 
 export default function Sidebar({ profile }: { profile: { full_name: string; role: UserRole } | null }) {
@@ -25,7 +26,7 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
     router.push('/login');
   }
 
-  const isAdmin = profile?.role === 'admin';
+  const isAdmin = profile?.role === 'admin' || profile?.role === 'lab_manager';
 
   return (
     <>

@@ -16,12 +16,33 @@ interface ParsedImport {
   warnings: string[];
 }
 
+/** Merge consolidated lines from multiple files: same SKU+variant+team → sum qty, merge breakdown */
+function mergeLines(groups: ConsolidatedLine[][]): ConsolidatedLine[] {
+  const map = new Map<string, ConsolidatedLine>();
+  for (const group of groups) {
+    for (const line of group) {
+      const key = `${line.team}||${line.product_sku}||${line.variant_label}`;
+      const existing = map.get(key);
+      if (existing) {
+        map.set(key, {
+          ...existing,
+          total_qty: existing.total_qty + line.total_qty,
+          breakdown: [...existing.breakdown, ...line.breakdown],
+        });
+      } else {
+        map.set(key, { ...line });
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
 export default function ImportView() {
   const { lang } = useI18n();
   const router = useRouter();
   const [step, setStep] = useState<Step>('upload');
   const [dragging, setDragging] = useState(false);
-  const [parsed, setParsed] = useState<ParsedImport | null>(null);
+  const [parsedFiles, setParsedFiles] = useState<ParsedImport[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0]);
   const [importType, setImportType] = useState<'daily' | 'cake_addon'>('daily');
@@ -30,43 +51,63 @@ export default function ImportView() {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set(TEAMS));
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(async (file: File) => {
+  // All merged + consolidated lines across all uploaded files
+  const mergedLines = mergeLines(parsedFiles.map(pf => pf.lines));
+  const allWarnings = parsedFiles.flatMap(pf => pf.warnings);
+
+  const handleFiles = useCallback(async (files: File[]) => {
     setError(null);
-    try {
-      const result = await parseExcelFile(file);
-      if (result.errors.length && !result.lines.length) {
-        setError(result.errors[0]);
+    const results: ParsedImport[] = [];
+    for (const file of files) {
+      try {
+        const result = await parseExcelFile(file);
+        if (result.errors.length && !result.lines.length) {
+          setError(`${file.name}: ${result.errors[0]}`);
+          return;
+        }
+        results.push({
+          sourceType: result.source_type,
+          filename: file.name,
+          lines: consolidateLines(result.lines),
+          warnings: result.errors,
+        });
+      } catch (e: any) {
+        setError(`${file.name}: ${e.message ?? 'Parse error'}`);
         return;
       }
-      const lines = consolidateLines(result.lines);
-      setParsed({
-        sourceType: result.source_type,
-        filename: file.name,
-        lines,
-        warnings: result.errors,
-      });
+    }
+    if (results.length > 0) {
+      setParsedFiles(results);
       setStep('preview');
-    } catch (e: any) {
-      setError(e.message ?? 'Parse error');
     }
   }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'));
+    if (files.length) handleFiles(files);
+  }, [handleFiles]);
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length) handleFiles(files);
   };
 
   async function publish(asDraft: boolean) {
-    if (!parsed) return;
+    if (!parsedFiles.length) return;
     setStep('saving');
     const supabase = createClient();
+
+    // Look up products by SKU to enrich assignments with image_url + product_id
+    const skus = Array.from(new Set(mergedLines.map(l => l.product_sku).filter(Boolean)));
+    const { data: productRows } = skus.length
+      ? await supabase.from('products').select('id, sku, image_url, name_en').in('sku', skus)
+      : { data: [] };
+    const productBySku: Record<string, { id: string; image_url: string | null; name_en: string | null }> = {};
+    for (const p of productRows ?? []) {
+      if (p.sku) productBySku[p.sku] = p;
+    }
 
     // Get next order number for this date
     const { count } = await supabase
@@ -75,6 +116,10 @@ export default function ImportView() {
       .eq('delivery_date', deliveryDate);
 
     const orderNumber = (count ?? 0) + 1;
+
+    // Determine filenames
+    const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
+    const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
 
     const { data: importRow, error: importErr } = await supabase
       .from('lab_imports')
@@ -85,8 +130,8 @@ export default function ImportView() {
         shipped_from_lab: shippedFromLab,
         notes,
         status: asDraft ? 'draft' : 'published',
-        filename_sales: parsed.sourceType === 'sales_order' ? parsed.filename : null,
-        filename_repl: parsed.sourceType === 'replenishment' ? parsed.filename : null,
+        filename_sales: salesFile?.filename ?? null,
+        filename_repl: replFile?.filename ?? null,
         published_at: asDraft ? null : new Date().toISOString(),
       })
       .select('id')
@@ -98,23 +143,26 @@ export default function ImportView() {
       return;
     }
 
-    // Insert consolidated lines as assignments
-    const assignments = parsed.lines.map((line, idx) => ({
-      import_id: importRow.id,
-      team: line.team,
-      product_name_vi: line.product_name_vi,
-      product_name_en: '',
-      image_url: null,
-      variant_label: line.variant_label,
-      total_qty: line.total_qty,
-      qty_to_produce: line.total_qty,
-      qty_produced: 0,
-      status: 'pending',
-      sort_order: idx,
-    }));
+    // Insert assignments enriched with product data
+    const assignments = mergedLines.map((line, idx) => {
+      const product = productBySku[line.product_sku] ?? null;
+      return {
+        import_id: importRow.id,
+        team: line.team,
+        product_id: product?.id ?? null,
+        product_name_vi: line.product_name_vi,
+        product_name_en: product?.name_en ?? '',
+        image_url: product?.image_url ?? null,
+        variant_label: line.variant_label,
+        total_qty: line.total_qty,
+        qty_to_produce: line.total_qty,
+        qty_produced: 0,
+        status: 'pending',
+        sort_order: idx,
+      };
+    });
 
     const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
-
     if (assignErr) {
       setError(assignErr.message);
       await supabase.from('lab_imports').delete().eq('id', importRow.id);
@@ -123,26 +171,35 @@ export default function ImportView() {
     }
 
     // Insert raw order lines for traceability
-    const orderLines = parsed.lines.flatMap(line =>
-      line.breakdown.map(b => ({
-        import_id: importRow.id,
-        source_type: parsed.sourceType,
-        order_ref: b.order_ref,
-        shop_name: b.shop_name,
-        product_sku: line.product_sku,
-        product_name_vi: line.product_name_vi,
-        team: line.team,
-        variant_label: line.variant_label,
-        qty: b.qty,
-        delivery_date: deliveryDate,
-        delivery_time: null,
-      }))
+    const orderLines = parsedFiles.flatMap(pf =>
+      pf.lines.flatMap(line =>
+        line.breakdown.map(b => ({
+          import_id: importRow.id,
+          source_type: pf.sourceType,
+          order_ref: b.order_ref,
+          shop_name: b.shop_name,
+          product_sku: line.product_sku,
+          product_name_vi: line.product_name_vi,
+          team: line.team,
+          variant_label: line.variant_label,
+          qty: b.qty,
+          delivery_date: deliveryDate,
+          delivery_time: null,
+        }))
+      )
     );
     if (orderLines.length > 0) {
       await supabase.from('lab_order_lines').insert(orderLines);
     }
 
     setStep('done');
+  }
+
+  function reset() {
+    setStep('upload');
+    setParsedFiles([]);
+    setError(null);
+    if (fileRef.current) fileRef.current.value = '';
   }
 
   const toggleTeam = (team: string) => {
@@ -155,13 +212,11 @@ export default function ImportView() {
 
   const byTeam = TEAMS.map(team => ({
     team,
-    lines: parsed?.lines.filter(l => l.team === team) ?? [],
+    lines: mergedLines.filter(l => l.team === team),
   })).filter(g => g.lines.length > 0);
 
-  // Lines with unknown teams
-  const unknownTeamLines = parsed?.lines.filter(l => !TEAMS.includes(l.team as Team)) ?? [];
-
-  const totalItems = parsed?.lines.reduce((sum, l) => sum + l.total_qty, 0) ?? 0;
+  const unknownTeamLines = mergedLines.filter(l => !TEAMS.includes(l.team as Team));
+  const totalItems = mergedLines.reduce((sum, l) => sum + l.total_qty, 0);
 
   if (step === 'done') {
     return (
@@ -179,7 +234,7 @@ export default function ImportView() {
           <button onClick={() => router.push(`/orders/${deliveryDate}`)} className="btn-primary">
             {lang === 'vi' ? 'Xem đơn hàng' : 'View order'}
           </button>
-          <button onClick={() => { setStep('upload'); setParsed(null); setError(null); }} className="btn-secondary">
+          <button onClick={reset} className="btn-secondary">
             {lang === 'vi' ? 'Nhập thêm' : 'Import another'}
           </button>
         </div>
@@ -194,50 +249,51 @@ export default function ImportView() {
           {lang === 'vi' ? 'Nhập đơn hàng' : 'Import orders'}
         </h1>
         <p className="text-ink-light text-sm mt-1">
-          {lang === 'vi' ? 'Tải file Excel từ Odoo để tạo đơn sản xuất' : 'Upload Odoo Excel file to create production orders'}
+          {lang === 'vi' ? 'Tải file Excel từ Odoo để tạo đơn sản xuất' : 'Upload Odoo Excel files to create production orders'}
         </p>
       </div>
 
-      {/* Step 1: Options + upload */}
+      {/* Options */}
+      <div className="card p-4 flex flex-wrap gap-4">
+        <div className="flex-1 min-w-40">
+          <label className="label">{lang === 'vi' ? 'Ngày giao hàng' : 'Delivery date'}</label>
+          <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+            className="input mt-1 w-full" />
+        </div>
+        <div className="flex-1 min-w-40">
+          <label className="label">{lang === 'vi' ? 'Loại đơn' : 'Order type'}</label>
+          <select value={importType} onChange={e => setImportType(e.target.value as any)} className="input mt-1 w-full">
+            <option value="daily">{lang === 'vi' ? 'Đơn chính (sáng)' : 'Main order (morning)'}</option>
+            <option value="cake_addon">{lang === 'vi' ? 'Đơn bánh khẩn' : 'Urgent cake order'}</option>
+          </select>
+        </div>
+        <div className="flex items-end gap-4">
+          <label className="flex items-center gap-2 cursor-pointer pb-2">
+            <input type="checkbox" checked={shippedFromLab} onChange={e => setShippedFromLab(e.target.checked)}
+              className="rounded" />
+            <span className="text-sm text-ink">{lang === 'vi' ? 'Giao từ lab' : 'Ships from lab'}</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Upload zone */}
       {step === 'upload' && (
         <div className="space-y-4">
-          <div className="card p-4 flex flex-wrap gap-4">
-            <div className="flex-1 min-w-40">
-              <label className="label">{lang === 'vi' ? 'Ngày giao hàng' : 'Delivery date'}</label>
-              <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
-                className="input mt-1 w-full" />
-            </div>
-            <div className="flex-1 min-w-40">
-              <label className="label">{lang === 'vi' ? 'Loại đơn' : 'Order type'}</label>
-              <select value={importType} onChange={e => setImportType(e.target.value as any)} className="input mt-1 w-full">
-                <option value="daily">{lang === 'vi' ? 'Đơn chính (sáng)' : 'Main order (morning)'}</option>
-                <option value="cake_addon">{lang === 'vi' ? 'Đơn bánh khẩn' : 'Urgent cake order'}</option>
-              </select>
-            </div>
-            <div className="flex items-end gap-4">
-              <label className="flex items-center gap-2 cursor-pointer pb-2">
-                <input type="checkbox" checked={shippedFromLab} onChange={e => setShippedFromLab(e.target.checked)}
-                  className="rounded" />
-                <span className="text-sm text-ink">{lang === 'vi' ? 'Giao từ lab' : 'Ships from lab'}</span>
-              </label>
-            </div>
-          </div>
-
           <div
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             onClick={() => fileRef.current?.click()}
-            className={`card border-2 border-dashed cursor-pointer transition-colors p-16 text-center
+            className={`card border-2 border-dashed cursor-pointer transition-colors p-14 text-center
               ${dragging ? 'border-gold bg-gold/5' : 'border-border-soft hover:border-gold/50 hover:bg-cream/80'}`}
           >
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={onFileChange} className="hidden" />
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple onChange={onFileChange} className="hidden" />
             <FileSpreadsheet size={40} className={`mx-auto mb-3 ${dragging ? 'text-gold' : 'text-ink-light'}`} />
             <p className="font-medium text-navy">
-              {lang === 'vi' ? 'Kéo file Excel vào đây' : 'Drop Excel file here'}
+              {lang === 'vi' ? 'Kéo file Excel vào đây' : 'Drop Excel files here'}
             </p>
             <p className="text-sm text-ink-light mt-1">
-              {lang === 'vi' ? 'hoặc click để chọn file' : 'or click to browse'}
+              {lang === 'vi' ? 'hoặc click để chọn file (có thể chọn nhiều file cùng lúc)' : 'or click to browse — multiple files supported'}
             </p>
             <p className="text-xs text-ink-light mt-3">Sales Order · Stock Replenishment (.xlsx)</p>
           </div>
@@ -251,45 +307,66 @@ export default function ImportView() {
         </div>
       )}
 
-      {/* Step 2: Preview */}
-      {(step === 'preview' || step === 'saving') && parsed && (
+      {/* Preview */}
+      {(step === 'preview' || step === 'saving') && parsedFiles.length > 0 && (
         <div className="space-y-4">
-          {/* Summary bar */}
-          <div className="card p-4 flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <FileSpreadsheet size={20} className="text-navy" />
-              <div>
-                <div className="font-medium text-navy text-sm">{parsed.filename}</div>
-                <div className="text-xs text-ink-light">
-                  {parsed.sourceType === 'sales_order'
-                    ? (lang === 'vi' ? 'Đơn bán hàng' : 'Sales Order')
-                    : (lang === 'vi' ? 'Bổ sung kho' : 'Stock Replenishment')}
-                  {' · '}
-                  {parsed.lines.length} {lang === 'vi' ? 'sản phẩm' : 'products'}
-                  {' · '}
-                  {totalItems} {lang === 'vi' ? 'cái' : 'items'}
-                </div>
+          {/* File chips */}
+          <div className="flex flex-wrap gap-2">
+            {parsedFiles.map((pf, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cream border border-border-soft text-sm">
+                <FileSpreadsheet size={14} className="text-navy" />
+                <span className="font-medium text-navy">{pf.filename}</span>
+                <span className="text-xs text-ink-light">
+                  ({pf.sourceType === 'sales_order'
+                    ? (lang === 'vi' ? 'Đơn bán' : 'Sales')
+                    : (lang === 'vi' ? 'Bổ sung' : 'Repl.')})
+                </span>
+                <button onClick={() => {
+                  const next = parsedFiles.filter((_, j) => j !== i);
+                  if (next.length === 0) reset();
+                  else setParsedFiles(next);
+                }} className="text-ink-light hover:text-red-500 transition-colors">
+                  <X size={13} />
+                </button>
               </div>
-            </div>
-            <button onClick={() => { setStep('upload'); setParsed(null); }}
-              className="text-ink-light hover:text-ink transition-colors p-1">
-              <X size={18} />
+            ))}
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-dashed border-gold/50 text-gold text-sm hover:bg-gold/5 transition-colors"
+            >
+              <Upload size={13} /> {lang === 'vi' ? 'Thêm file' : 'Add file'}
             </button>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) handleFiles([...parsedFiles.map(pf => new File([], pf.filename)), ...files].slice(parsedFiles.length));
+              if (fileRef.current) fileRef.current.value = '';
+            }} className="hidden" />
+          </div>
+
+          {/* Summary */}
+          <div className="card p-4 flex items-center gap-4 flex-wrap">
+            <div className="text-sm text-ink-light">
+              <span className="font-semibold text-navy">{mergedLines.length}</span> {lang === 'vi' ? 'sản phẩm' : 'products'}
+              {' · '}
+              <span className="font-semibold text-navy">{totalItems}</span> {lang === 'vi' ? 'cái tổng cộng' : 'items total'}
+              {parsedFiles.length > 1 && (
+                <span className="ml-2 text-gold font-medium">({parsedFiles.length} {lang === 'vi' ? 'file đã gộp' : 'files merged'})</span>
+              )}
+            </div>
           </div>
 
           {/* Warnings */}
-          {parsed.warnings.length > 0 && (
+          {allWarnings.length > 0 && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
               <div className="flex items-center gap-2 text-amber-700 font-medium text-sm mb-1">
                 <AlertCircle size={15} /> {lang === 'vi' ? 'Cảnh báo' : 'Warnings'}
               </div>
               <ul className="text-xs text-amber-700 space-y-0.5">
-                {parsed.warnings.map((w, i) => <li key={i}>· {w}</li>)}
+                {allWarnings.map((w, i) => <li key={i}>· {w}</li>)}
               </ul>
             </div>
           )}
 
-          {/* Unknown teams warning */}
           {unknownTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200">
               <div className="flex items-center gap-2 text-red-700 font-medium text-sm mb-1">
@@ -377,16 +454,13 @@ export default function ImportView() {
 
           {/* Action buttons */}
           <div className="flex gap-3 justify-end pt-2">
-            <button onClick={() => { setStep('upload'); setParsed(null); }} disabled={step === 'saving'}
-              className="btn-secondary">
+            <button onClick={reset} disabled={step === 'saving'} className="btn-secondary">
               {lang === 'vi' ? 'Quay lại' : 'Back'}
             </button>
-            <button onClick={() => publish(true)} disabled={step === 'saving'}
-              className="btn-secondary">
+            <button onClick={() => publish(true)} disabled={step === 'saving'} className="btn-secondary">
               {step === 'saving' ? '…' : (lang === 'vi' ? 'Lưu nháp' : 'Save as draft')}
             </button>
-            <button onClick={() => publish(false)} disabled={step === 'saving'}
-              className="btn-primary">
+            <button onClick={() => publish(false)} disabled={step === 'saving'} className="btn-primary">
               {step === 'saving'
                 ? (lang === 'vi' ? 'Đang lưu…' : 'Saving…')
                 : (lang === 'vi' ? 'Phát hành ngay' : 'Publish now')}

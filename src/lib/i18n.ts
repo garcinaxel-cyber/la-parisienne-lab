@@ -39,6 +39,12 @@ const T = {
     myStation: 'My Station', markDone: 'Done', markProgress: 'In progress',
     orderMain: 'Main Order', orderUrgent: '🚨 Urgent',
     fromLab: '⚡ Ships from lab',
+    // Fiches
+    fiches: 'Recipe Cards', fichesTitle: 'Production Recipe Cards',
+    ficheStep: 'Step', ficheAddStep: 'Add step', ficheSave: 'Save fiche',
+    ficheDuration: 'Duration (min)', ficheTemp: 'Temperature (°C)',
+    ficheDesc: 'Instructions', ficheNoSteps: 'No steps yet',
+    ficheViewBtn: 'View recipe',
     // General
     save: 'Save', cancel: 'Cancel', confirm: 'Confirm',
     noData: 'No data', loading: 'Loading…', error: 'An error occurred',
@@ -79,6 +85,12 @@ const T = {
     myStation: 'Trạm của tôi', markDone: 'Xong', markProgress: 'Đang làm',
     orderMain: 'Đơn chính', orderUrgent: '🚨 Khẩn',
     fromLab: '⚡ Giao từ lab',
+    // Fiches
+    fiches: 'Phiếu kỹ thuật', fichesTitle: 'Phiếu kỹ thuật sản xuất',
+    ficheStep: 'Bước', ficheAddStep: 'Thêm bước', ficheSave: 'Lưu phiếu',
+    ficheDuration: 'Thời gian (phút)', ficheTemp: 'Nhiệt độ (°C)',
+    ficheDesc: 'Hướng dẫn', ficheNoSteps: 'Chưa có bước nào',
+    ficheViewBtn: 'Xem phiếu',
     // General
     save: 'Lưu', cancel: 'Huỷ', confirm: 'Xác nhận',
     noData: 'Không có dữ liệu', loading: 'Đang tải…', error: 'Đã có lỗi xảy ra',

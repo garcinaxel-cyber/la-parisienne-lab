@@ -22,6 +22,8 @@ export default function OrderReviewView({
   const router = useRouter();
   const [localAssignments, setLocalAssignments] = useState(assignments);
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
   const [exceptionModal, setExceptionModal] = useState<{ id: string; productName: string } | null>(null);
   const [exceptionReason, setExceptionReason] = useState('');
 
@@ -40,6 +42,15 @@ export default function OrderReviewView({
       published_at: new Date().toISOString(),
     }).eq('id', importId);
     setPublishing(null);
+    router.refresh();
+  }
+
+  async function cancelImport(importId: string) {
+    setCancelling(importId);
+    const supabase = createClient();
+    await supabase.from('lab_imports').update({ status: 'cancelled' }).eq('id', importId);
+    setCancelling(null);
+    setConfirmCancel(null);
     router.refresh();
   }
 
@@ -117,9 +128,15 @@ export default function OrderReviewView({
                   className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
                 >
                   <Send size={13} />
-                  {publishing === imp.id
-                    ? '…'
-                    : (lang === 'vi' ? 'Phát hành' : 'Publish')}
+                  {publishing === imp.id ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publish')}
+                </button>
+              )}
+              {canManage && imp.status === 'published' && (
+                <button
+                  onClick={() => setConfirmCancel(imp.id)}
+                  className="text-xs py-1.5 px-3 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  {lang === 'vi' ? 'Hủy đơn' : 'Cancel'}
                 </button>
               )}
             </div>
@@ -214,6 +231,34 @@ export default function OrderReviewView({
           </div>
         );
       })}
+
+      {/* Cancel confirmation modal */}
+      {confirmCancel && (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/40">
+          <div className="card w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-semibold text-navy">
+              {lang === 'vi' ? 'Xác nhận hủy đơn?' : 'Cancel this import?'}
+            </h3>
+            <p className="text-sm text-ink-light">
+              {lang === 'vi'
+                ? 'Đơn sẽ chuyển sang trạng thái Đã hủy. Chefstation sẽ không còn thấy đơn này.'
+                : 'The import will be marked as cancelled and disappear from chef stations.'}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmCancel(null)} className="btn-secondary text-sm">
+                {lang === 'vi' ? 'Giữ lại' : 'Keep'}
+              </button>
+              <button
+                onClick={() => cancelImport(confirmCancel)}
+                disabled={cancelling === confirmCancel}
+                className="text-sm py-2 px-4 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                {cancelling === confirmCancel ? '…' : (lang === 'vi' ? 'Hủy đơn' : 'Cancel import')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Exception modal */}
       {exceptionModal && (

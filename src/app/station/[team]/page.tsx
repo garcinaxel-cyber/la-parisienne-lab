@@ -32,7 +32,7 @@ export default async function StationPage({ params }: { params: { team: string }
   const { data: assignments } = await supabase
     .from('lab_assignments')
     .select(`
-      id, product_name_vi, product_name_en, image_url,
+      id, product_id, product_name_vi, product_name_en, image_url,
       variant_label, total_qty, qty_to_produce, qty_produced,
       status, notes, sort_order, import_id,
       lab_imports!inner(delivery_date, order_number, type, status)

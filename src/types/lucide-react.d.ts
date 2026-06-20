@@ -28,4 +28,12 @@ declare module 'lucide-react' {
   export const UserCog: LucideIcon;
   export const Users: LucideIcon;
   export const X: LucideIcon;
+  export const BookOpen: LucideIcon;
+  export const Trash2: LucideIcon;
+  export const Thermometer: LucideIcon;
+  export const Timer: LucideIcon;
+  export const FileText: LucideIcon;
+  export const GripVertical: LucideIcon;
+  export const Eye: LucideIcon;
+  export const ArrowLeft: LucideIcon;
 }
