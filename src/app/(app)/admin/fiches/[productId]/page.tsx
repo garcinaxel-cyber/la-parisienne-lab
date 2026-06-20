@@ -14,7 +14,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
 
   const { data: product } = await supabase
     .from('products')
-    .select('id, name_vi, name_en, image_url, sku')
+    .select('id, name_vi, name_en, main_image_url, sku')
     .eq('id', params.productId)
     .single();
 
@@ -26,5 +26,9 @@ export default async function FicheDetailPage({ params }: { params: { productId:
     .eq('product_id', params.productId)
     .order('step_number');
 
-  return <FicheEditor product={product} steps={steps ?? []} />;
+  const productForEditor = {
+    ...product,
+    image_url: (product as any).main_image_url ?? null,
+  };
+  return <FicheEditor product={productForEditor} steps={steps ?? []} />;
 }

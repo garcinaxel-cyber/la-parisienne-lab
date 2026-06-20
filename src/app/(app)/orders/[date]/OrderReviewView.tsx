@@ -190,9 +190,16 @@ export default function OrderReviewView({
                 return (
                   <div key={a.id} className={`flex md:grid md:grid-cols-12 items-center px-4 py-3 gap-3 ${isSkip ? 'opacity-50' : ''}`}>
                     {/* Product */}
-                    <div className="flex-1 md:col-span-4 min-w-0">
-                      <div className="text-sm font-medium text-navy">{a.product_name_vi}</div>
-                      {a.product_name_en && <div className="text-xs text-ink-light">{a.product_name_en}</div>}
+                    <div className="flex-1 md:col-span-4 min-w-0 flex items-center gap-2">
+                      {a.image_url ? (
+                        <img src={a.image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-lg bg-cream shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-navy truncate">{a.product_name_vi}</div>
+                        {a.product_name_en && <div className="text-xs text-ink-light truncate">{a.product_name_en}</div>}
+                      </div>
                     </div>
                     {/* Variant */}
                     <div className="hidden md:block md:col-span-2 text-xs text-ink-light">

@@ -17,7 +17,7 @@ export default async function FichesPage() {
   // Plus all products from the catalogue for reference
   const { data: products } = await supabase
     .from('products')
-    .select('id, name_vi, name_en, image_url, sku')
+    .select('id, name_vi, name_en, main_image_url, sku')
     .order('name_vi');
 
   // Count steps per product
@@ -48,8 +48,8 @@ export default async function FichesPage() {
               href={`/admin/fiches/${product.id}`}
               className="card p-4 flex items-center gap-4 hover:bg-cream/60 transition-colors group"
             >
-              {product.image_url ? (
-                <img src={product.image_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+              {(product as any).main_image_url ? (
+                <img src={(product as any).main_image_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
               ) : (
                 <div className="w-12 h-12 rounded-lg bg-border-soft flex items-center justify-center shrink-0">
                   <BookOpen size={20} className="text-ink-light" />

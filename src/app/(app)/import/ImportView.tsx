@@ -102,11 +102,11 @@ export default function ImportView() {
     // Look up products by SKU to enrich assignments with image_url + product_id
     const skus = Array.from(new Set(mergedLines.map(l => l.product_sku).filter(Boolean)));
     const { data: productRows } = skus.length
-      ? await supabase.from('products').select('id, sku, image_url, name_en').in('sku', skus)
+      ? await supabase.from('products').select('id, sku, main_image_url, name_en').in('sku', skus)
       : { data: [] };
     const productBySku: Record<string, { id: string; image_url: string | null; name_en: string | null }> = {};
     for (const p of productRows ?? []) {
-      if (p.sku) productBySku[p.sku] = p;
+      if (p.sku) productBySku[p.sku] = { id: p.id, image_url: p.main_image_url ?? null, name_en: p.name_en ?? null };
     }
 
     // Get next order number for this date
