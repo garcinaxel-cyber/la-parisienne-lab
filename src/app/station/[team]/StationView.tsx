@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus, BookOpen, X, Timer, Thermometer, LogOut } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -148,6 +149,14 @@ export default function StationView({
                   }`}>{l.toUpperCase()}</button>
               ))}
             </div>
+            {/* Fiches link */}
+            <Link
+              href="/station/fiches"
+              title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
+              className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white/80 hover:bg-white/30 hover:text-white transition-colors"
+            >
+              <BookOpen size={15} />
+            </Link>
             {/* Logout */}
             <button
               onClick={logout}
@@ -310,7 +319,16 @@ function TaskCard({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-navy text-base leading-tight truncate">{a.product_name_vi}</div>
+          {a.product_id ? (
+            <Link
+              href={`/station/fiche/${a.product_id}?back=/station/me`}
+              className="font-bold text-navy text-base leading-tight truncate block hover:text-gold transition-colors"
+            >
+              {a.product_name_vi}
+            </Link>
+          ) : (
+            <div className="font-bold text-navy text-base leading-tight truncate">{a.product_name_vi}</div>
+          )}
           {a.variant_label !== 'Standard' && (
             <div className="text-sm text-ink-light">{a.variant_label}</div>
           )}

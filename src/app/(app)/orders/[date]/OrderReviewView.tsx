@@ -24,6 +24,8 @@ export default function OrderReviewView({
   const [publishing, setPublishing] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [exceptionModal, setExceptionModal] = useState<{ id: string; productName: string } | null>(null);
   const [exceptionReason, setExceptionReason] = useState('');
 
@@ -51,6 +53,16 @@ export default function OrderReviewView({
     await supabase.from('lab_imports').update({ status: 'cancelled' }).eq('id', importId);
     setCancelling(null);
     setConfirmCancel(null);
+    router.refresh();
+  }
+
+  async function deleteImport(importId: string) {
+    setDeleting(importId);
+    const supabase = createClient();
+    // Assignments cascade via FK; delete import is enough
+    await supabase.from('lab_imports').delete().eq('id', importId);
+    setDeleting(null);
+    setConfirmDelete(null);
     router.refresh();
   }
 
@@ -137,6 +149,14 @@ export default function OrderReviewView({
                   className="text-xs py-1.5 px-3 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 transition-colors"
                 >
                   {lang === 'vi' ? 'Hủy đơn' : 'Cancel'}
+                </button>
+              )}
+              {canManage && imp.status === 'cancelled' && (
+                <button
+                  onClick={() => setConfirmDelete(imp.id)}
+                  className="text-xs py-1.5 px-3 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors"
+                >
+                  {lang === 'vi' ? 'Xóa vĩnh viễn' : 'Delete'}
                 </button>
               )}
             </div>
@@ -238,6 +258,34 @@ export default function OrderReviewView({
           </div>
         );
       })}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/40">
+          <div className="card w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-semibold text-red-700">
+              {lang === 'vi' ? '⚠️ Xóa vĩnh viễn đơn này?' : '⚠️ Permanently delete this import?'}
+            </h3>
+            <p className="text-sm text-ink-light">
+              {lang === 'vi'
+                ? 'Toàn bộ dữ liệu sẽ bị xóa và không thể khôi phục.'
+                : 'All data will be permanently deleted and cannot be recovered.'}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmDelete(null)} className="btn-secondary text-sm">
+                {lang === 'vi' ? 'Hủy' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => deleteImport(confirmDelete)}
+                disabled={deleting === confirmDelete}
+                className="text-sm py-2 px-4 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                {deleting === confirmDelete ? '…' : (lang === 'vi' ? 'Xóa vĩnh viễn' : 'Delete permanently')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cancel confirmation modal */}
       {confirmCancel && (
