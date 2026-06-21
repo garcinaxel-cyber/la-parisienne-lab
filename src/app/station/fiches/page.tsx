@@ -7,8 +7,8 @@ export const revalidate = 30;
 
 export default async function StationFichesPage() {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) redirect('/login');
 
   // Fetch categories + products + step counts
   const [{ data: categories }, { data: products }, { data: stepCounts }] = await Promise.all([
