@@ -12,8 +12,8 @@ export default async function FichePage({
   searchParams: { back?: string };
 }) {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) redirect('/login');
 
   const backUrl = searchParams.back ?? '/station/fiches';
 
