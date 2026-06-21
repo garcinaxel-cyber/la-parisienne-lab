@@ -5,15 +5,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        navy:        '#1e2d4d',
-        'navy-light':'#2d4270',
-        gold:        '#c9a84c',
-        'gold-pale': '#fdf6e3',
-        'gold-light':'#e8d5a0',
-        cream:       '#faf7f2',
-        ink:         '#2c2c2c',
-        'ink-light': '#6b7280',
-        'border-soft':'#e8e2d9',
+        navy:        '#1A4731',   // Jungle
+        'navy-light':'#2D6A4F',   // Jungle light
+        gold:        '#C9A84C',
+        'gold-pale': '#FFFAEE',
+        'gold-light':'#F0D98A',
+        cream:       '#FFF4CC',   // Cream Soda
+        'cream-dark':'#F5E89A',   // Cream Soda darker
+        ink:         '#1A2C24',   // deep green-tinted text
+        'ink-light': '#6B7280',
+        'border-soft':'#E0D49A',  // warm border on cream
         // Team colors
         'team-baby-mama': '#7c3aed',
         'team-hung':      '#0369a1',

@@ -159,6 +159,7 @@ export default function ImportView() {
         qty_produced: 0,
         status: 'pending',
         sort_order: idx,
+        breakdown: line.breakdown ?? [],
       };
     });
 

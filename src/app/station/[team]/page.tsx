@@ -34,14 +34,14 @@ export default async function StationPage({ params }: { params: { team: string }
     .select(`
       id, product_id, product_name_vi, product_name_en, image_url,
       variant_label, total_qty, qty_to_produce, qty_produced,
-      status, notes, sort_order, import_id,
+      status, notes, sort_order, import_id, breakdown,
       lab_imports!inner(delivery_date, order_number, type, status)
     `)
     .eq('team', team)
     .eq('lab_imports.status', 'published')
     .eq('lab_imports.delivery_date', today)
     .order('sort_order')
-    .limit(80);
+    .limit(120);
 
   // Supabase returns joined tables as arrays; normalise to match StationView's expected shape
   const normalised = (assignments ?? []).map((a: any) => ({

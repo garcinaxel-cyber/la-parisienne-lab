@@ -7,7 +7,7 @@ const T = {
   en: {
     // Nav
     dashboard: 'Dashboard', import: 'Import Orders', orders: 'Production Orders',
-    admin: 'Admin', users: 'Users', logout: 'Log out',
+    admin: 'Admin', users: 'Users', logout: 'Log out', labProducts: 'Lab Products',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hung',
     team_entremet: 'Team Entremet', team_baker: 'Team Baker',
@@ -53,7 +53,7 @@ const T = {
   vi: {
     // Nav
     dashboard: 'Tổng quan', import: 'Nhập đơn hàng', orders: 'Đơn sản xuất',
-    admin: 'Quản trị', users: 'Người dùng', logout: 'Đăng xuất',
+    admin: 'Quản trị', users: 'Người dùng', logout: 'Đăng xuất', labProducts: 'Sản phẩm Lab',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hưng',
     team_entremet: 'Team Entremet', team_baker: 'Team Baker',

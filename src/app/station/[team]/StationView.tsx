@@ -2,10 +2,15 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus, BookOpen, X, Timer, Thermometer, LogOut } from 'lucide-react';
+import {
+  CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
+  BookOpen, X, Timer, Thermometer, LogOut, Store,
+} from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+
+type BreakdownItem = { shop_name: string; qty: number; order_ref?: string };
 
 type Assignment = {
   id: string;
@@ -21,6 +26,7 @@ type Assignment = {
   notes: string;
   sort_order: number;
   import_id: string;
+  breakdown: BreakdownItem[];
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
 };
 
@@ -35,6 +41,7 @@ type FicheStep = {
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
   in_progress: 'done',
+  skip: 'pending', // chef can override a skip
 };
 
 export default function StationView({
@@ -51,9 +58,10 @@ export default function StationView({
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
   const [qtyInput, setQtyInput] = useState(0);
   const [ficheModal, setFicheModal] = useState<{ productId: string; productName: string } | null>(null);
+  const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
   const meta = TEAM_LABELS[team];
 
-  // Supabase Realtime — subscribe to changes in lab_assignments for this team's today imports
+  // Supabase Realtime
   useEffect(() => {
     const supabase = createClient();
     const importIds = Array.from(new Set(initial.map(a => a.import_id)));
@@ -101,11 +109,21 @@ export default function StationView({
     setQtyModal(null);
   }
 
+  function toggleBreakdown(id: string) {
+    setExpandedBreakdown(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   const pending = assignments.filter(a => a.status === 'pending');
   const inProgress = assignments.filter(a => a.status === 'in_progress');
   const done = assignments.filter(a => a.status === 'done');
-  const blocked = assignments.filter(a => ['skip','partial','blocked'].includes(a.status));
-  const totalQty = assignments.reduce((s, a) => s + a.qty_to_produce, 0);
+  const skipped = assignments.filter(a => a.status === 'skip');
+  const other = assignments.filter(a => ['partial', 'blocked'].includes(a.status));
+
+  const totalQty = assignments.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
   const doneQty = assignments.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
   const pct = totalQty ? Math.round(doneQty / totalQty * 100) : 0;
 
@@ -119,82 +137,96 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
+  const sharedCardProps = {
+    lang,
+    updating,
+    onAdvance: advanceStatus,
+    onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
+    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    meta,
+    expandedBreakdown,
+    onToggleBreakdown: toggleBreakdown,
+  };
+
   return (
-    <div className="min-h-screen bg-cream" style={{ '--team-color': meta.color, '--team-bg': meta.bg } as any}>
-      {/* Top bar */}
-      <header className="sticky top-0 z-20 shadow-sm" style={{ backgroundColor: meta.color }}>
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-              <FlaskConical size={16} className="text-white" />
+    <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
+      {/* Top bar — Jungle green */}
+      <header className="sticky top-0 z-20" style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
+              <FlaskConical size={18} className="text-white" />
             </div>
-            <div>
-              <div className="text-white font-bold text-sm leading-tight">
+            <div className="min-w-0">
+              <div className="text-white font-bold text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
-              <div className="text-white/70 text-[11px]">{formatDate(today)}</div>
+              <div className="text-white/60 text-[11px] truncate">{formatDate(today)}</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Progress pill */}
-            <div className="bg-white/20 rounded-full px-3 py-1 text-white text-xs font-semibold">
-              {doneQty}/{totalQty} · {pct}%
+            <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
+              {doneQty}/{totalQty}
             </div>
             {/* Lang toggle */}
-            <div className="flex gap-0.5 bg-white/20 rounded-lg p-0.5">
-              {(['vi','en'] as const).map(l => (
+            <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              {(['vi', 'en'] as const).map(l => (
                 <button key={l} onClick={() => setLang(l)}
-                  className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
-                    lang === l ? 'bg-white text-navy' : 'text-white/70'
-                  }`}>{l.toUpperCase()}</button>
+                  className="px-2 py-1 rounded text-xs font-bold transition-colors"
+                  style={lang === l
+                    ? { backgroundColor: '#FFF4CC', color: '#1A4731' }
+                    : { color: 'rgba(255,255,255,0.7)' }
+                  }>{l.toUpperCase()}</button>
               ))}
             </div>
-            {/* Fiches link */}
-            <Link
-              href="/station/fiches"
-              title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
-              className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white/80 hover:bg-white/30 hover:text-white transition-colors"
-            >
+            {/* Fiches */}
+            <Link href="/station/fiches" title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <BookOpen size={15} />
             </Link>
             {/* Logout */}
-            <button
-              onClick={logout}
-              title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
-              className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white/80 hover:bg-white/30 hover:text-white transition-colors active:scale-95"
-            >
+            <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <LogOut size={15} />
             </button>
           </div>
         </div>
         {/* Progress bar */}
-        <div className="h-1 bg-white/20">
-          <div className="h-full bg-white transition-all duration-500" style={{ width: `${pct}%` }} />
+        <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+          <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-20">
+      {/* Completion banner */}
+      {pct === 100 && assignments.length > 0 && (
+        <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
+          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
+        </div>
+      )}
+
+      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-24">
         {assignments.length === 0 && (
           <div className="text-center py-20">
-            <CheckCircle2 size={48} className="mx-auto mb-3 text-border-soft" />
-            <p className="text-ink-light font-medium">
+            <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
+            <p className="font-semibold" style={{ color: '#1A4731' }}>
               {lang === 'vi' ? 'Chưa có đơn sản xuất hôm nay' : 'No production orders for today'}
             </p>
-            <p className="text-xs text-ink-light mt-1">
+            <p className="text-sm mt-1 text-ink-light">
               {lang === 'vi' ? 'Đơn sẽ xuất hiện khi được phát hành' : 'Orders will appear once published'}
             </p>
           </div>
         )}
 
-        {/* In progress — show first */}
+        {/* In progress — first */}
         {inProgress.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-light mb-3 flex items-center gap-1.5">
-              <Play size={12} className="text-blue-500" />
-              {lang === 'vi' ? 'Đang làm' : 'In progress'} ({inProgress.length})
-            </h2>
+            <SectionHeader icon={<Play size={13} style={{ color: '#2563EB' }} />}
+              label={lang === 'vi' ? 'Đang làm' : 'In progress'} count={inProgress.length} />
             <div className="space-y-3">
-              {inProgress.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
+              {inProgress.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
             </div>
           </section>
         )}
@@ -202,12 +234,25 @@ export default function StationView({
         {/* Pending */}
         {pending.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-light mb-3 flex items-center gap-1.5">
-              <Clock size={12} className="text-amber-500" />
-              {lang === 'vi' ? 'Chờ làm' : 'Pending'} ({pending.length})
-            </h2>
+            <SectionHeader icon={<Clock size={13} style={{ color: '#D97706' }} />}
+              label={lang === 'vi' ? 'Chờ làm' : 'Pending'} count={pending.length} />
             <div className="space-y-3">
-              {pending.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => { setQtyInput(a.qty_produced); setQtyModal(a); }} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
+              {pending.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
+            </div>
+          </section>
+        )}
+
+        {/* Skip — visible for chef verification (NOT grayed out) */}
+        {skipped.length > 0 && (
+          <section>
+            <SectionHeader
+              icon={<AlertCircle size={13} style={{ color: '#7C3AED' }} />}
+              label={lang === 'vi' ? 'Được báo "có sẵn" — hãy kiểm tra lại' : 'Marked in-stock — please verify'}
+              count={skipped.length}
+              accent
+            />
+            <div className="space-y-3">
+              {skipped.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} isSkip />)}
             </div>
           </section>
         )}
@@ -215,25 +260,21 @@ export default function StationView({
         {/* Done */}
         {done.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-light mb-3 flex items-center gap-1.5">
-              <CheckCircle2 size={12} className="text-green-500" />
-              {lang === 'vi' ? 'Hoàn thành' : 'Done'} ({done.length})
-            </h2>
-            <div className="space-y-2 opacity-60">
-              {done.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} isDone />)}
+            <SectionHeader icon={<CheckCircle2 size={13} style={{ color: '#059669' }} />}
+              label={lang === 'vi' ? 'Hoàn thành' : 'Done'} count={done.length} />
+            <div className="space-y-2 opacity-50">
+              {done.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} isDone />)}
             </div>
           </section>
         )}
 
-        {/* Blocked/skip */}
-        {blocked.length > 0 && (
+        {/* Other exceptions (partial / blocked) */}
+        {other.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-light mb-3 flex items-center gap-1.5">
-              <AlertCircle size={12} className="text-red-500" />
-              {lang === 'vi' ? 'Ngoại lệ' : 'Exceptions'} ({blocked.length})
-            </h2>
-            <div className="space-y-2 opacity-60">
-              {blocked.map(a => <TaskCard key={a.id} a={a} lang={lang} updating={updating} onAdvance={advanceStatus} onPartial={() => {}} onViewFiche={a.product_id ? () => setFicheModal({ productId: a.product_id!, productName: a.product_name_vi }) : null} meta={meta} />)}
+            <SectionHeader icon={<AlertCircle size={13} style={{ color: '#DC2626' }} />}
+              label={lang === 'vi' ? 'Ngoại lệ khác' : 'Other exceptions'} count={other.length} />
+            <div className="space-y-3">
+              {other.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
             </div>
           </section>
         )}
@@ -241,43 +282,40 @@ export default function StationView({
 
       {/* Fiche modal */}
       {ficheModal && (
-        <FicheModal
-          productId={ficheModal.productId}
-          productName={ficheModal.productName}
-          lang={lang}
-          onClose={() => setFicheModal(null)}
-        />
+        <FicheModal productId={ficheModal.productId} productName={ficheModal.productName}
+          lang={lang} onClose={() => setFicheModal(null)} />
       )}
 
       {/* Qty modal */}
       {qtyModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
             <div>
-              <h3 className="font-semibold text-navy">{qtyModal.product_name_vi}</h3>
+              <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-ink-light mt-0.5">
-                {lang === 'vi' ? 'Cần làm' : 'Target'}: {qtyModal.qty_to_produce}
+                {lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
               </p>
             </div>
             <div className="flex items-center justify-center gap-6">
               <button onClick={() => setQtyInput(q => Math.max(0, q - 1))}
-                className="w-12 h-12 rounded-full bg-border-soft flex items-center justify-center text-navy active:scale-95 transition-transform">
+                className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center active:scale-95 transition-transform"
+                style={{ color: '#1A4731' }}>
                 <Minus size={20} />
               </button>
-              <span className="text-5xl font-bold text-navy w-16 text-center">{qtyInput}</span>
+              <span className="text-5xl font-black w-16 text-center" style={{ color: '#1A4731' }}>{qtyInput}</span>
               <button onClick={() => setQtyInput(q => Math.min(qtyModal.qty_to_produce, q + 1))}
                 className="w-12 h-12 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform"
-                style={{ backgroundColor: meta.color }}>
+                style={{ backgroundColor: '#1A4731' }}>
                 <Plus size={20} />
               </button>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setQtyModal(null)} className="btn-secondary flex-1 py-3">
+              <button onClick={() => setQtyModal(null)} className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-ink-light">
                 {lang === 'vi' ? 'Hủy' : 'Cancel'}
               </button>
               <button onClick={savePartial}
-                className="flex-1 py-3 rounded-xl font-semibold text-white transition-colors active:scale-95"
-                style={{ backgroundColor: meta.color }}>
+                className="flex-1 py-3 rounded-xl font-bold text-white transition-colors"
+                style={{ backgroundColor: '#1A4731' }}>
                 {lang === 'vi' ? 'Xác nhận' : 'Confirm'}
               </button>
             </div>
@@ -288,75 +326,137 @@ export default function StationView({
   );
 }
 
+function SectionHeader({ icon, label, count, accent }: { icon: React.ReactNode; label: string; count: number; accent?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider"
+        style={{ color: accent ? '#7C3AED' : '#6B7280' }}>
+        {icon}
+        {label} <span className="ml-0.5 opacity-70">({count})</span>
+      </div>
+      <div className="flex-1 h-px" style={{ backgroundColor: accent ? '#DDD6FE' : '#E0D49A' }} />
+    </div>
+  );
+}
+
 function TaskCard({
-  a, lang, updating, onAdvance, onPartial, onViewFiche, meta, isDone = false,
+  a, lang, updating, onAdvance, onPartial, onViewFiche, meta,
+  isDone = false, isSkip = false,
+  expandedBreakdown, onToggleBreakdown,
 }: {
   a: Assignment; lang: 'vi' | 'en'; updating: string | null;
-  onAdvance: (a: Assignment) => void; onPartial: () => void;
-  onViewFiche: (() => void) | null;
-  meta: typeof TEAM_LABELS[Team]; isDone?: boolean;
+  onAdvance: (a: Assignment) => void;
+  onPartial: (a: Assignment) => void;
+  onViewFiche: (a: Assignment) => void;
+  meta: typeof TEAM_LABELS[Team];
+  isDone?: boolean; isSkip?: boolean;
+  expandedBreakdown: Set<string>;
+  onToggleBreakdown: (id: string) => void;
 }) {
   const st = STATUS_META[a.status];
-  const canAdvance = a.status === 'pending' || a.status === 'in_progress';
+  const canAdvance = ['pending', 'in_progress', 'skip'].includes(a.status);
   const isUpdating = updating === a.id;
 
-  const actionLabel = {
+  const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
     in_progress: lang === 'vi' ? 'Xong' : 'Mark done',
-  }[a.status as string] ?? '';
+    skip: lang === 'vi' ? 'Cần làm' : 'Override',
+  };
+
+  const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+  const isExpanded = expandedBreakdown.has(a.id);
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-border-soft">
-      <div className="flex items-center p-4 gap-4">
-        {/* Image */}
+    <div className="rounded-2xl overflow-hidden"
+      style={{
+        backgroundColor: isSkip ? '#F5F3FF' : 'white',
+        border: isSkip ? '1.5px solid #C4B5FD' : '1px solid #E0D49A',
+        boxShadow: '0 1px 4px rgba(26,71,49,0.07)',
+      }}>
+
+      {/* Skip warning banner */}
+      {isSkip && (
+        <div className="px-4 py-2 flex items-center gap-2 text-xs font-semibold"
+          style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>
+          <AlertCircle size={13} />
+          {lang === 'vi' ? 'Trợ lý đã đánh dấu "có sẵn" — vui lòng kiểm tra trước khi sản xuất'
+            : 'Marked in-stock by assistant — verify before producing'}
+        </div>
+      )}
+
+      <div className="flex items-start p-4 gap-3">
+        {/* Product image */}
         {a.image_url ? (
-          <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0 bg-cream" loading="lazy" />
+          <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0"
+            style={{ border: '1px solid #E0D49A' }} loading="lazy" />
         ) : (
-          <div className="w-16 h-16 rounded-xl bg-cream shrink-0 flex items-center justify-center">
-            <span className="text-3xl" style={{ color: meta.color }}>🥐</span>
-          </div>
+          <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
+            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
         )}
 
-        {/* Info */}
+        {/* Main info */}
         <div className="flex-1 min-w-0">
           {a.product_id ? (
-            <Link
-              href={`/station/fiche/${a.product_id}?back=/station/me`}
-              className="font-bold text-navy text-base leading-tight truncate block hover:text-gold transition-colors"
-            >
-              {a.product_name_vi}
+            <Link href={`/station/fiche/${a.product_id}?back=/station/me`}
+              className="font-bold text-base leading-tight block hover:underline"
+              style={{ color: '#1A4731' }}>
+              {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </Link>
           ) : (
-            <div className="font-bold text-navy text-base leading-tight truncate">{a.product_name_vi}</div>
+            <div className="font-bold text-base leading-tight" style={{ color: '#1A4731' }}>
+              {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+            </div>
           )}
           {a.variant_label !== 'Standard' && (
-            <div className="text-sm text-ink-light">{a.variant_label}</div>
+            <div className="text-sm text-ink-light mt-0.5">{a.variant_label}</div>
           )}
+
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <span className="text-2xl font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
-            <span className="badge text-white text-[10px]" style={{ backgroundColor: st.color }}>
+            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white"
+              style={{ backgroundColor: st.color }}>
               {lang === 'vi' ? st.labelVi : st.labelEn}
             </span>
           </div>
+
+          {/* Client breakdown toggle */}
+          {breakdown.length > 1 && (
+            <button onClick={() => onToggleBreakdown(a.id)}
+              className="mt-2 flex items-center gap-1 text-xs font-medium transition-colors"
+              style={{ color: '#2D6A4F' }}>
+              <Store size={11} />
+              {isExpanded
+                ? (lang === 'vi' ? 'Ẩn chi tiết khách hàng' : 'Hide client breakdown')
+                : (lang === 'vi' ? `Xem ${breakdown.length} khách hàng` : `${breakdown.length} clients`)
+              }
+            </button>
+          )}
+          {breakdown.length === 1 && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-light">
+              <Store size={11} />
+              {breakdown[0].shop_name} — ×{breakdown[0].qty}
+            </div>
+          )}
         </div>
 
-        {/* Actions */}
+        {/* Action buttons */}
         {canAdvance && !isDone && (
           <div className="flex flex-col gap-2 shrink-0">
-            <button
-              onClick={() => onAdvance(a)}
-              disabled={isUpdating}
-              className="px-4 py-2.5 rounded-xl font-semibold text-white text-sm active:scale-95 transition-all"
-              style={{ backgroundColor: meta.color }}
-            >
-              {isUpdating ? '…' : actionLabel}
+            <button onClick={() => onAdvance(a)} disabled={isUpdating}
+              className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
+              style={{
+                backgroundColor: isSkip ? '#7C3AED' : '#1A4731',
+                opacity: isUpdating ? 0.6 : 1,
+              }}>
+              {isUpdating ? '…' : actionLabel[a.status] ?? ''}
             </button>
             {a.status === 'in_progress' && (
-              <button onClick={onPartial}
-                className="px-3 py-1.5 rounded-xl text-xs font-medium border border-border-soft text-ink-light hover:border-navy/30 transition-colors text-center">
+              <button onClick={() => onPartial(a)}
+                className="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
+                style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
                 {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
               </button>
             )}
@@ -364,19 +464,39 @@ function TaskCard({
         )}
       </div>
 
-      {/* Notes + View fiche */}
-      {(a.notes || onViewFiche) && (
-        <div className="px-4 pb-3 border-t border-border-soft pt-2 flex items-center justify-between gap-2">
+      {/* Client breakdown expanded */}
+      {isExpanded && breakdown.length > 0 && (
+        <div className="mx-4 mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
+          <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
+            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderBottom: '1px solid #E0D49A' }}>
+            {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
+          </div>
+          {breakdown.map((b, i) => (
+            <div key={i} className="flex items-center justify-between px-3 py-2 text-sm"
+              style={{
+                borderTop: i > 0 ? '1px solid #F5EFC8' : undefined,
+                backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE',
+              }}>
+              <span className="text-ink font-medium truncate flex-1">{b.shop_name}</span>
+              <span className="font-black ml-3 shrink-0" style={{ color: '#1A4731' }}>×{b.qty}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Notes + fiche link */}
+      {(a.notes || a.product_id) && (
+        <div className="px-4 pb-3 pt-1 flex items-center justify-between gap-2"
+          style={{ borderTop: '1px solid #F5EFC8' }}>
           {a.notes ? (
-            <span className="text-xs text-ink-light flex-1">{a.notes}</span>
+            <span className="text-xs text-ink-light flex-1 italic">{a.notes}</span>
           ) : <span />}
-          {onViewFiche && (
-            <button
-              onClick={onViewFiche}
-              className="flex items-center gap-1 text-xs font-medium text-navy/70 hover:text-navy transition-colors shrink-0"
-            >
-              <BookOpen size={13} />
-              {lang === 'vi' ? 'Xem phiếu' : 'View recipe'}
+          {a.product_id && (
+            <button onClick={() => onViewFiche(a)}
+              className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
+              style={{ color: '#2D6A4F' }}>
+              <BookOpen size={12} />
+              {lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe card'}
             </button>
           )}
         </div>
@@ -398,47 +518,60 @@ function FicheModal({
       .from('lab_fiche_steps')
       .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
       .eq('product_id', productId)
+      .eq('step_type', 'step')
       .order('step_number')
       .then(({ data }) => setSteps(data ?? []));
   }, [productId]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl"
+        onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-soft shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 shrink-0"
+          style={{ borderBottom: '1px solid #E0D49A' }}>
           <div className="flex items-center gap-2">
-            <BookOpen size={18} className="text-navy" />
-            <span className="font-semibold text-navy">{productName}</span>
+            <BookOpen size={18} style={{ color: '#1A4731' }} />
+            <span className="font-bold text-base" style={{ color: '#1A4731' }}>{productName}</span>
           </div>
-          <button onClick={onClose} className="p-1 text-ink-light hover:text-navy transition-colors">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <Link href={`/station/fiche/${productId}?back=/station/me`}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+              style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
+              {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
+            </Link>
+            <button onClick={onClose} className="p-1 text-ink-light hover:text-ink transition-colors">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Steps */}
-        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
             <p className="text-ink-light text-sm text-center py-10">
               {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
             </p>
           ) : steps.length === 0 ? (
-            <p className="text-ink-light text-sm text-center py-10">
-              {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
-            </p>
+            <div className="text-center py-10">
+              <p className="text-ink-light text-sm">
+                {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
+              </p>
+              <Link href={`/station/fiche/${productId}?back=/station/me`}
+                className="text-xs font-semibold mt-2 inline-block" style={{ color: '#1A4731' }}>
+                {lang === 'vi' ? 'Xem trang phiếu →' : 'View fiche page →'}
+              </Link>
+            </div>
           ) : steps.map(step => (
             <div key={step.step_number} className="flex gap-3">
-              <div className="w-7 h-7 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+              <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5"
+                style={{ backgroundColor: '#1A4731' }}>
                 {step.step_number}
               </div>
               <div className="flex-1 space-y-1.5">
-                <p className="text-sm text-navy leading-relaxed">
-                  {lang === 'vi'
-                    ? step.description_vi
-                    : (step.description_en || step.description_vi)}
+                <p className="text-sm leading-relaxed" style={{ color: '#1A2C24' }}>
+                  {lang === 'vi' ? step.description_vi : (step.description_en || step.description_vi)}
                 </p>
                 {(step.duration_minutes || step.temperature_celsius) && (
                   <div className="flex gap-4 text-xs text-ink-light">

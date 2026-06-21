@@ -13,7 +13,7 @@ export default async function StationFichesPage() {
   // Fetch categories + products + step counts
   const [{ data: categories }, { data: products }, { data: stepCounts }] = await Promise.all([
     supabase.from('categories').select('id, name_vi, name_en').order('sort_order'),
-    supabase.from('products').select('id, name_vi, name_en, main_image_url, sku, category_id, subcategory').eq('is_active', true).order('name_vi'),
+    supabase.from('products').select('id, name_vi, name_en, main_image_url, sku, category_id, subcategory, is_lab_only').or('is_active.eq.true,is_lab_only.eq.true').order('name_vi'),
     supabase.from('lab_fiche_steps').select('product_id'),
   ]);
 
