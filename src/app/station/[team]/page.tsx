@@ -8,17 +8,17 @@ export const revalidate = 0; // Always fresh for chef station
 
 export default async function StationPage({ params }: { params: { team: string } }) {
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
 
   let team = params.team as Team;
 
   // If team = 'me', resolve from lab_profiles
   if (params.team === 'me') {
-    if (!user) redirect('/login');
+        if (!session) redirect('/login');
     const { data: labProfile } = await supabase
       .from('lab_profiles')
       .select('team')
-      .eq('id', user.id)
+            .eq('id', session.user.id)
       .single();
     if (!labProfile?.team) redirect('/login');
     team = labProfile.team as Team;
