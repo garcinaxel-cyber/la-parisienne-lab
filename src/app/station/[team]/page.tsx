@@ -34,7 +34,7 @@ export default async function StationPage({ params }: { params: { team: string }
     .select(`
       id, product_id, product_name_vi, product_name_en, image_url,
       variant_label, total_qty, qty_to_produce, qty_produced,
-      status, notes, sort_order, import_id, breakdown,
+      status, notes, sort_order, import_id,
       lab_imports!inner(delivery_date, order_number, type, status)
     `)
     .eq('team', team)
@@ -43,9 +43,22 @@ export default async function StationPage({ params }: { params: { team: string }
     .order('sort_order')
     .limit(120);
 
-  // Supabase returns joined tables as arrays; normalise to match StationView's expected shape
+  const assignmentIds = (assignments ?? []).map((a: any) => a.id);
+
+  // Breakdown is added by lab_v3.sql migration — fetch separately so main query
+  // still works even if the migration hasn't been run yet
+  const { data: breakdowns } = assignmentIds.length > 0
+    ? await supabase.from('lab_assignments').select('id, breakdown').in('id', assignmentIds)
+    : { data: [] as any[] };
+
+  const breakdownMap: Record<string, any[]> = {};
+  for (const b of breakdowns ?? []) {
+    breakdownMap[b.id] = Array.isArray(b.breakdown) ? b.breakdown : [];
+  }
+
   const normalised = (assignments ?? []).map((a: any) => ({
     ...a,
+    breakdown: breakdownMap[a.id] ?? [],
     lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,
   }));
 

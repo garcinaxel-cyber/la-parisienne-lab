@@ -8,11 +8,12 @@
 }
 
 @layer components {
-  .btn-primary { @apply inline-flex items-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-semibold text-white hover:bg-navy-light transition-colors; }
-  .btn-gold    { @apply inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-semibold text-navy hover:opacity-90 transition-opacity; }
-  .btn-ghost   { @apply inline-flex items-center gap-2 rounded-xl border border-border-soft px-4 py-2.5 text-sm font-medium text-ink hover:border-navy hover:text-navy transition-colors bg-white; }
-  .btn-danger  { @apply inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition-colors; }
-  .card        { @apply rounded-2xl bg-white shadow-sm border border-border-soft; }
-  .input       { @apply w-full rounded-xl border border-border-soft bg-white px-3 py-2.5 text-sm text-ink placeholder:text-ink-light focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy transition-colors; }
-  .badge       { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+  .btn-primary   { @apply inline-flex items-center gap-2 rounded-xl bg-navy px-4 py-2.5 text-sm font-semibold text-white hover:bg-navy-light transition-colors; }
+  .btn-secondary { @apply inline-flex items-center gap-2 rounded-xl border border-border-soft bg-white px-4 py-2.5 text-sm font-semibold text-ink hover:border-navy hover:text-navy transition-colors; }
+  .btn-gold      { @apply inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-semibold text-navy hover:opacity-90 transition-opacity; }
+  .btn-ghost     { @apply inline-flex items-center gap-2 rounded-xl border border-border-soft px-4 py-2.5 text-sm font-medium text-ink hover:border-navy hover:text-navy transition-colors bg-white; }
+  .btn-danger    { @apply inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition-colors; }
+  .card          { @apply rounded-2xl bg-white shadow-sm border border-border-soft; }
+  .input         { @apply w-full rounded-xl border border-border-soft bg-white px-3 py-2.5 text-sm text-ink placeholder:text-ink-light focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy transition-colors; }
+  .badge         { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold; }
 }
