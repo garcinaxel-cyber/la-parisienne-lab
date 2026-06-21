@@ -35,7 +35,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
           .in('import_id', importIds)
           .order('shop_name')
       : Promise.resolve({ data: [] }),
-    supabase.auth.getUser(),
+        supabase.auth.getSession(),
   ]);
 
   // Fetch breakdown separately (requires lab_v3.sql — safe fallback if not run)
@@ -50,8 +50,8 @@ export default async function OrderDatePage({ params }: { params: { date: string
     ...a, breakdown: breakdownMap[a.id] ?? [],
   }));
 
-  const profile = userResult.data.user
-    ? (await supabase.from('profiles').select('role').eq('id', userResult.data.user.id).single()).data
+    const profile = userResult.data.session
+        ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
     : null;
 
   return (
