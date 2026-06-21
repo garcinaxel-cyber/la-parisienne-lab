@@ -18,8 +18,9 @@ export async function middleware(req: NextRequest) {
         setAll: (cs: { name: string; value: string; options?: Record<string, unknown> }[]) =>
             cs.forEach(({ name, value, options }) => res.cookies.set(name, value, options as any)) } }
   );
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  // getSession() reads JWT from cookie — no network call, avoids Vercel 10s timeout
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
