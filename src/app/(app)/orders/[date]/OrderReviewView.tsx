@@ -2,20 +2,23 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+
+type OrderLine = { import_id: string; team: string; variant_label: string; shop_name: string; qty: number; order_ref?: string };
 
 const EXCEPTION_OPTIONS_EN = ['Out of stock', 'Not in production today', 'Already in stock', 'Quantity reduced', 'Other'];
 const EXCEPTION_OPTIONS_VI = ['Hết nguyên liệu', 'Không sản xuất hôm nay', 'Đã có trong kho', 'Giảm số lượng', 'Khác'];
 
 export default function OrderReviewView({
-  date, imports, assignments, userRole,
+  date, imports, assignments, orderLines, userRole,
 }: {
   date: string;
   imports: any[];
   assignments: any[];
+  orderLines: OrderLine[];
   userRole: string | null;
 }) {
   const { lang } = useI18n();
@@ -28,6 +31,22 @@ export default function OrderReviewView({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [exceptionModal, setExceptionModal] = useState<{ id: string; productName: string } | null>(null);
   const [exceptionReason, setExceptionReason] = useState('');
+  const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
+
+  function getBreakdown(a: any): { shop_name: string; qty: number }[] {
+    // Use stored breakdown JSON first (new imports after v3 migration)
+    if (Array.isArray(a.breakdown) && a.breakdown.length > 0) return a.breakdown;
+    // Fallback: match from fetched order lines
+    return orderLines.filter(
+      ol => ol.import_id === a.import_id && ol.team === a.team && ol.variant_label === a.variant_label
+    );
+  }
+
+  function toggleBreakdown(id: string) {
+    setExpandedBreakdown(prev => {
+      const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+    });
+  }
 
   const canManage = userRole === 'admin' || userRole === 'lab_manager' || userRole === 'assistant';
 
@@ -207,50 +226,76 @@ export default function OrderReviewView({
               {lines.map(a => {
                 const st = STATUS_META[a.status as AssignmentStatus];
                 const isSkip = a.status === 'skip';
+                const breakdown = getBreakdown(a);
+                const isExpanded = expandedBreakdown.has(a.id);
                 return (
-                  <div key={a.id} className={`flex md:grid md:grid-cols-12 items-center px-4 py-3 gap-3 ${isSkip ? 'opacity-50' : ''}`}>
-                    {/* Product */}
-                    <div className="flex-1 md:col-span-4 min-w-0 flex items-center gap-2">
-                      {a.image_url ? (
-                        <img src={a.image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
-                      ) : (
-                        <div className="w-9 h-9 rounded-lg bg-cream shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-navy truncate">{a.product_name_vi}</div>
-                        {a.product_name_en && <div className="text-xs text-ink-light truncate">{a.product_name_en}</div>}
+                  <div key={a.id} className={isSkip ? 'bg-purple-50/40' : ''}>
+                    <div className="flex md:grid md:grid-cols-12 items-center px-4 py-3 gap-3">
+                      {/* Product */}
+                      <div className="flex-1 md:col-span-4 min-w-0 flex items-center gap-2">
+                        {a.image_url ? (
+                          <img src={a.image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-lg bg-cream shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-navy truncate">{a.product_name_vi}</div>
+                          {a.product_name_en && <div className="text-xs text-ink-light truncate">{a.product_name_en}</div>}
+                          {/* Client breakdown toggle */}
+                          {breakdown.length > 0 && (
+                            <button onClick={() => toggleBreakdown(a.id)}
+                              className="flex items-center gap-1 text-[10px] font-semibold mt-0.5 transition-colors"
+                              style={{ color: '#2D6A4F' }}>
+                              <Store size={9} />
+                              {breakdown.length} {lang === 'vi' ? 'khách' : 'clients'}
+                              <ChevronDown size={9} style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {/* Variant */}
+                      <div className="hidden md:block md:col-span-2 text-xs text-ink-light">
+                        {a.variant_label !== 'Standard' ? a.variant_label : '–'}
+                      </div>
+                      {/* Qty */}
+                      <div className="md:col-span-1 text-center font-bold text-navy shrink-0">×{a.total_qty}</div>
+                      {/* Produced */}
+                      <div className="hidden md:block md:col-span-1 text-center text-sm text-ink-light">
+                        {a.qty_produced > 0 ? a.qty_produced : '–'}
+                      </div>
+                      {/* Status badge */}
+                      <div className="md:col-span-2 shrink-0">
+                        <span className="badge text-white text-[10px] whitespace-nowrap" style={{ backgroundColor: st.color }}>
+                          {lang === 'vi' ? st.labelVi : st.labelEn}
+                        </span>
+                      </div>
+                      {/* Exception / action */}
+                      <div className="md:col-span-2 text-xs text-ink-light truncate">
+                        {a.exception_reason
+                          ? <span className="italic">{a.exception_reason}</span>
+                          : canManage && !isSkip && (
+                            <button
+                              onClick={() => setExceptionModal({ id: a.id, productName: a.product_name_vi })}
+                              className="text-ink-light hover:text-navy transition-colors"
+                              title={lang === 'vi' ? 'Đánh dấu ngoại lệ' : 'Mark exception'}
+                            >
+                              <MoreVertical size={15} />
+                            </button>
+                          )}
                       </div>
                     </div>
-                    {/* Variant */}
-                    <div className="hidden md:block md:col-span-2 text-xs text-ink-light">
-                      {a.variant_label !== 'Standard' ? a.variant_label : '–'}
-                    </div>
-                    {/* Qty */}
-                    <div className="md:col-span-1 text-center font-bold text-navy shrink-0">×{a.total_qty}</div>
-                    {/* Produced */}
-                    <div className="hidden md:block md:col-span-1 text-center text-sm text-ink-light">
-                      {a.qty_produced > 0 ? a.qty_produced : '–'}
-                    </div>
-                    {/* Status badge */}
-                    <div className="md:col-span-2 shrink-0">
-                      <span className="badge text-white text-[10px] whitespace-nowrap" style={{ backgroundColor: st.color }}>
-                        {lang === 'vi' ? st.labelVi : st.labelEn}
-                      </span>
-                    </div>
-                    {/* Exception / action */}
-                    <div className="md:col-span-2 text-xs text-ink-light truncate">
-                      {a.exception_reason
-                        ? a.exception_reason
-                        : canManage && !isSkip && (
-                          <button
-                            onClick={() => setExceptionModal({ id: a.id, productName: a.product_name_vi })}
-                            className="text-ink-light hover:text-navy transition-colors"
-                            title={lang === 'vi' ? 'Đánh dấu ngoại lệ' : 'Mark exception'}
-                          >
-                            <MoreVertical size={15} />
-                          </button>
-                        )}
-                    </div>
+                    {/* Expanded client breakdown */}
+                    {isExpanded && breakdown.length > 0 && (
+                      <div className="mx-4 mb-3 rounded-xl overflow-hidden text-xs" style={{ border: '1px solid #E0D49A' }}>
+                        {breakdown.map((b, i) => (
+                          <div key={i} className="flex items-center justify-between px-3 py-2"
+                            style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined, backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE' }}>
+                            <span className="text-ink font-medium">{b.shop_name}</span>
+                            <span className="font-bold" style={{ color: '#1A4731' }}>×{b.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

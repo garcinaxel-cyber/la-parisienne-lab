@@ -10,7 +10,7 @@ export default async function LabProductsPage() {
   if (!user) redirect('/login');
 
   const { data: profile } = await supabase
-    .from('lab_profiles')
+    .from('profiles')
     .select('role')
     .eq('id', user.id)
     .single();
