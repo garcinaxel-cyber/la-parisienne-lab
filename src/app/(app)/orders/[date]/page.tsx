@@ -38,7 +38,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
   ]);
 
   const profile = userResult.data.user
-    ? (await supabase.from('lab_profiles').select('role').eq('id', userResult.data.user.id).single()).data
+    ? (await supabase.from('profiles').select('role').eq('id', userResult.data.user.id).single()).data
     : null;
 
   return (
