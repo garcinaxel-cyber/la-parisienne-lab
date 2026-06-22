@@ -51,6 +51,7 @@ export default function ImportView() {
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set(TEAMS));
   const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: Array<{ sku: string; name: string }> } | null>(null);
   const [excludedSkus, setExcludedSkus] = useState<Set<string>>(new Set());
+  const [orderTimes, setOrderTimes] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -86,7 +87,6 @@ export default function ImportView() {
     if (results.length > 0) {
       setParsedFiles(results);
       setStep('preview');
-      // Check which SKUs exist in the catalogue (async, non-blocking)
       const allLines = mergeLines(results.map(r => r.lines));
       const skus = Array.from(new Set(allLines.map(l => l.product_sku).filter(Boolean) as string[]));
       if (skus.length) {
@@ -131,8 +131,6 @@ export default function ImportView() {
     if (!parsedFiles.length) return;
     setStep('saving');
     const supabase = createClient();
-
-    // Look up products by SKU to enrich assignments with image_url + product_id
     const skus = Array.from(new Set(effectiveLines.map(l => l.product_sku).filter(Boolean)));
     const { data: productRows } = skus.length
       ? await supabase.from('products').select('id, sku, main_image_url, name_en').in('sku', skus)
@@ -141,19 +139,13 @@ export default function ImportView() {
     for (const p of productRows ?? []) {
       if (p.sku) productBySku[p.sku] = { id: p.id, image_url: p.main_image_url ?? null, name_en: p.name_en ?? null };
     }
-
-    // Get next order number for this date
     const { count } = await supabase
       .from('lab_imports')
       .select('*', { count: 'exact', head: true })
       .eq('delivery_date', deliveryDate);
-
     const orderNumber = (count ?? 0) + 1;
-
-    // Determine filenames
     const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
     const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
-
     const { data: importRow, error: importErr } = await supabase
       .from('lab_imports')
       .insert({
@@ -169,35 +161,26 @@ export default function ImportView() {
       })
       .select('id')
       .single();
-
     if (importErr || !importRow) {
       setError(importErr?.message ?? 'Failed to create import');
       setStep('preview');
       return;
     }
-
-    // Insert assignments — only lines with a valid team (CHECK constraint on lab_assignments)
-    // Lines with unrecognised/empty team are kept in lab_order_lines only (for traceability)
     const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
     const assignments = assignableLines.map((line, idx) => {
       const product = productBySku[line.product_sku] ?? null;
       return {
-        import_id: importRow.id,
-        team: line.team,
+        import_id: importRow.id, team: line.team,
         product_id: product?.id ?? null,
         product_name_vi: line.product_name_vi,
         product_name_en: product?.name_en ?? '',
         image_url: product?.image_url ?? null,
         variant_label: line.variant_label,
-        total_qty: line.total_qty,
-        qty_to_produce: line.total_qty,
-        qty_produced: 0,
-        status: 'pending',
-        sort_order: idx,
+        total_qty: line.total_qty, qty_to_produce: line.total_qty,
+        qty_produced: 0, status: 'pending', sort_order: idx,
         breakdown: line.breakdown ?? [],
       };
     });
-
     const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
     if (assignErr) {
       setError(assignErr.message);
@@ -205,8 +188,6 @@ export default function ImportView() {
       setStep('preview');
       return;
     }
-
-    // Insert raw order lines for traceability (also filtered by excludedSkus)
     const orderLines = parsedFiles.flatMap(pf =>
       pf.lines
         .filter(line => !excludedSkus.has(line.product_sku))
@@ -222,14 +203,13 @@ export default function ImportView() {
             variant_label: line.variant_label,
             qty: b.qty,
             delivery_date: deliveryDate,
-            delivery_time: null,
+            delivery_time: orderTimes[b.order_ref] || null,
           }))
         )
     );
     if (orderLines.length > 0) {
       await supabase.from('lab_order_lines').insert(orderLines);
     }
-
     setStep('done');
   }
 
@@ -239,6 +219,7 @@ export default function ImportView() {
     setError(null);
     setMatchCheck(null);
     setExcludedSkus(new Set());
+    setOrderTimes({});
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -338,7 +319,6 @@ export default function ImportView() {
             </p>
             <p className="text-xs text-ink-light mt-3">Sales Order · Stock Replenishment (.xlsx)</p>
           </div>
-
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -401,7 +381,7 @@ export default function ImportView() {
             </div>
           </div>
 
-          {/* Parse warnings (format issues from excel parser) */}
+          {/* Parse warnings */}
           {allWarnings.length > 0 && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
               <div className="flex items-center gap-2 text-amber-700 font-medium text-sm mb-1">
@@ -413,7 +393,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Unrecognized products — per-SKU Exclude / Keep toggles */}
+          {/* Unrecognized products */}
           {matchCheck && matchCheck.unmatched.length > 0 && (
             <div className="rounded-xl border border-amber-200 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 text-amber-700 font-medium text-sm">
@@ -438,14 +418,10 @@ export default function ImportView() {
                       <button
                         onClick={() => toggleExclude(sku)}
                         className={`text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 ${
-                          isExcluded
-                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                            : 'bg-red-100 text-red-700 hover:bg-red-200'
+                          isExcluded ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'
                         }`}
                       >
-                        {isExcluded
-                          ? (lang === 'vi' ? 'Giữ lại' : 'Keep')
-                          : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
+                        {isExcluded ? (lang === 'vi' ? 'Giữ lại' : 'Keep') : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
                       </button>
                     </div>
                   );
@@ -459,7 +435,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Empty team — kept in order history but not assigned to production */}
+          {/* Empty team */}
           {emptyTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
               <div className="flex items-center gap-2 text-blue-700 text-sm">
@@ -477,7 +453,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Other unrecognized teams (non-empty string, not in TEAMS list) */}
+          {/* Other unrecognized teams */}
           {otherUnknownTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200">
               <div className="flex items-center gap-2 text-red-700 font-medium text-sm mb-1">
@@ -500,7 +476,44 @@ export default function ImportView() {
               className="input mt-1 w-full resize-none" />
           </div>
 
-          {/* By team — excluded-SKU lines are hidden */}
+          {/* Delivery time per order */}
+          {(() => {
+            const orderRefs = Array.from(new Set(
+              mergedLines.flatMap(l => l.breakdown.map((b: any) => b.order_ref as string)).filter(Boolean)
+            ));
+            if (orderRefs.length === 0) return null;
+            return (
+              <div>
+                <label className="label">
+                  {lang === 'vi' ? 'Giờ cần xong theo đơn' : 'Ready time per order'}{' '}
+                  <span className="font-normal text-ink-light">(optional)</span>
+                </label>
+                <div className="mt-2 card p-3 space-y-2">
+                  {orderRefs.map(ref => (
+                    <div key={ref} className="flex items-center gap-3">
+                      <span className="text-sm font-mono font-medium text-navy w-40 truncate shrink-0">{ref}</span>
+                      <input
+                        type="time"
+                        value={orderTimes[ref] ?? ''}
+                        onChange={e => setOrderTimes(prev => ({ ...prev, [ref]: e.target.value }))}
+                        className="input py-1 text-sm w-32"
+                      />
+                      {orderTimes[ref] && (
+                        <button
+                          onClick={() => setOrderTimes(prev => { const next = { ...prev }; delete next[ref]; return next; })}
+                          className="text-ink-light hover:text-red-500 transition-colors"
+                        >
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* By team */}
           <div className="space-y-3">
             {byTeam.map(({ team, lines }) => {
               const meta = TEAM_LABELS[team as Team];
