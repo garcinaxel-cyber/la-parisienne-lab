@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store, Download } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
@@ -145,7 +145,7 @@ export default function OrderReviewView({
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-border-soft hover:bg-cream transition-colors"
             title={lang === 'vi' ? 'Xuất lệnh sản xuất Odoo' : 'Export Odoo Manufacturing Order'}
           >
-            <Download size={13} />
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Odoo MO
           </button>
         )}
