@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       .select('product_id')
       .eq('team', team)
       .not('product_id', 'is', null);
-    allowedProductIds = [...new Set((assignments ?? []).map((a: any) => a.product_id as string))];
+    allowedProductIds = Array.from(new Set((assignments ?? []).map((a: any) => a.product_id as string)));
     // If the team has never had any assignments, return nothing
     if (allowedProductIds.length === 0) return NextResponse.json([]);
   }
