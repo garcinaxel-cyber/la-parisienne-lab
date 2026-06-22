@@ -176,8 +176,10 @@ export default function ImportView() {
       return;
     }
 
-    // Insert assignments from effectiveLines (excluded SKUs removed)
-    const assignments = effectiveLines.map((line, idx) => {
+    // Insert assignments — only lines with a valid team (CHECK constraint on lab_assignments)
+    // Lines with unrecognised/empty team are kept in lab_order_lines only (for traceability)
+    const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
+    const assignments = assignableLines.map((line, idx) => {
       const product = productBySku[line.product_sku] ?? null;
       return {
         import_id: importRow.id,
@@ -457,7 +459,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Empty team — informational only, not a blocking error */}
+          {/* Empty team — kept in order history but not assigned to production */}
           {emptyTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
               <div className="flex items-center gap-2 text-blue-700 text-sm">
@@ -467,7 +469,9 @@ export default function ImportView() {
                     {emptyTeamLines.length} {lang === 'vi' ? 'dòng không có đội' : 'lines with no team assigned'}
                   </span>
                   {' — '}
-                  {lang === 'vi' ? 'sẽ vẫn được nhập bình thường.' : 'will still import normally.'}
+                  {lang === 'vi'
+                    ? 'sẽ được lưu vào lịch sử đơn hàng nhưng không giao cho đội nào.'
+                    : 'saved to order history but not assigned to any production team.'}
                 </span>
               </div>
             </div>
