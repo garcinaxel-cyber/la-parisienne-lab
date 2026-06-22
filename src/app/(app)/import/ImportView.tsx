@@ -49,15 +49,21 @@ export default function ImportView() {
   const [shippedFromLab, setShippedFromLab] = useState(false);
   const [notes, setNotes] = useState('');
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set(TEAMS));
-  const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: string[] } | null>(null);
+  const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: Array<{ sku: string; name: string }> } | null>(null);
+  const [excludedSkus, setExcludedSkus] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
   const mergedLines = mergeLines(parsedFiles.map(pf => pf.lines));
   const allWarnings = parsedFiles.flatMap(pf => pf.warnings);
+  // Lines that will actually be published (user-excluded SKUs removed)
+  const effectiveLines = mergedLines.filter(l => !excludedSkus.has(l.product_sku));
+  const totalItems = effectiveLines.reduce((sum, l) => sum + l.total_qty, 0);
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null);
+    setExcludedSkus(new Set());
+    setMatchCheck(null);
     const results: ParsedImport[] = [];
     for (const file of files) {
       try {
@@ -80,8 +86,34 @@ export default function ImportView() {
     if (results.length > 0) {
       setParsedFiles(results);
       setStep('preview');
+      // Check which SKUs exist in the catalogue (async, non-blocking)
+      const allLines = mergeLines(results.map(r => r.lines));
+      const skus = Array.from(new Set(allLines.map(l => l.product_sku).filter(Boolean) as string[]));
+      if (skus.length) {
+        const supabase = createClient();
+        supabase.from('products').select('sku').in('sku', skus).then(({ data }) => {
+          const matched = new Set((data ?? []).map((p: any) => p.sku));
+          setMatchCheck({
+            matched: skus.filter(s => matched.has(s)).length,
+            unmatched: skus
+              .filter(s => !matched.has(s))
+              .map(s => ({
+                sku: s,
+                name: allLines.find(l => l.product_sku === s)?.product_name_vi ?? s,
+              })),
+          });
+        });
+      }
     }
   }, []);
+
+  const toggleExclude = (sku: string) => {
+    setExcludedSkus(prev => {
+      const next = new Set(prev);
+      next.has(sku) ? next.delete(sku) : next.add(sku);
+      return next;
+    });
+  };
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -101,7 +133,7 @@ export default function ImportView() {
     const supabase = createClient();
 
     // Look up products by SKU to enrich assignments with image_url + product_id
-    const skus = Array.from(new Set(mergedLines.map(l => l.product_sku).filter(Boolean)));
+    const skus = Array.from(new Set(effectiveLines.map(l => l.product_sku).filter(Boolean)));
     const { data: productRows } = skus.length
       ? await supabase.from('products').select('id, sku, main_image_url, name_en').in('sku', skus)
       : { data: [] };
@@ -144,8 +176,8 @@ export default function ImportView() {
       return;
     }
 
-    // Insert assignments enriched with product data
-    const assignments = mergedLines.map((line, idx) => {
+    // Insert assignments from effectiveLines (excluded SKUs removed)
+    const assignments = effectiveLines.map((line, idx) => {
       const product = productBySku[line.product_sku] ?? null;
       return {
         import_id: importRow.id,
@@ -172,23 +204,25 @@ export default function ImportView() {
       return;
     }
 
-    // Insert raw order lines for traceability
+    // Insert raw order lines for traceability (also filtered by excludedSkus)
     const orderLines = parsedFiles.flatMap(pf =>
-      pf.lines.flatMap(line =>
-        line.breakdown.map(b => ({
-          import_id: importRow.id,
-          source_type: pf.sourceType,
-          order_ref: b.order_ref,
-          shop_name: b.shop_name,
-          product_sku: line.product_sku,
-          product_name_vi: line.product_name_vi,
-          team: line.team,
-          variant_label: line.variant_label,
-          qty: b.qty,
-          delivery_date: deliveryDate,
-          delivery_time: null,
-        }))
-      )
+      pf.lines
+        .filter(line => !excludedSkus.has(line.product_sku))
+        .flatMap(line =>
+          line.breakdown.map(b => ({
+            import_id: importRow.id,
+            source_type: pf.sourceType,
+            order_ref: b.order_ref,
+            shop_name: b.shop_name,
+            product_sku: line.product_sku,
+            product_name_vi: line.product_name_vi,
+            team: line.team,
+            variant_label: line.variant_label,
+            qty: b.qty,
+            delivery_date: deliveryDate,
+            delivery_time: null,
+          }))
+        )
     );
     if (orderLines.length > 0) {
       await supabase.from('lab_order_lines').insert(orderLines);
@@ -201,6 +235,8 @@ export default function ImportView() {
     setStep('upload');
     setParsedFiles([]);
     setError(null);
+    setMatchCheck(null);
+    setExcludedSkus(new Set());
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -214,11 +250,12 @@ export default function ImportView() {
 
   const byTeam = TEAMS.map(team => ({
     team,
-    lines: mergedLines.filter(l => l.team === team),
+    lines: mergedLines.filter(l => l.team === team && !excludedSkus.has(l.product_sku)),
   })).filter(g => g.lines.length > 0);
 
   const unknownTeamLines = mergedLines.filter(l => !TEAMS.includes(l.team as Team));
-  const totalItems = mergedLines.reduce((sum, l) => sum + l.total_qty, 0);
+  const emptyTeamLines = unknownTeamLines.filter(l => l.team === '' || l.team == null);
+  const otherUnknownTeamLines = unknownTeamLines.filter(l => l.team !== '' && l.team != null);
 
   if (step === 'done') {
     return (
@@ -348,16 +385,21 @@ export default function ImportView() {
           {/* Summary */}
           <div className="card p-4 flex items-center gap-4 flex-wrap">
             <div className="text-sm text-ink-light">
-              <span className="font-semibold text-navy">{mergedLines.length}</span> {lang === 'vi' ? 'sản phẩm' : 'products'}
+              <span className="font-semibold text-navy">{effectiveLines.length}</span> {lang === 'vi' ? 'sản phẩm' : 'products'}
               {' · '}
               <span className="font-semibold text-navy">{totalItems}</span> {lang === 'vi' ? 'cái tổng cộng' : 'items total'}
               {parsedFiles.length > 1 && (
                 <span className="ml-2 text-gold font-medium">({parsedFiles.length} {lang === 'vi' ? 'file đã gộp' : 'files merged'})</span>
               )}
+              {excludedSkus.size > 0 && (
+                <span className="ml-2 text-red-500 font-medium">
+                  · {excludedSkus.size} SKU{excludedSkus.size > 1 ? 's' : ''} {lang === 'vi' ? 'bị loại' : 'excluded'}
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Warnings */}
+          {/* Parse warnings (format issues from excel parser) */}
           {allWarnings.length > 0 && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
               <div className="flex items-center gap-2 text-amber-700 font-medium text-sm mb-1">
@@ -369,13 +411,76 @@ export default function ImportView() {
             </div>
           )}
 
-          {unknownTeamLines.length > 0 && (
+          {/* Unrecognized products — per-SKU Exclude / Keep toggles */}
+          {matchCheck && matchCheck.unmatched.length > 0 && (
+            <div className="rounded-xl border border-amber-200 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 text-amber-700 font-medium text-sm">
+                <AlertCircle size={15} />
+                <span>
+                  {matchCheck.unmatched.length}{' '}
+                  {lang === 'vi' ? 'sản phẩm không có trong catalogue' : 'products not found in catalogue'}
+                </span>
+                {matchCheck.matched > 0 && (
+                  <span className="ml-auto text-amber-600 font-normal text-xs">
+                    {matchCheck.matched} {lang === 'vi' ? 'SKU khớp' : 'SKUs matched'}
+                  </span>
+                )}
+              </div>
+              <div className="divide-y divide-amber-100 bg-white">
+                {matchCheck.unmatched.map(({ sku, name }) => {
+                  const isExcluded = excludedSkus.has(sku);
+                  return (
+                    <div key={sku} className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isExcluded ? 'opacity-50' : ''}`}>
+                      <code className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">{sku}</code>
+                      <span className={`flex-1 text-sm ${isExcluded ? 'line-through text-ink-light' : 'text-navy'}`}>{name}</span>
+                      <button
+                        onClick={() => toggleExclude(sku)}
+                        className={`text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 ${
+                          isExcluded
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                            : 'bg-red-100 text-red-700 hover:bg-red-200'
+                        }`}
+                      >
+                        {isExcluded
+                          ? (lang === 'vi' ? 'Giữ lại' : 'Keep')
+                          : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-2 bg-amber-50 text-xs text-amber-600">
+                {lang === 'vi'
+                  ? 'Sản phẩm giữ lại sẽ được nhập bình thường nhưng không có ảnh hay phiếu kỹ thuật.'
+                  : 'Kept products will import normally — without photo or recipe card.'}
+              </div>
+            </div>
+          )}
+
+          {/* Empty team — informational only, not a blocking error */}
+          {emptyTeamLines.length > 0 && (
+            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
+              <div className="flex items-center gap-2 text-blue-700 text-sm">
+                <AlertCircle size={15} className="shrink-0" />
+                <span>
+                  <span className="font-medium">
+                    {emptyTeamLines.length} {lang === 'vi' ? 'dòng không có đội' : 'lines with no team assigned'}
+                  </span>
+                  {' — '}
+                  {lang === 'vi' ? 'sẽ vẫn được nhập bình thường.' : 'will still import normally.'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Other unrecognized teams (non-empty string, not in TEAMS list) */}
+          {otherUnknownTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200">
               <div className="flex items-center gap-2 text-red-700 font-medium text-sm mb-1">
                 <AlertCircle size={15} /> {lang === 'vi' ? 'Đội chưa nhận dạng được' : 'Unrecognised teams'}
               </div>
               <ul className="text-xs text-red-700 space-y-0.5">
-                {Array.from(new Set(unknownTeamLines.map(l => l.team))).map(t => <li key={t}>· "{t}"</li>)}
+                {Array.from(new Set(otherUnknownTeamLines.map(l => l.team))).map(t => <li key={t}>· "{t}"</li>)}
               </ul>
             </div>
           )}
@@ -391,7 +496,7 @@ export default function ImportView() {
               className="input mt-1 w-full resize-none" />
           </div>
 
-          {/* By team */}
+          {/* By team — excluded-SKU lines are hidden */}
           <div className="space-y-3">
             {byTeam.map(({ team, lines }) => {
               const meta = TEAM_LABELS[team as Team];
