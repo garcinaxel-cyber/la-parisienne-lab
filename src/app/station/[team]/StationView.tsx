@@ -49,7 +49,11 @@ type SearchProduct = {
   sku: string | null;
   main_image_url: string | null;
   is_lab_only: boolean;
+  category_id: string | null;
+  subcategory: string | null;
 };
+
+type Category = { id: string; name_vi: string; name_en: string };
 
 type FicheStep = {
   step_number: number;
@@ -89,19 +93,34 @@ export default function StationView({
   const [extraResults, setExtraResults] = useState<SearchProduct[]>([]);
   const [extraProduct, setExtraProduct] = useState<SearchProduct | null>(null);
   const [extraQty, setExtraQty] = useState(1);
+  const [extraQtyInput, setExtraQtyInput] = useState('1');
   const [savingExtra, setSavingExtra] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [extraCategories, setExtraCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState('');
 
   const meta = TEAM_LABELS[team];
 
-  // Debounced product search
+  // Fetch categories when modal opens
+  useEffect(() => {
+    if (!extraModal || extraCategories.length > 0) return;
+    const supabase = createClient();
+    supabase.from('categories').select('id, name_vi, name_en').order('sort_order')
+      .then(({ data }) => setExtraCategories(data ?? []));
+  }, [extraModal]);
+
+  // Debounced product search — filtered by team + category
   useEffect(() => {
     if (!extraModal || extraProduct) return;
-    if (extraSearch.trim().length < 1) { setExtraResults([]); return; }
+    if (extraSearch.trim().length < 1 && !selectedCategory) { setExtraResults([]); return; }
     const timer = setTimeout(async () => {
       setSearchLoading(true);
       try {
-        const res = await fetch(`/api/lab/products-search?q=${encodeURIComponent(extraSearch.trim())}`);
+        const params = new URLSearchParams();
+        if (extraSearch.trim()) params.set('q', extraSearch.trim());
+        params.set('team', team);
+        if (selectedCategory) params.set('category', selectedCategory);
+        const res = await fetch(`/api/lab/products-search?${params.toString()}`);
         const data = await res.json();
         setExtraResults(Array.isArray(data) ? data : []);
       } catch {
@@ -111,7 +130,7 @@ export default function StationView({
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [extraSearch, extraModal, extraProduct]);
+  }, [extraSearch, extraModal, extraProduct, team, selectedCategory]);
 
   // Supabase Realtime
   useEffect(() => {
@@ -209,6 +228,8 @@ export default function StationView({
     setExtraResults([]);
     setExtraProduct(null);
     setExtraQty(1);
+    setExtraQtyInput('1');
+    setSelectedCategory('');
   }
 
   const production = assignments.filter(a => ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
@@ -518,6 +539,35 @@ export default function StationView({
             </div>
 
             <div className="px-5 pb-5 space-y-4">
+              {/* Category filter chips */}
+              {!extraProduct && extraCategories.length > 0 && (
+                <div className="flex gap-1.5 flex-wrap">
+                  <button
+                    onClick={() => setSelectedCategory('')}
+                    className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
+                    style={selectedCategory === ''
+                      ? { backgroundColor: '#1A4731', color: 'white' }
+                      : { backgroundColor: '#F3F4F6', color: '#6B7280' }
+                    }
+                  >
+                    {lang === 'vi' ? 'Tất cả' : 'All'}
+                  </button>
+                  {extraCategories.map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
+                      className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
+                      style={selectedCategory === cat.id
+                        ? { backgroundColor: '#1A4731', color: 'white' }
+                        : { backgroundColor: '#F3F4F6', color: '#6B7280' }
+                      }
+                    >
+                      {lang === 'vi' ? cat.name_vi : cat.name_en}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {extraProduct ? (
                 <div className="flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                   {extraProduct.main_image_url ? (
@@ -598,14 +648,30 @@ export default function StationView({
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
                     {lang === 'vi' ? 'Số lượng' : 'Quantity'}
                   </label>
-                  <div className="flex items-center gap-4 mt-2">
-                    <button onClick={() => setExtraQty(q => Math.max(1, q - 1))}
+                  <div className="flex items-center gap-3 mt-2">
+                    <button onClick={() => { const v = Math.max(1, extraQty - 1); setExtraQty(v); setExtraQtyInput(String(v)); }}
                       className="w-11 h-11 rounded-full bg-gray-100 flex items-center justify-center active:scale-95"
                       style={{ color: '#1A4731' }}>
                       <Minus size={18} />
                     </button>
-                    <span className="text-4xl font-black w-14 text-center" style={{ color: '#1A4731' }}>{extraQty}</span>
-                    <button onClick={() => setExtraQty(q => q + 1)}
+                    <input
+                      type="number" min={1}
+                      value={extraQtyInput}
+                      onChange={e => {
+                        setExtraQtyInput(e.target.value);
+                        const v = parseInt(e.target.value, 10);
+                        if (!isNaN(v) && v >= 1) setExtraQty(v);
+                      }}
+                      onBlur={() => {
+                        const v = parseInt(extraQtyInput, 10);
+                        const safe = isNaN(v) || v < 1 ? 1 : v;
+                        setExtraQty(safe);
+                        setExtraQtyInput(String(safe));
+                      }}
+                      className="text-4xl font-black text-center rounded-xl border-2 outline-none w-20 py-1"
+                      style={{ color: '#1A4731', borderColor: '#1A4731', WebkitAppearance: 'none', MozAppearance: 'textfield' }}
+                    />
+                    <button onClick={() => { const v = extraQty + 1; setExtraQty(v); setExtraQtyInput(String(v)); }}
                       className="w-11 h-11 rounded-full flex items-center justify-center text-white active:scale-95"
                       style={{ backgroundColor: '#1A4731' }}>
                       <Plus size={18} />
@@ -645,16 +711,23 @@ export default function StationView({
                 </p>
               )}
             </div>
-            <div className="flex items-center justify-center gap-6">
+            <div className="flex items-center justify-center gap-4">
               <button onClick={() => setQtyInput(q => Math.max(0, q - 1))}
                 className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center active:scale-95 transition-transform"
                 style={{ color: '#1A4731' }}>
                 <Minus size={20} />
               </button>
-              <span className="text-5xl font-black w-16 text-center"
-                style={{ color: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731' }}>
-                {qtyInput}
-              </span>
+              <input
+                type="number" min={0}
+                value={qtyInput}
+                onChange={e => setQtyInput(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                className="text-5xl font-black text-center rounded-xl border-2 outline-none w-24 py-2"
+                style={{
+                  color: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
+                  borderColor: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
+                  WebkitAppearance: 'none', MozAppearance: 'textfield',
+                }}
+              />
               <button onClick={() => setQtyInput(q => q + 1)}
                 className="w-12 h-12 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform"
                 style={{ backgroundColor: '#1A4731' }}>
