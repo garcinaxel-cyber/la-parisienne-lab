@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
-  BookOpen, X, Timer, Thermometer, LogOut, Store, Package,
+  BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -36,6 +36,8 @@ type Assignment = {
   sort_order: number;
   import_id: string;
   is_extra?: boolean;
+  sku: string | null;
+  weight_grams: number | null;
   breakdown: BreakdownItem[];
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
 };
@@ -57,6 +59,8 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
+type Tab = 'production' | 'commande' | 'termine';
+
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
   in_progress: 'done',
@@ -77,7 +81,7 @@ export default function StationView({
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
   const [qtyInput, setQtyInput] = useState(0);
   const [ficheModal, setFicheModal] = useState<{ productId: string; productName: string } | null>(null);
-  const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<Tab>('production');
 
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
@@ -191,7 +195,7 @@ export default function StationView({
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
     if (data) {
       setAssignments(prev => [...prev, {
-        ...row, id: data.id, notes: '',
+        ...row, id: data.id, notes: '', sku: extraProduct.sku, weight_grams: null,
         lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
       }]);
     }
@@ -207,23 +211,16 @@ export default function StationView({
     setExtraQty(1);
   }
 
-  function toggleBreakdown(id: string) {
-    setExpandedBreakdown(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
-  const pending = assignments.filter(a => a.status === 'pending');
-  const inProgress = assignments.filter(a => a.status === 'in_progress');
-  const done = assignments.filter(a => a.status === 'done');
-  const skipped = assignments.filter(a => a.status === 'skip');
-  const other = assignments.filter(a => ['partial', 'blocked'].includes(a.status));
+  const production = assignments.filter(a => ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
+  const termine = assignments.filter(a => ['done', 'skip'].includes(a.status));
 
   const totalQty = assignments.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
   const doneQty = assignments.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
   const pct = totalQty ? Math.round(doneQty / totalQty * 100) : 0;
+
+  const inProgressCount = assignments.filter(a => a.status === 'in_progress').length;
+  const pendingCount = assignments.filter(a => a.status === 'pending').length;
+  const termineCount = termine.length;
 
   async function logout() {
     await createClient().auth.signOut();
@@ -235,6 +232,30 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
+  const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
+    {
+      id: 'production',
+      labelVi: 'Sản xuất',
+      labelEn: 'Production',
+      count: production.length,
+      icon: <FlaskConical size={14} />,
+    },
+    {
+      id: 'commande',
+      labelVi: 'Đơn hàng',
+      labelEn: 'Commande',
+      count: assignments.length,
+      icon: <ClipboardList size={14} />,
+    },
+    {
+      id: 'termine',
+      labelVi: 'Hoàn thành',
+      labelEn: 'Terminé',
+      count: termineCount,
+      icon: <CheckCircle2 size={14} />,
+    },
+  ];
+
   const sharedCardProps = {
     lang,
     updating,
@@ -243,8 +264,6 @@ export default function StationView({
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
     onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
     meta,
-    expandedBreakdown,
-    onToggleBreakdown: toggleBreakdown,
   };
 
   return (
@@ -289,8 +308,32 @@ export default function StationView({
             </button>
           </div>
         </div>
+        {/* Progress bar */}
         <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
           <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
+        </div>
+        {/* Tab navigation */}
+        <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
+          {tabs.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-colors"
+              style={activeTab === tab.id
+                ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
+                : { color: 'rgba(255,255,255,0.55)', borderBottom: '2px solid transparent' }
+              }>
+              {tab.icon}
+              {lang === 'vi' ? tab.labelVi : tab.labelEn}
+              {tab.count > 0 && (
+                <span className="rounded-full px-1.5 py-0.5 text-[10px] font-black"
+                  style={activeTab === tab.id
+                    ? { backgroundColor: '#C9A84C', color: '#1A4731' }
+                    : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
+                  }>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </header>
 
@@ -300,77 +343,143 @@ export default function StationView({
         </div>
       )}
 
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6 pb-24">
-        {assignments.length === 0 && (
-          <div className="text-center py-20">
-            <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
-            <p className="font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Chưa có đơn sản xuất hôm nay' : 'No production orders for today'}
-            </p>
-            <p className="text-sm mt-1 text-ink-light">
-              {lang === 'vi' ? 'Đơn sẽ xuất hiện khi được phát hành' : 'Orders will appear once published'}
-            </p>
-          </div>
-        )}
+      {/* ─── PRODUCTION TAB ─── */}
+      {activeTab === 'production' && (
+        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+          {production.length === 0 && (
+            <div className="text-center py-20">
+              <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
+              <p className="font-semibold" style={{ color: '#1A4731' }}>
+                {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
+              </p>
+              <p className="text-sm mt-1 text-ink-light">
+                {lang === 'vi' ? 'Tất cả đã hoàn thành hoặc có sẵn' : 'All items are done or in stock'}
+              </p>
+            </div>
+          )}
+          {production.map(a => (
+            <ProductionCard key={a.id} a={a} {...sharedCardProps} />
+          ))}
+        </div>
+      )}
 
-        {inProgress.length > 0 && (
-          <section>
-            <SectionHeader icon={<Play size={13} style={{ color: '#2563EB' }} />}
-              label={lang === 'vi' ? 'Đang làm' : 'In progress'} count={inProgress.length} />
+      {/* ─── BON DE COMMANDE TAB ─── */}
+      {activeTab === 'commande' && (
+        <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
+          {assignments.length === 0 ? (
+            <div className="text-center py-20">
+              <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
+              <p className="font-semibold text-ink-light">
+                {lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today'}
+              </p>
+            </div>
+          ) : (
             <div className="space-y-3">
-              {inProgress.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
-            </div>
-          </section>
-        )}
+              {/* Summary header */}
+              <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
+                style={{ backgroundColor: '#1A4731', color: 'white' }}>
+                <div>
+                  <div className="font-bold text-base">
+                    {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
+                  </div>
+                  <div className="text-white/70 text-sm mt-0.5">
+                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
+                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                </div>
+              </div>
 
-        {pending.length > 0 && (
-          <section>
-            <SectionHeader icon={<Clock size={13} style={{ color: '#D97706' }} />}
-              label={lang === 'vi' ? 'Chờ làm' : 'Pending'} count={pending.length} />
-            <div className="space-y-3">
-              {pending.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
+              {/* Order lines */}
+              <div className="rounded-2xl overflow-hidden"
+                style={{ border: '1px solid #E0D49A', backgroundColor: 'white' }}>
+                <div className="px-4 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider"
+                  style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderBottom: '1px solid #E0D49A' }}>
+                  <span>{lang === 'vi' ? 'Sản phẩm' : 'Product'}</span>
+                  <span>{lang === 'vi' ? 'Số lượng' : 'Qty'}</span>
+                </div>
+                {assignments.map((a, i) => {
+                  const st = STATUS_META[a.status];
+                  const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+                  return (
+                    <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
+                      {/* Product row */}
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        {a.image_url ? (
+                          <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+                            style={{ border: '1px solid #E0D49A' }} />
+                        ) : (
+                          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
+                            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
+                            {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {a.sku && (
+                              <span className="text-[10px] font-mono text-ink-light">{a.sku}</span>
+                            )}
+                            {a.weight_grams && (
+                              <span className="text-[10px] text-ink-light">{a.weight_grams}g</span>
+                            )}
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                              style={{ backgroundColor: st.color }}>
+                              {lang === 'vi' ? st.labelVi : st.labelEn}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-2xl font-black shrink-0" style={{ color: meta.color }}>
+                          ×{a.qty_to_produce}
+                        </div>
+                      </div>
+                      {/* Shop breakdown */}
+                      {breakdown.length > 0 && (
+                        <div className="pb-3">
+                          {breakdown.map((b, bi) => (
+                            <div key={bi} className="flex items-center justify-between px-5 py-1.5 text-sm"
+                              style={{ backgroundColor: bi % 2 === 0 ? '#FFFDF0' : '#FFFAEE' }}>
+                              <div className="flex items-center gap-2 text-ink-light">
+                                <Store size={11} className="shrink-0" />
+                                <span>{b.shop_name}</span>
+                              </div>
+                              <span className="font-bold text-sm" style={{ color: '#1A4731' }}>×{b.qty}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </section>
-        )}
+          )}
+        </div>
+      )}
 
-        {/* In stock — chef marked, verify section */}
-        {skipped.length > 0 && (
-          <section>
-            <SectionHeader
-              icon={<Package size={13} style={{ color: '#7C3AED' }} />}
-              label={lang === 'vi' ? 'Có sẵn trong kho — không cần sản xuất' : 'In stock — no production needed'}
-              count={skipped.length}
-              accent
-            />
-            <div className="space-y-3">
-              {skipped.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} isSkip />)}
+      {/* ─── TERMINÉ TAB ─── */}
+      {activeTab === 'termine' && (
+        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
+          {termine.length === 0 ? (
+            <div className="text-center py-20">
+              <Clock size={48} className="mx-auto mb-3 text-ink-light" />
+              <p className="font-semibold text-ink-light">
+                {lang === 'vi' ? 'Chưa có sản phẩm hoàn thành' : 'No completed items yet'}
+              </p>
             </div>
-          </section>
-        )}
+          ) : (
+            termine.map(a => (
+              <TermineCard key={a.id} a={a} lang={lang} meta={meta}
+                onAdvance={advanceStatus} updating={updating} />
+            ))
+          )}
+        </div>
+      )}
 
-        {done.length > 0 && (
-          <section>
-            <SectionHeader icon={<CheckCircle2 size={13} style={{ color: '#059669' }} />}
-              label={lang === 'vi' ? 'Hoàn thành' : 'Done'} count={done.length} />
-            <div className="space-y-2 opacity-50">
-              {done.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} isDone />)}
-            </div>
-          </section>
-        )}
-
-        {other.length > 0 && (
-          <section>
-            <SectionHeader icon={<AlertCircle size={13} style={{ color: '#DC2626' }} />}
-              label={lang === 'vi' ? 'Ngoại lệ khác' : 'Other exceptions'} count={other.length} />
-            <div className="space-y-3">
-              {other.map(a => <TaskCard key={a.id} a={a} {...sharedCardProps} />)}
-            </div>
-          </section>
-        )}
-      </div>
-
-      {/* FAB */}
-      {assignments.length > 0 && (
+      {/* FAB — Add extra production (Production tab only) */}
+      {activeTab === 'production' && assignments.length > 0 && (
         <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
           <button
             onClick={() => setExtraModal(true)}
@@ -389,12 +498,11 @@ export default function StationView({
           lang={lang} onClose={() => setFicheModal(null)} />
       )}
 
-      {/* Extra production modal — smart search */}
+      {/* Extra production modal */}
       {extraModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={closeExtraModal}>
           <div className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            {/* Header */}
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>
@@ -406,13 +514,10 @@ export default function StationView({
                     : 'Select from catalogue — free text not allowed'}
                 </p>
               </div>
-              <button onClick={closeExtraModal} className="p-1 text-ink-light">
-                <X size={20} />
-              </button>
+              <button onClick={closeExtraModal} className="p-1 text-ink-light"><X size={20} /></button>
             </div>
 
             <div className="px-5 pb-5 space-y-4">
-              {/* Product selected */}
               {extraProduct ? (
                 <div className="flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                   {extraProduct.main_image_url ? (
@@ -423,9 +528,7 @@ export default function StationView({
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>{extraProduct.name_vi}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      {extraProduct.sku && (
-                        <span className="text-[10px] font-mono text-ink-light">{extraProduct.sku}</span>
-                      )}
+                      {extraProduct.sku && <span className="text-[10px] font-mono text-ink-light">{extraProduct.sku}</span>}
                       <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
                         style={extraProduct.is_lab_only
                           ? { backgroundColor: '#EDE9FE', color: '#6D28D9' }
@@ -436,12 +539,9 @@ export default function StationView({
                     </div>
                   </div>
                   <button onClick={() => { setExtraProduct(null); setExtraSearch(''); }}
-                    className="p-1 text-ink-light shrink-0">
-                    <X size={16} />
-                  </button>
+                    className="p-1 text-ink-light shrink-0"><X size={16} /></button>
                 </div>
               ) : (
-                /* Search input */
                 <div>
                   <div className="relative">
                     <SearchIcon size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-light" />
@@ -456,8 +556,6 @@ export default function StationView({
                       <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />
                     )}
                   </div>
-
-                  {/* Results */}
                   {extraResults.length > 0 && (
                     <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
                       {extraResults.map((p, i) => (
@@ -487,7 +585,6 @@ export default function StationView({
                       ))}
                     </div>
                   )}
-
                   {extraSearch.length > 0 && !searchLoading && extraResults.length === 0 && (
                     <p className="text-sm text-ink-light text-center py-3">
                       {lang === 'vi' ? 'Không tìm thấy sản phẩm nào' : 'No products found'}
@@ -496,7 +593,6 @@ export default function StationView({
                 </div>
               )}
 
-              {/* Qty stepper — show when product selected */}
               {extraProduct && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
@@ -518,15 +614,12 @@ export default function StationView({
                 </div>
               )}
 
-              {/* Actions */}
               <div className="flex gap-3">
                 <button onClick={closeExtraModal}
                   className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-500">
                   {lang === 'vi' ? 'Hủy' : 'Cancel'}
                 </button>
-                <button
-                  onClick={saveExtra}
-                  disabled={!extraProduct || savingExtra}
+                <button onClick={saveExtra} disabled={!extraProduct || savingExtra}
                   className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-40 transition-colors"
                   style={{ backgroundColor: '#1A4731' }}>
                   {savingExtra ? '…' : (lang === 'vi' ? 'Xác nhận' : 'Confirm')}
@@ -585,66 +678,42 @@ export default function StationView({
   );
 }
 
-function SectionHeader({ icon, label, count, accent }: { icon: React.ReactNode; label: string; count: number; accent?: boolean }) {
-  return (
-    <div className="flex items-center gap-2 mb-3">
-      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider"
-        style={{ color: accent ? '#7C3AED' : '#6B7280' }}>
-        {icon}
-        {label} <span className="ml-0.5 opacity-70">({count})</span>
-      </div>
-      <div className="flex-1 h-px" style={{ backgroundColor: accent ? '#DDD6FE' : '#E0D49A' }} />
-    </div>
-  );
-}
+// ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
-function TaskCard({
+function ProductionCard({
   a, lang, updating, onAdvance, onMarkInStock, onPartial, onViewFiche, meta,
-  isDone = false, isSkip = false,
-  expandedBreakdown, onToggleBreakdown,
 }: {
-  a: Assignment; lang: 'vi' | 'en'; updating: string | null;
+  a: Assignment;
+  lang: 'vi' | 'en';
+  updating: string | null;
   onAdvance: (a: Assignment) => void;
   onMarkInStock: (a: Assignment) => void;
   onPartial: (a: Assignment) => void;
   onViewFiche: (a: Assignment) => void;
   meta: typeof TEAM_LABELS[Team];
-  isDone?: boolean; isSkip?: boolean;
-  expandedBreakdown: Set<string>;
-  onToggleBreakdown: (id: string) => void;
 }) {
   const st = STATUS_META[a.status];
-  const canAdvance = ['pending', 'in_progress', 'skip'].includes(a.status);
   const isUpdating = updating === a.id;
+  const canAdvance = ['pending', 'in_progress'].includes(a.status);
   const canMarkStock = ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
+  const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
   const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
     in_progress: lang === 'vi' ? 'Xong' : 'Mark done',
-    skip: lang === 'vi' ? 'Cần làm' : 'Produce',
   };
-
-  const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
-  const isExpanded = expandedBreakdown.has(a.id);
 
   return (
     <div className="rounded-2xl overflow-hidden"
       style={{
-        backgroundColor: isSkip ? '#F5F3FF' : 'white',
-        border: isSkip ? '1.5px solid #C4B5FD' : '1px solid #E0D49A',
+        backgroundColor: 'white',
+        border: '1px solid #E0D49A',
         boxShadow: '0 1px 4px rgba(26,71,49,0.07)',
-        opacity: isDone ? 0.7 : 1,
       }}>
 
-      {/* In-stock banner */}
-      {isSkip && (
-        <div className="px-4 py-2 flex items-center gap-2 text-xs font-semibold"
-          style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>
-          <Package size={13} />
-          {lang === 'vi'
-            ? 'Đã có trong kho — nhấn "Cần làm" nếu cần sản xuất'
-            : 'In stock — tap "Produce" if production is needed'}
-        </div>
+      {/* Status stripe for in_progress */}
+      {a.status === 'in_progress' && (
+        <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
       )}
 
       <div className="flex items-start p-4 gap-3">
@@ -670,18 +739,32 @@ function TaskCard({
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </div>
           )}
-          {a.variant_label !== 'Standard' && (
-            <div className="text-sm text-ink-light mt-0.5">{a.variant_label}</div>
-          )}
-          {a.is_extra && (
-            <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full"
-              style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
-              {lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}
-            </span>
-          )}
 
+          {/* SKU + weight */}
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {a.sku && (
+              <span className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: '#F5F5F5', color: '#555' }}>
+                {a.sku}
+              </span>
+            )}
+            {a.weight_grams && (
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
+                {a.weight_grams}g
+              </span>
+            )}
+            {a.is_extra && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
+                {lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}
+              </span>
+            )}
+          </div>
+
+          {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-2xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>×{a.qty_to_produce}</span>
+            <span className="text-2xl font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
@@ -690,87 +773,59 @@ function TaskCard({
               {lang === 'vi' ? st.labelVi : st.labelEn}
             </span>
           </div>
-
-          {breakdown.length > 1 && (
-            <button onClick={() => onToggleBreakdown(a.id)}
-              className="mt-2 flex items-center gap-1 text-xs font-medium transition-colors"
-              style={{ color: '#2D6A4F' }}>
-              <Store size={11} />
-              {isExpanded
-                ? (lang === 'vi' ? 'Ẩn chi tiết khách hàng' : 'Hide client breakdown')
-                : (lang === 'vi' ? `Xem ${breakdown.length} khách hàng` : `${breakdown.length} clients`)
-              }
-            </button>
-          )}
-          {breakdown.length === 1 && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-light">
-              <Store size={11} />
-              {breakdown[0].shop_name} — ×{breakdown[0].qty}
-            </div>
-          )}
         </div>
 
         {/* Action buttons */}
-        {!isDone && (
-          <div className="flex flex-col gap-2 shrink-0">
-            {canAdvance && (
-              <button onClick={() => onAdvance(a)} disabled={isUpdating}
-                className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
-                style={{
-                  backgroundColor: isSkip ? '#7C3AED' : '#1A4731',
-                  opacity: isUpdating ? 0.6 : 1,
-                }}>
-                {isUpdating ? '…' : actionLabel[a.status] ?? ''}
-              </button>
-            )}
-            {/* En stock button — only for pending/in_progress non-extra items */}
-            {canMarkStock && (
-              <button onClick={() => onMarkInStock(a)} disabled={isUpdating}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
-                style={{
-                  border: '1px solid #C4B5FD',
-                  color: '#6D28D9',
-                  backgroundColor: '#F5F3FF',
-                  opacity: isUpdating ? 0.6 : 1,
-                }}>
-                <Package size={11} />
-                {lang === 'vi' ? 'Có sẵn' : 'In stock'}
-              </button>
-            )}
-            {a.status === 'in_progress' && (
-              <button onClick={() => onPartial(a)}
-                className="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
-                style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
-                {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
-              </button>
-            )}
-          </div>
-        )}
+        <div className="flex flex-col gap-2 shrink-0">
+          {canAdvance && (
+            <button onClick={() => onAdvance(a)} disabled={isUpdating}
+              className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
+              style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>
+              {isUpdating ? '…' : actionLabel[a.status] ?? ''}
+            </button>
+          )}
+          {canMarkStock && (
+            <button onClick={() => onMarkInStock(a)} disabled={isUpdating}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
+              style={{ border: '1px solid #C4B5FD', color: '#6D28D9', backgroundColor: '#F5F3FF', opacity: isUpdating ? 0.6 : 1 }}>
+              <Package size={11} />
+              {lang === 'vi' ? 'Có sẵn' : 'In stock'}
+            </button>
+          )}
+          {a.status === 'in_progress' && (
+            <button onClick={() => onPartial(a)}
+              className="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
+              style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
+              {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Client breakdown expanded */}
-      {isExpanded && breakdown.length > 0 && (
-        <div className="mx-4 mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
-          <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
-            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderBottom: '1px solid #E0D49A' }}>
+      {/* Breakdown — always visible */}
+      {breakdown.length > 0 && (
+        <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
+          <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+            style={{ color: '#2D6A4F', backgroundColor: '#F0F9F4' }}>
+            <Store size={10} />
             {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
           </div>
           {breakdown.map((b, i) => (
-            <div key={i} className="flex items-center justify-between px-3 py-2 text-sm"
+            <div key={i} className="flex items-center justify-between px-4 py-2 text-sm"
               style={{
                 borderTop: i > 0 ? '1px solid #F5EFC8' : undefined,
                 backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE',
               }}>
-              <span className="text-ink font-medium truncate flex-1">{b.shop_name}</span>
-              <span className="font-black ml-3 shrink-0" style={{ color: '#1A4731' }}>×{b.qty}</span>
+              <span className="text-ink font-medium">{b.shop_name}</span>
+              <span className="font-black" style={{ color: '#1A4731' }}>×{b.qty}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* Notes + fiche link */}
+      {/* Notes + fiche */}
       {(a.notes || a.product_id) && (
-        <div className="px-4 pb-3 pt-1 flex items-center justify-between gap-2"
+        <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-2"
           style={{ borderTop: '1px solid #F5EFC8' }}>
           {a.notes ? (
             <span className="text-xs text-ink-light flex-1 italic">{a.notes}</span>
@@ -788,6 +843,87 @@ function TaskCard({
     </div>
   );
 }
+
+// ─── TERMINÉ CARD ────────────────────────────────────────────────────────────
+
+function TermineCard({
+  a, lang, meta, onAdvance, updating,
+}: {
+  a: Assignment;
+  lang: 'vi' | 'en';
+  meta: typeof TEAM_LABELS[Team];
+  onAdvance: (a: Assignment) => void;
+  updating: string | null;
+}) {
+  const isSkip = a.status === 'skip';
+  const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+
+  return (
+    <div className="rounded-2xl overflow-hidden"
+      style={{
+        backgroundColor: isSkip ? '#F5F3FF' : 'white',
+        border: isSkip ? '1.5px solid #C4B5FD' : '1px solid #E0D49A',
+        opacity: isSkip ? 1 : 0.75,
+      }}>
+      <div className="flex items-center gap-3 p-4">
+        {a.image_url ? (
+          <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+            style={{ border: '1px solid #E0D49A' }} />
+        ) : (
+          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
+            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm" style={{ color: '#1A4731' }}>
+            {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {a.sku && <span className="text-[10px] font-mono text-ink-light">{a.sku}</span>}
+            {a.weight_grams && <span className="text-[10px] text-ink-light">{a.weight_grams}g</span>}
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            {isSkip ? (
+              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#6D28D9' }}>
+                <Package size={11} />
+                {lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'}
+              </span>
+            ) : (
+              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#059669' }}>
+                <CheckCircle2 size={11} />
+                {lang === 'vi' ? `Đã làm ×${a.qty_produced}` : `Done ×${a.qty_produced}`}
+              </span>
+            )}
+            <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>
+              ×{a.qty_to_produce}
+            </span>
+          </div>
+        </div>
+        {/* Revert button for skip */}
+        {isSkip && (
+          <button onClick={() => onAdvance(a)} disabled={updating === a.id}
+            className="px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all"
+            style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', opacity: updating === a.id ? 0.6 : 1 }}>
+            {lang === 'vi' ? 'Cần làm' : 'Produce'}
+          </button>
+        )}
+      </div>
+      {/* Breakdown for done items */}
+      {!isSkip && breakdown.length > 0 && (
+        <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
+          {breakdown.map((b, i) => (
+            <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs text-ink-light"
+              style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
+              <span>{b.shop_name}</span>
+              <span className="font-bold">×{b.qty}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── FICHE MODAL ─────────────────────────────────────────────────────────────
 
 function FicheModal({
   productId, productName, lang, onClose,
