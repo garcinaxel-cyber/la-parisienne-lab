@@ -2,7 +2,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
@@ -34,9 +35,7 @@ export default function OrderReviewView({
   const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
 
   function getBreakdown(a: any): { shop_name: string; qty: number }[] {
-    // Use stored breakdown JSON first (new imports after v3 migration)
     if (Array.isArray(a.breakdown) && a.breakdown.length > 0) return a.breakdown;
-    // Fallback: match from fetched order lines
     return orderLines.filter(
       ol => ol.import_id === a.import_id && ol.team === a.team && ol.variant_label === a.variant_label
     );
@@ -54,6 +53,22 @@ export default function OrderReviewView({
     new Date(d + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
+
+  function exportOdoo() {
+    const rows = localAssignments
+      .filter(a => a.status !== 'skip')
+      .map(a => ({
+        'Product': a.product_name_vi,
+        'Product Unit of Measure': 'Units',
+        'Quantity To Produce': a.qty_produced > 0 ? a.qty_produced : a.total_qty,
+      }));
+    if (!rows.length) return;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 40 }, { wch: 24 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    XLSX.writeFile(wb, `MO_${date}.xlsx`);
+  }
 
   async function publishImport(importId: string) {
     setPublishing(importId);
@@ -78,7 +93,6 @@ export default function OrderReviewView({
   async function deleteImport(importId: string) {
     setDeleting(importId);
     const supabase = createClient();
-    // Assignments cascade via FK; delete import is enough
     await supabase.from('lab_imports').delete().eq('id', importId);
     setDeleting(null);
     setConfirmDelete(null);
@@ -125,6 +139,16 @@ export default function OrderReviewView({
             {localAssignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'}
           </p>
         </div>
+        {localAssignments.length > 0 && (
+          <button
+            onClick={exportOdoo}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-border-soft hover:bg-cream transition-colors"
+            title={lang === 'vi' ? 'Xuất lệnh sản xuất Odoo' : 'Export Odoo Manufacturing Order'}
+          >
+            <Download size={13} />
+            Odoo MO
+          </button>
+        )}
       </div>
 
       {/* Imports summary */}
@@ -183,7 +207,6 @@ export default function OrderReviewView({
         ))}
       </div>
 
-      {/* Progress bar */}
       {localAssignments.length > 0 && (() => {
         const done = localAssignments.filter(a => a.status === 'done').length;
         const pct = Math.round(done / localAssignments.length * 100);
@@ -200,7 +223,6 @@ export default function OrderReviewView({
         );
       })()}
 
-      {/* By team */}
       {byTeam.map(({ team, lines }) => {
         const meta = TEAM_LABELS[team as Team];
         const done = lines.filter(l => l.status === 'done').length;
@@ -213,7 +235,6 @@ export default function OrderReviewView({
               <span className="text-xs" style={{ color: meta.color }}>{done}/{lines.length}</span>
             </div>
             <div className="divide-y divide-border-soft">
-              {/* Header */}
               <div className="hidden md:grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50">
                 <div className="col-span-4">{lang === 'vi' ? 'Sản phẩm' : 'Product'}</div>
                 <div className="col-span-2">{lang === 'vi' ? 'Biến thể' : 'Variant'}</div>
@@ -222,7 +243,6 @@ export default function OrderReviewView({
                 <div className="col-span-2">{lang === 'vi' ? 'Trạng thái' : 'Status'}</div>
                 <div className="col-span-2">{lang === 'vi' ? 'Lý do' : 'Exception'}</div>
               </div>
-
               {lines.map(a => {
                 const st = STATUS_META[a.status as AssignmentStatus];
                 const isSkip = a.status === 'skip';
@@ -231,7 +251,6 @@ export default function OrderReviewView({
                 return (
                   <div key={a.id} className={isSkip ? 'bg-purple-50/40' : ''}>
                     <div className="flex md:grid md:grid-cols-12 items-center px-4 py-3 gap-3">
-                      {/* Product */}
                       <div className="flex-1 md:col-span-4 min-w-0 flex items-center gap-2">
                         {a.image_url ? (
                           <img src={a.image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
@@ -239,9 +258,16 @@ export default function OrderReviewView({
                           <div className="w-9 h-9 rounded-lg bg-cream shrink-0" />
                         )}
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-navy truncate">{a.product_name_vi}</div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-sm font-medium text-navy truncate">{a.product_name_vi}</span>
+                            {a.is_extra && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
+                                style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
+                                +Extra
+                              </span>
+                            )}
+                          </div>
                           {a.product_name_en && <div className="text-xs text-ink-light truncate">{a.product_name_en}</div>}
-                          {/* Client breakdown toggle */}
                           {breakdown.length > 0 && (
                             <button onClick={() => toggleBreakdown(a.id)}
                               className="flex items-center gap-1 text-[10px] font-semibold mt-0.5 transition-colors"
@@ -253,23 +279,18 @@ export default function OrderReviewView({
                           )}
                         </div>
                       </div>
-                      {/* Variant */}
                       <div className="hidden md:block md:col-span-2 text-xs text-ink-light">
                         {a.variant_label !== 'Standard' ? a.variant_label : '–'}
                       </div>
-                      {/* Qty */}
                       <div className="md:col-span-1 text-center font-bold text-navy shrink-0">×{a.total_qty}</div>
-                      {/* Produced */}
                       <div className="hidden md:block md:col-span-1 text-center text-sm text-ink-light">
                         {a.qty_produced > 0 ? a.qty_produced : '–'}
                       </div>
-                      {/* Status badge */}
                       <div className="md:col-span-2 shrink-0">
                         <span className="badge text-white text-[10px] whitespace-nowrap" style={{ backgroundColor: st.color }}>
                           {lang === 'vi' ? st.labelVi : st.labelEn}
                         </span>
                       </div>
-                      {/* Exception / action */}
                       <div className="md:col-span-2 text-xs text-ink-light truncate">
                         {a.exception_reason
                           ? <span className="italic">{a.exception_reason}</span>
@@ -284,7 +305,6 @@ export default function OrderReviewView({
                           )}
                       </div>
                     </div>
-                    {/* Expanded client breakdown */}
                     {isExpanded && breakdown.length > 0 && (
                       <div className="mx-4 mb-3 rounded-xl overflow-hidden text-xs" style={{ border: '1px solid #E0D49A' }}>
                         {breakdown.map((b, i) => (
@@ -304,7 +324,6 @@ export default function OrderReviewView({
         );
       })}
 
-      {/* Delete confirmation modal */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/40">
           <div className="card w-full max-w-sm p-6 space-y-4">
@@ -332,7 +351,6 @@ export default function OrderReviewView({
         </div>
       )}
 
-      {/* Cancel confirmation modal */}
       {confirmCancel && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/40">
           <div className="card w-full max-w-sm p-6 space-y-4">
@@ -360,7 +378,6 @@ export default function OrderReviewView({
         </div>
       )}
 
-      {/* Exception modal */}
       {exceptionModal && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/40">
           <div className="card w-full max-w-md p-6 space-y-4">
