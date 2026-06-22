@@ -49,6 +49,7 @@ export default function ImportView() {
   const [shippedFromLab, setShippedFromLab] = useState(false);
   const [notes, setNotes] = useState('');
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set(TEAMS));
+  const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
