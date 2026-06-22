@@ -26,6 +26,7 @@ type Assignment = {
   notes: string;
   sort_order: number;
   import_id: string;
+  is_extra?: boolean;
   breakdown: BreakdownItem[];
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
 };
@@ -41,9 +42,8 @@ type FicheStep = {
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
   in_progress: 'done',
-  skip: 'pending', // chef can override a skip
+  skip: 'pending',
 };
-
 export default function StationView({
   team, assignments: initial, today,
 }: {
@@ -59,14 +59,16 @@ export default function StationView({
   const [qtyInput, setQtyInput] = useState(0);
   const [ficheModal, setFicheModal] = useState<{ productId: string; productName: string } | null>(null);
   const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
+  const [extraModal, setExtraModal] = useState(false);
+  const [extraName, setExtraName] = useState('');
+  const [extraQty, setExtraQty] = useState(1);
+  const [savingExtra, setSavingExtra] = useState(false);
   const meta = TEAM_LABELS[team];
 
-  // Supabase Realtime
   useEffect(() => {
     const supabase = createClient();
     const importIds = Array.from(new Set(initial.map(a => a.import_id)));
     if (importIds.length === 0) return;
-
     const channel = supabase
       .channel(`station-${team}`)
       .on('postgres_changes', {
@@ -80,7 +82,6 @@ export default function StationView({
         ));
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [team, initial]);
 
@@ -107,6 +108,41 @@ export default function StationView({
     await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
     setAssignments(prev => prev.map(x => x.id === qtyModal.id ? { ...x, ...update } : x));
     setQtyModal(null);
+  }
+
+  async function saveExtra() {
+    if (!extraName.trim() || extraQty < 1) return;
+    setSavingExtra(true);
+    const importId = assignments[0]?.import_id;
+    if (!importId) { setSavingExtra(false); return; }
+    const supabase = createClient();
+    const row = {
+      import_id: importId,
+      team,
+      product_name_vi: extraName.trim(),
+      product_name_en: '',
+      image_url: null as null,
+      product_id: null as null,
+      variant_label: 'Standard',
+      total_qty: extraQty,
+      qty_to_produce: extraQty,
+      qty_produced: extraQty,
+      status: 'done' as AssignmentStatus,
+      sort_order: 9999,
+      is_extra: true,
+      breakdown: [] as BreakdownItem[],
+    };
+    const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
+    if (data) {
+      setAssignments(prev => [...prev, {
+        ...row, id: data.id, notes: '',
+        lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
+      }]);
+    }
+    setExtraModal(false);
+    setExtraName('');
+    setExtraQty(1);
+    setSavingExtra(false);
   }
 
   function toggleBreakdown(id: string) {
@@ -147,10 +183,8 @@ export default function StationView({
     expandedBreakdown,
     onToggleBreakdown: toggleBreakdown,
   };
-
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
-      {/* Top bar — Jungle green */}
       <header className="sticky top-0 z-20" style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -165,11 +199,9 @@ export default function StationView({
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Progress pill */}
             <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
               {doneQty}/{totalQty}
             </div>
-            {/* Lang toggle */}
             <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
               {(['vi', 'en'] as const).map(l => (
                 <button key={l} onClick={() => setLang(l)}
@@ -180,13 +212,11 @@ export default function StationView({
                   }>{l.toUpperCase()}</button>
               ))}
             </div>
-            {/* Fiches */}
             <Link href="/station/fiches" title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <BookOpen size={15} />
             </Link>
-            {/* Logout */}
             <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
@@ -194,13 +224,11 @@ export default function StationView({
             </button>
           </div>
         </div>
-        {/* Progress bar */}
         <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
           <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
       </header>
 
-      {/* Completion banner */}
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
           {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
@@ -220,7 +248,6 @@ export default function StationView({
           </div>
         )}
 
-        {/* In progress — first */}
         {inProgress.length > 0 && (
           <section>
             <SectionHeader icon={<Play size={13} style={{ color: '#2563EB' }} />}
@@ -231,7 +258,6 @@ export default function StationView({
           </section>
         )}
 
-        {/* Pending */}
         {pending.length > 0 && (
           <section>
             <SectionHeader icon={<Clock size={13} style={{ color: '#D97706' }} />}
@@ -242,7 +268,6 @@ export default function StationView({
           </section>
         )}
 
-        {/* Skip — visible for chef verification (NOT grayed out) */}
         {skipped.length > 0 && (
           <section>
             <SectionHeader
@@ -257,7 +282,6 @@ export default function StationView({
           </section>
         )}
 
-        {/* Done */}
         {done.length > 0 && (
           <section>
             <SectionHeader icon={<CheckCircle2 size={13} style={{ color: '#059669' }} />}
@@ -268,7 +292,6 @@ export default function StationView({
           </section>
         )}
 
-        {/* Other exceptions (partial / blocked) */}
         {other.length > 0 && (
           <section>
             <SectionHeader icon={<AlertCircle size={13} style={{ color: '#DC2626' }} />}
@@ -279,14 +302,84 @@ export default function StationView({
           </section>
         )}
       </div>
+      {assignments.length > 0 && (
+        <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
+          <button
+            onClick={() => setExtraModal(true)}
+            className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all"
+            style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}
+          >
+            <Plus size={16} />
+            {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
+          </button>
+        </div>
+      )}
 
-      {/* Fiche modal */}
       {ficheModal && (
         <FicheModal productId={ficheModal.productId} productName={ficheModal.productName}
           lang={lang} onClose={() => setFicheModal(null)} />
       )}
 
-      {/* Qty modal */}
+      {extraModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
+            <div>
+              <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>
+                {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Extra production'}
+              </h3>
+              <p className="text-sm text-ink-light mt-0.5">
+                {lang === 'vi'
+                  ? 'Ghi nhận sản phẩm sản xuất thêm, không có trong đơn gốc'
+                  : 'Record production not included in the original order'}
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
+                {lang === 'vi' ? 'Tên sản phẩm' : 'Product name'}
+              </label>
+              <input
+                value={extraName}
+                onChange={e => setExtraName(e.target.value)}
+                placeholder={lang === 'vi' ? 'VD: Bánh Croissant beurre…' : 'E.g. Butter croissant…'}
+                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-green-600"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
+                {lang === 'vi' ? 'Số lượng' : 'Quantity'}
+              </label>
+              <div className="flex items-center gap-4 mt-2">
+                <button onClick={() => setExtraQty(q => Math.max(1, q - 1))}
+                  className="w-11 h-11 rounded-full bg-gray-100 flex items-center justify-center active:scale-95"
+                  style={{ color: '#1A4731' }}>
+                  <Minus size={18} />
+                </button>
+                <span className="text-4xl font-black w-14 text-center" style={{ color: '#1A4731' }}>{extraQty}</span>
+                <button onClick={() => setExtraQty(q => q + 1)}
+                  className="w-11 h-11 rounded-full flex items-center justify-center text-white active:scale-95"
+                  style={{ backgroundColor: '#1A4731' }}>
+                  <Plus size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setExtraModal(false); setExtraName(''); setExtraQty(1); }}
+                className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-500">
+                {lang === 'vi' ? 'Hủy' : 'Cancel'}
+              </button>
+              <button
+                onClick={saveExtra}
+                disabled={!extraName.trim() || savingExtra}
+                className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-50 transition-colors"
+                style={{ backgroundColor: '#1A4731' }}>
+                {savingExtra ? '…' : (lang === 'vi' ? 'Xác nhận' : 'Confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {qtyModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
@@ -295,6 +388,13 @@ export default function StationView({
               <p className="text-sm text-ink-light mt-0.5">
                 {lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
               </p>
+              {qtyInput > qtyModal.qty_to_produce && (
+                <p className="text-xs font-semibold mt-1" style={{ color: '#D97706' }}>
+                  {lang === 'vi'
+                    ? `⚠️ Vượt mục tiêu — ghi nhận sản xuất thêm`
+                    : `⚠️ Over target — extra production noted`}
+                </p>
+              )}
             </div>
             <div className="flex items-center justify-center gap-6">
               <button onClick={() => setQtyInput(q => Math.max(0, q - 1))}
@@ -302,8 +402,11 @@ export default function StationView({
                 style={{ color: '#1A4731' }}>
                 <Minus size={20} />
               </button>
-              <span className="text-5xl font-black w-16 text-center" style={{ color: '#1A4731' }}>{qtyInput}</span>
-              <button onClick={() => setQtyInput(q => Math.min(qtyModal.qty_to_produce, q + 1))}
+              <span className="text-5xl font-black w-16 text-center"
+                style={{ color: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731' }}>
+                {qtyInput}
+              </span>
+              <button onClick={() => setQtyInput(q => q + 1)}
                 className="w-12 h-12 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform"
                 style={{ backgroundColor: '#1A4731' }}>
                 <Plus size={20} />
@@ -325,7 +428,6 @@ export default function StationView({
     </div>
   );
 }
-
 function SectionHeader({ icon, label, count, accent }: { icon: React.ReactNode; label: string; count: number; accent?: boolean }) {
   return (
     <div className="flex items-center gap-2 mb-3">
@@ -374,7 +476,6 @@ function TaskCard({
         boxShadow: '0 1px 4px rgba(26,71,49,0.07)',
       }}>
 
-      {/* Skip warning banner */}
       {isSkip && (
         <div className="px-4 py-2 flex items-center gap-2 text-xs font-semibold"
           style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>
@@ -385,7 +486,6 @@ function TaskCard({
       )}
 
       <div className="flex items-start p-4 gap-3">
-        {/* Product image */}
         {a.image_url ? (
           <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0"
             style={{ border: '1px solid #E0D49A' }} loading="lazy" />
@@ -394,7 +494,6 @@ function TaskCard({
             style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
         )}
 
-        {/* Main info */}
         <div className="flex-1 min-w-0">
           {a.product_id ? (
             <Link href={`/station/fiche/${a.product_id}?back=/station/me`}
@@ -410,6 +509,12 @@ function TaskCard({
           {a.variant_label !== 'Standard' && (
             <div className="text-sm text-ink-light mt-0.5">{a.variant_label}</div>
           )}
+          {a.is_extra && (
+            <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
+              {lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}
+            </span>
+          )}
 
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <span className="text-2xl font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</span>
@@ -421,8 +526,6 @@ function TaskCard({
               {lang === 'vi' ? st.labelVi : st.labelEn}
             </span>
           </div>
-
-          {/* Client breakdown toggle */}
           {breakdown.length > 1 && (
             <button onClick={() => onToggleBreakdown(a.id)}
               className="mt-2 flex items-center gap-1 text-xs font-medium transition-colors"
@@ -442,7 +545,6 @@ function TaskCard({
           )}
         </div>
 
-        {/* Action buttons */}
         {canAdvance && !isDone && (
           <div className="flex flex-col gap-2 shrink-0">
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
@@ -464,7 +566,6 @@ function TaskCard({
         )}
       </div>
 
-      {/* Client breakdown expanded */}
       {isExpanded && breakdown.length > 0 && (
         <div className="mx-4 mb-3 rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
           <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
@@ -484,7 +585,6 @@ function TaskCard({
         </div>
       )}
 
-      {/* Notes + fiche link */}
       {(a.notes || a.product_id) && (
         <div className="px-4 pb-3 pt-1 flex items-center justify-between gap-2"
           style={{ borderTop: '1px solid #F5EFC8' }}>
@@ -504,7 +604,6 @@ function TaskCard({
     </div>
   );
 }
-
 function FicheModal({
   productId, productName, lang, onClose,
 }: {
@@ -528,7 +627,6 @@ function FicheModal({
       style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
       <div className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}>
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 shrink-0"
           style={{ borderBottom: '1px solid #E0D49A' }}>
           <div className="flex items-center gap-2">
@@ -547,7 +645,6 @@ function FicheModal({
           </div>
         </div>
 
-        {/* Steps */}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
             <p className="text-ink-light text-sm text-center py-10">
