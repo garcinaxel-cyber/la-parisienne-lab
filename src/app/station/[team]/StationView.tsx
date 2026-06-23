@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -19,7 +20,7 @@ function SearchIcon({ size = 15, className = '' }: { size?: number; className?: 
   );
 }
 
-type BreakdownItem = { shop_name: string; qty: number; order_ref?: string };
+type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null };
 
 type Assignment = {
   id: string;
@@ -38,6 +39,8 @@ type Assignment = {
   is_extra?: boolean;
   sku: string | null;
   weight_grams: number | null;
+  category_name_vi: string | null;
+  category_name_en: string | null;
   breakdown: BreakdownItem[];
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
 };
@@ -72,11 +75,13 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 };
 
 export default function StationView({
-  team, assignments: initial, today,
+  team, assignments: initial, viewDate, today, isHistoryView,
 }: {
   team: Team;
   assignments: Assignment[];
+  viewDate: string;
   today: string;
+  isHistoryView: boolean;
 }) {
   const { lang, setLang } = useI18n();
   const router = useRouter();
@@ -253,6 +258,18 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
+  function prevDay() {
+    const d = new Date(viewDate + 'T00:00:00');
+    d.setDate(d.getDate() - 1);
+    router.push(`/station/me?date=${d.toISOString().split('T')[0]}`);
+  }
+  function nextDay() {
+    if (viewDate >= today) return;
+    const d = new Date(viewDate + 'T00:00:00');
+    d.setDate(d.getDate() + 1);
+    router.push(`/station/me?date=${d.toISOString().split('T')[0]}`);
+  }
+
   const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
     {
       id: 'production',
@@ -292,16 +309,26 @@ export default function StationView({
       {/* Top bar */}
       <header className="sticky top-0 z-20" style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
               <FlaskConical size={18} className="text-white" />
             </div>
-            <div className="min-w-0">
+            <button onClick={prevDay} className="p-0.5 rounded text-white/60 hover:text-white transition-colors shrink-0">
+              <ChevronLeft size={16} />
+            </button>
+            <div className="min-w-0 text-center">
               <div className="text-white font-bold text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
-              <div className="text-white/60 text-[11px] truncate">{formatDate(today)}</div>
+              <div className={`text-[11px] truncate ${isHistoryView ? 'text-yellow-300' : 'text-white/60'}`}>
+                {isHistoryView ? '📅 ' : ''}{formatDate(viewDate)}
+              </div>
             </div>
+            <button onClick={nextDay} disabled={viewDate >= today}
+              className="p-0.5 rounded transition-colors shrink-0"
+              style={{ color: viewDate >= today ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.6)' }}>
+              <ChevronRight size={16} />
+            </button>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
@@ -439,12 +466,20 @@ export default function StationView({
                           <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
                             {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             {a.sku && (
-                              <span className="text-[10px] font-mono text-ink-light">{a.sku}</span>
+                              <span className="text-[10px] font-mono font-semibold px-1 py-0.5 rounded"
+                                style={{ backgroundColor: '#F5F5F5', color: '#555' }}>{a.sku}</span>
                             )}
                             {a.weight_grams && (
-                              <span className="text-[10px] text-ink-light">{a.weight_grams}g</span>
+                              <span className="text-[10px] font-semibold px-1 py-0.5 rounded"
+                                style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>{a.weight_grams}g</span>
+                            )}
+                            {(a.category_name_vi || a.category_name_en) && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                                style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                                {lang === 'vi' ? a.category_name_vi : (a.category_name_en || a.category_name_vi)}
+                              </span>
                             )}
                             <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
                               style={{ backgroundColor: st.color }}>
@@ -465,6 +500,12 @@ export default function StationView({
                               <div className="flex items-center gap-2 text-ink-light">
                                 <Store size={11} className="shrink-0" />
                                 <span>{b.shop_name}</span>
+                                {b.delivery_time && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
+                                    ⏰ {b.delivery_time.slice(0, 5)}
+                                  </span>
+                                )}
                               </div>
                               <span className="font-bold text-sm" style={{ color: '#1A4731' }}>×{b.qty}</span>
                             </div>
@@ -499,8 +540,8 @@ export default function StationView({
         </div>
       )}
 
-      {/* FAB — Add extra production (Production tab only) */}
-      {activeTab === 'production' && assignments.length > 0 && (
+      {/* FAB — Add extra production (Production tab only, not in history view) */}
+      {activeTab === 'production' && assignments.length > 0 && !isHistoryView && (
         <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
           <button
             onClick={() => setExtraModal(true)}
@@ -554,7 +595,7 @@ export default function StationView({
                   </button>
                   {extraCategories.map(cat => (
                     <button
-                      key={cat.id}
+                   `  key={cat.id}
                       onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
                       className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
                       style={selectedCategory === cat.id
@@ -889,7 +930,15 @@ function ProductionCard({
                 borderTop: i > 0 ? '1px solid #F5EFC8' : undefined,
                 backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE',
               }}>
-              <span className="text-ink font-medium">{b.shop_name}</span>
+              <span className="text-ink font-medium flex items-center gap-1.5">
+                {b.shop_name}
+                {b.delivery_time && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                    style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
+                    ⏰ {b.delivery_time.slice(0, 5)}
+                  </span>
+                )}
+              </span>
               <span className="font-black" style={{ color: '#1A4731' }}>×{b.qty}</span>
             </div>
           ))}
