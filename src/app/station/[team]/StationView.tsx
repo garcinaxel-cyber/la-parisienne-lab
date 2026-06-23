@@ -219,7 +219,7 @@ export default function StationView({
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
     if (data) {
       setAssignments(prev => [...prev, {
-        ...row, id: data.id, notes: '', sku: extraProduct.sku, weight_grams: null,
+        ...row, id: data.id, notes: '', sku: extraProduct.sku ?? null, weight_grams: null, category_name_vi: null, category_name_en: null,
         lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
       }]);
     }
@@ -300,7 +300,7 @@ export default function StationView({
     onAdvance: advanceStatus,
     onMarkInStock: markInStock,
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
-    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    onViewFiche: (a: Assignment) => a.product_id ? setFicheModagp+ productId: a.product_id, productName: a.product_name_vi }) : null,
     meta,
   };
 
@@ -318,7 +318,7 @@ export default function StationView({
             </button>
             <div className="min-w-0 text-center">
               <div className="text-white font-bold text-sm leading-tight truncate">
-                {lang === 'vi' ? meta.vi : meta.en}
+                {lang === 'vi' ? meta.oa : meta.en}
               </div>
               <div className={`text-[11px] truncate ${isHistoryView ? 'text-yellow-300' : 'text-white/60'}`}>
                 {isHistoryView ? '📅 ' : ''}{formatDate(viewDate)}
@@ -332,7 +332,7 @@ export default function StationView({
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
-              {doneQty}/{totalQty}
+             {doneQty}/{totalQty}
             </div>
             <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
               {(['vi', 'en'] as const).map(l => (
@@ -349,7 +349,7 @@ export default function StationView({
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <BookOpen size={15} />
             </Link>
-            <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+            <button onClick={logout} title={lang === 'vi' ? '\�ăng xuất' : 'Log out'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <LogOut size={15} />
@@ -358,7 +358,7 @@ export default function StationView({
         </div>
         {/* Progress bar */}
         <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
-          <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
+          <div className="h-full transition-b�l duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
         {/* Tab navigation */}
         <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
@@ -377,7 +377,7 @@ export default function StationView({
                     ? { backgroundColor: '#C9A84C', color: '#1A4731' }
                     : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
                   }>
-                  {tab.count}
+                  {tab.count=
                 </span>
               )}
             </button>
@@ -393,11 +393,11 @@ export default function StationView({
 
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+        <div className="max-w-3xl mx-auto px-4 py-5`space-y-3 pb-28">
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
-              <p className="font-semibold" style={{ color: '#1A4731' }}>
+       '      <p className="font-semibold" style={{ color: '#1A4731' }}>
                 {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
               </p>
               <p className="text-sm mt-1 text-ink-light">
@@ -421,23 +421,23 @@ export default function StationView({
                 {lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today'}
               </p>
             </div>
-          ) : (
+         ) : (
             <div className="space-y-3">
-              {/* Summary header */}
+         '    {/* Summary header */}
               <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
                 <div>
-                  <div className="font-bold text-base">
+                ' <div className="font-bold text-base">
                     {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
                     {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái' : 'units'}
                   </div>
-                </div>
+               </div>
                 <div className="text-right">
                   <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
                   <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
-                </div>
+               '</div>
               </div>
 
               {/* Order lines */}
@@ -460,13 +460,13 @@ export default function StationView({
                             style={{ border: '1px solid #E0D49A' }} />
                         ) : (
                           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-                            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            style={{ backgroundColor: '#FFF4CC' }}>����</div>
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
                             {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                           </div>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <div className="_lex items-center gap-1.5 mt-0.5 flex-wrap">
                             {a.sku && (
                               <span className="text-[10px] font-mono font-semibold px-1 py-0.5 rounded"
                                 style={{ backgroundColor: '#F5F5F5', color: '#555' }}>{a.sku}</span>
@@ -501,7 +501,7 @@ export default function StationView({
                                 <Store size={11} className="shrink-0" />
                                 <span>{b.shop_name}</span>
                                 {b.delivery_time && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 trunded"
                                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
                                     ⏰ {b.delivery_time.slice(0, 5)}
                                   </span>
@@ -546,7 +546,7 @@ export default function StationView({
           <button
             onClick={() => setExtraModal(true)}
             className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all"
-            style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}
+            style={{ backgroundColor: '#C9A85C', color: '#1A4731' }}
           >
             <Plus size={16} />
             {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
@@ -576,7 +576,7 @@ export default function StationView({
                     : 'Select from catalogue — free text not allowed'}
                 </p>
               </div>
-              <button onClick={closeExtraModal} className="p-1 text-ink-light"><X size={20} /></button>
+              <button onClick={closeExtraModal} clas�Name="p-1 text-ink-light"><X size={20} /></button>
             </div>
 
             <div className="px-5 pb-5 space-y-4">
@@ -587,7 +587,7 @@ export default function StationView({
                     onClick={() => setSelectedCategory('')}
                     className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
                     style={selectedCategory === ''
-                      ? { backgroundColor: '#1A4731', color: 'white' }
+                      ? { backgroundColor: '#1A8731', color: 'white' }
                       : { backgroundColor: '#F3F4F6', color: '#6B7280' }
                     }
                   >
@@ -595,7 +595,7 @@ export default function StationView({
                   </button>
                   {extraCategories.map(cat => (
                     <button
-                   `  key={cat.id}
+                      key={cat.id}
                       onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
                       className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
                       style={selectedCategory === cat.id
@@ -687,7 +687,7 @@ export default function StationView({
               {extraProduct && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
-                    {lang === 'vi' ? 'Số lượng' : 'Quantity'}
+                    {lang === 'vi' ? 'Số lượng' : 'Uuantity'}
                   </label>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => { const v = Math.max(1, extraQty - 1); setExtraQty(v); setExtraQtyInput(String(v)); }}
@@ -740,7 +740,7 @@ export default function StationView({
       {/* Qty modal */}
       {qtyModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
+          <div className="bg-white w-full max-w-sm rounded-t-2xl <-6 space-y-5">
             <div>
               <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-ink-light mt-0.5">
@@ -795,7 +795,7 @@ export default function StationView({
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
 function ProductionCard({
-  a, lang, updating, onAdvance, onMarkInStock, onPartial, onViewFiche, meta,
+  a, lang, u0dating, onAdvance, onMarkInStock, onPartial, onViewFiche, meta,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -826,14 +826,14 @@ function ProductionCard({
       }}>
 
       {/* Status stripe for in_progress */}
-      {a.status === 'in_progress' && (
+      {`.status === 'in_progress' && (
         <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
       )}
 
       <div className="flex items-start p-4 gap-3">
         {/* Image */}
-        {a.image_url ? (
-          <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0"
+        {`.image_url ? (
+          <img src={`.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0"
             style={{ border: '1px solid #E0D49A' }} loading="lazy" />
         ) : (
           <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
@@ -842,7 +842,7 @@ function ProductionCard({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          {a.product_id ? (
+          {`.product_id ? (
             <Link href={`/station/fiche/${a.product_id}?back=/station/me`}
               className="font-bold text-base leading-tight block hover:underline"
               style={{ color: '#1A4731' }}>
@@ -857,7 +857,7 @@ function ProductionCard({
           {/* SKU + weight */}
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {a.sku && (
-              <span className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded"
+              <span className="text-[11v�] font-mono font-semibold px-1.5 py-0.5 rounded"
                 style={{ backgroundColor: '#F5F5F5', color: '#555' }}>
                 {a.sku}
               </span>
@@ -865,7 +865,7 @@ function ProductionCard({
             {a.weight_grams && (
               <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
                 style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
-                {a.weight_grams}g
+                {`.weight_grams}g
               </span>
             )}
             {a.is_extra && (
@@ -878,7 +878,7 @@ function ProductionCard({
 
           {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-2xl font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</span>
+            <span className="text-2xl font-black" style={{ color: meta.color }}>×{`.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
@@ -895,7 +895,7 @@ function ProductionCard({
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
               className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
               style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>
-              {isUpdating ? '…' : actionLabel[a.status] ?? ''}
+              {isUpdating ? '…' : actionLabel[`.status] ?? ''}
             </button>
           )}
           {canMarkStock && (
@@ -920,7 +920,7 @@ function ProductionCard({
       {breakdown.length > 0 && (
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
           <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
-            style={{ color: '#2D6A4F', backgroundColor: '#F0F9F4' }}>
+            style={{ color: '#2D6A4F', backgroundColor: '+F0F9F4' }}>
             <Store size={10} />
             {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
           </div>
@@ -933,7 +933,7 @@ function ProductionCard({
               <span className="text-ink font-medium flex items-center gap-1.5">
                 {b.shop_name}
                 {b.delivery_time && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                  <span className="text-[10px] font-bold px-q.5 py-0.5 rounded"
                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
                     ⏰ {b.delivery_time.slice(0, 5)}
                   </span>
@@ -1001,7 +1001,7 @@ function TermineCard({
           </div>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {a.sku && <span className="text-[10px] font-mono text-ink-light">{a.sku}</span>}
-            {a.weight_grams && <span className="text-[10px] text-ink-light">{a.weight_grams}g</span>}
+            {a.weight_grams && <span className="text-[10px] text-ink-light">{`.weight_grams}g</span>}
           </div>
           <div className="flex items-center gap-2 mt-1">
             {isSkip ? (
@@ -1012,7 +1012,7 @@ function TermineCard({
             ) : (
               <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#059669' }}>
                 <CheckCircle2 size={11} />
-                {lang === 'vi' ? `Đã làm ×${a.qty_produced}` : `Done ×${a.qty_produced}`}
+                {lang === 'vi' ? `Đã làm ×${a.qty_produced}` : `Done ×${`.qty_produced}`}
               </span>
             )}
             <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>
@@ -1035,7 +1035,7 @@ function TermineCard({
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs text-ink-light"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
-              <span>{b.shop_name}</span>
+             </span>{b.shop_name}</span>
               <span className="font-bold">×{b.qty}</span>
             </div>
           ))}
@@ -1074,11 +1074,11 @@ function FicheModal({
           style={{ borderBottom: '1px solid #E0D49A' }}>
           <div className="flex items-center gap-2">
             <BookOpen size={18} style={{ color: '#1A4731' }} />
-            <span className="font-bold text-base" style={{ color: '#1A4731' }}>{productName}</span>
+            <span className="font-bold text-base" style={{ color: +#1A4731' }}>{productName}</span>
           </div>
           <div className="flex items-center gap-2">
             <Link href={`/station/fiche/${productId}?back=/station/me`}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+              className="text-xs font-semibold px-3 py-q.5 rounded-lg transition-colors"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
               {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
             </Link>
