@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Trash2, Save, Thermometer, Timer, Eye } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Save, Thermometer, Timer, Eye, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
@@ -110,6 +110,10 @@ export default function FicheEditor({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'produit' | 'technique' | 'ingredients' | 'steps'>('produit');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // ── Identity ──
   function toggleTeam(team: Team) {
@@ -161,6 +165,33 @@ export default function FicheEditor({
   }
   function updateStep(idx: number, patch: Partial<AssemblyStep>) {
     setSteps(p => p.map((s, i) => i === idx ? { ...s, ...patch } : s)); setSaved(false);
+  }
+
+  // ── Image upload ──
+  async function handleImageFile(file: File) {
+    if (!file.type.startsWith('image/')) return;
+    setUploadingImage(true);
+    const supabase = createClient();
+    const ext = file.name.split('.').pop() ?? 'jpg';
+    const path = `fiches/${ficheId}.${ext}`;
+    const { error } = await supabase.storage.from('lab-images').upload(path, file, { upsert: true });
+    if (!error) {
+      const { data: urlData } = supabase.storage.from('lab-images').getPublicUrl(path);
+      setIdentity(p => ({ ...p, image_url: urlData.publicUrl }));
+      setSaved(false);
+    }
+    setUploadingImage(false);
+  }
+
+  // ── Delete ──
+  async function deleteFiche() {
+    if (!confirm(lang === 'vi'
+      ? 'Xoá fiche này? Hành động này không thể hoàn tác.'
+      : 'Delete this recipe card? This cannot be undone.')) return;
+    setDeleting(true);
+    const supabase = createClient();
+    await supabase.from('lab_fiche_meta').update({ is_active: false }).eq('id', ficheId);
+    router.push('/admin/fiches');
   }
 
   // ── Save ──
@@ -328,10 +359,44 @@ export default function FicheEditor({
                   placeholder="Bread / Entremets…" className="input mt-1 w-full text-sm" />
               </div>
               <div>
-                <label className="label text-[10px]">Image URL</label>
-                <input value={identity.image_url}
-                  onChange={e => { setIdentity(p => ({ ...p, image_url: e.target.value })); setSaved(false); }}
-                  placeholder="https://…" className="input mt-1 w-full text-sm font-mono text-xs" />
+                <label className="label text-[10px]">{lang === 'vi' ? 'Hình ảnh' : 'Photo'}</label>
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={e => {
+                    e.preventDefault(); setDragOver(false);
+                    const file = e.dataTransfer.files[0];
+                    if (file) handleImageFile(file);
+                  }}
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`mt-1 relative flex items-center justify-center rounded-xl border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
+                    dragOver ? 'border-gold bg-gold/5' : 'border-border-soft hover:border-gold/40'
+                  } ${identity.image_url ? 'h-28' : 'h-20'}`}
+                >
+                  {identity.image_url ? (
+                    <>
+                      <img src={identity.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                        <span className="text-white text-xs font-medium flex items-center gap-1.5">
+                          <Upload size={12} /> {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
+                        </span>
+                      </div>
+                      <button type="button"
+                        onClick={e => { e.stopPropagation(); setIdentity(p => ({ ...p, image_url: '' })); setSaved(false); }}
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-red-500 transition-colors text-xs leading-none">
+                        ×
+                      </button>
+                    </>
+                  ) : uploadingImage ? (
+                    <span className="text-ink-light text-xs">⏳ {lang === 'vi' ? 'Đang tải lên…' : 'Uploading…'}</span>
+                  ) : (
+                    <span className="text-ink-light text-xs flex items-center gap-1.5">
+                      <Upload size={13} /> {lang === 'vi' ? 'Kéo thả hoặc click để chọn ảnh' : 'Drop or click to browse'}
+                    </span>
+                  )}
+                </div>
+                <input ref={imageInputRef} type="file" accept="image/*" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = ''; }} />
               </div>
             </div>
 
@@ -628,9 +693,15 @@ export default function FicheEditor({
 
       {/* Save bar */}
       <div className="flex items-center justify-between pt-2 border-t border-border-soft">
-        <Link href="/admin/fiches" className="btn-secondary text-sm">
-          {lang === 'vi' ? 'Quay lại danh sách' : 'Back to list'}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/admin/fiches" className="btn-secondary text-sm">
+            {lang === 'vi' ? 'Quay lại danh sách' : 'Back to list'}
+          </Link>
+          <button onClick={deleteFiche} disabled={deleting}
+            className="text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl px-3 py-2 transition-colors">
+            {deleting ? '…' : (lang === 'vi' ? 'Xoá fiche' : 'Delete')}
+          </button>
+        </div>
         <div className="flex items-center gap-3">
           {saved && <span className="text-sm text-emerald-600 font-medium">{lang === 'vi' ? '✓ Đã lưu' : '✓ Saved'}</span>}
           <button onClick={save} disabled={saving} className="btn-primary flex items-center gap-2">
