@@ -13,156 +13,94 @@ export default async function FichesPage() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) redirect('/dashboard');
 
-  const [{ data: categories }, { data: products }, { data: stepCounts }] = await Promise.all([
-    supabase.from('categories').select('id, name_vi, name_en').order('sort_order'),
+  const [{ data: fiches }, { data: stepCounts }] = await Promise.all([
     supabase
-      .from('products')
-      .select('id, name_vi, name_en, main_image_url, sku, is_lab_only, category_id, subcategory')
-      .or('is_active.eq.true,is_lab_only.eq.true')
+      .from('lab_fiche_meta')
+      .select('id, name_vi, name_en, image_url, category, teams, b2c_sku_ref')
+      .eq('is_active', true)
       .order('name_vi'),
-    supabase.from('lab_fiche_steps').select('product_id'),
+    supabase.from('lab_fiche_steps').select('fiche_id'),
   ]);
 
-  const countByProduct: Record<string, number> = {};
+  const countByFiche: Record<string, number> = {};
   for (const s of stepCounts ?? []) {
-    countByProduct[s.product_id] = (countByProduct[s.product_id] ?? 0) + 1;
+    countByFiche[s.fiche_id] = (countByFiche[s.fiche_id] ?? 0) + 1;
   }
 
-  const allProducts = products ?? [];
-  const catMap = new Map((categories ?? []).map(c => [c.id, c]));
+  const allFiches = fiches ?? [];
 
-  const catalogue = allProducts.filter((p: any) => !p.is_lab_only);
-  const labOnly   = allProducts.filter((p: any) => p.is_lab_only);
-
-  // Group a list of products by category → subcategory
-  function groupByCatSub(items: typeof allProducts) {
-    const catGroups = new Map<string, {
-      catName_vi: string;
-      catName_en: string;
-      subGroups: Map<string, typeof allProducts>;
-    }>();
-    for (const p of items) {
-      const cat = catMap.get((p as any).category_id ?? '') ?? { id: 'other', name_vi: 'Khác', name_en: 'Other' };
-      const sub = (p as any).subcategory ?? '';
-      if (!catGroups.has(cat.id)) {
-        catGroups.set(cat.id, { catName_vi: cat.name_vi, catName_en: cat.name_en, subGroups: new Map() });
-      }
-      const sg = catGroups.get(cat.id)!.subGroups;
-      if (!sg.has(sub)) sg.set(sub, []);
-      sg.get(sub)!.push(p);
-    }
-    return catGroups;
-  }
-
-  const catCatalogue = groupByCatSub(catalogue);
-  const catLabOnly   = groupByCatSub(labOnly);
-
-  function renderGrouped(
-    grouped: ReturnType<typeof groupByCatSub>,
-    isLabOnly = false,
-  ) {
-    return Array.from(grouped.entries()).map(([catId, { catName_vi, catName_en, subGroups }]) => (
-      <section key={catId} className="mt-6 first:mt-0">
-        {/* Category divider */}
-        <div className="flex items-center gap-3 mb-3">
-          <div className="h-px flex-1 bg-border-soft" />
-          <h2 className="text-xs font-bold uppercase tracking-widest text-ink-light px-1 shrink-0">
-            {catName_vi} · {catName_en}
-          </h2>
-          <div className="h-px flex-1 bg-border-soft" />
-        </div>
-
-        {Array.from(subGroups.entries()).map(([sub, subProducts]) => (
-          <div key={sub} className="mb-4">
-            {sub && (
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-ink-light mb-2 ml-1">
-                {sub}
-              </h3>
-            )}
-            <div className="grid gap-2 sm:grid-cols-2">
-              {subProducts.map((product: any) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  steps={countByProduct[product.id] ?? 0}
-                  isLabOnly={isLabOnly}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
-      </section>
-    ));
+  // Group by category text
+  const catGroups = new Map<string, typeof allFiches>();
+  for (const f of allFiches) {
+    const cat = (f as any).category ?? 'Khác';
+    if (!catGroups.has(cat)) catGroups.set(cat, []);
+    catGroups.get(cat)!.push(f);
   }
 
   return (
     <div className="space-y-2 max-w-4xl">
-      <div className="mb-6">
-        <h1 className="font-serif text-3xl font-bold text-navy">Phiếu kỹ thuật / Recipe Cards</h1>
-        <p className="text-sm text-ink-light mt-1">
-          Tạo hướng dẫn sản xuất từng bước cho mỗi sản phẩm · Step-by-step production guides per product
-        </p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="font-serif text-3xl font-bold text-navy">Phiếu kỹ thuật / Recipe Cards</h1>
+          <p className="text-sm text-ink-light mt-1">
+            {allFiches.length} fiches · Tạo hướng dẫn sản xuất từng bước · Step-by-step production guides
+          </p>
+        </div>
       </div>
 
-      {/* Catalogue products — grouped by category/subcategory */}
-      {catalogue.length > 0 && (
-        <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-ink-light mb-1">
-            Catalogue public · {catalogue.length} produits
-          </p>
-          {renderGrouped(catCatalogue, false)}
-        </div>
-      )}
-
-      {/* Lab-only products — grouped by category/subcategory */}
-      {labOnly.length > 0 && (
-        <div className="mt-10">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold uppercase tracking-widest" style={{ color: '#6D28D9' }}>
-              Lab Only / B2B · {labOnly.length} produits
-            </span>
-            <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>
-              Non visible sur catalogue
-            </span>
+      {Array.from(catGroups.entries()).map(([cat, items]) => (
+        <section key={cat} className="mt-6 first:mt-0">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-px flex-1 bg-border-soft" />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-ink-light px-1 shrink-0">
+              {cat}
+            </h2>
+            <div className="h-px flex-1 bg-border-soft" />
           </div>
-          {renderGrouped(catLabOnly, true)}
-        </div>
-      )}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {items.map((fiche: any) => (
+              <FicheCard
+                key={fiche.id}
+                fiche={fiche}
+                steps={countByFiche[fiche.id] ?? 0}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
 
-      {allProducts.length === 0 && (
+      {allFiches.length === 0 && (
         <div className="card p-12 text-center text-ink-light">
-          Chưa có sản phẩm nào. · No products yet.
+          Chưa có fiche nào. · No recipe cards yet.
         </div>
       )}
     </div>
   );
 }
 
-function ProductCard({ product, steps, isLabOnly = false }: {
-  product: { id: string; name_vi: string; name_en?: string | null; main_image_url?: string | null; sku?: string | null };
+function FicheCard({ fiche, steps }: {
+  fiche: { id: string; name_vi: string; name_en?: string | null; image_url?: string | null; b2c_sku_ref?: string | null };
   steps: number;
-  isLabOnly?: boolean;
 }) {
   return (
     <Link
-      href={`/admin/fiches/${product.id}`}
+      href={`/admin/fiches/${fiche.id}`}
       className="card p-4 flex items-center gap-4 hover:bg-cream/60 transition-colors group"
-      style={isLabOnly ? { borderColor: '#DDD6FE' } : undefined}
     >
-      {product.main_image_url ? (
-        <img src={product.main_image_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+      {fiche.image_url ? (
+        <img src={fiche.image_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
       ) : (
         <div className="w-12 h-12 rounded-lg bg-border-soft flex items-center justify-center shrink-0">
           <BookOpen size={20} className="text-ink-light" />
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-navy truncate">{product.name_vi}</div>
-        {product.name_en && <div className="text-xs text-ink-light truncate">{product.name_en}</div>}
+        <div className="font-medium text-navy truncate">{fiche.name_vi}</div>
+        {fiche.name_en && <div className="text-xs text-ink-light truncate">{fiche.name_en}</div>}
         <div className="flex items-center gap-2 mt-1">
-          {product.sku && (
+          {fiche.b2c_sku_ref && (
             <span className="inline-flex items-center gap-0.5 text-[10px] text-ink-light">
-              <Tag size={9} />{product.sku}
+              <Tag size={9} />{fiche.b2c_sku_ref}
             </span>
           )}
           {steps === 0 ? (
