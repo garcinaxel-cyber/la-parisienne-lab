@@ -5,6 +5,19 @@ import { BookOpen, Plus, Tag } from 'lucide-react';
 
 export const revalidate = 0;
 
+async function createFiche() {
+  'use server';
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) redirect('/login');
+  const { data } = await supabase
+    .from('lab_fiche_meta')
+    .insert({ name_vi: 'Nouveau produit / New product', is_active: true })
+    .select('id')
+    .single();
+  if (data?.id) redirect(`/admin/fiches/${data.id}`);
+}
+
 export default async function FichesPage() {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
@@ -46,6 +59,12 @@ export default async function FichesPage() {
             {allFiches.length} fiches · Tạo hướng dẫn sản xuất từng bước · Step-by-step production guides
           </p>
         </div>
+        <form action={createFiche}>
+          <button type="submit"
+            className="btn-primary flex items-center gap-2 shrink-0">
+            <Plus size={15} /> Tạo mới · New
+          </button>
+        </form>
       </div>
 
       {Array.from(catGroups.entries()).map(([cat, items]) => (
