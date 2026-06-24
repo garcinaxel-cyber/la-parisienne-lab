@@ -1,132 +1,198 @@
-import { createClient } from '@/lib/supabase-server';
-import { redirect } from 'next/navigation';
+'use client';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BookOpen, ChevronRight } from 'lucide-react';
+import { createClient } from '@/lib/supabase-browser';
 
-export const revalidate = 30;
+type Fiche = {
+  id: string;
+  name_vi: string;
+  name_en: string | null;
+  image_url: string | null;
+  category: string | null;
+  teams: string[] | null;
+  product_id: string | null;
+  stepCount: number;
+};
 
-export default async function StationFichesPage() {
-  const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) redirect('/login');
+export default function StationFichesPage() {
+  const [fiches, setFiches] = useState<Fiche[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCat, setSelectedCat] = useState('');
+  const [lang, setLang] = useState<'vi' | 'en'>('vi');
 
-  // Fetch categories + products + step counts
-  const [{ data: categories }, { data: products }, { data: stepCounts }] = await Promise.all([
-    supabase.from('categories').select('id, name_vi, name_en').order('sort_order'),
-    supabase.from('products').select('id, name_vi, name_en, main_image_url, sku, category_id, subcategory, is_lab_only').or('is_active.eq.true,is_lab_only.eq.true').order('name_vi'),
-    supabase.from('lab_fiche_steps').select('product_id'),
-  ]);
-
-  // Count steps per product
-  const countByProduct: Record<string, number> = {};
-  for (const s of stepCounts ?? []) {
-    countByProduct[s.product_id] = (countByProduct[s.product_id] ?? 0) + 1;
-  }
-
-  // Only show products that have at least one fiche step
-  const productsWithFiche = (products ?? []).filter(p => (countByProduct[p.id] ?? 0) > 0);
-
-  // Group by category
-  const catMap = new Map((categories ?? []).map(c => [c.id, c]));
-  const grouped: Map<string, { catName_vi: string; catName_en: string; products: typeof productsWithFiche }> = new Map();
-
-  for (const p of productsWithFiche) {
-    const cat = catMap.get(p.category_id ?? '') ?? { id: 'other', name_vi: 'Khác', name_en: 'Other' };
-    if (!grouped.has(cat.id)) {
-      grouped.set(cat.id, { catName_vi: cat.name_vi, catName_en: cat.name_en, products: [] });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setLang((localStorage.getItem('lab-lang') as 'vi' | 'en') || 'vi');
     }
-    grouped.get(cat.id)!.products.push(p);
+  }, []);
+
+  useEffect(() => {
+    async function load() {
+      const supabase = createClient();
+
+      // Get session + profile + lab team
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { window.location.href = '/login'; return; }
+
+      const [{ data: profile }, { data: labProfile }] = await Promise.all([
+        supabase.from('profiles').select('role').eq('id', session.user.id).single(),
+        supabase.from('lab_profiles').select('team').eq('id', session.user.id).single(),
+      ]);
+
+      const isAdmin = ['admin', 'lab_manager'].includes(profile?.role ?? '');
+      const userTeam = labProfile?.team;
+
+      // Fetch fiches from lab_fiche_meta (filtered by team for chefs)
+      let query = supabase
+        .from('lab_fiche_meta')
+        .select('id, name_vi, name_en, image_url, category, teams, product_id')
+        .eq('is_active', true);
+
+      if (!isAdmin && userTeam) {
+        query = query.contains('teams', [userTeam]);
+      }
+
+      const { data: fichesRaw } = await query.order('name_vi');
+      const allFiches = fichesRaw ?? [];
+      const ficheIds = allFiches.map(f => f.id);
+
+      // Count steps per fiche via fiche_id
+      const { data: stepRows } = ficheIds.length > 0
+        ? await supabase.from('lab_fiche_steps').select('fiche_id').in('fiche_id', ficheIds)
+        : { data: [] as { fiche_id: string }[] };
+
+      const countByFiche: Record<string, number> = {};
+      for (const s of stepRows ?? []) {
+        countByFiche[s.fiche_id] = (countByFiche[s.fiche_id] ?? 0) + 1;
+      }
+
+      setFiches(allFiches.map(f => ({ ...f, stepCount: countByFiche[f.id] ?? 0 })));
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  // Categories for filter chips
+  const categories = Array.from(new Set(fiches.map(f => f.category ?? 'Khác'))).sort();
+
+  // Filtered + grouped
+  const filtered = selectedCat ? fiches.filter(f => (f.category ?? 'Khác') === selectedCat) : fiches;
+
+  const catGroups = new Map<string, Fiche[]>();
+  for (const f of filtered) {
+    const cat = f.category ?? 'Khác';
+    if (!catGroups.has(cat)) catGroups.set(cat, []);
+    catGroups.get(cat)!.push(f);
   }
 
-  // Group by subcategory within each category
   return (
-    <div className="min-h-screen bg-cream">
+    <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
       {/* Header */}
-      <header className="bg-navy text-white px-4 py-4 flex items-center justify-between">
+      <header style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
+        className="sticky top-0 z-10 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gold flex items-center justify-center shrink-0">
-            <BookOpen size={16} className="text-navy" />
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+            style={{ backgroundColor: 'rgba(201,168,76,0.25)' }}>
+            <BookOpen size={16} className="text-white" />
           </div>
           <div>
-            <div className="font-serif font-bold text-sm">Phiếu Kỹ Thuật</div>
+            <div className="font-bold text-sm text-white">Phiếu Kỹ Thuật</div>
             <div className="text-white/60 text-[11px]">Recipe Cards — La Parisienne</div>
           </div>
         </div>
         <Link href="/station/me" className="text-white/70 text-xs hover:text-white transition-colors">
-          ← {`Ma station`}
+          ← {lang === 'vi' ? 'Trạm' : 'Station'}
         </Link>
       </header>
 
+      {/* Category filter chips */}
+      {categories.length > 1 && (
+        <div className="px-4 pt-4 flex gap-2 flex-wrap">
+          <button
+            onClick={() => setSelectedCat('')}
+            className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+            style={selectedCat === ''
+              ? { backgroundColor: '#1A4731', color: 'white' }
+              : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #C9A84C' }}>
+            {lang === 'vi' ? 'Tất cả' : 'All'} ({fiches.length})
+          </button>
+          {categories.map(cat => (
+            <button key={cat}
+              onClick={() => setSelectedCat(cat === selectedCat ? '' : cat)}
+              className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+              style={selectedCat === cat
+                ? { backgroundColor: '#1A4731', color: 'white' }
+                : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #C9A84C' }}>
+              {cat} ({fiches.filter(f => (f.category ?? 'Khác') === cat).length})
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-8 pb-16">
-        {grouped.size === 0 && (
-          <div className="card p-12 text-center text-ink-light">
-            <BookOpen size={40} className="mx-auto mb-3 text-border-soft" />
-            <p className="font-medium">Chưa có phiếu kỹ thuật nào.</p>
-            <p className="text-sm mt-1">Aucune fiche technique disponible.</p>
+        {loading && (
+          <div className="text-center py-20 text-sm font-semibold" style={{ color: '#1A4731' }}>
+            {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
           </div>
         )}
 
-        {Array.from(grouped.entries()).map(([catId, { catName_vi, catName_en, products: catProducts }]) => {
-          // Group by subcategory
-          const subMap = new Map<string, typeof catProducts>();
-          for (const p of catProducts) {
-            const sub = p.subcategory ?? '';
-            if (!subMap.has(sub)) subMap.set(sub, []);
-            subMap.get(sub)!.push(p);
-          }
+        {!loading && filtered.length === 0 && (
+          <div className="rounded-2xl p-12 text-center bg-white" style={{ border: '1px solid #E0D49A' }}>
+            <BookOpen size={40} className="mx-auto mb-3" style={{ color: '#C9A84C' }} />
+            <p className="font-semibold" style={{ color: '#1A4731' }}>
+              {lang === 'vi' ? 'Chưa có phiếu kỹ thuật.' : 'No recipe cards yet.'}
+            </p>
+            <p className="text-sm mt-1 text-gray-400">
+              {lang === 'vi' ? 'Admin cần thêm sản phẩm vào đội của bạn.' : 'Admin needs to add products to your team.'}
+            </p>
+          </div>
+        )}
 
-          return (
-            <section key={catId}>
-              {/* Category header */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="h-px flex-1 bg-border-soft" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-ink-light px-2 shrink-0">
-                  {catName_vi} · {catName_en}
-                </h2>
-                <div className="h-px flex-1 bg-border-soft" />
-              </div>
-
-              {Array.from(subMap.entries()).map(([sub, subProducts]) => (
-                <div key={sub} className="mb-5">
-                  {sub && (
-                    <h3 className="text-xs font-semibold text-ink-light mb-2 ml-1 uppercase tracking-wide">
-                      {sub}
-                    </h3>
+        {Array.from(catGroups.entries()).map(([cat, items]) => (
+          <section key={cat}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-px flex-1" style={{ backgroundColor: '#C9A84C', opacity: 0.3 }} />
+              <h2 className="text-xs font-bold uppercase tracking-widest px-2 shrink-0" style={{ color: '#1A4731' }}>
+                {cat}
+              </h2>
+              <div className="h-px flex-1" style={{ backgroundColor: '#C9A84C', opacity: 0.3 }} />
+            </div>
+            <div className="space-y-2">
+              {items.map(fiche => (
+                <Link
+                  key={fiche.id}
+                  href={`/station/fiche/${fiche.product_id ?? fiche.id}?back=/station/fiches`}
+                  className="flex items-center gap-4 bg-white rounded-2xl px-4 py-3 group transition-all"
+                  style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}
+                >
+                  {fiche.image_url ? (
+                    <img src={fiche.image_url} alt=""
+                      className="w-12 h-12 rounded-xl object-cover shrink-0"
+                      style={{ border: '1px solid #E0D49A' }} loading="lazy" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-2xl"
+                      style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                   )}
-                  <div className="space-y-2">
-                    {subProducts.map(product => {
-                      const steps = countByProduct[product.id] ?? 0;
-                      return (
-                        <Link
-                          key={product.id}
-                          href={`/station/fiche/${product.id}?back=/station/fiches`}
-                          className="flex items-center gap-4 bg-white rounded-2xl px-4 py-3 shadow-sm border border-border-soft hover:border-gold/30 hover:shadow-md transition-all group"
-                        >
-                          {(product as any).main_image_url ? (
-                            <img src={(product as any).main_image_url} alt=""
-                              className="w-12 h-12 rounded-xl object-cover shrink-0" loading="lazy" />
-                          ) : (
-                            <div className="w-12 h-12 rounded-xl bg-cream flex items-center justify-center shrink-0">
-                              <span className="text-2xl">🥐</span>
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-navy text-sm truncate">{product.name_vi}</div>
-                            {product.name_en && <div className="text-xs text-ink-light truncate">{product.name_en}</div>}
-                            <div className="text-xs text-emerald-600 font-medium mt-0.5">
-                              {steps} {steps === 1 ? 'étape' : 'étapes'} · {steps} bước
-                            </div>
-                          </div>
-                          <ChevronRight size={16} className="text-ink-light group-hover:text-navy transition-colors shrink-0" />
-                        </Link>
-                      );
-                    })}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>
+                      {lang === 'vi' ? fiche.name_vi : (fiche.name_en || fiche.name_vi)}
+                    </div>
+                    {fiche.name_en && lang === 'vi' && (
+                      <div className="text-xs truncate" style={{ color: '#8a8a8a' }}>{fiche.name_en}</div>
+                    )}
+                    <div className="text-xs font-medium mt-0.5" style={{ color: fiche.stepCount > 0 ? '#2D6A4F' : '#aaa' }}>
+                      {fiche.stepCount > 0
+                        ? `${fiche.stepCount} ${lang === 'vi' ? 'bước' : 'steps'}`
+                        : (lang === 'vi' ? 'Chưa có phiếu' : 'No recipe yet')}
+                    </div>
                   </div>
-                </div>
+                  <ChevronRight size={16} style={{ color: '#C9A84C' }} className="shrink-0" />
+                </Link>
               ))}
-            </section>
-          );
-        })}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
