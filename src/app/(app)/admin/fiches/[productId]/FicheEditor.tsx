@@ -6,7 +6,37 @@ import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'] as const;
+type Team = typeof TEAMS[number];
+
+interface FicheIdentity {
+  name_vi: string;
+  name_en: string;
+  category: string;
+  teams: Team[];
+  image_url: string;
+}
+
+interface FicheTechnique {
+  doc_code: string;
+  weight_grams: string;
+  tolerance_pct: string;
+  sensory_vi: string;
+  sensory_en: string;
+  warning_vi: string;
+  warning_en: string;
+}
+
+interface Variant {
+  id?: string;
+  label: string;
+  sku: string;
+  weight_g: string;
+  is_default: boolean;
+  sort_order: number;
+}
 
 interface Ingredient {
   id?: string;
@@ -26,25 +56,7 @@ interface AssemblyStep {
   temperature_celsius: number | null;
 }
 
-interface FicheMeta {
-  doc_code: string;
-  weight_grams: string;
-  tolerance_pct: string;
-  sensory_vi: string;
-  sensory_en: string;
-  warning_vi: string;
-  warning_en: string;
-}
-
-interface Product {
-  id: string;
-  name_vi: string;
-  name_en: string | null;
-  image_url: string | null;
-  sku: string | null;
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function emptyIngredient(num: number): Ingredient {
   return { step_number: num, description_vi: '', description_en: '', quantity_grams: null, percentage: null };
@@ -54,26 +66,40 @@ function emptyStep(num: number): AssemblyStep {
   return { step_number: num, description_vi: '', description_en: '', duration_minutes: null, temperature_celsius: null };
 }
 
-// ─── Component ──────────────────────────────────────────────────────────────
+function emptyVariant(sortOrder: number): Variant {
+  return { label: '', sku: '', weight_g: '', is_default: false, sort_order: sortOrder };
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function FicheEditor({
-  product,
+  ficheId,
+  identity: initIdentity,
+  technique: initTechnique,
+  variants: initVariants,
   ingredients: initIngredients,
   assemblySteps: initSteps,
-  meta: initMeta,
 }: {
-  product: Product;
+  ficheId: string;
+  identity: FicheIdentity;
+  technique: FicheTechnique | null;
+  variants: Variant[];
   ingredients: Ingredient[];
   assemblySteps: AssemblyStep[];
-  meta: FicheMeta | null;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
 
-  const [meta, setMeta] = useState<FicheMeta>(initMeta ?? {
+  const [identity, setIdentity] = useState<FicheIdentity>(initIdentity);
+  const [technique, setTechnique] = useState<FicheTechnique>(initTechnique ?? {
     doc_code: '', weight_grams: '', tolerance_pct: '3',
     sensory_vi: '', sensory_en: '', warning_vi: '', warning_en: '',
   });
+  const [variants, setVariants] = useState<Variant[]>(
+    initVariants.length > 0
+      ? initVariants
+      : [{ label: 'Standard', sku: '', weight_g: '', is_default: true, sort_order: 0 }]
+  );
   const [ingredients, setIngredients] = useState<Ingredient[]>(
     initIngredients.length > 0 ? initIngredients : [emptyIngredient(1)]
   );
@@ -83,9 +109,33 @@ export default function FicheEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'meta' | 'ingredients' | 'steps'>('meta');
+  const [activeTab, setActiveTab] = useState<'produit' | 'technique' | 'ingredients' | 'steps'>('produit');
 
-  // ── Ingredient actions ──
+  // ── Identity ──
+  function toggleTeam(team: Team) {
+    setIdentity(p => ({
+      ...p,
+      teams: p.teams.includes(team) ? p.teams.filter(t => t !== team) : [...p.teams, team],
+    }));
+    setSaved(false);
+  }
+
+  // ── Variants ──
+  function addVariant() { setVariants(p => [...p, emptyVariant(p.length)]); setSaved(false); }
+  function removeVariant(idx: number) {
+    setVariants(p => p.filter((_, i) => i !== idx).map((v, i) => ({ ...v, sort_order: i })));
+    setSaved(false);
+  }
+  function updateVariant(idx: number, patch: Partial<Variant>) {
+    setVariants(p => p.map((v, i) => i === idx ? { ...v, ...patch } : v));
+    setSaved(false);
+  }
+  function setDefaultVariant(idx: number) {
+    setVariants(p => p.map((v, i) => ({ ...v, is_default: i === idx })));
+    setSaved(false);
+  }
+
+  // ── Ingredients ──
   function addIngredient() { setIngredients(p => [...p, emptyIngredient(p.length + 1)]); setSaved(false); }
   function removeIngredient(idx: number) {
     setIngredients(p => p.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step_number: i + 1 })));
@@ -103,7 +153,7 @@ export default function FicheEditor({
     })));
   }
 
-  // ── Step actions ──
+  // ── Steps ──
   function addStep() { setSteps(p => [...p, emptyStep(p.length + 1)]); setSaved(false); }
   function removeStep(idx: number) {
     setSteps(p => p.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step_number: i + 1 })));
@@ -118,30 +168,67 @@ export default function FicheEditor({
     setSaving(true); setError(null);
     const supabase = createClient();
 
-    // 1. Upsert fiche meta
-    const { error: metaErr } = await supabase.from('lab_fiche_meta').upsert({
-      product_id: product.id,
-      doc_code: meta.doc_code || null,
-      weight_grams: meta.weight_grams ? Number(meta.weight_grams) : null,
-      tolerance_pct: meta.tolerance_pct ? Number(meta.tolerance_pct) : 3,
-      sensory_vi: meta.sensory_vi,
-      sensory_en: meta.sensory_en,
-      warning_vi: meta.warning_vi,
-      warning_en: meta.warning_en,
+    // 1. Update lab_fiche_meta
+    const { error: metaErr } = await supabase.from('lab_fiche_meta').update({
+      name_vi: identity.name_vi,
+      name_en: identity.name_en || null,
+      category: identity.category || null,
+      teams: identity.teams,
+      image_url: identity.image_url || null,
+      doc_code: technique.doc_code || null,
+      weight_grams: technique.weight_grams ? Number(technique.weight_grams) : null,
+      tolerance_pct: technique.tolerance_pct ? Number(technique.tolerance_pct) : 3,
+      sensory_vi: technique.sensory_vi || null,
+      sensory_en: technique.sensory_en || null,
+      warning_vi: technique.warning_vi || null,
+      warning_en: technique.warning_en || null,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'product_id' });
+    }).eq('id', ficheId);
     if (metaErr) { setError(metaErr.message); setSaving(false); return; }
 
-    // 2. Delete all existing steps
-    const { error: delErr } = await supabase.from('lab_fiche_steps').delete().eq('product_id', product.id);
+    // 2. Variants — delete removed, update existing, insert new
+    const currentIds = variants.filter(v => v.id).map(v => v.id!);
+    const removedIds = initVariants.filter(v => v.id && !currentIds.includes(v.id)).map(v => v.id!);
+    if (removedIds.length > 0) {
+      const { error: delVErr } = await supabase.from('lab_fiche_variants').delete().in('id', removedIds);
+      if (delVErr) { setError(delVErr.message); setSaving(false); return; }
+    }
+    const updateResults = await Promise.all(
+      variants.filter(v => v.id).map(v =>
+        supabase.from('lab_fiche_variants').update({
+          label: v.label,
+          sku: v.sku || null,
+          weight_g: v.weight_g ? Number(v.weight_g) : null,
+          is_default: v.is_default,
+          sort_order: v.sort_order,
+        }).eq('id', v.id!)
+      )
+    );
+    const updateErr = updateResults.find(r => r.error)?.error;
+    if (updateErr) { setError(updateErr.message); setSaving(false); return; }
+
+    const newVariants = variants.filter(v => !v.id).map(v => ({
+      fiche_id: ficheId,
+      label: v.label,
+      sku: v.sku || null,
+      weight_g: v.weight_g ? Number(v.weight_g) : null,
+      is_default: v.is_default,
+      sort_order: v.sort_order,
+    }));
+    if (newVariants.length > 0) {
+      const { error: insVErr } = await supabase.from('lab_fiche_variants').insert(newVariants);
+      if (insVErr) { setError(insVErr.message); setSaving(false); return; }
+    }
+
+    // 3. Steps — delete all + re-insert
+    const { error: delErr } = await supabase.from('lab_fiche_steps').delete().eq('fiche_id', ficheId);
     if (delErr) { setError(delErr.message); setSaving(false); return; }
 
-    // 3. Re-insert ingredients + assembly steps
     const rows = [
       ...ingredients
         .filter(i => i.description_vi.trim() || i.description_en.trim())
         .map(i => ({
-          product_id: product.id, step_type: 'ingredient', step_number: i.step_number,
+          fiche_id: ficheId, step_type: 'ingredient', step_number: i.step_number,
           description_vi: i.description_vi, description_en: i.description_en,
           quantity_grams: i.quantity_grams, percentage: i.percentage,
           duration_minutes: null, temperature_celsius: null,
@@ -149,7 +236,7 @@ export default function FicheEditor({
       ...steps
         .filter(s => s.description_vi.trim() || s.description_en.trim())
         .map(s => ({
-          product_id: product.id, step_type: 'step', step_number: s.step_number,
+          fiche_id: ficheId, step_type: 'step', step_number: s.step_number,
           description_vi: s.description_vi, description_en: s.description_en,
           quantity_grams: null, percentage: null,
           duration_minutes: s.duration_minutes, temperature_celsius: s.temperature_celsius,
@@ -166,9 +253,10 @@ export default function FicheEditor({
   const totalWeight = ingredients.reduce((s, i) => s + (i.quantity_grams ?? 0), 0);
 
   const tabs: { key: typeof activeTab; label: string }[] = [
-    { key: 'meta',        label: lang === 'vi' ? '① Thông tin chung' : '① General info' },
-    { key: 'ingredients', label: lang === 'vi' ? '② Nguyên liệu / Layers' : '② Ingredients / Layers' },
-    { key: 'steps',       label: lang === 'vi' ? '③ Quy trình lắp ráp' : '③ Assembly guide' },
+    { key: 'produit',     label: lang === 'vi' ? '① Sản phẩm' : '① Product' },
+    { key: 'technique',   label: lang === 'vi' ? '② Fiche technique' : '② Technical sheet' },
+    { key: 'ingredients', label: lang === 'vi' ? '③ Nguyên liệu' : '③ Ingredients' },
+    { key: 'steps',       label: lang === 'vi' ? '④ Quy trình' : '④ Assembly' },
   ];
 
   return (
@@ -181,17 +269,16 @@ export default function FicheEditor({
         </Link>
         <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
-            {product.image_url && (
-              <img src={product.image_url} alt="" className="w-14 h-14 rounded-xl object-cover shrink-0" />
+            {identity.image_url && (
+              <img src={identity.image_url} alt="" className="w-14 h-14 rounded-xl object-cover shrink-0" />
             )}
             <div>
-              <h1 className="font-serif text-2xl font-bold text-navy">{product.name_vi}</h1>
-              {product.name_en && <p className="text-sm text-ink-light">{product.name_en}</p>}
-              {product.sku && <p className="text-xs text-ink-light font-mono mt-0.5">SKU: {product.sku}</p>}
+              <h1 className="font-serif text-2xl font-bold text-navy">{identity.name_vi || '…'}</h1>
+              {identity.name_en && <p className="text-sm text-ink-light">{identity.name_en}</p>}
             </div>
           </div>
           <Link
-            href={`/station/fiche/${product.id}?back=/admin/fiches/${product.id}`}
+            href={`/station/fiche/${ficheId}?back=/admin/fiches/${ficheId}`}
             target="_blank"
             className="flex items-center gap-1.5 text-xs font-medium text-navy/60 border border-border-soft rounded-xl px-3 py-1.5 hover:bg-cream hover:text-navy transition-colors shrink-0"
           >
@@ -214,25 +301,141 @@ export default function FicheEditor({
         ))}
       </div>
 
-      {/* ── Tab: Metadata ── */}
-      {activeTab === 'meta' && (
+      {/* ── Tab: Sản phẩm ── */}
+      {activeTab === 'produit' && (
+        <div className="space-y-5">
+          <div className="card p-5 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label text-[10px]">Tên sản phẩm (Tiếng Việt) *</label>
+                <input value={identity.name_vi}
+                  onChange={e => { setIdentity(p => ({ ...p, name_vi: e.target.value })); setSaved(false); }}
+                  placeholder="Bánh mì bơ tỏi…" className="input mt-1 w-full text-sm font-medium" />
+              </div>
+              <div>
+                <label className="label text-[10px]">Product name (English)</label>
+                <input value={identity.name_en}
+                  onChange={e => { setIdentity(p => ({ ...p, name_en: e.target.value })); setSaved(false); }}
+                  placeholder="Garlic butter bread…" className="input mt-1 w-full text-sm" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label text-[10px]">{lang === 'vi' ? 'Danh mục' : 'Category'}</label>
+                <input value={identity.category}
+                  onChange={e => { setIdentity(p => ({ ...p, category: e.target.value })); setSaved(false); }}
+                  placeholder="Bread / Entremets…" className="input mt-1 w-full text-sm" />
+              </div>
+              <div>
+                <label className="label text-[10px]">Image URL</label>
+                <input value={identity.image_url}
+                  onChange={e => { setIdentity(p => ({ ...p, image_url: e.target.value })); setSaved(false); }}
+                  placeholder="https://…" className="input mt-1 w-full text-sm font-mono text-xs" />
+              </div>
+            </div>
+
+            {/* Teams multi-select */}
+            <div>
+              <label className="label text-[10px] mb-2 block">
+                {lang === 'vi' ? 'Đội sản xuất' : 'Production teams'}
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {TEAMS.map(team => (
+                  <button
+                    key={team}
+                    type="button"
+                    onClick={() => toggleTeam(team)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                      identity.teams.includes(team)
+                        ? 'bg-navy text-white border-navy'
+                        : 'bg-white text-ink-light border-border-soft hover:border-navy/30'
+                    }`}
+                  >
+                    {team}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Variants / SKUs block */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-navy">
+                {lang === 'vi' ? 'Kích thước / Formats (SKUs)' : 'Sizes / Formats (SKUs)'}
+              </h3>
+              <button onClick={addVariant}
+                className="flex items-center gap-1 text-xs font-medium text-gold border border-gold/40 rounded-lg px-3 py-1.5 hover:bg-gold/5 transition-colors">
+                <Plus size={12} /> {lang === 'vi' ? 'Thêm format' : 'Add size'}
+              </button>
+            </div>
+            <div className="card overflow-hidden">
+              <div className="grid grid-cols-12 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/60">
+                <div className="col-span-3">Label</div>
+                <div className="col-span-4">SKU</div>
+                <div className="col-span-2 text-center">{lang === 'vi' ? 'Khối lượng' : 'Weight'} (gr)</div>
+                <div className="col-span-2 text-center">{lang === 'vi' ? 'Mặc định' : 'Default'}</div>
+                <div className="col-span-1" />
+              </div>
+              <div className="divide-y divide-border-soft">
+                {variants.map((v, idx) => (
+                  <div key={idx} className="grid grid-cols-12 items-center px-4 py-2.5 gap-2">
+                    <div className="col-span-3">
+                      <input value={v.label}
+                        onChange={e => updateVariant(idx, { label: e.target.value })}
+                        placeholder="Standard, D14…" className="input w-full text-sm py-1.5" />
+                    </div>
+                    <div className="col-span-4">
+                      <input value={v.sku}
+                        onChange={e => updateVariant(idx, { sku: e.target.value })}
+                        placeholder="BCMD14…" className="input w-full text-sm py-1.5 font-mono text-xs" />
+                    </div>
+                    <div className="col-span-2">
+                      <input type="number" min={0} step={1} value={v.weight_g}
+                        onChange={e => updateVariant(idx, { weight_g: e.target.value })}
+                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                    </div>
+                    <div className="col-span-2 flex justify-center">
+                      <input type="radio" name="default_variant" checked={v.is_default}
+                        onChange={() => setDefaultVariant(idx)}
+                        className="accent-navy w-4 h-4 cursor-pointer" />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      {variants.length > 1 && (
+                        <button onClick={() => removeVariant(idx)}
+                          className="p-1 text-ink-light hover:text-red-500 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab: Fiche technique ── */}
+      {activeTab === 'technique' && (
         <div className="card p-5 space-y-5">
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="label text-[10px]">{lang === 'vi' ? 'Mã tài liệu' : 'Document code'}</label>
-              <input value={meta.doc_code} onChange={e => setMeta(m => ({ ...m, doc_code: e.target.value }))}
+              <input value={technique.doc_code} onChange={e => setTechnique(m => ({ ...m, doc_code: e.target.value }))}
                 placeholder="QT-SX-CBP05" className="input mt-1 w-full text-sm font-mono" />
             </div>
             <div>
               <label className="label text-[10px]">{lang === 'vi' ? 'Trọng lượng chuẩn (gr)' : 'Standard weight (gr)'}</label>
-              <input type="number" min={0} value={meta.weight_grams}
-                onChange={e => setMeta(m => ({ ...m, weight_grams: e.target.value }))}
+              <input type="number" min={0} value={technique.weight_grams}
+                onChange={e => setTechnique(m => ({ ...m, weight_grams: e.target.value }))}
                 placeholder="170" className="input mt-1 w-full text-sm" />
             </div>
             <div>
               <label className="label text-[10px]">{lang === 'vi' ? 'Sai số (%)' : 'Tolerance (%)'}</label>
-              <input type="number" min={0} max={20} step={0.5} value={meta.tolerance_pct}
-                onChange={e => setMeta(m => ({ ...m, tolerance_pct: e.target.value }))}
+              <input type="number" min={0} max={20} step={0.5} value={technique.tolerance_pct}
+                onChange={e => setTechnique(m => ({ ...m, tolerance_pct: e.target.value }))}
                 placeholder="3" className="input mt-1 w-full text-sm" />
             </div>
           </div>
@@ -241,16 +444,16 @@ export default function FicheEditor({
             <div>
               <label className="label text-[10px]">Tiêu chuẩn cảm quan — Tiếng Việt</label>
               <p className="text-[10px] text-ink-light mt-0.5 mb-1">Mỗi dòng = 1 tiêu chí. Dùng **Tiêu đề:** để in đậm.</p>
-              <textarea value={meta.sensory_vi}
-                onChange={e => setMeta(m => ({ ...m, sensory_vi: e.target.value }))}
+              <textarea value={technique.sensory_vi}
+                onChange={e => setTechnique(m => ({ ...m, sensory_vi: e.target.value }))}
                 placeholder={"**Hình dáng:** Oval thuôn dài đều đặn\n**Màu sắc:** Vàng nâu óng\n**Bề mặt:** Sốt zíc-zắc sắc nét\n**Cấu trúc:** Ruột mềm xốp, ẩm"}
                 rows={6} className="input mt-1 w-full resize-none text-sm font-mono" />
             </div>
             <div>
               <label className="label text-[10px]">Quality standards — English</label>
               <p className="text-[10px] text-ink-light mt-0.5 mb-1">One line = one criterion. Use **Title:** for bold.</p>
-              <textarea value={meta.sensory_en}
-                onChange={e => setMeta(m => ({ ...m, sensory_en: e.target.value }))}
+              <textarea value={technique.sensory_en}
+                onChange={e => setTechnique(m => ({ ...m, sensory_en: e.target.value }))}
                 placeholder={"**Shape:** Elongated oval, uniform\n**Color:** Golden brown crust\n**Surface:** Precise zigzag sauce\n**Texture:** Soft, moist crumb"}
                 rows={6} className="input mt-1 w-full resize-none text-sm font-mono" />
             </div>
@@ -259,15 +462,15 @@ export default function FicheEditor({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label text-[10px]">Lưu ý nghiêm ngặt — Tiếng Việt</label>
-              <textarea value={meta.warning_vi}
-                onChange={e => setMeta(m => ({ ...m, warning_vi: e.target.value }))}
+              <textarea value={technique.warning_vi}
+                onChange={e => setTechnique(m => ({ ...m, warning_vi: e.target.value }))}
                 placeholder="Toàn bộ thợ bánh bắt buộc phải cân đong chính xác…"
                 rows={3} className="input mt-1 w-full resize-none text-sm" />
             </div>
             <div>
               <label className="label text-[10px]">Strict note — English</label>
-              <textarea value={meta.warning_en}
-                onChange={e => setMeta(m => ({ ...m, warning_en: e.target.value }))}
+              <textarea value={technique.warning_en}
+                onChange={e => setTechnique(m => ({ ...m, warning_en: e.target.value }))}
                 placeholder="All bakers must weigh each layer precisely…"
                 rows={3} className="input mt-1 w-full resize-none text-sm" />
             </div>
@@ -397,13 +600,17 @@ export default function FicheEditor({
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="label text-[10px] flex items-center gap-1"><Timer size={11} /> {lang === 'vi' ? 'Thời gian (phút)' : 'Duration (min)'}</label>
+                  <label className="label text-[10px] flex items-center gap-1">
+                    <Timer size={11} /> {lang === 'vi' ? 'Thời gian (phút)' : 'Duration (min)'}
+                  </label>
                   <input type="number" min={0} value={step.duration_minutes ?? ''}
                     onChange={e => updateStep(idx, { duration_minutes: e.target.value ? Number(e.target.value) : null })}
                     placeholder="—" className="input mt-1 w-full text-sm" />
                 </div>
                 <div className="flex-1">
-                  <label className="label text-[10px] flex items-center gap-1"><Thermometer size={11} /> {lang === 'vi' ? 'Nhiệt độ (°C)' : 'Temperature (°C)'}</label>
+                  <label className="label text-[10px] flex items-center gap-1">
+                    <Thermometer size={11} /> {lang === 'vi' ? 'Nhiệt độ (°C)' : 'Temperature (°C)'}
+                  </label>
                   <input type="number" value={step.temperature_celsius ?? ''}
                     onChange={e => updateStep(idx, { temperature_celsius: e.target.value ? Number(e.target.value) : null })}
                     placeholder="—" className="input mt-1 w-full text-sm" />
