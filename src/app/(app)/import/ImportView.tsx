@@ -65,7 +65,10 @@ export default function ImportView() {
     setError(null);
     setExcludedSkus(new Set());
     setMatchCheck(null);
-    const results: ParsedImport[] = [];
+
+    // First pass: parse all files to get raw lines
+    type RawResult = { sourceType: 'sales_order' | 'replenishment'; filename: string; rawLines: any[]; warnings: string[] };
+    const parseRaw: RawResult[] = [];
     for (const file of files) {
       try {
         const result = await parseExcelFile(file);
@@ -73,37 +76,63 @@ export default function ImportView() {
           setError(`${file.name}: ${result.errors[0]}`);
           return;
         }
-        results.push({
-          sourceType: result.source_type,
-          filename: file.name,
-          lines: consolidateLines(result.lines),
-          warnings: result.errors,
-        });
+        parseRaw.push({ sourceType: result.source_type, filename: file.name, rawLines: result.lines, warnings: result.errors });
       } catch (e: any) {
         setError(`${file.name}: ${e.message ?? 'Parse error'}`);
         return;
       }
     }
-    if (results.length > 0) {
-      setParsedFiles(results);
-      setStep('preview');
-      const allLines = mergeLines(results.map(r => r.lines));
-      const skus = Array.from(new Set(allLines.map(l => l.product_sku).filter(Boolean) as string[]));
-      if (skus.length) {
-        const supabase = createClient();
-        supabase.from('products').select('sku').in('sku', skus).then(({ data }) => {
-          const matched = new Set((data ?? []).map((p: any) => p.sku));
-          setMatchCheck({
-            matched: skus.filter(s => matched.has(s)).length,
-            unmatched: skus
-              .filter(s => !matched.has(s))
-              .map(s => ({
-                sku: s,
-                name: allLines.find(l => l.product_sku === s)?.product_name_vi ?? s,
-              })),
-          });
-        });
+    if (!parseRaw.length) return;
+
+    // Look up lab_fiche_variants to get actual variant labels per SKU
+    const allRawSkus = Array.from(new Set(parseRaw.flatMap(r => r.rawLines.map((l: any) => l.product_sku)).filter(Boolean))) as string[];
+    const variantLabelMap: Record<string, string> = {};
+    if (allRawSkus.length) {
+      const supabase = createClient();
+      const { data: variantRows } = await supabase
+        .from('lab_fiche_variants')
+        .select('sku, label')
+        .in('sku', allRawSkus);
+      for (const v of variantRows ?? []) {
+        if (v.sku) variantLabelMap[v.sku] = v.label;
       }
+    }
+
+    // Patch variant_label on each raw line, then consolidate
+    const results: ParsedImport[] = parseRaw.map(r => ({
+      sourceType: r.sourceType,
+      filename: r.filename,
+      warnings: r.warnings,
+      lines: consolidateLines(
+        r.rawLines.map((l: any) => ({
+          ...l,
+          variant_label: variantLabelMap[l.product_sku] ?? l.variant_label,
+        }))
+      ),
+    }));
+
+    setParsedFiles(results);
+    setStep('preview');
+
+    // Match check: SKUs must be in products OR lab_fiche_variants to be considered "matched"
+    if (allRawSkus.length) {
+      const supabase = createClient();
+      const allLines = mergeLines(results.map(r => r.lines));
+      Promise.all([
+        supabase.from('products').select('sku').in('sku', allRawSkus),
+        supabase.from('lab_fiche_variants').select('sku').in('sku', allRawSkus),
+      ]).then(([{ data: prodData }, { data: varData }]) => {
+        const matched = new Set([...(prodData ?? []), ...(varData ?? [])].map((p: any) => p.sku));
+        setMatchCheck({
+          matched: allRawSkus.filter(s => matched.has(s)).length,
+          unmatched: allRawSkus
+            .filter(s => !matched.has(s))
+            .map(s => ({
+              sku: s,
+              name: allLines.find(l => l.product_sku === s)?.product_name_vi ?? s,
+            })),
+        });
+      });
     }
   }, []);
 
@@ -131,6 +160,8 @@ export default function ImportView() {
     if (!parsedFiles.length) return;
     setStep('saving');
     const supabase = createClient();
+
+    // Look up products by SKU to enrich assignments with image_url + product_id
     const skus = Array.from(new Set(effectiveLines.map(l => l.product_sku).filter(Boolean)));
     const { data: productRows } = skus.length
       ? await supabase.from('products').select('id, sku, main_image_url, name_en').in('sku', skus)
@@ -139,13 +170,19 @@ export default function ImportView() {
     for (const p of productRows ?? []) {
       if (p.sku) productBySku[p.sku] = { id: p.id, image_url: p.main_image_url ?? null, name_en: p.name_en ?? null };
     }
+
+    // Get next order number for this date
     const { count } = await supabase
       .from('lab_imports')
       .select('*', { count: 'exact', head: true })
       .eq('delivery_date', deliveryDate);
+
     const orderNumber = (count ?? 0) + 1;
+
+    // Determine filenames
     const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
     const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
+
     const { data: importRow, error: importErr } = await supabase
       .from('lab_imports')
       .insert({
@@ -161,26 +198,35 @@ export default function ImportView() {
       })
       .select('id')
       .single();
+
     if (importErr || !importRow) {
       setError(importErr?.message ?? 'Failed to create import');
       setStep('preview');
       return;
     }
+
+    // Insert assignments — only lines with a valid team (CHECK constraint on lab_assignments)
+    // Lines with unrecognised/empty team are kept in lab_order_lines only (for traceability)
     const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
     const assignments = assignableLines.map((line, idx) => {
       const product = productBySku[line.product_sku] ?? null;
       return {
-        import_id: importRow.id, team: line.team,
+        import_id: importRow.id,
+        team: line.team,
         product_id: product?.id ?? null,
         product_name_vi: line.product_name_vi,
         product_name_en: product?.name_en ?? '',
         image_url: product?.image_url ?? null,
         variant_label: line.variant_label,
-        total_qty: line.total_qty, qty_to_produce: line.total_qty,
-        qty_produced: 0, status: 'pending', sort_order: idx,
+        total_qty: line.total_qty,
+        qty_to_produce: line.total_qty,
+        qty_produced: 0,
+        status: 'pending',
+        sort_order: idx,
         breakdown: line.breakdown ?? [],
       };
     });
+
     const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
     if (assignErr) {
       setError(assignErr.message);
@@ -188,6 +234,8 @@ export default function ImportView() {
       setStep('preview');
       return;
     }
+
+    // Insert raw order lines for traceability (also filtered by excludedSkus)
     const orderLines = parsedFiles.flatMap(pf =>
       pf.lines
         .filter(line => !excludedSkus.has(line.product_sku))
@@ -210,6 +258,7 @@ export default function ImportView() {
     if (orderLines.length > 0) {
       await supabase.from('lab_order_lines').insert(orderLines);
     }
+
     setStep('done');
   }
 
@@ -319,6 +368,7 @@ export default function ImportView() {
             </p>
             <p className="text-xs text-ink-light mt-3">Sales Order · Stock Replenishment (.xlsx)</p>
           </div>
+
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -381,7 +431,7 @@ export default function ImportView() {
             </div>
           </div>
 
-          {/* Parse warnings */}
+          {/* Parse warnings (format issues from excel parser) */}
           {allWarnings.length > 0 && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
               <div className="flex items-center gap-2 text-amber-700 font-medium text-sm mb-1">
@@ -393,7 +443,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Unrecognized products */}
+          {/* Unrecognized products — per-SKU Exclude / Keep toggles */}
           {matchCheck && matchCheck.unmatched.length > 0 && (
             <div className="rounded-xl border border-amber-200 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 text-amber-700 font-medium text-sm">
@@ -418,10 +468,14 @@ export default function ImportView() {
                       <button
                         onClick={() => toggleExclude(sku)}
                         className={`text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 ${
-                          isExcluded ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200'
+                          isExcluded
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                            : 'bg-red-100 text-red-700 hover:bg-red-200'
                         }`}
                       >
-                        {isExcluded ? (lang === 'vi' ? 'Giữ lại' : 'Keep') : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
+                        {isExcluded
+                          ? (lang === 'vi' ? 'Giữ lại' : 'Keep')
+                          : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
                       </button>
                     </div>
                   );
@@ -435,7 +489,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Empty team */}
+          {/* Empty team — kept in order history but not assigned to production */}
           {emptyTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
               <div className="flex items-center gap-2 text-blue-700 text-sm">
@@ -453,7 +507,7 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Other unrecognized teams */}
+          {/* Other unrecognized teams (non-empty string, not in TEAMS list) */}
           {otherUnknownTeamLines.length > 0 && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200">
               <div className="flex items-center gap-2 text-red-700 font-medium text-sm mb-1">
@@ -513,7 +567,7 @@ export default function ImportView() {
             );
           })()}
 
-          {/* By team */}
+          {/* By team — excluded-SKU lines are hidden */}
           <div className="space-y-3">
             {byTeam.map(({ team, lines }) => {
               const meta = TEAM_LABELS[team as Team];
