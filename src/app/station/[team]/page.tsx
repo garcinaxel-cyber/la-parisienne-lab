@@ -117,5 +117,5 @@ export default async function StationPage({ params, searchParams }: { params: { 
     products: undefined,
   }));
 
-  return <StationView team={team} teamSlug={params.team} assignments={normalised} viewDate={viewDate} today={today} isHistoryView={isHistoryView} />;
+  return <StationView key={viewDate} team={team} teamSlug={params.team} assignments={normalised} viewDate={viewDate} today={today} isHistoryView={isHistoryView} />;
 }
