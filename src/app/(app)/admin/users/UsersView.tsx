@@ -6,9 +6,8 @@ import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 
-// Only lab roles are managed here. Catalogue roles (admin/sales/viewer) are managed in the catalogue app.
 const LAB_ROLES = ['lab_manager', 'assistant', 'chef'] as const;
-const ALL_ROLES = LAB_ROLES;
+const EDITABLE_ROLES = LAB_ROLES; // admins are shown read-only
 
 type UserRow = {
   id: string;
@@ -108,9 +107,10 @@ export default function UsersView({ users }: { users: UserRow[] }) {
 
         <div className="divide-y divide-border-soft">
           {users.map(user => {
+            const isAdmin = user.role === 'admin';
             const edit = getEdit(user);
             const isLabRole = LAB_ROLES.includes(edit.role as any);
-            const isDirty = edit.role !== user.role || edit.team !== (user.lab_profiles?.team ?? null);
+            const isDirty = !isAdmin && (edit.role !== user.role || edit.team !== (user.lab_profiles?.team ?? null));
             const isChef = edit.role === 'chef';
 
             return (
@@ -128,27 +128,31 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                   </div>
                 </div>
 
-                {/* Role select */}
+                {/* Role select (read-only for admin) */}
                 <div className="col-span-5 md:col-span-3">
-                  <select
-                    value={edit.role}
-                    onChange={e => updateEdit(user.id, { role: e.target.value, team: null })}
-                    className="input text-sm w-full"
-                  >
-                    {ALL_ROLES.map(r => (
-                      <option key={r} value={r}>{ROLE_LABEL[r]}</option>
-                    ))}
-                  </select>
+                  {isAdmin ? (
+                    <span className="text-xs text-ink-light italic">{lang === 'vi' ? 'Không thể thay đổi' : 'Cannot change'}</span>
+                  ) : (
+                    <select
+                      value={edit.role}
+                      onChange={e => updateEdit(user.id, { role: e.target.value, team: null })}
+                      className="input text-sm w-full"
+                    >
+                      {EDITABLE_ROLES.map(r => (
+                        <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
-                {/* Team select (only for lab roles) */}
+                {/* Team select */}
                 <div className="col-span-4 md:col-span-3">
-                  {isLabRole ? (
+                  {!isAdmin && isLabRole ? (
                     <select
                       value={edit.team ?? ''}
                       onChange={e => updateEdit(user.id, { team: e.target.value || null })}
                       className="input text-sm w-full"
-                      disabled={!isChef} // only chefs need team; managers see all
+                      disabled={!isChef}
                     >
                       {!isChef && <option value="">— {lang === 'vi' ? 'Tất cả' : 'All teams'} —</option>}
                       {isChef && <option value="">{lang === 'vi' ? 'Chọn đội…' : 'Select team…'}</option>}
