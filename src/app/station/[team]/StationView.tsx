@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, PenLine,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -75,9 +75,10 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 };
 
 export default function StationView({
-  team, assignments: initial, viewDate, today, isHistoryView,
+  team, teamSlug, assignments: initial, viewDate, today, isHistoryView,
 }: {
   team: Team;
+  teamSlug: string;
   assignments: Assignment[];
   viewDate: string;
   today: string;
@@ -261,13 +262,13 @@ export default function StationView({
   function prevDay() {
     const d = new Date(viewDate + 'T00:00:00');
     d.setDate(d.getDate() - 1);
-    router.push(`/station/me?date=${d.toISOString().split('T')[0]}`);
+    router.push(`/station/${teamSlug}?date=${d.toISOString().split('T')[0]}`);
   }
   function nextDay() {
     if (viewDate >= today) return;
     const d = new Date(viewDate + 'T00:00:00');
     d.setDate(d.getDate() + 1);
-    router.push(`/station/me?date=${d.toISOString().split('T')[0]}`);
+    router.push(`/station/${teamSlug}?date=${d.toISOString().split('T')[0]}`);
   }
 
   const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
@@ -301,6 +302,7 @@ export default function StationView({
     onMarkInStock: markInStock,
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
     onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    onNoteUpdate: (id: string, note: string) => setAssignments(prev => prev.map(x => x.id === id ? { ...x, notes: note } : x)),
     meta,
   };
 
@@ -393,11 +395,11 @@ export default function StationView({
 
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (
-        <div className="max-w-3xl mx-auto px-4 py-5`space-y-3 pb-28">
+        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
-       '      <p className="font-semibold" style={{ color: '#1A4731' }}>
+              <p className="font-semibold" style={{ color: '#1A4731' }}>
                 {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
               </p>
               <p className="text-sm mt-1 text-ink-light">
@@ -423,11 +425,11 @@ export default function StationView({
             </div>
           ) : (
             <div className="space-y-3">
-         '    {/* Summary header */}
+              {/* Summary header */}
               <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
                 <div>
-                ' <div className="font-bold text-base">
+                  <div className="font-bold text-base">
                     {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
@@ -437,7 +439,7 @@ export default function StationView({
                 <div className="text-right">
                   <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
                   <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
-               '</div>
+                </div>
               </div>
 
               {/* Order lines */}
@@ -466,7 +468,7 @@ export default function StationView({
                           <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
                             {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                           </div>
-                          <div className="_lex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             {a.sku && (
                               <span className="text-[10px] font-mono font-semibold px-1 py-0.5 rounded"
                                 style={{ backgroundColor: '#F5F5F5', color: '#555' }}>{a.sku}</span>
@@ -501,7 +503,7 @@ export default function StationView({
                                 <Store size={11} className="shrink-0" />
                                 <span>{b.shop_name}</span>
                                 {b.delivery_time && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 trunded"
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
                                     ⏰ {b.delivery_time.slice(0, 5)}
                                   </span>
@@ -546,7 +548,7 @@ export default function StationView({
           <button
             onClick={() => setExtraModal(true)}
             className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all"
-            style={{ backgroundColor: '#C9A85C', color: '#1A4731' }}
+            style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}
           >
             <Plus size={16} />
             {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
@@ -587,7 +589,7 @@ export default function StationView({
                     onClick={() => setSelectedCategory('')}
                     className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
                     style={selectedCategory === ''
-                      ? { backgroundColor: '#1A8731', color: 'white' }
+                      ? { backgroundColor: '#1A4731', color: 'white' }
                       : { backgroundColor: '#F3F4F6', color: '#6B7280' }
                     }
                   >
@@ -687,7 +689,7 @@ export default function StationView({
               {extraProduct && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
-                    {lang === 'vi' ? 'Số lượng' : 'Uqantity'}
+                    {lang === 'vi' ? 'Số lượng' : 'Quantity'}
                   </label>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => { const v = Math.max(1, extraQty - 1); setExtraQty(v); setExtraQtyInput(String(v)); }}
@@ -748,7 +750,7 @@ export default function StationView({
               </p>
               {qtyInput > qtyModal.qty_to_produce && (
                 <p className="text-xs font-semibold mt-1" style={{ color: '#D97706' }}>
-                  {lang === 'vi' ? '⚠️ Vược mục tiêu — ghi nhận sản xuất thêm' : '⚠️ Over target — extra production noted'}
+                  {lang === 'vi' ? '⚠️ Vượt mục tiêu — ghi nhận sản xuất thêm' : '⚠️ Over target — extra production noted'}
                 </p>
               )}
             </div>
@@ -792,10 +794,78 @@ export default function StationView({
   );
 }
 
+// ─── NOTES EDITOR ────────────────────────────────────────────────────────────
+
+function NotesEditor({
+  assignmentId, initialNotes, lang, onSaved,
+}: {
+  assignmentId: string;
+  initialNotes: string;
+  lang: 'vi' | 'en';
+  onSaved: (id: string, note: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(initialNotes);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    const supabase = createClient();
+    await supabase.from('lab_assignments').update({ notes: value }).eq('id', assignmentId);
+    setSaving(false);
+    setEditing(false);
+    onSaved(assignmentId, value);
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-1 flex-1 min-w-0">
+        {value ? (
+          <span className="text-xs text-ink-light italic truncate flex-1">{value}</span>
+        ) : (
+          <span className="text-xs text-ink-light/50 flex-1">
+            {lang === 'vi' ? 'Thêm ghi chú…' : 'Add note…'}
+          </span>
+        )}
+        <button onClick={() => setEditing(true)}
+          className="p-1 shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+          style={{ color: '#1A4731' }}>
+          <PenLine size={11} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 flex-1">
+      <textarea
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        rows={2}
+        autoFocus
+        className="text-xs flex-1 border rounded-lg px-2 py-1 resize-none outline-none"
+        style={{ borderColor: '#C4B5FD', fontSize: '11px' }}
+      />
+      <div className="flex flex-col gap-1 shrink-0">
+        <button onClick={save} disabled={saving}
+          className="text-[11px] font-bold px-2 py-0.5 rounded"
+          style={{ backgroundColor: '#1A4731', color: 'white', opacity: saving ? 0.6 : 1 }}>
+          {saving ? '…' : '✓'}
+        </button>
+        <button onClick={() => { setValue(initialNotes); setEditing(false); }}
+          className="text-[11px] font-bold px-2 py-0.5 rounded"
+          style={{ backgroundColor: '#F5F5F5', color: '#555' }}>
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
 function ProductionCard({
-  a, lang, updating, onAdvance, onMarkInStock, onPartial, onViewFiche, meta,
+  a, lang, updating, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, meta,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -804,6 +874,7 @@ function ProductionCard({
   onMarkInStock: (a: Assignment) => void;
   onPartial: (a: Assignment) => void;
   onViewFiche: (a: Assignment) => void;
+  onNoteUpdate: (id: string, note: string) => void;
   meta: typeof TEAM_LABELS[Team];
 }) {
   const st = STATUS_META[a.status];
@@ -854,7 +925,7 @@ function ProductionCard({
             </div>
           )}
 
-          {/* SKU + weight */}
+          {/* SKU + weight + variant */}
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {a.sku && (
               <span className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded"
@@ -866,6 +937,12 @@ function ProductionCard({
               <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
                 style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
                 {a.weight_grams}g
+              </span>
+            )}
+            {a.variant_label && a.variant_label !== 'Standard' && (
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
+                {a.variant_label}
               </span>
             )}
             {a.is_extra && (
@@ -946,22 +1023,18 @@ function ProductionCard({
       )}
 
       {/* Notes + fiche */}
-      {(a.notes || a.product_id) && (
-        <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-2"
-          style={{ borderTop: '1px solid #F5EFC8' }}>
-          {a.notes ? (
-            <span className="text-xs text-ink-light flex-1 italic">{a.notes}</span>
-          ) : <span />}
-          {a.product_id && (
-            <button onClick={() => onViewFiche(a)}
-              className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
-              style={{ color: '#2D6A4F' }}>
-              <BookOpen size={12} />
-              {lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe card'}
-            </button>
-          )}
-        </div>
-      )}
+      <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-2"
+        style={{ borderTop: '1px solid #F5EFC8' }}>
+        <NotesEditor assignmentId={a.id} initialNotes={a.notes} lang={lang} onSaved={onNoteUpdate} />
+        {a.product_id && (
+          <button onClick={() => onViewFiche(a)}
+            className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
+            style={{ color: '#2D6A4F' }}>
+            <BookOpen size={12} />
+            {lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe card'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1035,7 +1108,7 @@ function TermineCard({
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs text-ink-light"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
-             <span>{b.shop_name}</span>
+              <span>{b.shop_name}</span>
               <span className="font-bold">×{b.qty}</span>
             </div>
           ))}
@@ -1053,16 +1126,28 @@ function FicheModal({
   productId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
 }) {
   const [steps, setSteps] = useState<FicheStep[] | null>(null);
+  const [ficheId, setFicheId] = useState<string | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
-    supabase
-      .from('lab_fiche_steps')
-      .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
-      .eq('product_id', productId)
-      .eq('step_type', 'step')
-      .order('step_number')
-      .then(({ data }) => setSteps(data ?? []));
+    supabase.auth.getSession().then(({ data }) => setIsLoggedIn(!!data.session));
+    Promise.all([
+      supabase
+        .from('lab_fiche_steps')
+        .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
+        .eq('product_id', productId)
+        .eq('step_type', 'step')
+        .order('step_number'),
+      supabase
+        .from('lab_fiche_meta')
+        .select('id')
+        .eq('product_id', productId)
+        .single(),
+    ]).then(([stepsRes, metaRes]) => {
+      setSteps(stepsRes.data ?? []);
+      setFicheId(metaRes.data?.id ?? null);
+    });
   }, [productId]);
 
   return (
@@ -1077,8 +1162,15 @@ function FicheModal({
             <span className="font-bold text-base" style={{ color: '#1A4731' }}>{productName}</span>
           </div>
           <div className="flex items-center gap-2">
+            {isLoggedIn && ficheId && (
+              <Link href={`/admin/fiches/${ficheId}`}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                style={{ backgroundColor: '#F0FDF4', color: '#166534' }}>
+                {lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}
+              </Link>
+            )}
             <Link href={`/station/fiche/${productId}?back=/station/me`}
-              className="text-xs font-semibold px-3 py-0.5 rounded-lg transition-colors"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
               {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
             </Link>
