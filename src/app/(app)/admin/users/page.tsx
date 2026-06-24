@@ -6,20 +6,20 @@ export const revalidate = 0;
 
 export default async function UsersPage() {
   const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) redirect('/login');
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) redirect('/login');
 
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (profile?.role !== 'admin') redirect('/dashboard');
 
-  // Only show lab users — catalogue users (admin/sales/viewer) stay invisible here
+  // All lab-role users (admin included — catalogue roles stay invisible)
   const { data: users } = await supabase
     .from('profiles')
     .select(`
       id, full_name, role,
       lab_profiles(team)
     `)
-    .in('role', ['lab_manager', 'assistant', 'chef'])
+    .in('role', ['admin', 'lab_manager', 'assistant', 'chef'])
     .order('full_name');
 
   // Supabase returns one-to-one joins as arrays; normalise to single object
