@@ -41,4 +41,6 @@ declare module 'lucide-react' {
   export const Package2: LucideIcon;
   export const Tag: LucideIcon;
   export const Building2: LucideIcon;
+  export const PenLine: LucideIcon;
+  export const Scan: LucideIcon;
 }
