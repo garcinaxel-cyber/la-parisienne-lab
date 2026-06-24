@@ -12,46 +12,60 @@ export default async function FichePage({
   searchParams: { back?: string };
 }) {
   const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) redirect('/login');
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) redirect('/login');
 
   const backUrl = searchParams.back ?? '/station/fiches';
 
+  // Try to load from products table (product-linked fiche)
   const { data: product } = await supabase
     .from('products')
     .select('id, name_vi, name_en, main_image_url, sku, subcategory, weight_grams, categories(name_vi, name_en)')
     .eq('id', params.productId)
-    .single();
+    .maybeSingle();
 
-  if (!product) redirect(backUrl);
+  // Get fiche meta — by product_id if product exists, by fiche id if standalone
+  const { data: metaRaw } = product
+    ? await supabase.from('lab_fiche_meta').select('*').eq('product_id', params.productId).maybeSingle()
+    : await supabase.from('lab_fiche_meta').select('*').eq('id', params.productId).maybeSingle();
 
-  const { data: allSteps } = await supabase
-    .from('lab_fiche_steps')
-    .select('step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
-    .eq('product_id', params.productId)
-    .order('step_number');
+  if (!product && !metaRaw) redirect(backUrl);
 
-  const { data: metaRaw } = await supabase
-    .from('lab_fiche_meta')
-    .select('*')
-    .eq('product_id', params.productId)
-    .single();
+  // Steps are keyed by fiche_id (not product_id)
+  const ficheId = metaRaw?.id ?? null;
+  const { data: allSteps } = ficheId
+    ? await supabase
+        .from('lab_fiche_steps')
+        .select('step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
+        .eq('fiche_id', ficheId)
+        .order('step_number')
+    : { data: [] };
 
-  const meta = metaRaw ?? null;
+  // If product exists, use it; otherwise synthesise from fiche meta
+  const productData = product ?? {
+    id: metaRaw!.id,
+    name_vi: metaRaw!.name_vi,
+    name_en: metaRaw!.name_en ?? null,
+    main_image_url: metaRaw!.image_url ?? null,
+    sku: null,
+    subcategory: null,
+    weight_grams: metaRaw!.weight_grams ?? null,
+    categories: null,
+  };
 
   // Normalize categories join (Supabase returns array)
   const normalised = {
-    ...product,
-    categories: Array.isArray((product as any).categories)
-      ? (product as any).categories[0] ?? null
-      : (product as any).categories ?? null,
+    ...productData,
+    categories: Array.isArray((productData as any).categories)
+      ? (productData as any).categories[0] ?? null
+      : (productData as any).categories ?? null,
   };
 
   return (
     <FicheView
       product={normalised}
       steps={(allSteps ?? []) as any[]}
-      meta={meta}
+      meta={metaRaw ?? null}
       backUrl={backUrl}
     />
   );
