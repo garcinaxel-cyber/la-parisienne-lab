@@ -493,6 +493,7 @@ export default function StationView({
                           ×{a.qty_to_produce}
                         </div>
                       </div>
+                      {/* Shop breakdown */}
                       {breakdown.length > 0 && (
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
@@ -679,7 +680,7 @@ export default function StationView({
                   )}
                   {extraSearch.length > 0 && !searchLoading && extraResults.length === 0 && (
                     <p className="text-sm text-ink-light text-center py-3">
-                      {lang === 'vi' ? 'Không tìm thấy sản phẩm nào' : 'No products found'}
+                      {lang === 'vi' ? 'Kbông tìm thấy sản phẩm nào' : 'No products found'}
                     </p>
                   )}
                 </div>
@@ -934,7 +935,7 @@ function ProductionCard({
             )}
             {a.weight_grams && (
               <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
-                style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
+                style= {{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
                 {a.weight_grams}g
               </span>
             )}
@@ -1025,7 +1026,7 @@ function ProductionCard({
       <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-2"
         style={{ borderTop: '1px solid #F5EFC8' }}>
         <NotesEditor assignmentId={a.id} initialNotes={a.notes} lang={lang} onSaved={onNoteUpdate} />
-        {a.product_id && (
+       {a.product_id && (
           <button onClick={() => onViewFiche(a)}
             className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
             style={{ color: '#2D6A4F' }}>
@@ -1230,4 +1231,3 @@ function FicheModal({
     </div>
   );
 }
-�Т��F�c���F�c���Т��F�c���F�c���F�c����Р
