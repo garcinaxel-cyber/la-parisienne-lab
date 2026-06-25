@@ -26,6 +26,7 @@ declare module 'lucide-react' {
   export const Send: LucideIcon;
   export const Upload: LucideIcon;
   export const UserCog: LucideIcon;
+  export const UserPlus: LucideIcon;
   export const Users: LucideIcon;
   export const X: LucideIcon;
   export const BookOpen: LucideIcon;
