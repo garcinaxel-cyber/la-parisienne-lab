@@ -14,6 +14,7 @@ declare module 'lucide-react' {
   export const ClipboardList: LucideIcon;
   export const Clock: LucideIcon;
   export const FileSpreadsheet: LucideIcon;
+  export const FilePlus: LucideIcon;
   export const FlaskConical: LucideIcon;
   export const LayoutDashboard: LucideIcon;
   export const LogOut: LucideIcon;
@@ -44,4 +45,9 @@ declare module 'lucide-react' {
   export const Building2: LucideIcon;
   export const PenLine: LucideIcon;
   export const Scan: LucideIcon;
+  export const Settings: LucideIcon;
+  export const Bell: LucideIcon;
+  export const BellRing: LucideIcon;
+  export const CheckCheck: LucideIcon;
+  export const Webhook: LucideIcon;
 }
