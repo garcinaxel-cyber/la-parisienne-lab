@@ -28,7 +28,7 @@ export async function publishImportAction(
     .from('lab_imports').select('type, order_number').eq('id', importId).single();
   const { data: asgns } = await supabase
     .from('lab_assignments').select('team').eq('import_id', importId);
-  const teams = [...new Set((asgns ?? []).map((a: any) => a.team as string))];
+  const teams = Array.from(new Set((asgns ?? []).map((a: any) => a.team as string)));
   const { data: settings } = await supabase
     .from('lab_notification_settings')
     .select('target, zalo_webhook_url').in('target', teams);
