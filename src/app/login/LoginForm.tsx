@@ -1,11 +1,13 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Loader2 } from 'lucide-react';
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get('redirect') ?? '/dashboard';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -17,7 +19,8 @@ export default function LoginForm() {
     const supabase = createClient();
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
     if (err) { setError(err.message); setLoading(false); return; }
-    router.push('/dashboard');
+    // Redirect to original destination (e.g. /station/hung from QR code)
+    router.push(redirectTo);
     router.refresh();
   }
 
