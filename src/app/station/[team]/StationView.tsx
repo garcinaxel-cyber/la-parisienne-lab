@@ -401,7 +401,7 @@ export default function StationView({
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
           <div>{lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}</div>
-          {!isHistoryView && !isEmployee && (
+          {!isHistoryView && userRole !== 'employee' && (
             <button
               onClick={handleProductionReady}
               disabled={notifying || notified}
