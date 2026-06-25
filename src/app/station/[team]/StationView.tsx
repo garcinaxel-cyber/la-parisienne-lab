@@ -5,10 +5,11 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronLeft, ChevronRight, PenLine,
+  ChevronLeft, ChevronRight, PenLine, BellRing,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
+import { sendProductionReadyNotification } from './actions';
 import { createClient } from '@/lib/supabase-browser';
 
 function SearchIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
@@ -102,6 +103,8 @@ export default function StationView({
   const [extraQtyInput, setExtraQtyInput] = useState('1');
   const [savingExtra, setSavingExtra] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [notifying, setNotifying] = useState(false);
+  const [notified, setNotified] = useState(false);
   const [extraCategories, setExtraCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('');
 
@@ -254,6 +257,14 @@ export default function StationView({
     router.push('/login');
   }
 
+  async function handleProductionReady() {
+    setNotifying(true);
+    await sendProductionReadyNotification(teamSlug, viewDate);
+    setNotifying(false);
+    setNotified(true);
+    setTimeout(() => setNotified(false), 5000);
+  }
+
   const formatDate = (d: string) =>
     new Date(d + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
       weekday: 'long', day: 'numeric', month: 'long',
@@ -389,7 +400,21 @@ export default function StationView({
 
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
-          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
+          <div>{lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}</div>
+          {!isHistoryView && !isEmployee && (
+            <button
+              onClick={handleProductionReady}
+              disabled={notifying || notified}
+              className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all active:scale-95"
+              style={{ backgroundColor: '#1A4731', color: '#FFF4CC', opacity: notified ? 0.75 : 1 }}
+            >
+              <BellRing size={13} />
+              {notified
+                ? (lang === 'vi' ? '✓ Đã báo assistantes' : '✓ Notified')
+                : notifying ? '…'
+                : (lang === 'vi' ? 'Báo production prête' : 'Notify: Production ready')}
+            </button>
+          )}
         </div>
       )}
 
