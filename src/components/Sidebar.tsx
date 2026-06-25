@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, FlaskConical, BookOpen, Scan } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, FlaskConical, BookOpen, Scan, Settings } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -15,6 +15,7 @@ const ADMIN_NAV = [
   { href: '/admin/users',     icon: Users,    key: 'users'     as const },
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
+  { href: '/admin/settings',  icon: Settings, key: 'settings'  as const },
 ];
 
 export default function Sidebar({ profile }: { profile: { full_name: string; role: UserRole } | null }) {
