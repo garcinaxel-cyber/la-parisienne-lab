@@ -493,7 +493,6 @@ export default function StationView({
                           ×{a.qty_to_produce}
                         </div>
                       </div>
-                      {/* Shop breakdown */}
                       {breakdown.length > 0 && (
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
@@ -1132,22 +1131,26 @@ function FicheModal({
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data }) => setIsLoggedIn(!!data.session));
-    Promise.all([
-      supabase
-        .from('lab_fiche_steps')
-        .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
-        .eq('product_id', productId)
-        .eq('step_type', 'step')
-        .order('step_number'),
-      supabase
-        .from('lab_fiche_meta')
-        .select('id')
-        .eq('product_id', productId)
-        .single(),
-    ]).then(([stepsRes, metaRes]) => {
-      setSteps(stepsRes.data ?? []);
-      setFicheId(metaRes.data?.id ?? null);
-    });
+    // First get fiche meta to get ficheId, then load steps by fiche_id
+    supabase
+      .from('lab_fiche_meta')
+      .select('id')
+      .eq('product_id', productId)
+      .maybeSingle()
+      .then(({ data: meta }) => {
+        setFicheId(meta?.id ?? null);
+        if (meta?.id) {
+          supabase
+            .from('lab_fiche_steps')
+            .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
+            .eq('fiche_id', meta.id)
+            .eq('step_type', 'step')
+            .order('step_number')
+            .then(({ data }) => setSteps(data ?? []));
+        } else {
+          setSteps([]);
+        }
+      });
   }, [productId]);
 
   return (
@@ -1227,3 +1230,4 @@ function FicheModal({
     </div>
   );
 }
+�Т��F�c���F�c���Т��F�c���F�c���F�c����Р
