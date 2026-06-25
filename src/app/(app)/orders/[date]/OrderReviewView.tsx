@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { publishImportAction } from './actions';
 
 type OrderLine = { import_id: string; team: string; variant_label: string; shop_name: string; qty: number; order_ref?: string };
 
@@ -72,11 +73,7 @@ export default function OrderReviewView({
 
   async function publishImport(importId: string) {
     setPublishing(importId);
-    const supabase = createClient();
-    await supabase.from('lab_imports').update({
-      status: 'published',
-      published_at: new Date().toISOString(),
-    }).eq('id', importId);
+    await publishImportAction(importId, date);
     setPublishing(null);
     router.refresh();
   }
