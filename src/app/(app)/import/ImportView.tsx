@@ -1,11 +1,12 @@
 'use client';
 import { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, ChevronDown, ChevronUp, FilePlus } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { parseExcelFile, consolidateLines, type ConsolidatedLine } from '@/lib/excel-parser';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { createFicheFromSku } from './actions';
 
 type Step = 'upload' | 'preview' | 'saving' | 'done';
 
@@ -52,6 +53,7 @@ export default function ImportView() {
   const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: Array<{ sku: string; name: string }> } | null>(null);
   const [excludedSkus, setExcludedSkus] = useState<Set<string>>(new Set());
   const [orderTimes, setOrderTimes] = useState<Record<string, string>>({});
+  const [creatingFicheSku, setCreatingFicheSku] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -142,6 +144,17 @@ export default function ImportView() {
       next.has(sku) ? next.delete(sku) : next.add(sku);
       return next;
     });
+  };
+
+  const handleCreateFiche = async (sku: string, name: string) => {
+    setCreatingFicheSku(sku);
+    const { ficheId, error } = await createFicheFromSku(sku, name);
+    if (error || !ficheId) {
+      setCreatingFicheSku(null);
+      setError(error ?? 'Failed to create fiche');
+      return;
+    }
+    router.push(`/admin/fiches/${ficheId}`);
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -461,10 +474,23 @@ export default function ImportView() {
               <div className="divide-y divide-amber-100 bg-white">
                 {matchCheck.unmatched.map(({ sku, name }) => {
                   const isExcluded = excludedSkus.has(sku);
+                  const isCreating = creatingFicheSku === sku;
                   return (
-                    <div key={sku} className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isExcluded ? 'opacity-50' : ''}`}>
+                    <div key={sku} className={`flex items-center gap-2 px-4 py-2.5 transition-colors ${isExcluded ? 'opacity-50' : ''}`}>
                       <code className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">{sku}</code>
-                      <span className={`flex-1 text-sm ${isExcluded ? 'line-through text-ink-light' : 'text-navy'}`}>{name}</span>
+                      <span className={`flex-1 text-sm min-w-0 truncate ${isExcluded ? 'line-through text-ink-light' : 'text-navy'}`}>{name}</span>
+                      {!isExcluded && (
+                        <button
+                          onClick={() => handleCreateFiche(sku, name)}
+                          disabled={isCreating || !!creatingFicheSku}
+                          className="text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 bg-navy/10 text-navy hover:bg-navy/20 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          <FilePlus size={11} />
+                          {isCreating
+                            ? '…'
+                            : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
+                        </button>
+                      )}
                       <button
                         onClick={() => toggleExclude(sku)}
                         className={`text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 ${
@@ -483,8 +509,8 @@ export default function ImportView() {
               </div>
               <div className="px-4 py-2 bg-amber-50 text-xs text-amber-600">
                 {lang === 'vi'
-                  ? 'Sản phẩm giữ lại sẽ được nhập bình thường nhưng không có ảnh hay phiếu kỹ thuật.'
-                  : 'Kept products will import normally — without photo or recipe card.'}
+                  ? 'Tạo phiếu kỹ thuật trước hoặc giữ lại để nhập bình thường (không có ảnh hay phiếu).'
+                  : 'Create a recipe card first, or keep to import normally (without photo or recipe card).'}
               </div>
             </div>
           )}
