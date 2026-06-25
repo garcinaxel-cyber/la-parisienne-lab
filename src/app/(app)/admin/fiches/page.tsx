@@ -18,7 +18,7 @@ async function createFiche() {
   if (data?.id) redirect(`/admin/fiches/${data.id}`);
 }
 
-export default async function FichesPage() {
+export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/login');
@@ -41,10 +41,15 @@ export default async function FichesPage() {
   }
 
   const allFiches = fiches ?? [];
+  const selectedCat = searchParams?.cat ?? '';
 
-  // Group by category text
+  // All unique categories for filter chips
+  const allCats = Array.from(new Set(allFiches.map((f: any) => f.category ?? 'Khác'))).sort() as string[];
+
+  // Filter then group
+  const filtered = selectedCat ? allFiches.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : allFiches;
   const catGroups = new Map<string, typeof allFiches>();
-  for (const f of allFiches) {
+  for (const f of filtered) {
     const cat = (f as any).category ?? 'Khác';
     if (!catGroups.has(cat)) catGroups.set(cat, []);
     catGroups.get(cat)!.push(f);
@@ -52,7 +57,7 @@ export default async function FichesPage() {
 
   return (
     <div className="space-y-2 max-w-4xl">
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <h1 className="font-serif text-3xl font-bold text-navy">Phiếu kỹ thuật / Recipe Cards</h1>
           <p className="text-sm text-ink-light mt-1">
@@ -60,37 +65,47 @@ export default async function FichesPage() {
           </p>
         </div>
         <form action={createFiche}>
-          <button type="submit"
-            className="btn-primary flex items-center gap-2 shrink-0">
+          <button type="submit" className="btn-primary flex items-center gap-2 shrink-0">
             <Plus size={15} /> Tạo mới · New
           </button>
         </form>
       </div>
 
+      {/* Category filter chips */}
+      {allCats.length > 1 && (
+        <div className="flex gap-2 flex-wrap pb-2">
+          <Link href="/admin/fiches"
+            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!selectedCat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
+            Tất cả · All ({allFiches.length})
+          </Link>
+          {allCats.map(cat => (
+            <Link key={cat}
+              href={`/admin/fiches?cat=${encodeURIComponent(cat)}`}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedCat === cat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
+              {cat} ({allFiches.filter((f: any) => (f.category ?? 'Khác') === cat).length})
+            </Link>
+          ))}
+        </div>
+      )}
+
       {Array.from(catGroups.entries()).map(([cat, items]) => (
-        <section key={cat} className="mt-6 first:mt-0">
+        <section key={cat} className="mt-4 first:mt-0">
           <div className="flex items-center gap-3 mb-3">
             <div className="h-px flex-1 bg-border-soft" />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-ink-light px-1 shrink-0">
-              {cat}
-            </h2>
+            <h2 className="text-xs font-bold uppercase tracking-widest text-ink-light px-1 shrink-0">{cat}</h2>
             <div className="h-px flex-1 bg-border-soft" />
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {items.map((fiche: any) => (
-              <FicheCard
-                key={fiche.id}
-                fiche={fiche}
-                steps={countByFiche[fiche.id] ?? 0}
-              />
+              <FicheCard key={fiche.id} fiche={fiche} steps={countByFiche[fiche.id] ?? 0} />
             ))}
           </div>
         </section>
       ))}
 
-      {allFiches.length === 0 && (
+      {filtered.length === 0 && (
         <div className="card p-12 text-center text-ink-light">
-          Chưa có fiche nào. · No recipe cards yet.
+          {selectedCat ? `Aucune fiche dans "${selectedCat}".` : 'Chưa có fiche nào. · No recipe cards yet.'}
         </div>
       )}
     </div>
