@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserCog, Save, AlertCircle } from 'lucide-react';
+import { UserCog, Save, AlertCircle, UserPlus, X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { inviteLabUser } from './actions';
 
 const LAB_ROLES = ['lab_manager', 'assistant', 'chef'] as const;
 const EDITABLE_ROLES = LAB_ROLES; // admins are shown read-only
@@ -22,6 +23,38 @@ export default function UsersView({ users }: { users: UserRow[] }) {
   const [editing, setEditing] = useState<Record<string, { role: string; team: string | null }>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Invite modal state
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteForm, setInviteForm] = useState<{
+    email: string; fullName: string;
+    role: 'chef' | 'assistant' | 'lab_manager'; team: string;
+  }>({ email: '', fullName: '', role: 'chef', team: '' });
+
+  async function submitInvite() {
+    if (!inviteForm.email || !inviteForm.fullName) return;
+    if (inviteForm.role === 'chef' && !inviteForm.team) return;
+    setInviting(true);
+    setInviteError(null);
+    const res = await inviteLabUser({
+      email: inviteForm.email,
+      fullName: inviteForm.fullName,
+      role: inviteForm.role,
+      team: inviteForm.role === 'chef' ? inviteForm.team : null,
+    });
+    setInviting(false);
+    if (res.error) { setInviteError(res.error); return; }
+    setInviteSuccess(true);
+    setTimeout(() => {
+      setShowInvite(false);
+      setInviteSuccess(false);
+      setInviteForm({ email: '', fullName: '', role: 'chef', team: '' });
+      router.refresh();
+    }, 1500);
+  }
 
   function getEdit(user: UserRow) {
     return editing[user.id] ?? {
@@ -81,14 +114,120 @@ export default function UsersView({ users }: { users: UserRow[] }) {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="font-serif text-3xl font-bold text-navy">{lang === 'vi' ? 'Quản lý người dùng' : 'User management'}</h1>
-        <p className="text-sm text-ink-light mt-1">
-          {lang === 'vi'
-            ? 'Phân quyền và gán đội sản xuất cho từng người'
-            : 'Assign roles and production teams to each user'}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-3xl font-bold text-navy">{lang === 'vi' ? 'Quản lý người dùng' : 'User management'}</h1>
+          <p className="text-sm text-ink-light mt-1">
+            {lang === 'vi'
+              ? 'Phân quyền và gán đội sản xuất cho từng người'
+              : 'Assign roles and production teams to each user'}
+          </p>
+        </div>
+        <button
+          onClick={() => { setShowInvite(true); setInviteError(null); setInviteSuccess(false); }}
+          className="btn-primary flex items-center gap-2 shrink-0"
+        >
+          <UserPlus size={15} />
+          {lang === 'vi' ? 'Mời người dùng' : 'Invite user'}
+        </button>
       </div>
+
+      {/* Invite modal */}
+      {showInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+          onClick={() => setShowInvite(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-bold text-lg text-navy">
+                {lang === 'vi' ? 'Mời thành viên mới' : 'Invite new member'}
+              </h2>
+              <button onClick={() => setShowInvite(false)} className="text-ink-light hover:text-ink">
+                <X size={18} />
+              </button>
+            </div>
+
+            {inviteSuccess ? (
+              <div className="text-center py-6">
+                <div className="text-4xl mb-2">✅</div>
+                <p className="font-semibold text-navy">
+                  {lang === 'vi' ? 'Đã gửi email mời!' : 'Invitation sent!'}
+                </p>
+                <p className="text-sm text-ink-light mt-1">
+                  {inviteForm.email}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-ink-light uppercase tracking-wider">Email *</label>
+                  <input type="email" value={inviteForm.email}
+                    onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+                    className="input mt-1 w-full" placeholder="nom@email.com" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-ink-light uppercase tracking-wider">
+                    {lang === 'vi' ? 'Họ tên *' : 'Full name *'}
+                  </label>
+                  <input type="text" value={inviteForm.fullName}
+                    onChange={e => setInviteForm(f => ({ ...f, fullName: e.target.value }))}
+                    className="input mt-1 w-full" placeholder={lang === 'vi' ? 'Nguyễn Văn A' : 'Jane Doe'} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-ink-light uppercase tracking-wider">Role *</label>
+                    <select value={inviteForm.role}
+                      onChange={e => setInviteForm(f => ({ ...f, role: e.target.value as any, team: '' }))}
+                      className="input mt-1 w-full">
+                      <option value="chef">Chef</option>
+                      <option value="assistant">Assistant</option>
+                      <option value="lab_manager">Lab Manager</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-ink-light uppercase tracking-wider">Team</label>
+                    <select value={inviteForm.team}
+                      onChange={e => setInviteForm(f => ({ ...f, team: e.target.value }))}
+                      className="input mt-1 w-full"
+                      disabled={inviteForm.role !== 'chef'}>
+                      <option value="">{inviteForm.role !== 'chef' ? '—' : (lang === 'vi' ? 'Chọn đội…' : 'Select…')}</option>
+                      {TEAMS.map(t => (
+                        <option key={t} value={t}>
+                          {lang === 'vi' ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {inviteError && (
+                  <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    <span>{inviteError}</span>
+                  </div>
+                )}
+
+                <div className="text-xs text-ink-light bg-cream/60 rounded-xl p-3">
+                  {lang === 'vi'
+                    ? 'Người dùng nhận email để đặt mật khẩu. Họ chỉ có quyền truy cập Lab App — không phải Catalogue App.'
+                    : 'The user receives an email to set their password. They get Lab App access only — not the Catalogue App.'}
+                </div>
+
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setShowInvite(false)} className="btn-secondary flex-1">
+                    {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={submitInvite}
+                    disabled={inviting || !inviteForm.email || !inviteForm.fullName || (inviteForm.role === 'chef' && !inviteForm.team)}
+                    className="btn-primary flex-1 flex items-center justify-center gap-2">
+                    {inviting ? '…' : (lang === 'vi' ? 'Gửi lời mời' : 'Send invite')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
