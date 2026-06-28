@@ -14,11 +14,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .single();
 
   // Only lab roles can access the app — catalogue-only users get bounced to login
-  const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef'];
+  const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
   if (!profile || !LAB_ROLES.includes(profile.role)) redirect('/login');
 
-  // Chefs get redirected to their station view — they don't use the app layout
-  if (profile.role === 'chef') redirect('/station/me');
+  // Chefs and workers go to their station — they don't use the full admin layout
+  if (profile.role === 'chef' || profile.role === 'worker') redirect('/station/me');
 
   return (
     <div className="flex min-h-screen bg-cream">
