@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, ChevronRight } from 'lucide-react';
+import { BookOpen, ChevronRight, Lock } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 
 type Fiche = {
@@ -20,6 +20,7 @@ export default function StationFichesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedCat, setSelectedCat] = useState('');
   const [lang, setLang] = useState<'vi' | 'en'>('vi');
+  const [isReadOnly, setIsReadOnly] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -31,7 +32,6 @@ export default function StationFichesPage() {
     async function load() {
       const supabase = createClient();
 
-      // Get session + profile + lab team
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { window.location.href = '/login'; return; }
 
@@ -40,24 +40,28 @@ export default function StationFichesPage() {
         supabase.from('lab_profiles').select('team').eq('id', session.user.id).single(),
       ]);
 
-      const isAdmin = ['admin', 'lab_manager'].includes(profile?.role ?? '');
+      const role = profile?.role ?? '';
+      const isAdmin = ['admin', 'lab_manager'].includes(role);
+      // Workers can see fiches but cannot edit them
+      const isWorker = role === 'worker';
+      setIsReadOnly(isWorker);
       const userTeam = labProfile?.team;
 
-      // Fetch fiches from lab_fiche_meta (filtered by team for chefs)
       let query = supabase
         .from('lab_fiche_meta')
         .select('id, name_vi, name_en, image_url, category, teams, product_id')
         .eq('is_active', true);
 
       if (!isAdmin && userTeam) {
+        // Chef / Worker: show only fiches assigned to their team
         query = query.contains('teams', [userTeam]);
       }
+      // If no team assigned and not admin: show nothing (admin should assign teams first)
 
       const { data: fichesRaw } = await query.order('name_vi');
       const allFiches = fichesRaw ?? [];
       const ficheIds = allFiches.map(f => f.id);
 
-      // Count steps per fiche via fiche_id
       const { data: stepRows } = ficheIds.length > 0
         ? await supabase.from('lab_fiche_steps').select('fiche_id').in('fiche_id', ficheIds)
         : { data: [] as { fiche_id: string }[] };
@@ -73,10 +77,7 @@ export default function StationFichesPage() {
     load();
   }, []);
 
-  // Categories for filter chips
   const categories = Array.from(new Set(fiches.map(f => f.category ?? 'Khác'))).sort();
-
-  // Filtered + grouped
   const filtered = selectedCat ? fiches.filter(f => (f.category ?? 'Khác') === selectedCat) : fiches;
 
   const catGroups = new Map<string, Fiche[]>();
@@ -88,7 +89,6 @@ export default function StationFichesPage() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
-      {/* Header */}
       <header style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
         className="sticky top-0 z-10 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -97,7 +97,15 @@ export default function StationFichesPage() {
             <BookOpen size={16} className="text-white" />
           </div>
           <div>
-            <div className="font-bold text-sm text-white">Phiếu Kỹ Thuật</div>
+            <div className="font-bold text-sm text-white flex items-center gap-2">
+              Phiếu Kỹ Thuật
+              {isReadOnly && (
+                <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                  style={{ backgroundColor: 'rgba(255,244,204,0.2)', color: '#FFF4CC' }}>
+                  <Lock size={9} /> Xem
+                </span>
+              )}
+            </div>
             <div className="text-white/60 text-[11px]">Recipe Cards — La Parisienne</div>
           </div>
         </div>
@@ -106,11 +114,9 @@ export default function StationFichesPage() {
         </Link>
       </header>
 
-      {/* Category filter chips */}
       {categories.length > 1 && (
         <div className="px-4 pt-4 flex gap-2 flex-wrap">
-          <button
-            onClick={() => setSelectedCat('')}
+          <button onClick={() => setSelectedCat('')}
             className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
             style={selectedCat === ''
               ? { backgroundColor: '#1A4731', color: 'white' }
@@ -118,8 +124,7 @@ export default function StationFichesPage() {
             {lang === 'vi' ? 'Tất cả' : 'All'} ({fiches.length})
           </button>
           {categories.map(cat => (
-            <button key={cat}
-              onClick={() => setSelectedCat(cat === selectedCat ? '' : cat)}
+            <button key={cat} onClick={() => setSelectedCat(cat === selectedCat ? '' : cat)}
               className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
               style={selectedCat === cat
                 ? { backgroundColor: '#1A4731', color: 'white' }
@@ -144,7 +149,9 @@ export default function StationFichesPage() {
               {lang === 'vi' ? 'Chưa có phiếu kỹ thuật.' : 'No recipe cards yet.'}
             </p>
             <p className="text-sm mt-1 text-gray-400">
-              {lang === 'vi' ? 'Admin cần thêm sản phẩm vào đội của bạn.' : 'Admin needs to add products to your team.'}
+              {lang === 'vi'
+                ? 'Admin cần gán sản phẩm vào đội của bạn trong mục Phiếu Kỹ Thuật.'
+                : 'Admin needs to assign products to your team in the Recipe Cards section.'}
             </p>
           </div>
         )}
@@ -187,7 +194,10 @@ export default function StationFichesPage() {
                         : (lang === 'vi' ? 'Chưa có phiếu' : 'No recipe yet')}
                     </div>
                   </div>
-                  <ChevronRight size={16} style={{ color: '#C9A84C' }} className="shrink-0" />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isReadOnly && <Lock size={12} style={{ color: '#C9A84C' }} />}
+                    <ChevronRight size={16} style={{ color: '#C9A84C' }} />
+                  </div>
                 </Link>
               ))}
             </div>
