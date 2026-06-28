@@ -6,7 +6,11 @@ import { TEAMS } from '@/lib/types';
 
 export const revalidate = 0;
 
-export default async function StationPage({ params, searchParams }: { params: { team: string }; searchParams?: { date?: string } }) {
+export default async function StationPage({
+  params,
+}: {
+  params: { team: string };
+}) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -25,9 +29,17 @@ export default async function StationPage({ params, searchParams }: { params: { 
 
   if (!TEAMS.includes(team)) redirect('/login');
 
+  // Verify user role (chef or worker only — admins can also access for monitoring)
+  const { data: profile } = session
+    ? await supabase.from('profiles').select('role').eq('id', session.user.id).single()
+    : { data: null };
+
+  const allowedRoles = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
+  if (!profile || !allowedRoles.includes(profile.role)) redirect('/login');
+
+  const isWorker = profile.role === 'worker';
+
   const today = new Date().toISOString().split('T')[0];
-  const viewDate = searchParams?.date ?? today;
-  const isHistoryView = viewDate !== today;
 
   const { data: assignments } = await supabase
     .from('lab_assignments')
@@ -40,13 +52,12 @@ export default async function StationPage({ params, searchParams }: { params: { 
     `)
     .eq('team', team)
     .eq('lab_imports.status', 'published')
-    .eq('lab_imports.delivery_date', viewDate)
+    .eq('lab_imports.delivery_date', today)
     .order('sort_order')
     .limit(120);
 
   const assignmentIds = (assignments ?? []).map((a: any) => a.id);
 
-  // Breakdowns
   const { data: breakdowns } = assignmentIds.length > 0
     ? await supabase.from('lab_assignments').select('id, breakdown').in('id', assignmentIds)
     : { data: [] as any[] };
@@ -56,29 +67,17 @@ export default async function StationPage({ params, searchParams }: { params: { 
     breakdownMap[b.id] = Array.isArray(b.breakdown) ? b.breakdown : [];
   }
 
-  // Weight from fiche meta
-  const productIds = (assignments ?? [])
-    .map((a: any) => a.product_id)
-    .filter(Boolean) as string[];
+  const productIds = (assignments ?? []).map((a: any) => a.product_id).filter(Boolean) as string[];
 
   const { data: ficheMeta } = productIds.length > 0
-    ? await supabase
-        .from('lab_fiche_meta')
-        .select('product_id, weight_grams')
-        .in('product_id', productIds)
+    ? await supabase.from('lab_fiche_meta').select('product_id, weight_grams').in('product_id', productIds)
     : { data: [] as any[] };
 
   const weightMap: Record<string, number | null> = {};
-  for (const m of ficheMeta ?? []) {
-    weightMap[m.product_id] = m.weight_grams ?? null;
-  }
+  for (const m of ficheMeta ?? []) weightMap[m.product_id] = m.weight_grams ?? null;
 
-  // Categories for products
   const { data: productCats } = productIds.length > 0
-    ? await supabase
-        .from('products')
-        .select('id, categories!category_id(name_vi, name_en)')
-        .in('id', productIds)
+    ? await supabase.from('products').select('id, categories!category_id(name_vi, name_en)').in('id', productIds)
     : { data: [] as any[] };
 
   const categoryNameMap: Record<string, { vi: string; en: string }> = {};
@@ -87,15 +86,10 @@ export default async function StationPage({ params, searchParams }: { params: { 
     if (cat && p.id) categoryNameMap[p.id] = { vi: cat.name_vi ?? '', en: cat.name_en ?? '' };
   }
 
-  // Delivery times from lab_order_lines (per order_ref)
   const importIds = Array.from(new Set((assignments ?? []).map((a: any) => a.import_id).filter(Boolean))) as string[];
   const { data: orderLineDeliveries } = importIds.length > 0
-    ? await supabase
-        .from('lab_order_lines')
-        .select('order_ref, delivery_time')
-        .in('import_id', importIds)
-        .not('delivery_time', 'is', null)
-        .not('order_ref', 'is', null)
+    ? await supabase.from('lab_order_lines').select('order_ref, delivery_time').in('import_id', importIds)
+        .not('delivery_time', 'is', null).not('order_ref', 'is', null)
     : { data: [] as any[] };
 
   const deliveryTimeByRef: Record<string, string> = {};
@@ -117,5 +111,13 @@ export default async function StationPage({ params, searchParams }: { params: { 
     products: undefined,
   }));
 
-  return <StationView key={viewDate} team={team} teamSlug={params.team} assignments={normalised} viewDate={viewDate} today={today} isHistoryView={isHistoryView} />;
+  return (
+    <StationView
+      team={team}
+      teamSlug={params.team}
+      assignments={normalised}
+      today={today}
+      isWorker={isWorker}
+    />
+  );
 }
