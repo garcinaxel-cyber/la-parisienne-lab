@@ -347,12 +347,12 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
-  const tabs: { id: Tab; labelVi: string; labelEn: string; count?: number; icon: React.ReactNode }[] = [
-    { id: 'production', labelVi: 'Sản xuất', labelEn: 'Production', count: production.length, icon: <FlaskConical size={14} /> },
-    { id: 'commande', labelVi: 'Đơn hàng', labelEn: 'Orders', count: assignments.length, icon: <ClipboardList size={14} /> },
-    { id: 'termine', labelVi: 'Hoàn thành', labelEn: 'Done', count: termineCount, icon: <CheckCircle2 size={14} /> },
-    { id: 'historique', labelVi: 'Lịch sử', labelEn: 'History', icon: <History size={14} /> },
-    { id: 'upcoming', labelVi: 'Sắp tới', labelEn: 'Upcoming', icon: <CalendarDays size={14} /> },
+  const tabs = [
+    { id: 'production' as Tab, labelVi: 'Sản xuất', labelEn: 'Production', count: production.length },
+    { id: 'commande' as Tab, labelVi: 'Đơn hàng', labelEn: 'Orders', count: assignments.length },
+    { id: 'termine' as Tab, labelVi: 'Hoàn thành', labelEn: 'Done', count: termineCount },
+    { id: 'historique' as Tab, labelVi: 'Lịch sử', labelEn: 'History' },
+    { id: 'upcoming' as Tab, labelVi: 'Sắp tới', labelEn: 'Upcoming' },
   ];
 
   const sharedCardProps = {
@@ -429,7 +429,11 @@ export default function StationView({
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
                 : { color: 'rgba(255,255,255,0.55)', borderBottom: '2px solid transparent' }
               }>
-              {tab.icon}
+              {tab.id === 'production' ? <FlaskConical size={14} /> :
+               tab.id === 'commande' ? <ClipboardList size={14} /> :
+               tab.id === 'termine' ? <CheckCircle2 size={14} /> :
+               tab.id === 'historique' ? <History size={14} /> :
+               <CalendarDays size={14} />}
               {lang === 'vi' ? tab.labelVi : tab.labelEn}
               {tab.count != null && tab.count > 0 && (
                 <span className="rounded-full px-1.5 py-0.5 text-[9px] font-black"
