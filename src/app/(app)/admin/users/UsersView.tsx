@@ -7,7 +7,7 @@ import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { inviteLabUser } from './actions';
 
-const LAB_ROLES = ['lab_manager', 'assistant', 'chef'] as const;
+const LAB_ROLES = ['lab_manager', 'assistant', 'chef', 'worker'] as const;
 const EDITABLE_ROLES = LAB_ROLES; // admins are shown read-only
 
 type UserRow = {
@@ -31,19 +31,19 @@ export default function UsersView({ users }: { users: UserRow[] }) {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteForm, setInviteForm] = useState<{
     email: string; fullName: string;
-    role: 'chef' | 'assistant' | 'lab_manager'; team: string;
+    role: 'chef' | 'assistant' | 'lab_manager' | 'worker'; team: string;
   }>({ email: '', fullName: '', role: 'chef', team: '' });
 
   async function submitInvite() {
     if (!inviteForm.email || !inviteForm.fullName) return;
-    if (inviteForm.role === 'chef' && !inviteForm.team) return;
+    if (['chef', 'worker'].includes(inviteForm.role) && !inviteForm.team) return;
     setInviting(true);
     setInviteError(null);
     const res = await inviteLabUser({
       email: inviteForm.email,
       fullName: inviteForm.fullName,
       role: inviteForm.role,
-      team: inviteForm.role === 'chef' ? inviteForm.team : null,
+      team: ['chef', 'worker'].includes(inviteForm.role) ? inviteForm.team : null,
     });
     setInviting(false);
     if (res.error) { setInviteError(res.error); return; }
@@ -103,13 +103,14 @@ export default function UsersView({ users }: { users: UserRow[] }) {
 
   const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin', sales: 'Sales', viewer: 'Viewer',
-    lab_manager: 'Lab Manager', assistant: 'Assistant', chef: 'Chef',
+    lab_manager: 'Lab Manager', assistant: 'Assistant', chef: 'Chef', worker: 'Worker',
   };
 
   const ROLE_BADGE: Record<string, string> = {
     admin: 'bg-navy text-white', sales: 'bg-gold/20 text-gold',
     viewer: 'bg-gray-100 text-gray-600', lab_manager: 'bg-purple-100 text-purple-700',
     assistant: 'bg-blue-100 text-blue-700', chef: 'bg-emerald-100 text-emerald-700',
+    worker: 'bg-orange-100 text-orange-700',
   };
 
   return (
@@ -179,6 +180,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                       onChange={e => setInviteForm(f => ({ ...f, role: e.target.value as any, team: '' }))}
                       className="input mt-1 w-full">
                       <option value="chef">Chef</option>
+                      <option value="worker">Worker</option>
                       <option value="assistant">Assistant</option>
                       <option value="lab_manager">Lab Manager</option>
                     </select>
@@ -188,8 +190,8 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                     <select value={inviteForm.team}
                       onChange={e => setInviteForm(f => ({ ...f, team: e.target.value }))}
                       className="input mt-1 w-full"
-                      disabled={inviteForm.role !== 'chef'}>
-                      <option value="">{inviteForm.role !== 'chef' ? '—' : (lang === 'vi' ? 'Chọn đội…' : 'Select…')}</option>
+                      disabled={!['chef', 'worker'].includes(inviteForm.role)}>
+                      <option value="">{!['chef', 'worker'].includes(inviteForm.role) ? '—' : (lang === 'vi' ? 'Chọn đội…' : 'Select…')}</option>
                       {TEAMS.map(t => (
                         <option key={t} value={t}>
                           {lang === 'vi' ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en}
@@ -218,7 +220,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                   </button>
                   <button
                     onClick={submitInvite}
-                    disabled={inviting || !inviteForm.email || !inviteForm.fullName || (inviteForm.role === 'chef' && !inviteForm.team)}
+                    disabled={inviting || !inviteForm.email || !inviteForm.fullName || (['chef', 'worker'].includes(inviteForm.role) && !inviteForm.team)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2">
                     {inviting ? '…' : (lang === 'vi' ? 'Gửi lời mời' : 'Send invite')}
                   </button>
@@ -249,8 +251,8 @@ export default function UsersView({ users }: { users: UserRow[] }) {
             const isAdmin = user.role === 'admin';
             const edit = getEdit(user);
             const isLabRole = LAB_ROLES.includes(edit.role as any);
+            const needsTeam = edit.role === 'chef' || edit.role === 'worker';
             const isDirty = !isAdmin && (edit.role !== user.role || edit.team !== (user.lab_profiles?.team ?? null));
-            const isChef = edit.role === 'chef';
 
             return (
               <div key={user.id} className="grid grid-cols-12 items-center px-4 py-3 gap-2">
@@ -291,10 +293,10 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                       value={edit.team ?? ''}
                       onChange={e => updateEdit(user.id, { team: e.target.value || null })}
                       className="input text-sm w-full"
-                      disabled={!isChef}
+                      disabled={!needsTeam}
                     >
-                      {!isChef && <option value="">— {lang === 'vi' ? 'Tất cả' : 'All teams'} —</option>}
-                      {isChef && <option value="">{lang === 'vi' ? 'Chọn đội…' : 'Select team…'}</option>}
+                      {!needsTeam && <option value="">— {lang === 'vi' ? 'Tất cả' : 'All teams'} —</option>}
+                      {needsTeam && <option value="">{lang === 'vi' ? 'Chọn đội…' : 'Select team…'}</option>}
                       {TEAMS.map(team => (
                         <option key={team} value={team}>
                           {lang === 'vi' ? TEAM_LABELS[team as Team].vi : TEAM_LABELS[team as Team].en}
@@ -311,7 +313,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                   {isDirty && (
                     <button
                       onClick={() => save(user)}
-                      disabled={saving === user.id || (isChef && !edit.team)}
+                      disabled={saving === user.id || (needsTeam && !edit.team)}
                       className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
                     >
                       <Save size={12} />
@@ -334,7 +336,8 @@ export default function UsersView({ users }: { users: UserRow[] }) {
           {[
             { role: 'lab_manager', en: 'Full access: import, review, publish, manage users', vi: 'Toàn quyền: nhập, xem xét, phát hành, quản lý người dùng' },
             { role: 'assistant', en: 'Import and review orders, mark exceptions', vi: 'Nhập và xem xét đơn, đánh dấu ngoại lệ' },
-            { role: 'chef', en: "View own team's station only, update progress", vi: 'Chỉ xem trạm đội mình, cập nhật tiến độ' },
+            { role: 'chef', en: "View own team's station, update production progress", vi: 'Xem trạm đội mình, cập nhật tiến độ sản xuất' },
+            { role: 'worker', en: "View own team's station — read only, cannot mark progress", vi: 'Xem trạm đội mình — chỉ đọc, không thể cập nhật tiến độ' },
           ].map(({ role, en, vi }) => (
             <div key={role} className="flex items-start gap-2">
               <span className={`badge text-[10px] shrink-0 mt-0.5 ${ROLE_BADGE[role]}`}>{ROLE_LABEL[role]}</span>
