@@ -19,7 +19,7 @@ export default async function UsersPage() {
       id, full_name, role,
       lab_profiles(team)
     `)
-    .in('role', ['admin', 'lab_manager', 'assistant', 'chef'])
+    .in('role', ['admin', 'lab_manager', 'assistant', 'chef', 'worker'])
     .order('full_name');
 
   // Supabase returns one-to-one joins as arrays; normalise to single object
