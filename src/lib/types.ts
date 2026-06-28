@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'lab_manager' | 'assistant' | 'chef' | 'sales' | 'viewer';
+export type UserRole = 'admin' | 'lab_manager' | 'assistant' | 'chef' | 'worker' | 'sales' | 'viewer';
 export type Team = 'baby_mama' | 'hung' | 'entremet' | 'baker';
 export type ImportType = 'daily' | 'cake_addon';
 export type ImportStatus = 'draft' | 'published' | 'cancelled';
@@ -9,9 +9,9 @@ export const TEAMS: Team[] = ['baby_mama', 'hung', 'entremet', 'baker'];
 
 export const TEAM_LABELS: Record<Team, { en: string; vi: string; color: string; bg: string }> = {
   baby_mama: { en: 'Team Baby Mama', vi: 'Team Baby Mama', color: '#7c3aed', bg: '#f5f3ff' },
-  hung:      { en: 'Team Hung',      vi: 'Team Hưng',      color: '#0369a1', bg: '#eff6ff' },
-  entremet:  { en: 'Team Entremet',  vi: 'Team Entremet',  color: '#b45309', bg: '#fffbeb' },
-  baker:     { en: 'Team Baker',     vi: 'Team Baker',     color: '#047857', bg: '#ecfdf5' },
+  hung: { en: 'Team Hung', vi: 'Team Hưng', color: '#0369a1', bg: '#eff6ff' },
+  entremet: { en: 'Team Entremet', vi: 'Team Entremet', color: '#b45309', bg: '#fffbeb' },
+  baker: { en: 'Team Baker', vi: 'Team Baker', color: '#047857', bg: '#ecfdf5' },
 };
 
 // Map Odoo product tag strings → Team enum
@@ -23,12 +23,12 @@ export const ODOO_TEAM_MAP: Record<string, Team> = {
 };
 
 export const STATUS_META: Record<AssignmentStatus, { color: string; labelEn: string; labelVi: string }> = {
-  pending:     { color: '#6b7280', labelEn: 'To produce',  labelVi: 'Chưa làm' },
+  pending: { color: '#6b7280', labelEn: 'To produce', labelVi: 'Chưa làm' },
   in_progress: { color: '#0369a1', labelEn: 'In progress', labelVi: 'Đang làm' },
-  done:        { color: '#047857', labelEn: 'Done',         labelVi: 'Xong' },
-  skip:        { color: '#7c3aed', labelEn: 'In stock',     labelVi: 'Có sẵn' },
-  partial:     { color: '#b45309', labelEn: 'Partial',      labelVi: 'Một phần' },
-  blocked:     { color: '#dc2626', labelEn: 'Blocked',      labelVi: 'Bị chặn' },
+  done: { color: '#047857', labelEn: 'Done', labelVi: 'Xong' },
+  skip: { color: '#7c3aed', labelEn: 'In stock', labelVi: 'Có sẵn' },
+  partial: { color: '#b45309', labelEn: 'Partial', labelVi: 'Một phần' },
+  blocked: { color: '#dc2626', labelEn: 'Blocked', labelVi: 'Bị chặn' },
 };
 
 export interface Profile {
