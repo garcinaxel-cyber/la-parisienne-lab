@@ -31,27 +31,39 @@ export default async function FichePage({
 
   if (!product && !metaRaw) redirect(backUrl);
 
-  // Steps and variants are keyed by fiche_id (not product_id)
   const ficheId = metaRaw?.id ?? null;
 
   const [stepsResult, variantsResult] = await Promise.all([
     ficheId
       ? supabase
           .from('lab_fiche_steps')
-          .select('step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
+          .select('id, step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
           .eq('fiche_id', ficheId)
           .order('step_number')
       : Promise.resolve({ data: [] }),
     ficheId
       ? supabase
           .from('lab_fiche_variants')
-          .select('label, sku, weight_g, is_default')
+          .select('id, label, sku, weight_g, is_default')
           .eq('fiche_id', ficheId)
           .order('sort_order')
       : Promise.resolve({ data: [] }),
   ]);
 
-  // If product exists, use it; otherwise synthesise from fiche meta
+  // Fetch per-variant quantities for ingredient steps
+  const ingredientStepIds = (stepsResult.data ?? [])
+    .filter((s: any) => s.step_type === 'ingredient')
+    .map((s: any) => s.id)
+    .filter(Boolean);
+
+  const { data: variantQtyData } = ingredientStepIds.length > 0
+    ? await supabase
+        .from('lab_fiche_variant_quantities')
+        .select('step_id, variant_id, quantity_grams')
+        .in('step_id', ingredientStepIds)
+    : { data: [] as { step_id: string; variant_id: string; quantity_grams: number | null }[] };
+
+  // Build product data
   const productData = product ?? {
     id: metaRaw!.id,
     name_vi: metaRaw!.name_vi,
@@ -63,7 +75,6 @@ export default async function FichePage({
     categories: null,
   };
 
-  // Normalize categories join (Supabase returns array)
   const normalised = {
     ...productData,
     categories: Array.isArray((productData as any).categories)
@@ -77,6 +88,7 @@ export default async function FichePage({
       steps={(stepsResult.data ?? []) as any[]}
       meta={metaRaw ?? null}
       variants={(variantsResult.data ?? []) as any[]}
+      variantQuantities={(variantQtyData ?? []) as any[]}
       backUrl={backUrl}
     />
   );
