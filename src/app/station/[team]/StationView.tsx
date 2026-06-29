@@ -5,7 +5,6 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  History, CalendarDays, Lock,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -380,7 +379,7 @@ export default function StationView({
                 {isWorker && (
                   <span className="flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
                     style={{ backgroundColor: 'rgba(255,244,204,0.2)', color: '#FFF4CC' }}>
-                    <Lock size={8} /> Worker
+                    <AlertCircle size={8} /> Worker
                   </span>
                 )}
               </div>
@@ -432,8 +431,8 @@ export default function StationView({
               {tab.id === 'production' ? <FlaskConical size={14} /> :
                tab.id === 'commande' ? <ClipboardList size={14} /> :
                tab.id === 'termine' ? <CheckCircle2 size={14} /> :
-               tab.id === 'historique' ? <History size={14} /> :
-               <CalendarDays size={14} />}
+               tab.id === 'historique' ? <Clock size={14} /> :
+               <ClipboardList size={14} />}
               {lang === 'vi' ? tab.labelVi : tab.labelEn}
               {tab.count != null && tab.count > 0 && (
                 <span className="rounded-full px-1.5 py-0.5 text-[9px] font-black"
@@ -585,7 +584,7 @@ export default function StationView({
           )}
           {!historyLoading && history !== null && history.length === 0 && (
             <div className="text-center py-20">
-              <History size={48} className="mx-auto mb-3 text-gray-300" />
+              <Clock size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
                 {lang === 'vi' ? 'ChÆ°a cÃ³ lá»ch sá»­ 7 ngÃ y qua' : 'No history in the last 7 days'}
               </p>
@@ -630,7 +629,7 @@ export default function StationView({
           )}
           {!upcomingLoading && upcoming !== null && upcoming.length === 0 && (
             <div className="text-center py-20">
-              <CalendarDays size={48} className="mx-auto mb-3 text-gray-300" />
+              <ClipboardList size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
                 {lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n hÃ ng sáº¯p tá»i' : 'No upcoming orders'}
               </p>
