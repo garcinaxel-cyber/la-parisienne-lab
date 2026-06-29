@@ -514,8 +514,7 @@ export default function StationView({
                           <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
                             style={{ border: '1px solid #E0D49A' }} />
                         ) : (
-                          <div className="w-12 h-12 rounded-xl shrink-0"></div>
-                        )}ext-xl"
+                          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
                             style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                         )}
                         <div className="flex-1 min-w-0">
