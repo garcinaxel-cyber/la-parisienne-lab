@@ -74,7 +74,7 @@ type UpcomingDay = {
 
 type Tab = 'production' | 'commande' | 'termine' | 'historique' | 'upcoming';
 
-const STATUS_FLOW: Record<string, string> = {
+const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
   in_progress: 'done',
   skip: 'pending',
@@ -119,16 +119,6 @@ export default function StationView({
   const [upcomingLoading, setUpcomingLoading] = useState(false);
 
   const meta = TEAM_LABELS[team];
-  function handlePartial(a: Assignment) { setQtyInput(a.qty_produced); setQtyModal(a); }
-  function handleViewFiche(a: Assignment) { if (a.product_id) setFicheModal({ productId: a.product_id, productName: a.product_name_vi }); }
-  const sharedCardProps = {
-    lang, updating, isWorker,
-    onAdvance: advanceStatus,
-    onMarkInStock: markInStock,
-    onPartial: handlePartial,
-    onViewFiche: handleViewFiche,
-    meta,
-  };
 
   // Load history when tab selected
   useEffect(() => {
@@ -358,13 +348,21 @@ export default function StationView({
     });
 
   const tabs = [
-    { id: 'production' as Tab, labelVi: 'Sản xuất', labelEn: 'Production', count: production.length },
-    { id: 'commande' as Tab, labelVi: 'Đơn hàng', labelEn: 'Orders', count: assignments.length },
-    { id: 'termine' as Tab, labelVi: 'Hoàn thành', labelEn: 'Done', count: termineCount },
-    { id: 'historique' as Tab, labelVi: 'Lịch sử', labelEn: 'History' },
-    { id: 'upcoming' as Tab, labelVi: 'Sắp tới', labelEn: 'Upcoming' },
+    { id: 'production' as Tab, labelVi: 'Sáº£n xuáº¥t', labelEn: 'Production', count: production.length },
+    { id: 'commande' as Tab, labelVi: 'ÄÆ¡n hÃ ng', labelEn: 'Orders', count: assignments.length },
+    { id: 'termine' as Tab, labelVi: 'HoÃ n thÃ nh', labelEn: 'Done', count: termineCount },
+    { id: 'historique' as Tab, labelVi: 'Lá»ch sá»­', labelEn: 'History' },
+    { id: 'upcoming' as Tab, labelVi: 'Sáº¯p tá»i', labelEn: 'Upcoming' },
   ];
 
+  const sharedCardProps = {
+    lang, updating, isWorker,
+    onAdvance: advanceStatus,
+    onMarkInStock: markInStock,
+    onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
+    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    meta,
+  };
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
@@ -404,12 +402,12 @@ export default function StationView({
                   }>{l.toUpperCase()}</button>
               ))}
             </div>
-            <Link href="/station/fiches" title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
+            <Link href="/station/fiches" title={lang === 'vi' ? 'Phiáº¿u ká»¹ thuáº­t' : 'Recipe cards'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <BookOpen size={15} />
             </Link>
-            <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+            <button onClick={logout} title={lang === 'vi' ? 'ÄÄng xuáº¥t' : 'Log out'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <LogOut size={15} />
@@ -451,21 +449,21 @@ export default function StationView({
 
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
-          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
+          {lang === 'vi' ? 'ð HoÃ n thÃ nh táº¥t cáº£!' : 'ð All done for today!'}
         </div>
       )}
 
-      {/* ─── PRODUCTION TAB ─── */}
+      {/* âââ PRODUCTION TAB âââ */}
       {activeTab === 'production' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
               <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
+                {lang === 'vi' ? 'KhÃ´ng cÃ³ sáº£n pháº©m cáº§n lÃ m' : 'Nothing left to produce'}
               </p>
               <p className="text-sm mt-1 text-gray-400">
-                {lang === 'vi' ? 'Tất cả đã hoàn thành hoặc có sẵn' : 'All items are done or in stock'}
+                {lang === 'vi' ? 'Táº¥t cáº£ ÄÃ£ hoÃ n thÃ nh hoáº·c cÃ³ sáºµn' : 'All items are done or in stock'}
               </p>
             </div>
           )}
@@ -473,14 +471,14 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── COMMANDES TAB ─── */}
+      {/* âââ COMMANDES TAB âââ */}
       {activeTab === 'commande' && (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
           {assignments.length === 0 ? (
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
-                {lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n hÃ ng hÃ´m nay' : 'No orders for today'}
               </p>
             </div>
           ) : (
@@ -489,22 +487,22 @@ export default function StationView({
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
                 <div>
                   <div className="font-bold text-base">
-                    {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
+                    {lang === 'vi' ? 'Tá»ng ÄÆ¡n hÃ ng hÃ´m nay' : "Today's order summary"}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
-                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                    {assignments.length} {lang === 'vi' ? 'sáº£n pháº©m' : 'products'} â {totalQty} {lang === 'vi' ? 'cÃ¡i' : 'units'}
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
-                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'HoÃ n thÃ nh' : 'Complete'}</div>
                 </div>
               </div>
               <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E0D49A', backgroundColor: 'white' }}>
                 <div className="px-4 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider"
                   style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderBottom: '1px solid #E0D49A' }}>
-                  <span>{lang === 'vi' ? 'Sản phẩm' : 'Product'}</span>
-                  <span>{lang === 'vi' ? 'Số lượng' : 'Qty'}</span>
+                  <span>{lang === 'vi' ? 'Sáº£n pháº©m' : 'Product'}</span>
+                  <span>{lang === 'vi' ? 'Sá» lÆ°á»£ng' : 'Qty'}</span>
                 </div>
                 {assignments.map((a, i) => {
                   const st = STATUS_META[a.status];
@@ -517,7 +515,7 @@ export default function StationView({
                             style={{ border: '1px solid #E0D49A' }} />
                         ) : (
                           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-                            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
@@ -530,7 +528,7 @@ export default function StationView({
                             </span>
                           </div>
                         </div>
-                        <div className="text-2xl font-black shrink-0" style={{ color: meta.color }}>×{a.qty_to_produce}</div>
+                        <div className="text-2xl font-black shrink-0" style={{ color: meta.color }}>Ã{a.qty_to_produce}</div>
                       </div>
                       {breakdown.length > 0 && (
                         <div className="pb-3">
@@ -543,11 +541,11 @@ export default function StationView({
                                 {b.delivery_time && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                                    ⏰ {b.delivery_time.slice(0, 5)}
+                                    â° {b.delivery_time.slice(0, 5)}
                                   </span>
                                 )}
                               </div>
-                              <span className="font-bold text-sm" style={{ color: '#1A4731' }}>×{b.qty}</span>
+                              <span className="font-bold text-sm" style={{ color: '#1A4731' }}>Ã{b.qty}</span>
                             </div>
                           ))}
                         </div>
@@ -561,14 +559,14 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── TERMINÉ TAB ─── */}
+      {/* âââ TERMINÃ TAB âââ */}
       {activeTab === 'termine' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
           {termine.length === 0 ? (
             <div className="text-center py-20">
               <Clock size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
-                {lang === 'vi' ? 'Chưa có sản phẩm hoàn thành' : 'No completed items yet'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ sáº£n pháº©m hoÃ n thÃ nh' : 'No completed items yet'}
               </p>
             </div>
           ) : (
@@ -577,19 +575,19 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── HISTORIQUE TAB (7 jours) ─── */}
+      {/* âââ HISTORIQUE TAB (7 jours) âââ */}
       {activeTab === 'historique' && (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
           {historyLoading && (
             <div className="text-center py-20 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải lịch sử…' : 'Loading history…'}
+              {lang === 'vi' ? 'Äang táº£i lá»ch sá»­â¦' : 'Loading historyâ¦'}
             </div>
           )}
           {!historyLoading && history !== null && history.length === 0 && (
             <div className="text-center py-20">
               <History size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
-                {lang === 'vi' ? 'Chưa có lịch sử 7 ngày qua' : 'No history in the last 7 days'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ lá»ch sá»­ 7 ngÃ y qua' : 'No history in the last 7 days'}
               </p>
             </div>
           )}
@@ -610,7 +608,7 @@ export default function StationView({
                     </span>
                   </div>
                   <div className="h-px flex-1" style={{ backgroundColor: '#E0D49A' }} />
-                  </div>
+                </div>
                 <div className="space-y-2">
                   {dayAssignments.map(a => (
                     <HistoryCard key={a.id} a={a} lang={lang} meta={meta} />
@@ -622,19 +620,19 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── UPCOMING TAB ─── */}
+      {/* âââ UPCOMING TAB âââ */}
       {activeTab === 'upcoming' && (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
           {upcomingLoading && (
             <div className="text-center py-20 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải đơn sắp tới…' : 'Loading upcoming orders…'}
+              {lang === 'vi' ? 'Äang táº£i ÄÆ¡n sáº¯p tá»iâ¦' : 'Loading upcoming ordersâ¦'}
             </div>
           )}
           {!upcomingLoading && upcoming !== null && upcoming.length === 0 && (
             <div className="text-center py-20">
               <CalendarDays size={48} className="mx-auto mb-3 text-gray-300" />
               <p className="font-semibold text-gray-400">
-                {lang === 'vi' ? 'Chưa có đơn hàng sắp tới' : 'No upcoming orders'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n hÃ ng sáº¯p tá»i' : 'No upcoming orders'}
               </p>
             </div>
           )}
@@ -652,10 +650,10 @@ export default function StationView({
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
                       style={{ backgroundColor: daysFromNow === 1 ? '#FEF3C7' : '#F0F9F4', color: daysFromNow === 1 ? '#D97706' : '#2D6A4F' }}>
                       {daysFromNow === 1
-                        ? (lang === 'vi' ? 'Ngày mai' : 'Tomo2row')
+                        ? (lang === 'vi' ? 'NgÃ y mai' : 'Tomorrow')
                         : `J+${daysFromNow}`}
                     </span>
-                    <span className="text-[10px] text-gray-400">{totalUnits} {lang === 'vi' ? 'cái' : 'units'}</span>
+                    <span className="text-[10px] text-gray-400">{totalUnits} {lang === 'vi' ? 'cÃ¡i' : 'units'}</span>
                   </div>
                   <div className="h-px flex-1" style={{ backgroundColor: '#E0D49A' }} />
                 </div>
@@ -668,7 +666,7 @@ export default function StationView({
                           style={{ border: '1px solid #E0D49A' }} loading="lazy" />
                       ) : (
                         <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-lg"
-                          style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                          style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>
@@ -677,7 +675,7 @@ export default function StationView({
                         <div className="text-xs text-gray-400">{a.variant_label}</div>
                       </div>
                       <div className="text-xl font-black shrink-0" style={{ color: meta.color }}>
-                        ×{a.qty_to_produce}
+                        Ã{a.qty_to_produce}
                       </div>
                     </div>
                   ))}
@@ -688,7 +686,7 @@ export default function StationView({
         </div>
       )}
 
-      {/* FAB — Add extra (Production tab only, not workers) */}
+      {/* FAB â Add extra (Production tab only, not workers) */}
       {activeTab === 'production' && assignments.length > 0 && !isWorker && (
         <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
           <button
@@ -696,7 +694,7 @@ export default function StationView({
             className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all"
             style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
             <Plus size={16} />
-            {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
+            {lang === 'vi' ? 'Sáº£n xuáº¥t thÃªm ngoÃ i ÄÆ¡n' : 'Add extra production'}
           </button>
         </div>
       )}
@@ -715,10 +713,10 @@ export default function StationView({
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>
-                  {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Extra production'}
+                  {lang === 'vi' ? 'Sáº£n xuáº¥t thÃªm ngoÃ i ÄÆ¡n' : 'Extra production'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {lang === 'vi' ? 'Chọn sản phẩm từ danh mục' : 'Select from catalogue'}
+                  {lang === 'vi' ? 'Chá»n sáº£n pháº©m tá»« danh má»¥c' : 'Select from catalogue'}
                 </p>
               </div>
               <button onClick={closeExtraModal} className="p-1 text-gray-400"><X size={20} /></button>
@@ -729,7 +727,7 @@ export default function StationView({
                   <button onClick={() => setSelectedCategory('')}
                     className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
                     style={selectedCategory === '' ? { backgroundColor: '#1A4731', color: 'white' } : { backgroundColor: '#F3F4F6', color: '#6B7280' }}>
-                    {lang === 'vi' ? 'Tất cả' : 'All'}
+                    {lang === 'vi' ? 'Táº¥t cáº£' : 'All'}
                   </button>
                   {extraCategories.map(cat => (
                     <button key={cat.id} onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
@@ -744,11 +742,11 @@ export default function StationView({
                 <div className="flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                   {extraProduct.main_image_url
                     ? <img src={extraProduct.main_image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                    : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                    : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                   }
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>{extraProduct.name_vi}</div>
-                  </d)v>
+                  </div>
                   <button onClick={() => { setExtraProduct(null); setExtraSearch(''); }} className="p-1 text-gray-400"><X size={16} /></button>
                 </div>
               ) : (
@@ -756,7 +754,7 @@ export default function StationView({
                   <div className="relative">
                     <SearchIcon size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input value={extraSearch} onChange={e => setExtraSearch(e.target.value)}
-                      placeholder={lang === 'vi' ? 'Tên sản phẩm hoặc SKU…' : 'Product name or SKU…'}
+                      placeholder={lang === 'vi' ? 'TÃªn sáº£n pháº©m hoáº·c SKUâ¦' : 'Product name or SKUâ¦'}
                       className="w-full rounded-xl border border-gray-200 pl-9 pr-3 py-2.5 text-sm outline-none focus:border-green-600" autoFocus />
                     {searchLoading && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-green-600 border-t-transparent animate-spin" />}
                   </div>
@@ -768,7 +766,7 @@ export default function StationView({
                           style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
                           {p.main_image_url
                             ? <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
-                            : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                           }
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
@@ -783,7 +781,7 @@ export default function StationView({
               {extraProduct && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                    {lang === 'vi' ? 'Số lượng' : 'Quantity'}
+                    {lang === 'vi' ? 'Sá» lÆ°á»£ng' : 'Quantity'}
                   </label>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => { const v = Math.max(1, extraQty - 1); setExtraQty(v); setExtraQtyInput(String(v)); }}
@@ -797,7 +795,7 @@ export default function StationView({
                       style={{ color: '#1A4731', borderColor: '#1A4731' }} />
                     <button onClick={() => { const v = extraQty + 1; setExtraQty(v); setExtraQtyInput(String(v)); }}
                       className="w-11 h-11 rounded-full flex items-center justify-center text-white"
-                      style={{ back'roundColor: '#1A4731' }}>
+                      style={{ backgroundColor: '#1A4731' }}>
                       <Plus size={18} />
                     </button>
                   </div>
@@ -805,12 +803,12 @@ export default function StationView({
               )}
               <div className="flex gap-3">
                 <button onClick={closeExtraModal} className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-500">
-                  {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                  {lang === 'vi' ? 'Há»§y' : 'Cancel'}
                 </button>
                 <button onClick={saveExtra} disabled={!extraProduct || savingExtra}
                   className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-40"
                   style={{ backgroundColor: '#1A4731' }}>
-                  {savingExtra ? '…' : (lang === 'vi' ? 'Xác nhận' : 'Confirm')}
+                  {savingExtra ? 'â¦' : (lang === 'vi' ? 'XÃ¡c nháº­n' : 'Confirm')}
                 </button>
               </div>
             </div>
@@ -825,10 +823,10 @@ export default function StationView({
             <div>
               <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-gray-400 mt-0.5">
-                {lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
+                {lang === 'vi' ? 'Cáº§n lÃ m' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
               </p>
             </div>
-            <div className="flex items-center justify-cen4er gap-4">
+            <div className="flex items-center justify-center gap-4">
               <button onClick={() => setQtyInput(q => Math.max(0, q - 1))}
                 className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center" style={{ color: '#1A4731' }}>
                 <Minus size={20} />
@@ -838,16 +836,16 @@ export default function StationView({
                 className="text-5xl font-black text-center rounded-xl border-2 outline-none w-24 py-2"
                 style={{ color: '#1A4731', borderColor: '#1A4731' }} />
               <button onClick={() => setQtyInput(q => q + 1)}
-                className="w-12 h-12 rounded-full flex items-center justify-center text-7hite" style={{ backgroundColor: '#1A4731' }}>
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#1A4731' }}>
                 <Plus size={20} />
               </button>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setQtyModal(null)} className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-400">
-                {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                {lang === 'vi' ? 'Há»§y' : 'Cancel'}
               </button>
               <button onClick={savePartial} className="flex-1 py-3 rounded-xl font-bold text-white" style={{ backgroundColor: '#1A4731' }}>
-                {lang === 'vi' ? 'Xác nhận' : 'Confirm'}
+                {lang === 'vi' ? 'XÃ¡c nháº­n' : 'Confirm'}
               </button>
             </div>
           </div>
@@ -857,7 +855,7 @@ export default function StationView({
   );
 }
 
-// ─── PRODUCTION CARD ──────────────────────────────────────────────────────────
+// âââ PRODUCTION CARD ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock, onPartial, onViewFiche, meta }: {
   a: Assignment; lang: 'vi' | 'en'; updating: string | null; isWorker: boolean;
@@ -872,7 +870,7 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
   const actionLabel: Record<string, string> = {
-    pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
+    pending: lang === 'vi' ? 'Báº¯t Äáº§u' : 'Start',
     in_progress: lang === 'vi' ? 'Xong' : 'Mark done',
   };
 
@@ -883,7 +881,7 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
       <div className="flex items-start p-4 gap-3">
         {a.image_url
           ? <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} loading="lazy" />
-          : <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+          : <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
         }
         <div className="flex-1 min-w-0">
           {a.product_id ? (
@@ -897,13 +895,13 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
             </div>
           )}
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-     0      {a.sku && <span className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#F5F5F5', color: '#555' }}>{a.sku}</span>}
+            {a.sku && <span className="text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#F5F5F5', color: '#555' }}>{a.sku}</span>}
             {a.weight_grams && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>{a.weight_grams}g</span>}
-            {a.is_extra && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>{lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}</span>}
+            {a.is_extra && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>{lang === 'vi' ? '+ NgoÃ i ÄÆ¡n' : '+ Extra'}</span>}
           </div>
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-2xl font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</span>
-            {a.qty_produced > 0 && a.status !== 'done' && <span className="text-sm text-gray-400">(✓ {a.qty_produced})</span>}
+            <span className="text-2xl font-black" style={{ color: meta.color }}>Ã{a.qty_to_produce}</span>
+            {a.qty_produced > 0 && a.status !== 'done' && <span className="text-sm text-gray-400">(â {a.qty_produced})</span>}
             <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white" style={{ backgroundColor: st.color }}>
               {lang === 'vi' ? st.labelVi : st.labelEn}
             </span>
@@ -915,21 +913,21 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
               <button onClick={() => onAdvance(a)} disabled={isUpdating}
                 className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
                 style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>
-                {isUpdating ? '…' : actionLabel[a.status] ?? ''}
+                {isUpdating ? 'â¦' : actionLabel[a.status] ?? ''}
               </button>
             )}
             {canMarkStock && (
               <button onClick={() => onMarkInStock(a)} disabled={isUpdating}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95"
                 style={{ border: '1px solid #C4B5FD', color: '#6D28D9', backgroundColor: '#F5F3FF', opacity: isUpdating ? 0.6 : 1 }}>
-                <Package size={11} /> {lang === 'vi' ? 'Có sẵn' : 'In stock'}
+                <Package size={11} /> {lang === 'vi' ? 'CÃ³ sáºµn' : 'In stock'}
               </button>
             )}
             {a.status === 'in_progress' && (
               <button onClick={() => onPartial(a)}
                 className="px-3 py-1.5 rounded-xl text-xs font-medium border text-center"
                 style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
-                {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
+                {lang === 'vi' ? 'Ghi sá»' : 'Enter qty'}
               </button>
             )}
           </div>
@@ -939,7 +937,7 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
           <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
             style={{ color: '#2D6A4F', backgroundColor: '#F0F9F4' }}>
-            <Store size={10} /> {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
+            <Store size={10} /> {lang === 'vi' ? 'Chi tiáº¿t theo khÃ¡ch hÃ ng' : 'Per-client breakdown'}
           </div>
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-2 text-sm"
@@ -949,11 +947,11 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
                 {b.delivery_time && (
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                    ⏰ {b.delivery_time.slice(0, 5)}
+                    â° {b.delivery_time.slice(0, 5)}
                   </span>
                 )}
               </span>
-              <span className="font-black" style={{ color: '#1A4731' }}>×{b.qty}</span>
+              <span className="font-black" style={{ color: '#1A4731' }}>Ã{b.qty}</span>
             </div>
           ))}
         </div>
@@ -965,7 +963,7 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
             <button onClick={() => onViewFiche(a)}
               className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
               style={{ color: '#2D6A4F' }}>
-              <BookOpen size={12} /> {lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe card'}
+              <BookOpen size={12} /> {lang === 'vi' ? 'Phiáº¿u ká»¹ thuáº­t' : 'Recipe card'}
             </button>
           )}
         </div>
@@ -974,7 +972,7 @@ function ProductionCard({ a, lang, updating, isWorker, onAdvance, onMarkInStock,
   );
 }
 
-// ─── TERMINÉ CARD ─────────────────────────────────────────────────────────────
+// âââ TERMINÃ CARD âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function TermineCard({ a, lang, meta, onAdvance, updating, isWorker }: {
   a: Assignment; lang: 'vi' | 'en'; meta: typeof TEAM_LABELS[Team];
@@ -988,7 +986,7 @@ function TermineCard({ a, lang, meta, onAdvance, updating, isWorker }: {
       <div className="flex items-center gap-3 p-4">
         {a.image_url
           ? <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
-          : <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+          : <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
         }
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm" style={{ color: '#1A4731' }}>
@@ -997,21 +995,21 @@ function TermineCard({ a, lang, meta, onAdvance, updating, isWorker }: {
           <div className="flex items-center gap-2 mt-1">
             {isSkip ? (
               <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#6D28D9' }}>
-                <Package size={11} /> {lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'}
+                <Package size={11} /> {lang === 'vi' ? 'CÃ³ sáºµn trong kho' : 'In stock'}
               </span>
             ) : (
               <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#059669' }}>
-                <CheckCircle2 size={11} /> {lang === 'vi' ? `Đã làm ×${a.qty_produced}` : `Done ×${a.qty_produced}`}
+                <CheckCircle2 size={11} /> {lang === 'vi' ? `ÄÃ£ lÃ m Ã${a.qty_produced}` : `Done Ã${a.qty_produced}`}
               </span>
             )}
-            <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>×{a.qty_to_produce}</span>
+            <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>Ã{a.qty_to_produce}</span>
           </div>
         </div>
         {isSkip && !isWorker && (
           <button onClick={() => onAdvance(a)} disabled={updating === a.id}
             className="px-3 py-2 rounded-xl text-xs font-bold active:scale-95"
             style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', opacity: updating === a.id ? 0.6 : 1 }}>
-            {lang === 'vi' ? 'Cần làm' : 'Produce'}
+            {lang === 'vi' ? 'Cáº§n lÃ m' : 'Produce'}
           </button>
         )}
       </div>
@@ -1020,7 +1018,7 @@ function TermineCard({ a, lang, meta, onAdvance, updating, isWorker }: {
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs text-gray-400"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
-              <span>{b.shop_name}</span><span className="font-bold">×{b.qty}</span>
+              <span>{b.shop_name}</span><span className="font-bold">Ã{b.qty}</span>
             </div>
           ))}
         </div>
@@ -1029,7 +1027,7 @@ function TermineCard({ a, lang, meta, onAdvance, updating, isWorker }: {
   );
 }
 
-// ─── HISTORY CARD ─────────────────────────────────────────────────────────────
+// âââ HISTORY CARD âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function HistoryCard({ a, lang, meta }: { a: Assignment; lang: 'vi' | 'en'; meta: typeof TEAM_LABELS[Team] }) {
   const st = STATUS_META[a.status];
@@ -1038,7 +1036,7 @@ function HistoryCard({ a, lang, meta }: { a: Assignment; lang: 'vi' | 'en'; meta
       style={{ border: '1px solid #E0D49A', opacity: 0.85 }}>
       {a.image_url
         ? <img src={a.image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} loading="lazy" />
-        : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+        : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
       }
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>
@@ -1049,16 +1047,16 @@ function HistoryCard({ a, lang, meta }: { a: Assignment; lang: 'vi' | 'en'; meta
         </span>
       </div>
       <div className="text-right shrink-0">
-        <div className="text-lg font-black" style={{ color: meta.color }}>×{a.qty_to_produce}</div>
+        <div className="text-lg font-black" style={{ color: meta.color }}>Ã{a.qty_to_produce}</div>
         {a.qty_produced > 0 && a.status === 'done' && (
-          <div className="text-[10px] text-gray-400">✓ {a.qty_produced}</div>
+          <div className="text-[10px] text-gray-400">â {a.qty_produced}</div>
         )}
       </div>
     </div>
   );
 }
 
-// ─── FICHE MODAL ──────────────────────────────────────────────────────────────
+// âââ FICHE MODAL ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function FicheModal({ productId, productName, lang, onClose }: {
   productId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
@@ -1083,19 +1081,19 @@ function FicheModal({ productId, productName, lang, onClose }: {
             <Link href={`/station/fiche/${productId}?back=/station/me`}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
-              {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
+              {lang === 'vi' ? 'Xem Äáº§y Äá»§' : 'Full view'}
             </Link>
             <button onClick={onClose} className="p-1 text-gray-400"><X size={20} /></button>
           </div>
         </div>
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
-            <p className="text-gray-400 text-sm text-center py-10">{lang === 'vi' ? 'Đang tải…' : 'Loading…'}</p>
+            <p className="text-gray-400 text-sm text-center py-10">{lang === 'vi' ? 'Äang táº£iâ¦' : 'Loadingâ¦'}</p>
           ) : steps.length === 0 ? (
             <div className="text-center py-10">
-              <p className="text-gray-400 text-sm">{lang === 'vi' ? 'Chưa có phiếu kỹ thuật.' : 'No recipe steps yet.'}</p>
+              <p className="text-gray-400 text-sm">{lang === 'vi' ? 'ChÆ°a cÃ³ phiáº¿q ká»¹ thuáº­t.' : 'No recipe steps yet.'}</p>
               <Link href={`/station/fiche/${productId}?back=/station/me`} className="text-xs font-semibold mt-2 inline-block" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Xem trang phiếu →' : 'View fiche page →'}
+                {lang === 'vi' ? 'Xem trang phiáº¿u â' : 'View fiche page â'}
               </Link>
             </div>
           ) : steps.map(step => (
@@ -1109,8 +1107,8 @@ function FicheModal({ productId, productName, lang, onClose }: {
                 </p>
                 {(step.duration_minutes || step.temperature_celsius) && (
                   <div className="flex gap-4 text-xs text-gray-400">
-                    {step.duration_minutes && <span className="flex items-center gap-1"><Timer size={11} /> {step.duration_minutes} {lang === 'vi' ? 'phút' : 'min'}</span>}
-                    {step.temperature_celsius && <span className="flex items-center gap-1"><Thermometer size={11} /> {step.temperature_celsius}°C</span>}
+                    {step.duration_minutes && <span className="flex items-center gap-1"><Timer size={11} /> {step.duration_minutes} {lang === 'vi' ? 'phÃºt' : 'min'}</span>}
+                    {step.temperature_celsius && <span className="flex items-center gap-1"><Thermometer size={11} /> {step.temperature_celsius}Â°C</span>}
                   </div>
                 )}
               </div>
