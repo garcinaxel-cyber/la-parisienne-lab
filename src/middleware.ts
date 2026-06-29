@@ -23,24 +23,19 @@ export async function middleware(req: NextRequest) {
     }
   );
 
+  // Race getSession (reads cookie, but may hang on token refresh) vs 4s timeout.
+  // Prevents Vercel 10s edge timeout -> 504 when Supabase refresh token call hangs.
+  let session = null;
   try {
-    // Race getSession against a 4s timeout.
-    // If Supabase tries to refresh an expired token (network call) and hangs,
-    // we redirect to login instead of hitting Vercel's 10s edge timeout -> 504.
-    const sessionResult = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise((resolve) =>
-        setTimeout(() => resolve({ data: { session: null }, error: null }), 4000)
-      ),
+    session = await Promise.race([
+      supabase.auth.getSession().then((r) => r.data.session),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
     ]);
+  } catch (_e) {
+    session = null;
+  }
 
-    if (!sessionResult.data.session) {
-      const url = req.nextUrl.clone();
-      url.pathname = '/login';
-      return NextResponse.redirect(url);
-    }
-  } catch {
-    // Any error -> redirect to login (never 504)
+  if (!session) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
