@@ -355,12 +355,14 @@ export default function StationView({
     { id: 'upcoming' as Tab, labelVi: 'Sắp tới', labelEn: 'Upcoming' },
   ];
 
+  function handlePartial(a: Assignment) { setQtyInput(a.qty_produced); setQtyModal(a); }
+  function handleViewFiche(a: Assignment) { if (a.product_id) setFicheModal({ productId: a.product_id, productName: a.product_name_vi }); }
   const sharedCardProps = {
     lang, updating, isWorker,
     onAdvance: advanceStatus,
     onMarkInStock: markInStock,
-    onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
-    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    onPartial: handlePartial,
+    onViewFiche: handleViewFiche,
     meta,
   };
 
