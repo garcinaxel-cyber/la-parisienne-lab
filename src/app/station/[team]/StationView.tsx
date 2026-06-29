@@ -623,7 +623,7 @@ export default function StationView({
       )}
 
       {/* ─── UPCOMING TAB ─── */}
-      {activeTab === 'u/ming' && (
+      {activeTab === 'upcoming' && (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
           {upcomingLoading && (
             <div className="text-center py-20 text-sm font-semibold" style={{ color: '#1A4731' }}>
