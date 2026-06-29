@@ -74,7 +74,7 @@ type UpcomingDay = {
 
 type Tab = 'production' | 'commande' | 'termine' | 'historique' | 'upcoming';
 
-const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
+const STATUS_FLOW: Record<string, string> = {
   pending: 'in_progress',
   in_progress: 'done',
   skip: 'pending',
