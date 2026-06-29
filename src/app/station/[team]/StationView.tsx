@@ -642,7 +642,7 @@ export default function StationView({
             const totalUnits = dayAssignments.reduce((s, a) => s + a.qty_to_produce, 0);
             const daysFromNow = Math.ceil((new Date(date).getTime() - new Date(today).getTime()) / 86400000);
             return (
-              <section key={date} classame="mb-6">
+              <section key={date} className="mb-6">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="h-px flex-1" style={{ backgroundColor: '#E0D49A' }} />
                   <div className="flex items-center gap-2 shrink-0">
