@@ -6,11 +6,7 @@ import { TEAMS } from '@/lib/types';
 
 export const revalidate = 0;
 
-export default async function StationPage({
-  params,
-}: {
-  params: { team: string };
-}) {
+export default async function StationPage({ params }: { params: { team: string } }) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -29,15 +25,16 @@ export default async function StationPage({
 
   if (!TEAMS.includes(team)) redirect('/login');
 
-  // Verify user role (chef or worker only — admins can also access for monitoring)
-  const { data: profile } = session
-    ? await supabase.from('profiles').select('role').eq('id', session.user.id).single()
-    : { data: null };
-
-  const allowedRoles = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
-  if (!profile || !allowedRoles.includes(profile.role)) redirect('/login');
-
-  const isWorker = profile.role === 'worker';
+  // Check if current user is a worker (read-only station mode)
+  let isWorker = false;
+  if (session) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', session.user.id)
+      .single();
+    isWorker = profile?.role === 'worker';
+  }
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -67,17 +64,27 @@ export default async function StationPage({
     breakdownMap[b.id] = Array.isArray(b.breakdown) ? b.breakdown : [];
   }
 
-  const productIds = (assignments ?? []).map((a: any) => a.product_id).filter(Boolean) as string[];
+  const productIds = (assignments ?? [])
+    .map((a: any) => a.product_id)
+    .filter(Boolean) as string[];
 
   const { data: ficheMeta } = productIds.length > 0
-    ? await supabase.from('lab_fiche_meta').select('product_id, weight_grams').in('product_id', productIds)
+    ? await supabase
+        .from('lab_fiche_meta')
+        .select('product_id, weight_grams')
+        .in('product_id', productIds)
     : { data: [] as any[] };
 
   const weightMap: Record<string, number | null> = {};
-  for (const m of ficheMeta ?? []) weightMap[m.product_id] = m.weight_grams ?? null;
+  for (const m of ficheMeta ?? []) {
+    weightMap[m.product_id] = m.weight_grams ?? null;
+  }
 
   const { data: productCats } = productIds.length > 0
-    ? await supabase.from('products').select('id, categories!category_id(name_vi, name_en)').in('id', productIds)
+    ? await supabase
+        .from('products')
+        .select('id, categories!category_id(name_vi, name_en)')
+        .in('id', productIds)
     : { data: [] as any[] };
 
   const categoryNameMap: Record<string, { vi: string; en: string }> = {};
@@ -88,8 +95,12 @@ export default async function StationPage({
 
   const importIds = Array.from(new Set((assignments ?? []).map((a: any) => a.import_id).filter(Boolean))) as string[];
   const { data: orderLineDeliveries } = importIds.length > 0
-    ? await supabase.from('lab_order_lines').select('order_ref, delivery_time').in('import_id', importIds)
-        .not('delivery_time', 'is', null).not('order_ref', 'is', null)
+    ? await supabase
+        .from('lab_order_lines')
+        .select('order_ref, delivery_time')
+        .in('import_id', importIds)
+        .not('delivery_time', 'is', null)
+        .not('order_ref', 'is', null)
     : { data: [] as any[] };
 
   const deliveryTimeByRef: Record<string, string> = {};
@@ -111,13 +122,5 @@ export default async function StationPage({
     products: undefined,
   }));
 
-  return (
-    <StationView
-      team={team}
-      teamSlug={params.team}
-      assignments={normalised}
-      today={today}
-      isWorker={isWorker}
-    />
-  );
+  return <StationView team={team} teamSlug={params.team} assignments={normalised} today={today} isWorker={isWorker} />;
 }
