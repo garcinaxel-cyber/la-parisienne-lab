@@ -11,7 +11,6 @@ type Fiche = {
   image_url: string | null;
   category: string | null;
   teams: string[] | null;
-  product_id: string | null;
   stepCount: number;
 };
 
@@ -49,7 +48,7 @@ export default function StationFichesPage() {
 
       let query = supabase
         .from('lab_fiche_meta')
-        .select('id, name_vi, name_en, image_url, category, teams, product_id')
+        .select('id, name_vi, name_en, image_url, category, teams')
         .eq('is_active', true);
 
       if (!isAdmin && userTeam) {
@@ -58,7 +57,8 @@ export default function StationFichesPage() {
       }
       // If no team assigned and not admin: show nothing (admin should assign teams first)
 
-      const { data: fichesRaw } = await query.order('name_vi');
+      const { data: fichesRaw, error } = await query.order('name_vi');
+      if (error) console.error('fiches query error:', error);
       const allFiches = fichesRaw ?? [];
       const ficheIds = allFiches.map(f => f.id);
 
@@ -99,12 +99,6 @@ export default function StationFichesPage() {
           <div>
             <div className="font-bold text-sm text-white flex items-center gap-2">
               Phiếu Kỹ Thuật
-              {isReadOnly && (
-                <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: 'rgba(255,244,204,0.2)', color: '#FFF4CC' }}>
-                  <AlertCircle size={9} /> Xem
-                </span>
-              )}
             </div>
             <div className="text-white/60 text-[11px]">Recipe Cards — La Parisienne</div>
           </div>
@@ -169,7 +163,7 @@ export default function StationFichesPage() {
               {items.map(fiche => (
                 <Link
                   key={fiche.id}
-                  href={`/station/fiche/${fiche.product_id ?? fiche.id}?back=/station/fiches`}
+                  href={`/station/fiche/${fiche.id}?back=/station/fiches`}
                   className="flex items-center gap-4 bg-white rounded-2xl px-4 py-3 group transition-all"
                   style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}
                 >
@@ -194,10 +188,7 @@ export default function StationFichesPage() {
                         : (lang === 'vi' ? 'Chưa có phiếu' : 'No recipe yet')}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {isReadOnly && <AlertCircle size={12} style={{ color: '#C9A84C' }} />}
-                    <ChevronRight size={16} style={{ color: '#C9A84C' }} />
-                  </div>
+                  <ChevronRight size={16} style={{ color: '#C9A84C' }} />
                 </Link>
               ))}
             </div>
