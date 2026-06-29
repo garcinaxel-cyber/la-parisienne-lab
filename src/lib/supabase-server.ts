@@ -9,8 +9,13 @@ export function createClient() {
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cs: { name: string; value: string; options?: Record<string, unknown> }[]) =>
-          cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options as any)),
+        setAll: (cs: { name: string; value: string; options?: Record<string, unknown> }[]) => {
+          try {
+            cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options as any));
+          } catch {
+            // Called from a Server Component — cookie refresh is handled by middleware
+          }
+        },
       },
     }
   );
