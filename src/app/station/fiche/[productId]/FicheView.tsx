@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import Link from 'next/link';
 import { ArrowLeft, Printer, Timer, Thermometer } from 'lucide-react';
@@ -14,6 +15,7 @@ interface FicheMeta {
 }
 
 interface FicheStep {
+  id?: string;
   step_type: string;
   step_number: number;
   description_vi: string;
@@ -25,10 +27,17 @@ interface FicheStep {
 }
 
 interface FicheVariant {
+  id: string;
   label: string;
   sku: string | null;
   weight_g: number | null;
   is_default: boolean;
+}
+
+interface VariantQuantity {
+  step_id: string;
+  variant_id: string;
+  quantity_grams: number | null;
 }
 
 interface Product {
@@ -44,7 +53,6 @@ interface Product {
 
 function renderSensory(text: string) {
   return text.split('\n').filter(Boolean).map((line, i) => {
-    // **Title:** rest → <strong>Title:</strong> rest
     const m = line.match(/^\*\*(.+?)\*\*[:：]?\s*(.*)/);
     return (
       <li key={i} style={{ display: 'flex', gap: '6px', marginBottom: '4px', fontSize: '11px', color: '#444' }}>
@@ -58,19 +66,20 @@ function renderSensory(text: string) {
 }
 
 export default function FicheView({
-  product, steps, meta, backUrl, variants = [],
+  product, steps, meta, backUrl, variants = [], variantQuantities = [],
 }: {
   product: Product;
   steps: FicheStep[];
   meta: FicheMeta | null;
   backUrl: string;
   variants?: FicheVariant[];
+  variantQuantities?: VariantQuantity[];
 }) {
   const { lang, setLang } = useI18n();
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
 
   const ingredients = steps.filter(s => s.step_type === 'ingredient');
   const assemblySteps = steps.filter(s => s.step_type === 'step' || !s.step_type);
-  const totalWeight = ingredients.reduce((s, i) => s + (i.quantity_grams ?? 0), 0);
 
   const sensoryText = lang === 'vi' ? (meta?.sensory_vi ?? '') : (meta?.sensory_en ?? '');
   const warning = lang === 'vi' ? meta?.warning_vi : meta?.warning_en;
@@ -81,12 +90,22 @@ export default function FicheView({
   const stdWeight = meta?.weight_grams ?? product.weight_grams;
   const tol = meta?.tolerance_pct ?? 3;
 
-  // Variants that have a weight defined — used for "grammes par taille"
   const weightedVariants = variants.filter(v => v.weight_g != null);
+
+  // Get display quantity for an ingredient based on selected variant
+  function getIngQty(ing: FicheStep): number | null {
+    if (!selectedVariantId || !variantQuantities.length || !ing.id) return ing.quantity_grams;
+    const vq = variantQuantities.find(q => q.step_id === ing.id && q.variant_id === selectedVariantId);
+    return vq !== undefined ? vq.quantity_grams : ing.quantity_grams;
+  }
+
+  const selectedVariant = selectedVariantId ? variants.find(v => v.id === selectedVariantId) : null;
+
+  // Total weight for current view (default or selected variant)
+  const displayTotalWeight = ingredients.reduce((s, ing) => s + (getIngQty(ing) ?? 0), 0);
 
   return (
     <>
-      {/* Global print CSS */}
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -103,7 +122,6 @@ export default function FicheView({
           <ArrowLeft size={15} /> {lang === 'vi' ? 'Quay lại' : 'Back'}
         </Link>
         <div className="flex items-center gap-2">
-          {/* Lang toggle */}
           <div className="flex gap-0.5 bg-cream rounded-lg p-0.5 border border-border-soft">
             {(['vi', 'en'] as const).map(l => (
               <button key={l} onClick={() => setLang(l)}
@@ -152,7 +170,6 @@ export default function FicheView({
           )}
 
           <div style={{ marginTop: '8px', fontFamily: 'Arial, sans-serif' }}>
-            {/* Category */}
             {categoryName && (
               <div style={{ fontSize: '12px', color: '#555', marginBottom: '6px' }}>
                 {lang === 'vi' ? 'Phân nhóm:' : 'Category:'}{' '}
@@ -160,27 +177,52 @@ export default function FicheView({
               </div>
             )}
 
-            {/* Grammes par taille — show variants if multiple sizes have weights */}
+            {/* Grammes par taille — clickable badges */}
             {weightedVariants.length > 1 ? (
               <div>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: '#555', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Grammes par taille
+                  {variantQuantities.length > 0
+                    ? (lang === 'vi' ? 'Chọn kích thước để xem định lượng:' : 'Select size to view quantities:')
+                    : 'Grammes par taille'}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: stdWeight ? '6px' : '0' }}>
-                  {weightedVariants.map((v, i) => (
-                    <span key={i} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '4px',
-                      background: v.is_default ? '#FFF8E7' : '#f5f5f5',
-                      border: v.is_default ? '1.5px solid #C5932A' : '1px solid #ddd',
-                      borderRadius: '4px', padding: '3px 9px',
-                      fontSize: '11px', color: '#333',
-                    }}>
-                      <strong style={{ color: '#1a1a2e' }}>{v.label}:</strong>
-                      <span style={{ color: '#C5932A', fontWeight: 700 }}>{v.weight_g} gr</span>
-                      {v.is_default && <span style={{ color: '#C5932A', fontSize: '8px' }}>★</span>}
-                    </span>
-                  ))}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '6px' }}>
+                  {weightedVariants.map((v, i) => {
+                    const isSelected = selectedVariantId === v.id;
+                    const hasVarQty = variantQuantities.some(q => q.variant_id === v.id);
+                    return (
+                      <button
+                        key={i}
+                        className="no-print"
+                        onClick={() => setSelectedVariantId(isSelected ? null : v.id)}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '4px',
+                          background: isSelected ? '#FFF0C0' : (v.is_default ? '#FFF8E7' : '#f5f5f5'),
+                          border: isSelected ? '2px solid #C5932A' : (v.is_default ? '1.5px solid #C5932A' : '1px solid #ddd'),
+                          borderRadius: '4px', padding: '3px 9px',
+                          fontSize: '11px', color: '#333',
+                          cursor: hasVarQty ? 'pointer' : 'default',
+                          fontFamily: 'Arial, sans-serif',
+                        }}
+                      >
+                        <strong style={{ color: '#1a1a2e' }}>{v.label}:</strong>
+                        <span style={{ color: '#C5932A', fontWeight: 700 }}>{v.weight_g} gr</span>
+                        {v.is_default && <span style={{ color: '#C5932A', fontSize: '8px' }}>★</span>}
+                        {hasVarQty && !isSelected && <span style={{ color: '#888', fontSize: '8px' }}>📐</span>}
+                      </button>
+                    );
+                  })}
                 </div>
+                {selectedVariant && (
+                  <div className="no-print" style={{ fontSize: '10px', color: '#C5932A', marginTop: '2px', fontFamily: 'Arial, sans-serif' }}>
+                    📐 {lang === 'vi' ? 'Đang xem:' : 'Viewing:'} <strong>{selectedVariant.label}</strong>
+                    <button
+                      onClick={() => setSelectedVariantId(null)}
+                      style={{ marginLeft: '8px', color: '#888', fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      × {lang === 'vi' ? 'reset' : 'reset'}
+                    </button>
+                  </div>
+                )}
                 {stdWeight && (
                   <div style={{ fontSize: '11px', color: '#555' }}>
                     {lang === 'vi' ? 'Sai số cho phép:' : 'Tolerance:'}{' '}
@@ -189,9 +231,7 @@ export default function FicheView({
                 )}
               </div>
             ) : (
-              /* Single weight display (original) */
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '12px', color: '#555' }}>
-                {/* If one variant with weight, show it; else fall back to meta/product weight */}
                 {weightedVariants.length === 1 ? (
                   <>
                     <span>
@@ -205,7 +245,7 @@ export default function FicheView({
                   </>
                 ) : stdWeight ? (
                   <span>
-                    {lang === 'vi' ? 'Thw�ng trọng lượng chuẩn:' : 'Standard weight:'}{' '}
+                    {lang === 'vi' ? 'Tổng trọng lượng chuẩn:' : 'Standard weight:'}{' '}
                     <strong style={{ color: '#C5932A' }}>{stdWeight} gr</strong>
                   </span>
                 ) : null}
@@ -253,6 +293,11 @@ export default function FicheView({
           <div>
             <div style={{ fontSize: '10px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '1.5px', fontFamily: 'Arial, sans-serif', marginBottom: '8px', borderBottom: '1px solid #ddd', paddingBottom: '4px' }}>
               {lang === 'vi' ? 'CẤU TRÚC CÁC LỚP NGUYÊN LIỆU (LAYERS)' : 'INGREDIENT LAYERS STRUCTURE'}
+              {selectedVariant && (
+                <span style={{ marginLeft: '8px', color: '#C5932A', fontWeight: 400, textTransform: 'none', fontSize: '9px' }}>
+                  — {selectedVariant.label} ({selectedVariant.weight_g} gr)
+                </span>
+              )}
             </div>
             {ingredients.length > 0 ? (
               <table className="fiche-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'Arial, sans-serif' }}>
@@ -271,30 +316,33 @@ export default function FicheView({
                   </tr>
                 </thead>
                 <tbody>
-                  {ingredients.map((ing, i) => (
-                    <tr key={i} style={{ backgroundColor: i % 2 === 1 ? '#fafafa' : '#fff' }}>
-                      <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center', fontWeight: 700 }}>{i + 1}</td>
-                      <td style={{ border: '1px solid #ccc', padding: '5px 6px' }}>
-                        {lang === 'vi' ? ing.description_vi : (ing.description_en || ing.description_vi)}
-                      </td>
-                      <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center' }}>
-                        {ing.quantity_grams != null ? `${ing.quantity_grams} gr` : '–'}
-                      </td>
-                      <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center' }}>
-                        {ing.percentage != null ? `${ing.percentage}%` : '–'}
-                      </td>
-                    </tr>
-                  ))}
+                  {ingredients.map((ing, i) => {
+                    const displayQty = getIngQty(ing);
+                    return (
+                      <tr key={i} style={{ backgroundColor: i % 2 === 1 ? '#fafafa' : '#fff' }}>
+                        <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center', fontWeight: 700 }}>{i + 1}</td>
+                        <td style={{ border: '1px solid #ccc', padding: '5px 6px' }}>
+                          {lang === 'vi' ? ing.description_vi : (ing.description_en || ing.description_vi)}
+                        </td>
+                        <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center', color: selectedVariantId ? '#C5932A' : 'inherit', fontWeight: selectedVariantId ? 700 : 400 }}>
+                          {displayQty != null ? `${displayQty} gr` : '–'}
+                        </td>
+                        <td style={{ border: '1px solid #ccc', padding: '5px 6px', textAlign: 'center' }}>
+                          {!selectedVariantId && ing.percentage != null ? `${ing.percentage}%` : '–'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {/* Total row */}
                   <tr style={{ backgroundColor: '#FFF8E7' }}>
                     <td colSpan={2} style={{ border: '1px solid #ccc', padding: '6px 8px', textAlign: 'right', fontWeight: 700, fontSize: '11px', color: '#1a1a2e' }}>
                       {lang === 'vi' ? 'TỔNG TRỌNG LƯỢNG THÀNH PHẨM:' : 'TOTAL FINISHED WEIGHT:'}
                     </td>
                     <td style={{ border: '1px solid #ccc', padding: '6px 8px', textAlign: 'center', fontWeight: 900, color: '#C5932A' }}>
-                      {totalWeight > 0 ? `${totalWeight} gr` : (stdWeight ? `${stdWeight} gr` : '–')}
+                      {displayTotalWeight > 0 ? `${displayTotalWeight} gr` : (stdWeight ? `${stdWeight} gr` : '–')}
                     </td>
                     <td style={{ border: '1px solid #ccc', padding: '6px 8px', textAlign: 'center', fontWeight: 900, color: '#C5932A' }}>
-                      100%
+                      {!selectedVariantId ? '100%' : '–'}
                     </td>
                   </tr>
                 </tbody>
