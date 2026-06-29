@@ -24,6 +24,13 @@ interface FicheStep {
   percentage: number | null;
 }
 
+interface FicheVariant {
+  label: string;
+  sku: string | null;
+  weight_g: number | null;
+  is_default: boolean;
+}
+
 interface Product {
   id: string;
   name_vi: string;
@@ -51,12 +58,13 @@ function renderSensory(text: string) {
 }
 
 export default function FicheView({
-  product, steps, meta, backUrl,
+  product, steps, meta, backUrl, variants = [],
 }: {
   product: Product;
   steps: FicheStep[];
   meta: FicheMeta | null;
   backUrl: string;
+  variants?: FicheVariant[];
 }) {
   const { lang, setLang } = useI18n();
 
@@ -72,6 +80,9 @@ export default function FicheView({
 
   const stdWeight = meta?.weight_grams ?? product.weight_grams;
   const tol = meta?.tolerance_pct ?? 3;
+
+  // Variants that have a weight defined — used for "grammes par taille"
+  const weightedVariants = variants.filter(v => v.weight_g != null);
 
   return (
     <>
@@ -139,15 +150,72 @@ export default function FicheView({
           {product.name_en && (
             <p style={{ fontSize: '12px', color: '#666', margin: '3px 0 0', fontFamily: 'Arial, sans-serif' }}>{product.name_en}</p>
           )}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '8px', fontSize: '12px', color: '#555', fontFamily: 'Arial, sans-serif' }}>
+
+          <div style={{ marginTop: '8px', fontFamily: 'Arial, sans-serif' }}>
+            {/* Category */}
             {categoryName && (
-              <span>{lang === 'vi' ? 'Phân nhóm:' : 'Category:'} <strong>{categoryName}{product.subcategory ? ` (${product.subcategory})` : ''}</strong></span>
+              <div style={{ fontSize: '12px', color: '#555', marginBottom: '6px' }}>
+                {lang === 'vi' ? 'Phân nhóm:' : 'Category:'}{' '}
+                <strong>{categoryName}{product.subcategory ? ` (${product.subcategory})` : ''}</strong>
+              </div>
             )}
-            {stdWeight && (
-              <span>{lang === 'vi' ? 'Tổng trọng lượng chuẩn:' : 'Standard weight:'} <strong style={{ color: '#C5932A' }}>{stdWeight} gr</strong></span>
-            )}
-            {stdWeight && (
-              <span>{lang === 'vi' ? 'Sai số cho phép:' : 'Tolerance:'} <strong>± {tol}% ({Math.round(stdWeight * (1 - tol / 100))}g – {Math.round(stdWeight * (1 + tol / 100))}g)</strong></span>
+
+            {/* Grammes par taille — show variants if multiple sizes have weights */}
+            {weightedVariants.length > 1 ? (
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#555', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Grammes par taille
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: stdWeight ? '6px' : '0' }}>
+                  {weightedVariants.map((v, i) => (
+                    <span key={i} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '4px',
+                      background: v.is_default ? '#FFF8E7' : '#f5f5f5',
+                      border: v.is_default ? '1.5px solid #C5932A' : '1px solid #ddd',
+                      borderRadius: '4px', padding: '3px 9px',
+                      fontSize: '11px', color: '#333',
+                    }}>
+                      <strong style={{ color: '#1a1a2e' }}>{v.label}:</strong>
+                      <span style={{ color: '#C5932A', fontWeight: 700 }}>{v.weight_g} gr</span>
+                      {v.is_default && <span style={{ color: '#C5932A', fontSize: '8px' }}>★</span>}
+                    </span>
+                  ))}
+                </div>
+                {stdWeight && (
+                  <div style={{ fontSize: '11px', color: '#555' }}>
+                    {lang === 'vi' ? 'Sai số cho phép:' : 'Tolerance:'}{' '}
+                    <strong>± {tol}%</strong>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Single weight display (original) */
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '12px', color: '#555' }}>
+                {/* If one variant with weight, show it; else fall back to meta/product weight */}
+                {weightedVariants.length === 1 ? (
+                  <>
+                    <span>
+                      {lang === 'vi' ? 'Kích thước:' : 'Size:'}{' '}
+                      <strong style={{ color: '#1a1a2e' }}>{weightedVariants[0].label}</strong>
+                    </span>
+                    <span>
+                      {lang === 'vi' ? 'Trọng lượng chuẩn:' : 'Standard weight:'}{' '}
+                      <strong style={{ color: '#C5932A' }}>{weightedVariants[0].weight_g} gr</strong>
+                    </span>
+                  </>
+                ) : stdWeight ? (
+                  <span>
+                    {lang === 'vi' ? 'Thw�ng trọng lượng chuẩn:' : 'Standard weight:'}{' '}
+                    <strong style={{ color: '#C5932A' }}>{stdWeight} gr</strong>
+                  </span>
+                ) : null}
+                {stdWeight && (
+                  <span>
+                    {lang === 'vi' ? 'Sai số cho phép:' : 'Tolerance:'}{' '}
+                    <strong>± {tol}% ({Math.round(stdWeight * (1 - tol / 100))}g – {Math.round(stdWeight * (1 + tol / 100))}g)</strong>
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
