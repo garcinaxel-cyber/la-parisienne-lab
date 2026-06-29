@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, ChevronRight, Lock } from 'lucide-react';
+import { BookOpen, ChevronRight, AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 
 type Fiche = {
@@ -102,7 +102,7 @@ export default function StationFichesPage() {
               {isReadOnly && (
                 <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
                   style={{ backgroundColor: 'rgba(255,244,204,0.2)', color: '#FFF4CC' }}>
-                  <Lock size={9} /> Xem
+                  <AlertCircle size={9} /> Xem
                 </span>
               )}
             </div>
@@ -195,7 +195,7 @@ export default function StationFichesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {isReadOnly && <Lock size={12} style={{ color: '#C9A84C' }} />}
+                    {isReadOnly && <AlertCircle size={12} style={{ color: '#C9A84C' }} />}
                     <ChevronRight size={16} style={{ color: '#C9A84C' }} />
                   </div>
                 </Link>
