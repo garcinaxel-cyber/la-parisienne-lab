@@ -31,15 +31,25 @@ export default async function FichePage({
 
   if (!product && !metaRaw) redirect(backUrl);
 
-  // Steps are keyed by fiche_id (not product_id)
+  // Steps and variants are keyed by fiche_id (not product_id)
   const ficheId = metaRaw?.id ?? null;
-  const { data: allSteps } = ficheId
-    ? await supabase
-        .from('lab_fiche_steps')
-        .select('step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
-        .eq('fiche_id', ficheId)
-        .order('step_number')
-    : { data: [] };
+
+  const [stepsResult, variantsResult] = await Promise.all([
+    ficheId
+      ? supabase
+          .from('lab_fiche_steps')
+          .select('step_type, step_number, description_vi, description_en, duration_minutes, temperature_celsius, quantity_grams, percentage')
+          .eq('fiche_id', ficheId)
+          .order('step_number')
+      : Promise.resolve({ data: [] }),
+    ficheId
+      ? supabase
+          .from('lab_fiche_variants')
+          .select('label, sku, weight_g, is_default')
+          .eq('fiche_id', ficheId)
+          .order('sort_order')
+      : Promise.resolve({ data: [] }),
+  ]);
 
   // If product exists, use it; otherwise synthesise from fiche meta
   const productData = product ?? {
@@ -64,8 +74,9 @@ export default async function FichePage({
   return (
     <FicheView
       product={normalised}
-      steps={(allSteps ?? []) as any[]}
+      steps={(stepsResult.data ?? []) as any[]}
       meta={metaRaw ?? null}
+      variants={(variantsResult.data ?? []) as any[]}
       backUrl={backUrl}
     />
   );
