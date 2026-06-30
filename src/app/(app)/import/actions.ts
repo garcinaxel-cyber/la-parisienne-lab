@@ -1,5 +1,6 @@
 'use server';
 import { createClient } from '@/lib/supabase-server';
+import { redirect } from 'next/navigation';
 
 export async function createFicheFromSku(
   sku: string,
@@ -25,5 +26,17 @@ export async function createFicheFromSku(
     .single();
 
   if (error || !data?.id) return { error: error?.message ?? 'Failed to create fiche' };
+
+  // Create a default "Standard" variant with the SKU so future imports recognise it
+  if (sku) {
+    await supabase.from('lab_fiche_variants').insert({
+      fiche_id: data.id,
+      label: 'Standard',
+      sku,
+      is_default: true,
+      sort_order: 0,
+    });
+  }
+
   return { ficheId: data.id };
 }
