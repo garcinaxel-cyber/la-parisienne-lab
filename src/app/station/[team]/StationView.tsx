@@ -67,7 +67,14 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history';
+
+type DateSummary = {
+  delivery_date: string;
+  productCount: number;
+  totalQty: number;
+  doneQty: number;
+};
 
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
@@ -98,6 +105,9 @@ export default function StationView({
   const [blockedReason, setBlockedReason] = useState('');
   const [blockedCustom, setBlockedCustom] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('production');
+  const [upcomingData, setUpcomingData] = useState<DateSummary[]>([]);
+  const [historyData, setHistoryData] = useState<DateSummary[]>([]);
+  const [loadingDates, setLoadingDates] = useState(false);
 
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
@@ -166,6 +176,53 @@ export default function StationView({
 
     return () => { supabase.removeChannel(channel); };
   }, [team, initial]);
+
+  // Lazy-load upcoming / history dates
+  useEffect(() => {
+    if (activeTab !== 'upcoming' && activeTab !== 'history') return;
+    const cache = activeTab === 'upcoming' ? upcomingData : historyData;
+    if (cache.length > 0) return;
+    setLoadingDates(true);
+    const supabase = createClient();
+    const isUpcoming = activeTab === 'upcoming';
+    supabase
+      .from('lab_imports')
+      .select('id, delivery_date')
+      .eq('status', 'published')
+      [isUpcoming ? 'gt' : 'lt']('delivery_date', today)
+      .order('delivery_date', { ascending: isUpcoming })
+      .limit(20)
+      .then(async ({ data: imports }) => {
+        if (!imports?.length) {
+          if (isUpcoming) setUpcomingData([]);
+          else setHistoryData([]);
+          setLoadingDates(false); return;
+        }
+        const importIds = imports.map((i: any) => i.id);
+        const { data: asgns } = await supabase
+          .from('lab_assignments')
+          .select('import_id, qty_to_produce, status')
+          .in('import_id', importIds)
+          .eq('team', team);
+        const byDate = new Map<string, DateSummary>();
+        for (const imp of imports) {
+          if (!byDate.has(imp.delivery_date))
+            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0 });
+        }
+        for (const a of asgns ?? []) {
+          const imp = imports.find((i: any) => i.id === a.import_id);
+          if (!imp) continue;
+          const s = byDate.get(imp.delivery_date)!;
+          s.productCount++;
+          s.totalQty += a.qty_to_produce ?? 0;
+          if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
+        }
+        const result = Array.from(byDate.values()).filter(d => d.productCount > 0);
+        if (isUpcoming) setUpcomingData(result);
+        else setHistoryData(result);
+        setLoadingDates(false);
+      });
+  }, [activeTab, team, today]);
 
   async function advanceStatus(a: Assignment) {
     const next = STATUS_FLOW[a.status];
@@ -313,6 +370,20 @@ export default function StationView({
       count: termineCount,
       icon: <CheckCircle2 size={14} />,
     },
+    {
+      id: 'upcoming',
+      labelVi: 'Sắp tới',
+      labelEn: 'À venir',
+      count: upcomingData.length,
+      icon: <ChevronRight size={14} />,
+    },
+    {
+      id: 'history',
+      labelVi: 'Lịch sử',
+      labelEn: 'Historique',
+      count: historyData.length,
+      icon: <Clock size={14} />,
+    },
   ];
 
   const isEmployee = userRole === 'employee';
@@ -346,8 +417,12 @@ export default function StationView({
               <div className="text-white font-bold text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
-              <div className={`text-[11px] truncate ${isHistoryView ? 'text-yellow-300' : 'text-white/60'}`}>
-                {isHistoryView ? '📅 ' : ''}{formatDate(viewDate)}
+              <div className="text-[11px] truncate">
+                {!isHistoryView
+                  ? <span className="font-bold text-yellow-300">HÔM NAY · </span>
+                  : <span className="text-yellow-300">📅 </span>
+                }
+                <span className={isHistoryView ? 'text-yellow-300' : 'text-white/70'}>{formatDate(viewDate)}</span>
               </div>
             </div>
             <button onClick={nextDay} disabled={viewDate >= today}
@@ -563,6 +638,86 @@ export default function StationView({
                 onAdvance={advanceStatus} updating={updating} />
             ))
           )}
+        </div>
+      )}
+
+      {/* ─── UPCOMING TAB ─── */}
+      {activeTab === 'upcoming' && (
+        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
+          {loadingDates && (
+            <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
+              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+            </div>
+          )}
+          {!loadingDates && upcomingData.length === 0 && (
+            <div className="text-center py-20">
+              <ClipboardList size={40} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
+              <p className="font-semibold" style={{ color: '#1A4731' }}>
+                {lang === 'vi' ? 'Chưa có đơn hàng sắp tới' : 'No upcoming orders'}
+              </p>
+              <p className="text-sm mt-1 text-gray-400">
+                {lang === 'vi' ? 'Import đơn hàng để xem ở đây' : 'Import orders to see them here'}
+              </p>
+            </div>
+          )}
+          {upcomingData.map(d => {
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+            });
+            return (
+              <button key={d.delivery_date}
+                onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
+                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white"
+                style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}>
+                <div>
+                  <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
+                  <div className="text-xs mt-0.5 font-medium" style={{ color: '#2D6A4F' }}>
+                    {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'unités'}
+                  </div>
+                </div>
+                <ChevronRight size={16} style={{ color: '#C9A84C' }} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── HISTORY TAB ─── */}
+      {activeTab === 'history' && (
+        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
+          {loadingDates && (
+            <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
+              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+            </div>
+          )}
+          {!loadingDates && historyData.length === 0 && (
+            <div className="text-center py-20">
+              <Clock size={40} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
+              <p className="font-semibold" style={{ color: '#1A4731' }}>
+                {lang === 'vi' ? 'Chưa có lịch sử' : 'Aucun historique'}
+              </p>
+            </div>
+          )}
+          {historyData.map(d => {
+            const pct = d.totalQty ? Math.round(d.doneQty / d.totalQty * 100) : 0;
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+            });
+            return (
+              <button key={d.delivery_date}
+                onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
+                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white"
+                style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}>
+                <div>
+                  <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
+                  <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
+                    {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'}
+                  </div>
+                </div>
+                <ChevronRight size={16} style={{ color: '#C9A84C' }} />
+              </button>
+            );
+          })}
         </div>
       )}
 
