@@ -196,7 +196,8 @@ export default function StationView({
         if (!imports?.length) {
           if (isUpcoming) setUpcomingData([]);
           else setHistoryData([]);
-          setLoadingDates(false); return;
+          setLoadingDates(false);
+          return;
         }
         const importIds = imports.map((i: any) => i.id);
         const { data: asgns } = await supabase
@@ -426,7 +427,7 @@ export default function StationView({
               </div>
             </div>
             <button onClick={nextDay} disabled={viewDate >= today}
-              className="p-0.5 rounded transition-colors shring-0"
+              className="p-0.5 rounded transition-colors shrink-0"
               style={{ color: viewDate >= today ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.6)' }}>
               <ChevronRight size={16} />
             </button>
@@ -593,7 +594,7 @@ export default function StationView({
                         </div>
                       </div>
                       {/* Shop breakdown */}
-                     {breakdown.length > 0 && (
+                      {breakdown.length > 0 && (
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
                             <div key={bi} className="flex items-center justify-between px-5 py-1.5 text-sm"
@@ -888,7 +889,7 @@ export default function StationView({
                           {p.main_image_url ? (
                             <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                           ) : (
-                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg " style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
