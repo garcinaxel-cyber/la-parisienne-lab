@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { BookOpen, ChevronRight, AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
@@ -19,6 +20,8 @@ export default function StationFichesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedCat, setSelectedCat] = useState('');
   const [lang, setLang] = useState<'vi' | 'en'>('vi');
+  const searchParams = useSearchParams();
+  const teamParam = searchParams.get('team');
   const [isReadOnly, setIsReadOnly] = useState(false);
 
   useEffect(() => {
@@ -51,11 +54,10 @@ export default function StationFichesPage() {
         .select('id, name_vi, name_en, image_url, category, teams')
         .eq('is_active', true);
 
-      if (!isAdmin && userTeam) {
-        // Chef / Worker: show only fiches assigned to their team
-        query = query.contains('teams', [userTeam]);
+      const filterTeam = teamParam ?? (!isAdmin ? userTeam : null);
+      if (filterTeam) {
+        query = query.contains('teams', [filterTeam]);
       }
-      // If no team assigned and not admin: show nothing (admin should assign teams first)
 
       const { data: fichesRaw, error } = await query.order('name_vi');
       if (error) console.error('fiches query error:', error);
@@ -103,7 +105,7 @@ export default function StationFichesPage() {
             <div className="text-white/60 text-[11px]">Recipe Cards — La Parisienne</div>
           </div>
         </div>
-        <Link href="/station/me" className="text-white/70 text-xs hover:text-white transition-colors">
+        <Link href={teamParam ? `/station/${teamParam}` : '/station/me'} className="text-white/70 text-xs hover:text-white transition-colors">
           ← {lang === 'vi' ? 'Trạm' : 'Station'}
         </Link>
       </header>
