@@ -12,6 +12,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) redirect('/dashboard');
 
+  // Read fiche from lab_fiche_meta (params.productId = fiche id)
   const { data: fiche } = await supabase
     .from('lab_fiche_meta')
     .select('*')
@@ -28,7 +29,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
       .order('step_number'),
     supabase
       .from('lab_fiche_variants')
-      .select('id, label, sku, weight_g, is_default, sort_order')
+      .select('id, label, sku, weight_g, is_default, sort_order, image_url')
       .eq('fiche_id', params.productId)
       .order('sort_order'),
   ]);
@@ -36,26 +37,6 @@ export default async function FicheDetailPage({ params }: { params: { productId:
   const steps = allSteps ?? [];
   const ingredients = steps.filter((s: any) => s.step_type === 'ingredient');
   const assemblySteps = steps.filter((s: any) => s.step_type === 'step' || !s.step_type);
-
-  // Load per-variant quantities for ingredient steps
-  const ingredientStepIds = ingredients.map((s: any) => s.id).filter(Boolean);
-  const { data: variantQtyData } = ingredientStepIds.length > 0
-    ? await supabase
-        .from('lab_fiche_variant_quantities')
-        .select('step_id, variant_id, quantity_grams')
-        .in('step_id', ingredientStepIds)
-    : { data: [] as { step_id: string; variant_id: string; quantity_grams: number | null }[] };
-
-  // Map step_id → step_number for conversion
-  const stepNumById: Record<string, number> = {};
-  for (const s of ingredients) {
-    stepNumById[(s as any).id] = (s as any).step_number;
-  }
-  const initVariantQty = (variantQtyData ?? []).map((vq: any) => ({
-    step_number: stepNumById[vq.step_id],
-    variant_id: vq.variant_id,
-    quantity_grams: vq.quantity_grams,
-  })).filter((vq: any) => vq.step_number != null);
 
   return (
     <FicheEditor
@@ -83,10 +64,10 @@ export default async function FicheDetailPage({ params }: { params: { productId:
         weight_g: v.weight_g?.toString() ?? '',
         is_default: v.is_default ?? false,
         sort_order: v.sort_order ?? 0,
+        image_url: v.image_url ?? '',
       }))}
       ingredients={ingredients}
       assemblySteps={assemblySteps}
-      initVariantQty={initVariantQty}
     />
   );
 }
