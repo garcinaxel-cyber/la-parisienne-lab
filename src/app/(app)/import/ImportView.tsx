@@ -22,7 +22,7 @@ function mergeLines(groups: ConsolidatedLine[][]): ConsolidatedLine[] {
   const map = new Map<string, ConsolidatedLine>();
   for (const group of groups) {
     for (const line of group) {
-      const key = `${line.team}||${line.product_sku}||${line.variant_label}`;
+      const key = `${line.team}||${line.product_sku}||${line.variant_label}||${line.delivery_date}`;
       const existing = map.get(key);
       if (existing) {
         map.set(key, {
@@ -45,7 +45,7 @@ export default function ImportView() {
   const [dragging, setDragging] = useState(false);
   const [parsedFiles, setParsedFiles] = useState<ParsedImport[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0]);
+  const [importedDate, setImportedDate] = useState('');
   const [importType, setImportType] = useState<'daily' | 'cake_addon'>('daily');
   const [shippedFromLab, setShippedFromLab] = useState(false);
   const [notes, setNotes] = useState('');
@@ -172,6 +172,7 @@ export default function ImportView() {
   async function publish(asDraft: boolean) {
     if (!parsedFiles.length) return;
     setStep('saving');
+    const earliestDate = effectiveLines.map(l => l.delivery_date).filter(Boolean).sort()[0] ?? new Date().toISOString().split('T')[0];
     const supabase = createClient();
 
     // Look up products by SKU to enrich assignments with image_url + product_id
@@ -188,18 +189,18 @@ export default function ImportView() {
     const { count } = await supabase
       .from('lab_imports')
       .select('*', { count: 'exact', head: true })
-      .eq('delivery_date', deliveryDate);
+      .eq('delivery_date', earliestDate);
 
     const orderNumber = (count ?? 0) + 1;
 
     // Determine filenames
     const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
-    const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
+    const replFile = parsedFiles.find(pf => pf.sourceType === 'replenishment');
 
     const { data: importRow, error: importErr } = await supabase
       .from('lab_imports')
       .insert({
-        delivery_date: deliveryDate,
+        delivery_date: earliestDate,
         order_number: orderNumber,
         type: importType,
         shipped_from_lab: shippedFromLab,
@@ -263,7 +264,7 @@ export default function ImportView() {
             team: line.team,
             variant_label: line.variant_label,
             qty: b.qty,
-            delivery_date: deliveryDate,
+            delivery_date: line.delivery_date,
             delivery_time: orderTimes[b.order_ref] || null,
           }))
         )
@@ -272,6 +273,7 @@ export default function ImportView() {
       await supabase.from('lab_order_lines').insert(orderLines);
     }
 
+    setImportedDate(earliestDate);
     setStep('done');
   }
 
@@ -315,7 +317,7 @@ export default function ImportView() {
             : `${totalItems} items dispatched to production teams`}
         </p>
         <div className="flex gap-3 justify-center pt-2">
-          <button onClick={() => router.push(`/orders/${deliveryDate}`)} className="btn-primary">
+          <button onClick={() => router.push(`/orders/${importedDate}`)} className="btn-primary">
             {lang === 'vi' ? 'Xem đơn hàng' : 'View order'}
           </button>
           <button onClick={reset} className="btn-secondary">
@@ -339,11 +341,6 @@ export default function ImportView() {
 
       {/* Options */}
       <div className="card p-4 flex flex-wrap gap-4">
-        <div className="flex-1 min-w-40">
-          <label className="label">{lang === 'vi' ? 'Ngày giao hàng' : 'Delivery date'}</label>
-          <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
-            className="input mt-1 w-full" />
-        </div>
         <div className="flex-1 min-w-40">
           <label className="label">{lang === 'vi' ? 'Loại đơn' : 'Order type'}</label>
           <select value={importType} onChange={e => setImportType(e.target.value as any)} className="input mt-1 w-full">
