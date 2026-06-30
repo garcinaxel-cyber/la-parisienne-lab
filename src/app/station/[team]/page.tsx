@@ -80,6 +80,20 @@ export default async function StationPage({ params }: { params: { team: string }
     weightMap[m.product_id] = m.weight_grams ?? null;
   }
 
+  // Variant-specific image — look up lab_fiche_variants.image_url by SKU
+  const allSkus = (assignments ?? []).map((a: any) => a.products?.sku).filter(Boolean) as string[];
+  const { data: variantImgRows } = allSkus.length > 0
+    ? await supabase
+        .from('lab_fiche_variants')
+        .select('sku, image_url')
+        .in('sku', allSkus)
+        .not('image_url', 'is', null)
+    : { data: [] as any[] };
+  const variantImgBySku: Record<string, string> = {};
+  for (const v of variantImgRows ?? []) {
+    if (v.sku && v.image_url) variantImgBySku[v.sku] = v.image_url;
+  }
+
   const { data: productCats } = productIds.length > 0
     ? await supabase
         .from('products')
@@ -111,6 +125,7 @@ export default async function StationPage({ params }: { params: { team: string }
   const normalised = (assignments ?? []).map((a: any) => ({
     ...a,
     sku: a.products?.sku ?? null,
+    image_url: (a.products?.sku && variantImgBySku[a.products.sku]) ? variantImgBySku[a.products.sku] : (a.image_url ?? null),
     weight_grams: a.product_id ? (weightMap[a.product_id] ?? null) : null,
     category_name_vi: a.product_id ? (categoryNameMap[a.product_id]?.vi ?? null) : null,
     category_name_en: a.product_id ? (categoryNameMap[a.product_id]?.en ?? null) : null,
