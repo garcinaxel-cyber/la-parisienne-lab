@@ -46,6 +46,15 @@ function normaliseTeam(raw: string): string {
   return ODOO_TEAM_MAP[clean] ?? ODOO_TEAM_MAP[clean.toLowerCase()] ?? clean;
 }
 
+/** Find a column index by exact header name (robust to column-order changes in Odoo exports). */
+function col(headers: string[], ...names: string[]): number {
+  for (const name of names) {
+    const idx = headers.findIndex(h => h.trim() === name);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
 export async function parseExcelFile(file: File): Promise<ParseResult> {
   const errors: string[] = [];
   const buffer = await file.arrayBuffer();
@@ -62,17 +71,27 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   const lines: ParsedLine[] = [];
 
   if (type === 'sales_order') {
-    // Columns: OrderRef, Customer, DeliveryDate, LineOrderRef, Description, Product, Tag, SKU, Qty
+    // Find columns by name — robust to Odoo adding/reordering columns
+    const orderRefIdx = col(headers, 'Order Reference');
+    const shopIdx     = col(headers, 'Customer');
+    const dateIdx     = col(headers, 'Delivery Date');
+    const skuIdx      = col(headers, 'Order Lines/Product/Reference');
+    const descIdx     = col(headers, 'Order Lines/Description');
+    const productIdx  = col(headers, 'Order Lines/Product');
+    const teamIdx     = col(headers, 'Order Lines/Product/All Product Tag');
+    const qtyIdx      = col(headers, 'Order Lines/Quantity');
+
     let curOrderRef = '', curShop = '', curDate = '', curTime: string | null = null;
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i] as unknown[];
-      if (r[0]) { curOrderRef = String(r[0]).trim(); }
-      if (r[1]) { curShop = String(r[1]).trim(); }
-      if (r[2]) { const dt = excelDateToISO(r[2]); curDate = dt.date; curTime = dt.time; }
-      const sku  = String(r[7] ?? '').trim();
-      const name = String(r[3] ?? r[4] ?? r[5] ?? '').replace(/\[.*?\]\s*/, '').trim();
-      const team = String(r[6] ?? '').trim();
-      const qty  = Math.round(Number(r[8] ?? 0));
+      if (orderRefIdx >= 0 && r[orderRefIdx]) curOrderRef = String(r[orderRefIdx]).trim();
+      if (shopIdx >= 0 && r[shopIdx])         curShop     = String(r[shopIdx]).trim();
+      if (dateIdx >= 0 && r[dateIdx])         { const dt = excelDateToISO(r[dateIdx]); curDate = dt.date; curTime = dt.time; }
+      const sku  = skuIdx >= 0 ? String(r[skuIdx] ?? '').trim() : '';
+      const rawName = descIdx >= 0 ? r[descIdx] : (productIdx >= 0 ? r[productIdx] : null);
+      const name = String(rawName ?? '').replace(/\[.*?\]\s*/, '').trim();
+      const team = teamIdx >= 0 ? String(r[teamIdx] ?? '').trim() : '';
+      const qty  = qtyIdx >= 0 ? Math.round(Number(r[qtyIdx] ?? 0)) : 0;
       if (!sku || !qty) continue;
       lines.push({ source_type: 'sales_order', order_ref: curOrderRef, shop_name: curShop,
         product_sku: sku, product_name_vi: name, team: normaliseTeam(team),
@@ -81,17 +100,25 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   }
 
   if (type === 'replenishment') {
-    // Columns: DeliveryDate, DestWarehouse, RequestNumber, ProductName, SKU, Tags, QtyRequested
+    // Find columns by name — robust to Odoo adding/reordering columns
+    const dateIdx      = col(headers, 'Delivery Date');
+    const warehouseIdx = col(headers, 'Destination Warehouse');
+    const requestIdx   = col(headers, 'Request Number');
+    const nameIdx      = col(headers, 'Request Lines/Product/Name');
+    const skuIdx       = col(headers, 'Request Lines/Product/Reference');
+    const teamIdx      = col(headers, 'Request Lines/Product/Tags');
+    const qtyIdx       = col(headers, 'Request Lines/Quantity Requested');
+
     let curDate = '', curTime: string | null = null, curWarehouse = '', curRef = '';
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i] as unknown[];
-      if (r[0]) { const dt = excelDateToISO(r[0]); curDate = dt.date; curTime = dt.time; }
-      if (r[1]) curWarehouse = String(r[1]).trim();
-      if (r[2]) curRef = String(r[2]).trim();
-      const name = String(r[3] ?? '').trim();
-      const sku  = String(r[3] ?? r[4] ?? '').trim();
-      const team = String(r[3] ?? r[5] ?? '').trim();
-      const qty  = Math.round(Number(r[6] ?? 0));
+      if (dateIdx >= 0 && r[dateIdx])        { const dt = excelDateToISO(r[dateIdx]); curDate = dt.date; curTime = dt.time; }
+      if (warehouseIdx >= 0 && r[warehouseIdx]) curWarehouse = String(r[warehouseIdx]).trim();
+      if (requestIdx >= 0 && r[requestIdx])  curRef = String(r[requestIdx]).trim();
+      const name = nameIdx >= 0 ? String(r[nameIdx] ?? '').trim() : '';
+      const sku  = skuIdx >= 0  ? String(r[skuIdx]  ?? '').trim() : '';
+      const team = teamIdx >= 0 ? String(r[teamIdx] ?? '').trim() : '';
+      const qty  = qtyIdx >= 0  ? Math.round(Number(r[qtyIdx] ?? 0)) : 0;
       if (!sku || !qty) continue;
       lines.push({ source_type: 'replenishment', order_ref: curRef, shop_name: curWarehouse,
         product_sku: sku, product_name_vi: name, team: normaliseTeam(team),
