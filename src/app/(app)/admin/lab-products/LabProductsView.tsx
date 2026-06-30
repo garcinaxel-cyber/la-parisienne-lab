@@ -1,32 +1,26 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Package2, Tag, Building2, X, Save, Trash2 } from 'lucide-react';
+import { Plus, Package2, Tag, FlaskConical, X, Save, Trash2, PenLine } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 
-type Product = {
+type Fiche = {
   id: string;
   name_vi: string;
   name_en: string | null;
-  sku: string | null;
-  main_image_url: string | null;
-  is_lab_only: boolean;
+  image_url: string | null;
+  category: string | null;
   is_active: boolean;
-  subcategory: string | null;
+  sku: string | null; // SKU from default variant
 };
 
 type Category = { id: string; name_vi: string; name_en: string };
 
-const CHANNELS = [
-  { value: 'b2b', label_vi: 'B2B (doanh nghiệp)', label_en: 'B2B (business)' },
-  { value: 'wholesale', label_vi: 'Bán sỉ', label_en: 'Wholesale' },
-  { value: 'internal', label_vi: 'Nội bộ', label_en: 'Internal use' },
-  { value: 'other', label_vi: 'Khác', label_en: 'Other channel' },
-];
+const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'] as const;
 
 export default function LabProductsView({ products: initial, categories }: {
-  products: Product[]; categories: Category[];
+  products: Fiche[]; categories: Category[];
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -40,15 +34,21 @@ export default function LabProductsView({ products: initial, categories }: {
     name_vi: '',
     name_en: '',
     sku: '',
-    channel: 'b2b',
-    subcategory: '',
-    category_id: '',
+    category: '',
+    teams: [] as string[],
     image_url: '',
   });
 
   function resetForm() {
-    setForm({ name_vi: '', name_en: '', sku: '', channel: 'b2b', subcategory: '', category_id: '', image_url: '' });
+    setForm({ name_vi: '', name_en: '', sku: '', category: '', teams: [], image_url: '' });
     setError(null);
+  }
+
+  function toggleTeam(team: string) {
+    setForm(f => ({
+      ...f,
+      teams: f.teams.includes(team) ? f.teams.filter(t => t !== team) : [...f.teams, team],
+    }));
   }
 
   async function createProduct() {
@@ -57,40 +57,47 @@ export default function LabProductsView({ products: initial, categories }: {
     setError(null);
     const supabase = createClient();
 
-    const { data, error: err } = await supabase.from('products').insert({
-      name_vi: form.name_vi.trim(),
-      name_en: form.name_en.trim() || null,
-      sku: form.sku.trim() || null,
-      subcategory: form.subcategory.trim() || null,
-      category_id: form.category_id || null,
-      main_image_url: form.image_url.trim() || null,
-      is_active: false,       // NOT visible on public catalogue
-      is_lab_only: true,      // Lab-only flag
-    }).select('id, name_vi, name_en, sku, main_image_url, is_lab_only, is_active, subcategory').single();
+    // 1) Create the fiche in lab_fiche_meta
+    const { data: fiche, error: ficheErr } = await supabase
+      .from('lab_fiche_meta')
+      .insert({
+        name_vi: form.name_vi.trim(),
+        name_en: form.name_en.trim() || null,
+        category: form.category.trim() || null,
+        teams: form.teams.length > 0 ? form.teams : null,
+        image_url: form.image_url.trim() || null,
+        is_active: true,
+      })
+      .select('id, name_vi, name_en, image_url, category, is_active')
+      .single();
 
-    if (err || !data) {
-      setError(err?.message ?? 'Failed to create product');
+    if (ficheErr || !fiche) {
+      setError(ficheErr?.message ?? 'Failed to create fiche');
       setSaving(false);
       return;
     }
 
-    setProducts(prev => [data, ...prev]);
+    // 2) Create a default "Standard" variant with the given SKU
+    const sku = form.sku.trim() || null;
+    await supabase.from('lab_fiche_variants').insert({
+      fiche_id: fiche.id,
+      label: 'Standard',
+      sku,
+      is_default: true,
+      sort_order: 0,
+    });
+
+    setProducts(prev => [{ ...fiche, sku }, ...prev]);
     resetForm();
     setShowForm(false);
     setSaving(false);
   }
 
-  async function toggleActive(product: Product) {
-    // Note: is_active=true would make it visible on the catalogue.
-    // For lab-only products, we keep is_active=false always.
-    // This button is intentionally not provided.
-  }
-
   async function deleteProduct(id: string) {
-    if (!confirm(lang === 'vi' ? 'Xóa sản phẩm này? Hành động này không thể hoàn tác.' : 'Delete this product? This cannot be undone.')) return;
+    if (!confirm(lang === 'vi' ? 'Xóa fiche này? Hành động này không thể hoàn tác.' : 'Delete this fiche? This cannot be undone.')) return;
     setDeleting(id);
     const supabase = createClient();
-    await supabase.from('products').delete().eq('id', id).eq('is_lab_only', true);
+    await supabase.from('lab_fiche_meta').delete().eq('id', id);
     setProducts(prev => prev.filter(p => p.id !== id));
     setDeleting(null);
   }
@@ -120,12 +127,12 @@ export default function LabProductsView({ products: initial, categories }: {
       {/* Info box */}
       <div className="rounded-xl p-4 text-sm flex gap-3"
         style={{ backgroundColor: '#F0F9F4', border: '1px solid #A7D4B8', color: '#2D6A4F' }}>
-        <Building2 size={18} className="shrink-0 mt-0.5" />
+        <FlaskConical size={18} className="shrink-0 mt-0.5" />
         <div>
-          <strong>{lang === 'vi' ? 'Comment ça marche :' : 'How this works:'}</strong>
+          <strong>{lang === 'vi' ? 'Fiches kỹ thuật Lab :' : 'Lab recipe fiches:'}</strong>
           {lang === 'vi'
-            ? ' Các sản phẩm này được lưu trong cùng bảng products nhưng với is_active=false và is_lab_only=true. App catalogue chỉ hiển thị is_active=true, nên chúng sẽ không bao giờ xuất hiện cho khách hàng. Trong Lab, chúng hiển thị cho manager và đầu bếp.'
-            : ' These products live in the shared products table but with is_active=false and is_lab_only=true. The catalogue app only shows is_active=true products, so they never appear to customers. In the Lab, they\'re visible to managers and chefs.'}
+            ? ' Mỗi fiche được lưu trong lab_fiche_meta — hoàn toàn tách biệt với catalogue B2C. Tạo fiche tại đây, sau đó chỉnh sửa chi tiết (nguyên liệu, bước làm, variants) trong trình chỉnh sửa fiche.'
+            : ' Each fiche lives in lab_fiche_meta — completely separate from the B2C catalogue. Create a fiche here, then edit details (ingredients, steps, variants) in the fiche editor.'}
         </div>
       </div>
 
@@ -145,7 +152,7 @@ export default function LabProductsView({ products: initial, categories }: {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
-                {lang === 'vi' ? 'Tên sản phẩm (VI) *' : 'Product name (VI) *'}
+                {lang === 'vi' ? 'Tên sản phẩm (VI) *'}
               </label>
               <input value={form.name_vi} onChange={e => setForm(f => ({ ...f, name_vi: e.target.value }))}
                 className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
@@ -162,49 +169,38 @@ export default function LabProductsView({ products: initial, categories }: {
                 placeholder="e.g. B2B Bread" />
             </div>
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">SKU</label>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
+                {lang === 'vi' ? 'SKU (variant Standard)' : 'SKU (Standard variant)'}
+              </label>
               <input value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
                 className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
                 style={{ borderColor: '#E0D49A' }}
-                placeholder="e.g. B2B-001" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
-                {lang === 'vi' ? 'Kênh phân phối' : 'Channel'}
-              </label>
-              <select value={form.channel} onChange={e => setForm(f => ({ ...f, channel: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
-                style={{ borderColor: '#E0D49A' }}>
-                {CHANNELS.map(c => (
-                  <option key={c.value} value={c.value}>
-                    {lang === 'vi' ? c.label_vi : c.label_en}
-                  </option>
-                ))}
-              </select>
+                placeholder="e.g. LP-B2B-001" />
             </div>
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
                 {lang === 'vi' ? 'Danh mục' : 'Category'}
               </label>
-              <select value={form.category_id} onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
-                style={{ borderColor: '#E0D49A' }}>
-                <option value="">{lang === 'vi' ? '— Chọn danh mục —' : '— Select category —'}</option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {lang === 'vi' ? c.name_vi : c.name_en}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
-                {lang === 'vi' ? 'Danh mục con' : 'Subcategory'}
-              </label>
-              <input value={form.subcategory} onChange={e => setForm(f => ({ ...f, subcategory: e.target.value }))}
+              <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                 className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
                 style={{ borderColor: '#E0D49A' }}
-                placeholder="e.g. Gói hợp tác" />
+                placeholder="e.g. Bánh ngọt" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
+                {lang === 'vi' ? 'Đội sản xuất' : 'Production teams'}
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {TEAMS.map(team => (
+                  <button key={team} type="button" onClick={() => toggleTeam(team)}
+                    className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+                    style={form.teams.includes(team)
+                      ? { backgroundColor: '#1A4731', color: 'white' }
+                      : { backgroundColor: '#F3F4F6', color: '#6B7280', border: '1px solid #E0D49A' }}>
+                    {team}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
@@ -244,7 +240,7 @@ export default function LabProductsView({ products: initial, categories }: {
           style={{ backgroundColor: 'white', border: '1px solid #E0D49A' }}>
           <Package2 size={40} className="mx-auto mb-3 text-ink-light" />
           <p className="font-semibold text-ink-light">
-            {lang === 'vi' ? 'Chưa có sản phẩm lab-only' : 'No lab-only products yet'}
+            {lang === 'vi' ? 'Chůa có sản phẩm lab-only' : 'No lab-only products yet'}
           </p>
           <p className="text-sm text-ink-light mt-1">
             {lang === 'vi' ? 'Thêm sản phẩm B2B hoặc các kênh khác tại đây' : 'Add B2B or other-channel products here'}
@@ -258,8 +254,8 @@ export default function LabProductsView({ products: initial, categories }: {
           {products.map((p, i) => (
             <div key={p.id} className="flex items-center gap-4 px-5 py-4"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
-              {p.main_image_url ? (
-                <img src={p.main_image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+              {p.image_url ? (
+                <img src={p.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
                   style={{ border: '1px solid #E0D49A' }} />
               ) : (
                 <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
@@ -277,12 +273,21 @@ export default function LabProductsView({ products: initial, categories }: {
                       <Tag size={9} />{p.sku}
                     </span>
                   )}
-                  <span className="text-[10px] font-bold rounded-full px-2 py-0.5"
-                    style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>
-                    Lab only
-                  </span>
+                  {p.category && (
+                    <span className="text-[10px] font-semibold rounded-full px-2 py-0.5"
+                      style={{ backgroundColor: '#FFF4CC', color: '#92600A' }}>
+                      {p.category}
+                    </span>
+                  )}
                 </div>
               </div>
+              <button
+                onClick={() => router.push(`/admin/fiches/${p.id}`)}
+                className="p-2 rounded-lg transition-colors"
+                style={{ color: '#2D6A4F' }}
+                title={lang === 'vi' ? 'Chỉnh sửa fiche' : 'Edit fiche'}>
+                <PenLine size={15} />
+              </button>
               <button
                 onClick={() => deleteProduct(p.id)}
                 disabled={deleting === p.id}
