@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+
 import Link from 'next/link';
 import { BookOpen, ChevronRight, AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
@@ -21,14 +21,19 @@ export default function StationFichesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedCat, setSelectedCat] = useState('');
   const [lang, setLang] = useState<'vi' | 'en'>('vi');
-  const searchParams = useSearchParams();
-  const teamParam = searchParams.get('team');
+  const [teamParam, setTeamParam] = useState<string | null>(null);
   const [isReadOnly, setIsReadOnly] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setLang((localStorage.getItem('lab-lang') as 'vi' | 'en') || 'vi');
     }
+  }, []);
+
+  // Read team from URL (avoid useSearchParams to prevent SSR pre-render issue)
+  useEffect(() => {
+    const tp = new URLSearchParams(window.location.search).get('team');
+    setTeamParam(tp);
   }, []);
 
   useEffect(() => {
@@ -55,7 +60,8 @@ export default function StationFichesPage() {
         .select('id, name_vi, name_en, image_url, category, teams')
         .eq('is_active', true);
 
-      const filterTeam = teamParam ?? (!isAdmin ? userTeam : null);
+      const tp = new URLSearchParams(window.location.search).get('team');
+      const filterTeam = tp ?? (!isAdmin ? userTeam : null);
       if (filterTeam) {
         query = query.contains('teams', [filterTeam]);
       }
