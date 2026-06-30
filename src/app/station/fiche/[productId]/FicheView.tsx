@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import Link from 'next/link';
-import { ArrowLeft, Printer, Timer, Thermometer } from 'lucide-react';
+import { ArrowLeft, Printer } from 'lucide-react';
 
 interface FicheMeta {
   doc_code: string | null;
