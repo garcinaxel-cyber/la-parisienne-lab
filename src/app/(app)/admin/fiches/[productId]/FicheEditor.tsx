@@ -275,6 +275,7 @@ export default function FicheEditor({
           weight_g: v.weight_g ? Number(v.weight_g) : null,
           is_default: v.is_default,
           sort_order: v.sort_order,
+          image_url: v.image_url || null,
         }).eq('id', v.id!)
       )
     );
@@ -288,6 +289,7 @@ export default function FicheEditor({
       weight_g: v.weight_g ? Number(v.weight_g) : null,
       is_default: v.is_default,
       sort_order: v.sort_order,
+      image_url: v.image_url || null,
     }));
     if (newVariants.length > 0) {
       const { error: insVErr } = await supabase.from('lab_fiche_variants').insert(newVariants);
@@ -556,8 +558,20 @@ export default function FicheEditor({
                         </button>
                       )}
                     </div>
+                    {/* Photo URL per variant */}
+                    <div className="flex items-center gap-2 pl-0.5">
+                      {v.image_url && (
+                        <img src={v.image_url} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0 border border-border-soft" />
+                      )}
+                      <input
+                        value={v.image_url}
+                        onChange={e => updateVariant(idx, { image_url: e.target.value })}
+                        placeholder={lang === 'vi' ? '🖼 URL ảnh riêng cho biến thể (tuỳ chọn)' : '🖼 Variant photo URL (optional)'}
+                        className="input w-full text-xs py-1 text-ink-light"
+                      />
+                    </div>
                   </div>
-                ))}
+                )})
               </div>
             </div>
           </div>
