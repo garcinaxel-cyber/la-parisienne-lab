@@ -733,7 +733,7 @@ export default function StationView({
                           {p.main_image_url ? (
                             <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                           ) : (
-                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg " style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
