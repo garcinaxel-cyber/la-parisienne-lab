@@ -82,6 +82,7 @@ export default function FicheEditor({
   variants: initVariants,
   ingredients: initIngredients,
   assemblySteps: initSteps,
+  initVariantQty,
 }: {
   ficheId: string;
   identity: FicheIdentity;
