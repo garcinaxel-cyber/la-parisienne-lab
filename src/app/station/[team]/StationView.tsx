@@ -517,7 +517,7 @@ export default function StationView({
                           x{a.qty_to_produce}
                         </div>
                       </div>
-                      {{/* Shop breakdown */}
+                      {/* Shop breakdown */}
                      {breakdown.length > 0 && (
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
@@ -680,6 +680,7 @@ export default function StationView({
                       }
                     >
                       {lang === 'vi' ? cat.name_vi : cat.name_en}
+                    </button>
                   ))}
                 </div>
               )}
@@ -732,7 +733,7 @@ export default function StationView({
                           {p.main_image_url ? (
                             <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                           ) : (
-                            <div className="w-9 h-9 rounded-lg slassName="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
