@@ -114,7 +114,10 @@ export default function FicheEditor({
   const [uploadingImage, setUploadingImage] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [uploadingVariantIdx, setUploadingVariantIdx] = useState<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const variantImageInputRef = useRef<HTMLInputElement>(null);
+  const variantUploadTargetIdx = useRef<number>(-1);
 
   // ── Identity ──
   function toggleTeam(team: Team) {
@@ -182,6 +185,21 @@ export default function FicheEditor({
       setSaved(false);
     }
     setUploadingImage(false);
+  }
+
+  // ── Variant image upload ──
+  async function handleVariantImageFile(idx: number, file: File) {
+    if (!file.type.startsWith('image/')) return;
+    setUploadingVariantIdx(idx);
+    const supabase = createClient();
+    const ext = file.name.split('.').pop() ?? 'jpg';
+    const path = `fiches/${ficheId}/v${idx}.${ext}`;
+    const { error } = await supabase.storage.from('lab-images').upload(path, file, { upsert: true });
+    if (!error) {
+      const { data: urlData } = supabase.storage.from('lab-images').getPublicUrl(path);
+      updateVariant(idx, { image_url: urlData.publicUrl });
+    }
+    setUploadingVariantIdx(null);
   }
 
   // ── Delete ──
@@ -400,6 +418,12 @@ export default function FicheEditor({
                 </div>
                 <input ref={imageInputRef} type="file" accept="image/*" className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = ''; }} />
+                <input ref={variantImageInputRef} type="file" accept="image/*" className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f && variantUploadTargetIdx.current >= 0) handleVariantImageFile(variantUploadTargetIdx.current, f);
+                    e.target.value = '';
+                  }} />
               </div>
             </div>
 
@@ -479,17 +503,42 @@ export default function FicheEditor({
                         )}
                       </div>
                     </div>
-                    {/* Photo URL per variant */}
+                    {/* Variant photo — drag & drop upload */}
                     <div className="flex items-center gap-2 pl-0.5">
-                      {v.image_url && (
-                        <img src={v.image_url} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0 border border-border-soft" />
-                      )}
-                      <input
-                        value={v.image_url}
-                        onChange={e => updateVariant(idx, { image_url: e.target.value })}
-                        placeholder={lang === 'vi' ? '🖼 URL ảnh riêng cho biến thể (tuỳ chọn)' : '🖼 Variant photo URL (optional)'}
-                        className="input w-full text-xs py-1 text-ink-light"
-                      />
+                      <div
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={e => {
+                          e.preventDefault();
+                          const file = e.dataTransfer.files[0];
+                          if (file) handleVariantImageFile(idx, file);
+                        }}
+                        onClick={() => {
+                          variantUploadTargetIdx.current = idx;
+                          variantImageInputRef.current?.click();
+                        }}
+                        className="relative flex items-center justify-center rounded-lg border border-dashed border-border-soft hover:border-gold/40 cursor-pointer transition-colors overflow-hidden shrink-0 w-10 h-10"
+                      >
+                        {v.image_url ? (
+                          <>
+                            <img src={v.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                              <Upload size={10} className="text-white" />
+                            </div>
+                            <button type="button"
+                              onClick={e => { e.stopPropagation(); updateVariant(idx, { image_url: '' }); }}
+                              className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-red-500 transition-colors text-[9px] leading-none">
+                              ×
+                            </button>
+                          </>
+                        ) : uploadingVariantIdx === idx ? (
+                          <span className="text-[10px] text-ink-light">⏳</span>
+                        ) : (
+                          <Upload size={11} className="text-ink-light" />
+                        )}
+                      </div>
+                      <span className="text-xs text-ink-light">
+                        {lang === 'vi' ? 'Ảnh riêng (kéo thả hoặc click)' : 'Variant photo (drop or click)'}
+                      </span>
                     </div>
                   </div>
                 ))}
