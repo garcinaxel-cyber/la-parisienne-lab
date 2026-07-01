@@ -384,28 +384,28 @@ export default function StationView({
     {
       id: 'commande',
       labelVi: 'Đơn hàng',
-      labelEn: 'Commande',
+      labelEn: 'Orders',
       count: assignments.length,
       icon: <ClipboardList size={14} />,
     },
     {
       id: 'termine',
       labelVi: 'Hoàn thành',
-      labelEn: 'Terminé',
+      labelEn: 'Done',
       count: termineCount,
       icon: <CheckCircle2 size={14} />,
     },
     {
       id: 'upcoming',
       labelVi: 'Sắp tới',
-      labelEn: 'À venir',
+      labelEn: 'Upcoming',
       count: upcomingData.length,
       icon: <ChevronRight size={14} />,
     },
     {
       id: 'history',
       labelVi: 'Lịch sử',
-      labelEn: 'Historique',
+      labelEn: 'History',
       count: historyData.length,
       icon: <Clock size={14} />,
     },
@@ -686,7 +686,7 @@ export default function StationView({
                 <div>
                   <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                   <div className="text-xs mt-0.5 font-medium" style={{ color: '#2D6A4F' }}>
-                    {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'unités'}
+                    {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'units'}
                   </div>
                 </div>
                 <ChevronRight size={16} style={{ color: '#C9A84C' }} />
@@ -708,7 +708,7 @@ export default function StationView({
             <div className="text-center py-20">
               <Clock size={40} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
               <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Chưa có lịch sử' : 'Aucun historique'}
+                {lang === 'vi' ? 'Chưa có lịch sử' : 'No history yet'}
               </p>
             </div>
           )}
@@ -736,7 +736,7 @@ export default function StationView({
                   <div>
                     <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                     <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
-                      {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'}
+                      {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'}
                     </div>
                   </div>
                   <ChevronRight size={16}
