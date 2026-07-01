@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronLeft, ChevronRight, PenLine,
+  ChevronRight, PenLine,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -337,32 +337,7 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
-  function prevDay() {
-    const d = new Date(viewDate + 'T00:00:00');
-    d.setDate(d.getDate() - 1);
-    router.push(`/station/${teamSlug}?date=${d.toISOString().split('T')[0]}`);
-  }
-  function nextDay() {
-    if (viewDate >= today) return;
-    const d = new Date(viewDate + 'T00:00:00');
-    d.setDate(d.getDate() + 1);
-    router.push(`/station/${teamSlug}?date=${d.toISOString().split('T')[0]}`);
-  }
-
-  const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
-    {
-      id: 'production',
-      labelVi: 'Sản xuất',
-      labelEn: 'Production',
-      count: production.length,
-      icon: <FlaskConical size={14} />,
-    },
-    {
-      id: 'commande',
-      labelVi: 'Đơn hàng',
-      labelEn: 'Commande',
-      count: assignments.length,
-      icon: <ClipboardList size={14} />,
+List size={14} />,
     },
     {
       id: 'termine',
@@ -411,26 +386,15 @@ export default function StationView({
             <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
               <FlaskConical size={18} className="text-white" />
             </div>
-            <button onClick={prevDay} className="p-0.5 rounded text-white/60 hover:text-white transition-colors shrink-0">
-              <ChevronLeft size={16} />
-            </button>
             <div className="min-w-0 text-center">
               <div className="text-white font-bold text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
               <div className="text-[11px] truncate">
-                {!isHistoryView
-                  ? <span className="font-bold text-yellow-300">HÔM NAY · </span>
-                  : <span className="text-yellow-300">📅 </span>
-                }
-                <span className={isHistoryView ? 'text-yellow-300' : 'text-white/70'}>{formatDate(viewDate)}</span>
+                <span className="font-bold text-yellow-300">HÔM NAY · </span>
+                <span className="text-white/70">{formatDate(today)}</span>
               </div>
             </div>
-            <button onClick={nextDay} disabled={viewDate >= today}
-              className="p-0.5 rounded transition-colors shrink-0"
-              style={{ color: viewDate >= today ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.6)' }}>
-              <ChevronRight size={16} />
-            </button>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
