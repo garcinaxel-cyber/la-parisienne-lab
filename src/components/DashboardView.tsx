@@ -36,10 +36,10 @@ export default function DashboardView({ stats, imports, assignments, today }:
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: lang === 'vi' ? 'ÄÆ¡n nháº­p hÃ´m nay' : 'Imports today', value: s.imports_today, icon: Package, color: 'text-navy' },
-          { label: lang === 'vi' ? 'ÄÃ£ phÃ¡t hÃ nh' : 'Published', value: s.published_today, icon: CheckCircle2, color: 'text-green-600' },
-          { label: lang === 'vi' ? 'Tiáº¿n Äá»' : 'Progress', value: `${pct}%`, icon: Clock, color: 'text-gold' },
-          { label: lang === 'vi' ? 'Bá» cháº·n' : 'Blocked', value: s.blocked, icon: AlertCircle, color: 'text-red-500' },
+          { label: lang === 'vi' ? 'Đơn nhập hôm nay' : 'Imports today', value: s.imports_today, icon: Package, color: 'text-navy' },
+          { label: lang === 'vi' ? 'Đã phát hành' : 'Published', value: s.published_today, icon: CheckCircle2, color: 'text-green-600' },
+          { label: lang === 'vi' ? 'Tiến độ' : 'Progress', value: `${pct}%`, icon: Clock, color: 'text-gold' },
+          { label: lang === 'vi' ? 'Bị chặn' : 'Blocked', value: s.blocked, icon: AlertCircle, color: 'text-red-500' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="card p-4 flex items-center gap-3">
             <Icon size={22} className={color} />
@@ -55,7 +55,7 @@ export default function DashboardView({ stats, imports, assignments, today }:
       {s.total_assignments > 0 && (
         <div className="card p-4">
           <div className="flex justify-between text-sm mb-2">
-            <span className="font-medium text-navy">{lang === 'vi' ? 'Tiáº¿n Äá» sáº£n xuáº¥t' : 'Production progress'}</span>
+            <span className="font-medium text-navy">{lang === 'vi' ? 'Tiến độ sản xuất' : 'Production progress'}</span>
             <span className="text-ink-light">{s.done_assignments}/{s.total_assignments}</span>
           </div>
           <div className="h-3 rounded-full bg-border-soft overflow-hidden">
@@ -96,7 +96,7 @@ export default function DashboardView({ stats, imports, assignments, today }:
                           {a.variant_label !== 'Standard' && <div className="text-xs text-ink-light">{a.variant_label}</div>}
                         </div>
                         <div className="flex items-center gap-3 ml-3 shrink-0">
-                          <span className="text-sm font-bold text-navy">Ã{a.total_qty}</span>
+                          <span className="text-sm font-bold text-navy">x{a.total_qty}</span>
                           <span className="badge text-white text-[10px]" style={{ backgroundColor: st.color }}>
                             {lang === 'vi' ? st.labelVi : st.labelEn}
                           </span>
@@ -109,13 +109,13 @@ export default function DashboardView({ stats, imports, assignments, today }:
                   {isExpanded && (
                     <div className="flex items-center justify-between px-4 py-2.5 font-semibold" style={{ backgroundColor: meta.bg }}>
                       <span className="text-sm" style={{ color: meta.color }}>
-                        {lang === 'vi' ? 'Tá»ng cá»ng' : 'Total'}
+                        {lang === 'vi' ? 'Tổng cộng' : 'Total'}
                       </span>
                       <span className="text-sm" style={{ color: meta.color }}>
-                        Ã{totalQty}
+                        x{totalQty}
                         {pendingQty > 0 && (
                           <span className="ml-2 text-xs font-normal opacity-70">
-                            ({pendingQty} {lang === 'vi' ? 'cÃ²n láº¡i' : 'remaining'})
+                            ({pendingQty} {lang === 'vi' ? 'còn lại' : 'remaining'})
                           </span>
                         )}
                       </span>
@@ -132,14 +132,14 @@ export default function DashboardView({ stats, imports, assignments, today }:
                       {isExpanded ? (
                         <>
                           <ChevronUp size={13} />
-                          {lang === 'vi' ? 'Thu gá»n' : 'Show less'}
+                          {lang === 'vi' ? 'Thu gọn' : 'Show less'}
                         </>
                       ) : (
                         <>
                           <ChevronDown size={13} />
-                          +{hiddenCount} {lang === 'vi' ? 'sáº£n pháº©m khÃ¡c' : 'more'}
-                          {' Â· '}
-                          {lang === 'vi' ? 'tá»ng' : 'total'} Ã{totalQty}
+                          +{hiddenCount} {lang === 'vi' ? 'sản phẩm khác' : 'more'}
+                          {' - '}
+                          {lang === 'vi' ? 'tổng' : 'total'} x{totalQty}
                         </>
                       )}
                     </button>
@@ -152,7 +152,7 @@ export default function DashboardView({ stats, imports, assignments, today }:
       ) : (
         <div className="card p-12 text-center">
           <Package size={40} className="mx-auto mb-3 text-border-soft" />
-          <p className="text-ink-light">{lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n nÃ o ÄÆ°á»£c phÃ¡t hÃ nh hÃ´m nay' : 'No orders published yet today'}</p>
+          <p className="text-ink-light">{lang === 'vi' ? 'Chưa có đơn nào được phát hành hôm nay' : 'No orders published yet today'}</p>
           <Link href="/import" className="btn-primary mt-4 mx-auto">{t('import')}</Link>
         </div>
       )}
@@ -161,7 +161,7 @@ export default function DashboardView({ stats, imports, assignments, today }:
       {imports.length > 0 && (
         <div className="card overflow-hidden">
           <div className="px-4 py-3 border-b border-border-soft">
-            <h2 className="font-semibold text-navy text-sm">{lang === 'vi' ? 'ÄÆ¡n gáº§n ÄÃ¢y' : 'Recent imports'}</h2>
+            <h2 className="font-semibold text-navy text-sm">{lang === 'vi' ? 'Đơn gần đây' : 'Recent imports'}</h2>
           </div>
           <div className="divide-y divide-border-soft">
             {imports.map((imp: any) => (
@@ -169,12 +169,12 @@ export default function DashboardView({ stats, imports, assignments, today }:
                 className="flex items-center justify-between px-4 py-3 hover:bg-cream transition-colors">
                 <div>
                   <span className="text-sm font-medium text-navy">
-                    {imp.delivery_date} â {lang === 'vi' ? (imp.type === 'daily' ? 'ÄÆ¡n chÃ­nh' : 'ÄÆ¡n kháº©n') : (imp.type === 'daily' ? 'Main' : 'Urgent')} #{imp.order_number}
+                    {imp.delivery_date} — {lang === 'vi' ? (imp.type === 'daily' ? 'Đơn chính' : 'Đơn khẩn') : (imp.type === 'daily' ? 'Main' : 'Urgent')} #{imp.order_number}
                   </span>
-                  {imp.shipped_from_lab && <span className="ml-2 text-xs text-amber-600">â¡ {lang === 'vi' ? 'Giao tá»« lab' : 'Ships from lab'}</span>}
+                  {imp.shipped_from_lab && <span className="ml-2 text-xs text-amber-600">⚡ {lang === 'vi' ? 'Giao từ lab' : 'Ships from lab'}</span>}
                 </div>
                 <span className={`badge ${imp.status === 'published' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                  {imp.status === 'published' ? (lang === 'vi' ? 'ÄÃ£ phÃ¡t' : 'Published') : (lang === 'vi' ? 'NhÃ¡p' : 'Draft')}
+                  {imp.status === 'published' ? (lang === 'vi' ? 'Đã phát' : 'Published') : (lang === 'vi' ? 'Nháp' : 'Draft')}
                 </span>
               </Link>
             ))}
