@@ -27,8 +27,16 @@ function excelDateToISO(val: unknown): { date: string; time: string | null } {
     const timePart = d[1]?.slice(0, 5) || null;
     return { date: d[0], time: timePart === '00:00' ? null : timePart };
   }
+  // Excel serial number — XLSX may return raw numbers even with cellDates:true
+  // for certain Odoo date formats. Convert manually: days since 1900-01-01.
+  if (typeof val === 'number' && val > 1) {
+    const jsDate = new Date(Math.round((val - 25569) * 86400 * 1000));
+    const d = jsDate.toISOString().split('T');
+    const timePart = d[1]?.slice(0, 5) || null;
+    return { date: d[0], time: timePart === '00:00' ? null : timePart };
+  }
   if (typeof val === 'string') {
-    const parts = val.split(' ');
+    const parts = val.trim().split(/[\sT]/);
     return { date: parts[0], time: parts[1]?.slice(0, 5) || null };
   }
   return { date: new Date().toISOString().split('T')[0], time: null };
