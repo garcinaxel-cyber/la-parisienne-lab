@@ -141,7 +141,7 @@ export default function StationView({
       .then(({ data }) => setExtraCategories(data ?? []));
   }, [extraModal]);
 
-  // Debounced product search — filtered by team + category
+  // Debounced product search â filtered by team + category
   useEffect(() => {
     if (!extraModal || extraProduct) return;
     if (extraSearch.trim().length < 1 && !selectedCategory) { setExtraResults([]); return; }
@@ -372,25 +372,39 @@ export default function StationView({
       weekday: 'long', day: 'numeric', month: 'long',
     });
 
-List size={14} />,
+
+  const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
+    {
+      id: 'production',
+      labelVi: 'Sáº£n xuáº¥t',
+      labelEn: 'Production',
+      count: production.length,
+      icon: <FlaskConical size={14} />,
+    },
+    {
+      id: 'commande',
+      labelVi: 'ÄÆ¡n hÃ ng',
+      labelEn: 'Commande',
+      count: assignments.length,
+      icon: <ClipboardList size={14} />,
     },
     {
       id: 'termine',
-      labelVi: 'Hoàn thành',
-      labelEn: 'Terminé',
+      labelVi: 'HoÃ n thÃ nh',
+      labelEn: 'TerminÃ©',
       count: termineCount,
       icon: <CheckCircle2 size={14} />,
     },
     {
       id: 'upcoming',
-      labelVi: 'Sắp tới',
-      labelEn: 'À venir',
+      labelVi: 'Sáº¯p tá»i',
+      labelEn: 'Ã venir',
       count: upcomingData.length,
       icon: <ChevronRight size={14} />,
     },
     {
       id: 'history',
-      labelVi: 'Lịch sử',
+      labelVi: 'Lá»ch sá»­',
       labelEn: 'Historique',
       count: historyData.length,
       icon: <Clock size={14} />,
@@ -426,7 +440,7 @@ List size={14} />,
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
               <div className="text-[11px] truncate">
-                <span className="font-bold text-yellow-300">HÔM NAY · </span>
+                <span className="font-bold text-yellow-300">HÃM NAY Â· </span>
                 <span className="text-white/70">{formatDate(today)}</span>
               </div>
             </div>
@@ -445,12 +459,12 @@ List size={14} />,
                   }>{l.toUpperCase()}</button>
               ))}
             </div>
-            <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
+            <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiáº¿u ká»¹ thuáº­t' : 'Recipe cards'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <BookOpen size={15} />
             </Link>
-            <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+            <button onClick={logout} title={lang === 'vi' ? 'ÄÄng xuáº¥t' : 'Log out'}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
               <LogOut size={15} />
@@ -488,21 +502,21 @@ List size={14} />,
 
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
-          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
+          {lang === 'vi' ? 'ð HoÃ n thÃ nh táº¥t cáº£!' : 'ð All done for today!'}
         </div>
       )}
 
-      {/* ─── PRODUCTION TAB ─── */}
+      {/* âââ PRODUCTION TAB âââ */}
       {activeTab === 'production' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
               <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
+                {lang === 'vi' ? 'KhÃ´ng cÃ³ sáº£n pháº©m cáº§n lÃ m' : 'Nothing left to produce'}
               </p>
               <p className="text-sm mt-1 text-ink-light">
-                {lang === 'vi' ? 'Tất cả đã hoàn thành hoặc có sẵn' : 'All items are done or in stock'}
+                {lang === 'vi' ? 'Táº¥t cáº£ ÄÃ£ hoÃ n thÃ nh hoáº·c cÃ³ sáºµn' : 'All items are done or in stock'}
               </p>
             </div>
           )}
@@ -512,14 +526,14 @@ List size={14} />,
         </div>
       )}
 
-      {/* ─── BON DE COMMANDE TAB ─── */}
+      {/* âââ BON DE COMMANDE TAB âââ */}
       {activeTab === 'commande' && (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
           {assignments.length === 0 ? (
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
               <p className="font-semibold text-ink-light">
-                {lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n hÃ ng hÃ´m nay' : 'No orders for today'}
               </p>
             </div>
           ) : (
@@ -529,15 +543,15 @@ List size={14} />,
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
                 <div>
                   <div className="font-bold text-base">
-                    {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
+                    {lang === 'vi' ? 'Tá»ng ÄÆ¡n hÃ ng hÃ´m nay' : "Today's order summary"}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
-                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                    {assignments.length} {lang === 'vi' ? 'sáº£n pháº©m' : 'products'} â {totalQty} {lang === 'vi' ? 'cÃ¡i' : 'units'}
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
-                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'HoÃ n thÃ nh' : 'Complete'}</div>
                 </div>
               </div>
 
@@ -546,8 +560,8 @@ List size={14} />,
                 style={{ border: '1px solid #E0D49A', backgroundColor: 'white' }}>
                 <div className="px-4 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider"
                   style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderBottom: '1px solid #E0D49A' }}>
-                  <span>{lang === 'vi' ? 'Sản phẩm' : 'Product'}</span>
-                  <span>{lang === 'vi' ? 'Số lượng' : 'Qty'}</span>
+                  <span>{lang === 'vi' ? 'Sáº£n pháº©m' : 'Product'}</span>
+                  <span>{lang === 'vi' ? 'Sá» lÆ°á»£ng' : 'Qty'}</span>
                 </div>
                 {assignments.map((a, i) => {
                   const st = STATUS_META[a.status];
@@ -561,7 +575,7 @@ List size={14} />,
                             style={{ border: '1px solid #E0D49A' }} />
                         ) : (
                           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-                            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
@@ -604,7 +618,7 @@ List size={14} />,
                                 {b.delivery_time && (
                                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                                    ⏰ {b.delivery_time.slice(0, 5)}
+                                    â° {b.delivery_time.slice(0, 5)}
                                   </span>
                                 )}
                               </div>
@@ -622,14 +636,14 @@ List size={14} />,
         </div>
       )}
 
-      {/* ─── TERMINÉ TAB ─── */}
+      {/* âââ TERMINÃ TAB âââ */}
       {activeTab === 'termine' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
           {termine.length === 0 ? (
             <div className="text-center py-20">
               <Clock size={48} className="mx-auto mb-3 text-ink-light" />
               <p className="font-semibold text-ink-light">
-                {lang === 'vi' ? 'Chưa có sản phẩm hoàn thành' : 'No completed items yet'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ sáº£n pháº©m hoÃ n thÃ nh' : 'No completed items yet'}
               </p>
             </div>
           ) : (
@@ -641,22 +655,22 @@ List size={14} />,
         </div>
       )}
 
-      {/* ─── UPCOMING TAB ─── */}
+      {/* âââ UPCOMING TAB âââ */}
       {activeTab === 'upcoming' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
             <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+              {lang === 'vi' ? 'Äang táº£iâ¦' : 'Loadingâ¦'}
             </div>
           )}
           {!loadingDates && upcomingData.length === 0 && (
             <div className="text-center py-20">
               <ClipboardList size={40} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
               <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Chưa có đơn hàng sắp tới' : 'No upcoming orders'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ ÄÆ¡n hÃ ng sáº¯p tá»i' : 'No upcoming orders'}
               </p>
               <p className="text-sm mt-1 text-gray-400">
-                {lang === 'vi' ? 'Import đơn hàng để xem ở đây' : 'Import orders to see them here'}
+                {lang === 'vi' ? 'Import ÄÆ¡n hÃ ng Äá» xem á» ÄÃ¢y' : 'Import orders to see them here'}
               </p>
             </div>
           )}
@@ -672,7 +686,7 @@ List size={14} />,
                 <div>
                   <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                   <div className="text-xs mt-0.5 font-medium" style={{ color: '#2D6A4F' }}>
-                    {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'unités'}
+                    {d.productCount} {lang === 'vi' ? 'sáº£n pháº©m' : 'produits'} Â· {d.totalQty} {lang === 'vi' ? 'cÃ¡i' : 'unitÃ©s'}
                   </div>
                 </div>
                 <ChevronRight size={16} style={{ color: '#C9A84C' }} />
@@ -682,19 +696,19 @@ List size={14} />,
         </div>
       )}
 
-      {/* ─── HISTORY TAB ─── */}
+      {/* âââ HISTORY TAB âââ */}
       {activeTab === 'history' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
             <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+              {lang === 'vi' ? 'Äang táº£iâ¦' : 'Loadingâ¦'}
             </div>
           )}
           {!loadingDates && historyData.length === 0 && (
             <div className="text-center py-20">
               <Clock size={40} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
               <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Chưa có lịch sử' : 'Aucun historique'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ lá»ch sá»­' : 'Aucun historique'}
               </p>
             </div>
           )}
@@ -722,7 +736,7 @@ List size={14} />,
                   <div>
                     <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                     <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
-                      {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'}
+                      {pct === 100 ? 'â ' : ''}{pct}% Â· {d.productCount} {lang === 'vi' ? 'sáº£n pháº©m' : 'produits'}
                     </div>
                   </div>
                   <ChevronRight size={16}
@@ -733,12 +747,12 @@ List size={14} />,
                   <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
                     {loadingDetails && !details && (
                       <p className="text-center text-xs py-3" style={{ color: '#1A4731' }}>
-                        {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+                        {lang === 'vi' ? 'Äang táº£iâ¦' : 'Loadingâ¦'}
                       </p>
                     )}
                     {details && details.length === 0 && (
                       <p className="text-center text-xs py-3 text-gray-400">
-                        {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
+                        {lang === 'vi' ? 'KhÃ´ng cÃ³ chi tiáº¿t ÄÆ¡n hÃ ng' : 'No order details'}
                       </p>
                     )}
                     {(details ?? []).map(order => (
@@ -753,9 +767,9 @@ List size={14} />,
                             <div key={i} className="flex items-center justify-between text-xs">
                               <span style={{ color: '#374151' }}>
                                 {item.product_name_vi}
-                                {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
+                                {item.variant_label ? <span className="ml-1 text-gray-400">Â· {item.variant_label}</span> : null}
                               </span>
-                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>Ã{item.qty}</span>
                             </div>
                           ))}
                         </div>
@@ -769,7 +783,7 @@ List size={14} />,
         </div>
       )}
 
-      {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
+      {/* FAB â Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
         <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
           <button
@@ -778,7 +792,7 @@ List size={14} />,
             style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}
           >
             <Plus size={16} />
-            {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
+            {lang === 'vi' ? 'Sáº£n xuáº¥t thÃªm ngoÃ i ÄÆ¡n' : 'Add extra production'}
           </button>
         </div>
       )}
@@ -797,7 +811,7 @@ List size={14} />,
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#DC2626' }}>
-                  {lang === 'vi' ? 'Lý do bị chặn' : 'Blocked reason'}
+                  {lang === 'vi' ? 'LÃ½ do bá» cháº·n' : 'Blocked reason'}
                 </h3>
                 <p className="text-xs text-ink-light mt-0.5 truncate">{blockedModal.product_name_vi}</p>
               </div>
@@ -806,7 +820,7 @@ List size={14} />,
             <div className="px-5 pb-5 space-y-3">
               {[
                 { value: 'manque_temps', vi: 'Manque de temps', en: 'Lack of time' },
-                { value: 'matieres_premieres', vi: 'Manque de matières premières', en: 'Missing ingredients' },
+                { value: 'matieres_premieres', vi: 'Manque de matiÃ¨res premiÃ¨res', en: 'Missing ingredients' },
                 { value: 'other', vi: 'Autre raison', en: 'Other reason' },
               ].map(opt => (
                 <button key={opt.value} onClick={() => setBlockedReason(opt.value)}
@@ -821,7 +835,7 @@ List size={14} />,
                 <input
                   value={blockedCustom}
                   onChange={e => setBlockedCustom(e.target.value)}
-                  placeholder={lang === 'vi' ? 'Nhập lý do…' : 'Enter reason…'}
+                  placeholder={lang === 'vi' ? 'Nháº­p lÃ½ doâ¦' : 'Enter reasonâ¦'}
                   className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"
                   style={{ borderColor: '#E0D49A' }}
                   autoFocus
@@ -832,7 +846,7 @@ List size={14} />,
                 disabled={!blockedReason || (blockedReason === 'other' && !blockedCustom.trim())}
                 className="w-full py-3 rounded-xl font-bold text-sm text-white disabled:opacity-40"
                 style={{ backgroundColor: '#DC2626' }}>
-                {lang === 'vi' ? 'Xác nhận bị chặn' : 'Confirm blocked'}
+                {lang === 'vi' ? 'XÃ¡c nháº­n bá» cháº·n' : 'Confirm blocked'}
               </button>
             </div>
           </div>
@@ -847,12 +861,12 @@ List size={14} />,
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>
-                  {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Extra production'}
+                  {lang === 'vi' ? 'Sáº£n xuáº¥t thÃªm ngoÃ i ÄÆ¡n' : 'Extra production'}
                 </h3>
                 <p className="text-xs text-ink-light mt-0.5">
                   {lang === 'vi'
-                    ? 'Chọn sản phẩm từ danh mục — không thể nhập tự do'
-                    : 'Select from catalogue — free text not allowed'}
+                    ? 'Chá»n sáº£n pháº©m tá»« danh má»¥c â khÃ´ng thá» nháº­p tá»± do'
+                    : 'Select from catalogue â free text not allowed'}
                 </p>
               </div>
               <button onClick={closeExtraModal} className="p-1 text-ink-light"><X size={20} /></button>
@@ -870,7 +884,7 @@ List size={14} />,
                       : { backgroundColor: '#F3F4F6', color: '#6B7280' }
                     }
                   >
-                    {lang === 'vi' ? 'Tất cả' : 'All'}
+                    {lang === 'vi' ? 'Táº¥t cáº£' : 'All'}
                   </button>
                   {extraCategories.map(cat => (
                     <button
@@ -893,7 +907,7 @@ List size={14} />,
                   {extraProduct.main_image_url ? (
                     <img src={extraProduct.main_image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                   ) : (
-                    <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                    <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>{extraProduct.name_vi}</div>
@@ -918,7 +932,7 @@ List size={14} />,
                     <input
                       value={extraSearch}
                       onChange={e => setExtraSearch(e.target.value)}
-                      placeholder={lang === 'vi' ? 'Tên sản phẩm hoặc SKU…' : 'Product name or SKU…'}
+                      placeholder={lang === 'vi' ? 'TÃªn sáº£n pháº©m hoáº·c SKUâ¦' : 'Product name or SKUâ¦'}
                       className="w-full rounded-xl border border-gray-200 pl-9 pr-3 py-2.5 text-sm outline-none focus:border-green-600"
                       autoFocus
                     />
@@ -936,7 +950,7 @@ List size={14} />,
                           {p.main_image_url ? (
                             <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                           ) : (
-                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                            <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
@@ -957,7 +971,7 @@ List size={14} />,
                   )}
                   {extraSearch.length > 0 && !searchLoading && extraResults.length === 0 && (
                     <p className="text-sm text-ink-light text-center py-3">
-                      {lang === 'vi' ? 'Không tìm thấy sản phẩm nào' : 'No products found'}
+                      {lang === 'vi' ? 'KhÃ´ng tÃ¬m tháº¥y sáº£n pháº©m nÃ o' : 'No products found'}
                     </p>
                   )}
                 </div>
@@ -966,7 +980,7 @@ List size={14} />,
               {extraProduct && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
-                    {lang === 'vi' ? 'Số lượng' : 'Quantity'}
+                    {lang === 'vi' ? 'Sá» lÆ°á»£ng' : 'Quantity'}
                   </label>
                   <div className="flex items-center gap-3 mt-2">
                     <button onClick={() => { const v = Math.max(1, extraQty - 1); setExtraQty(v); setExtraQtyInput(String(v)); }}
@@ -1003,12 +1017,12 @@ List size={14} />,
               <div className="flex gap-3">
                 <button onClick={closeExtraModal}
                   className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-500">
-                  {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                  {lang === 'vi' ? 'Há»§y' : 'Cancel'}
                 </button>
                 <button onClick={saveExtra} disabled={!extraProduct || savingExtra}
                   className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-40 transition-colors"
                   style={{ backgroundColor: '#1A4731' }}>
-                  {savingExtra ? '…' : (lang === 'vi' ? 'Xác nhận' : 'Confirm')}
+                  {savingExtra ? 'â¦' : (lang === 'vi' ? 'XÃ¡c nháº­n' : 'Confirm')}
                 </button>
               </div>
             </div>
@@ -1023,11 +1037,11 @@ List size={14} />,
             <div>
               <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-ink-light mt-0.5">
-                {lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
+                {lang === 'vi' ? 'Cáº§n lÃ m' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
               </p>
               {qtyInput > qtyModal.qty_to_produce && (
                 <p className="text-xs font-semibold mt-1" style={{ color: '#D97706' }}>
-                  {lang === 'vi' ? '⚠️ Vượt mục tiêu — ghi nhận sản xuất thêm' : '⚠️ Over target — extra production noted'}
+                  {lang === 'vi' ? 'â ï¸ VÆ°á»£t má»¥c tiÃªu â ghi nháº­n sáº£n xuáº¥t thÃªm' : 'â ï¸ Over target â extra production noted'}
                 </p>
               )}
             </div>
@@ -1056,12 +1070,12 @@ List size={14} />,
             </div>
             <div className="flex gap-3">
               <button onClick={() => setQtyModal(null)} className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-ink-light">
-                {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                {lang === 'vi' ? 'Há»§y' : 'Cancel'}
               </button>
               <button onClick={savePartial}
                 className="flex-1 py-3 rounded-xl font-bold text-white transition-colors"
                 style={{ backgroundColor: '#1A4731' }}>
-                {lang === 'vi' ? 'Xác nhận' : 'Confirm'}
+                {lang === 'vi' ? 'XÃ¡c nháº­n' : 'Confirm'}
               </button>
             </div>
           </div>
@@ -1071,7 +1085,7 @@ List size={14} />,
   );
 }
 
-// ─── NOTES EDITOR ────────────────────────────────────────────────────────────
+// âââ NOTES EDITOR ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function NotesEditor({
   assignmentId, initialNotes, lang, onSaved,
@@ -1101,7 +1115,7 @@ function NotesEditor({
           <span className="text-xs text-ink-light italic truncate flex-1">{value}</span>
         ) : (
           <span className="text-xs text-ink-light/50 flex-1">
-            {lang === 'vi' ? 'Thêm ghi chú…' : 'Add note…'}
+            {lang === 'vi' ? 'ThÃªm ghi chÃºâ¦' : 'Add noteâ¦'}
           </span>
         )}
         <button onClick={() => setEditing(true)}
@@ -1127,19 +1141,19 @@ function NotesEditor({
         <button onClick={save} disabled={saving}
           className="text-[11px] font-bold px-2 py-0.5 rounded"
           style={{ backgroundColor: '#1A4731', color: 'white', opacity: saving ? 0.6 : 1 }}>
-          {saving ? '…' : '✓'}
+          {saving ? 'â¦' : 'â'}
         </button>
         <button onClick={() => { setValue(initialNotes); setEditing(false); }}
           className="text-[11px] font-bold px-2 py-0.5 rounded"
           style={{ backgroundColor: '#F5F5F5', color: '#555' }}>
-          ✕
+          â
         </button>
       </div>
     </div>
   );
 }
 
-// ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
+// âââ PRODUCTION CARD âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function ProductionCard({
   a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, meta,
@@ -1164,7 +1178,7 @@ function ProductionCard({
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
   const actionLabel: Record<string, string> = {
-    pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
+    pending: lang === 'vi' ? 'Báº¯t Äáº§u' : 'Start',
     in_progress: lang === 'vi' ? 'Xong' : 'Mark done',
   };
 
@@ -1188,7 +1202,7 @@ function ProductionCard({
             style={{ border: '1px solid #E0D49A' }} loading="lazy" />
         ) : (
           <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
-            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+            style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
         )}
 
         {/* Info */}
@@ -1228,7 +1242,7 @@ function ProductionCard({
             {a.is_extra && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                 style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
-                {lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}
+                {lang === 'vi' ? '+ NgoÃ i ÄÆ¡n' : '+ Extra'}
               </span>
             )}
           </div>
@@ -1237,7 +1251,7 @@ function ProductionCard({
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <span className="text-2xl font-black" style={{ color: meta.color }}>x{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
-              <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
+              <span className="text-sm text-ink-light">(â {a.qty_produced})</span>
             )}
             <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white"
               style={{ backgroundColor: st.color }}>
@@ -1247,7 +1261,7 @@ function ProductionCard({
           {a.status === 'blocked' && a.blocked_reason && (
             <div className="mt-1 text-xs font-medium rounded-lg px-2 py-1 inline-block"
               style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
-              ⚠ {a.blocked_reason}
+              â  {a.blocked_reason}
             </div>
           )}
         </div>
@@ -1258,7 +1272,7 @@ function ProductionCard({
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
               className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
               style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>
-              {isUpdating ? '…' : actionLabel[a.status] ?? ''}
+              {isUpdating ? 'â¦' : actionLabel[a.status] ?? ''}
             </button>
           )}
           {canMarkStock && (
@@ -1266,40 +1280,40 @@ function ProductionCard({
               className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
               style={{ border: '1px solid #C4B5FD', color: '#6D28D9', backgroundColor: '#F5F3FF', opacity: isUpdating ? 0.6 : 1 }}>
               <Package size={11} />
-              {lang === 'vi' ? 'Có sẵn' : 'In stock'}
+              {lang === 'vi' ? 'CÃ³ sáºµn' : 'In stock'}
             </button>
           )}
           {a.status === 'in_progress' && !readOnly && (
             <button onClick={() => onPartial(a)}
               className="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
               style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
-              {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
+              {lang === 'vi' ? 'Ghi sá»' : 'Enter qty'}
             </button>
           )}
           {canBlock && (
             <button onClick={() => onBlocked(a)} disabled={isUpdating}
               className="px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
               style={{ border: '1px solid #FCA5A5', color: '#DC2626', backgroundColor: '#FEF2F2', opacity: isUpdating ? 0.6 : 1 }}>
-              {lang === 'vi' ? 'Chặn' : 'Block'}
+              {lang === 'vi' ? 'Cháº·n' : 'Block'}
             </button>
           )}
           {a.status === 'blocked' && !readOnly && (
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
               className="px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
               style={{ border: '1px solid #A7D4B8', color: '#2D6A4F', backgroundColor: '#F0F9F4', opacity: isUpdating ? 0.6 : 1 }}>
-              {lang === 'vi' ? 'Mở lại' : 'Unblock'}
+              {lang === 'vi' ? 'Má» láº¡i' : 'Unblock'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Breakdown — always visible */}
+      {/* Breakdown â always visible */}
       {breakdown.length > 0 && (
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
           <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
             style={{ color: '#2D6A4F', backgroundColor: '#F0F9F4' }}>
             <Store size={10} />
-            {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
+            {lang === 'vi' ? 'Chi tiáº¿t theo khÃ¡ch hÃ ng' : 'Per-client breakdown'}
           </div>
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-2 text-sm"
@@ -1312,7 +1326,7 @@ function ProductionCard({
                 {b.delivery_time && (
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                     style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                    ⏰ {b.delivery_time.slice(0, 5)}
+                    â° {b.delivery_time.slice(0, 5)}
                   </span>
                 )}
               </span>
@@ -1331,7 +1345,7 @@ function ProductionCard({
             className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
             style={{ color: '#2D6A4F' }}>
             <BookOpen size={12} />
-            {lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe card'}
+            {lang === 'vi' ? 'Phiáº¿u ká»¹ thuáº­t' : 'Recipe card'}
           </button>
         )}
       </div>
@@ -1339,7 +1353,7 @@ function ProductionCard({
   );
 }
 
-// ─── TERMINÉ CARD ────────────────────────────────────────────────────────────
+// âââ TERMINÃ CARD ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function TermineCard({
   a, lang, meta, onAdvance, updating,
@@ -1366,7 +1380,7 @@ function TermineCard({
             style={{ border: '1px solid #E0D49A' }} />
         ) : (
           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-            style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+            style={{ backgroundColor: '#FFF4CC' }}>ð¥</div>
         )}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm" style={{ color: '#1A4731' }}>
@@ -1380,12 +1394,12 @@ function TermineCard({
             {isSkip ? (
               <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#6D28D9' }}>
                 <Package size={11} />
-                {lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'}
+                {lang === 'vi' ? 'CÃ³ sáºµn trong kho' : 'In stock'}
               </span>
             ) : (
               <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#059669' }}>
                 <CheckCircle2 size={11} />
-                {lang === 'vi' ? `Đã làm x${a.qty_produced}` : `Done x${a.qty_produced}`}
+                {lang === 'vi' ? `ÄÃ£ lÃ m x${a.qty_produced}` : `Done x${a.qty_produced}`}
               </span>
             )}
             <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>
@@ -1398,7 +1412,7 @@ function TermineCard({
           <button onClick={() => onAdvance(a)} disabled={updating === a.id}
             className="px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all"
             style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', opacity: updating === a.id ? 0.6 : 1 }}>
-            {lang === 'vi' ? 'Cần làm' : 'Produce'}
+            {lang === 'vi' ? 'Cáº§n lÃ m' : 'Produce'}
           </button>
         )}
       </div>
@@ -1418,7 +1432,7 @@ function TermineCard({
   );
 }
 
-// ─── FICHE MODAL ─────────────────────────────────────────────────────────────
+// âââ FICHE MODAL âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function FicheModal({
   productId, productName, lang, onClose,
@@ -1470,13 +1484,13 @@ function FicheModal({
               <Link href={`/admin/fiches/${ficheId}`}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: '#F0FDF4', color: '#166534' }}>
-                {lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}
+                {lang === 'vi' ? 'Chá»nh sá»­a' : 'Edit'}
               </Link>
             )}
             <Link href={`/station/fiche/${productId}?back=/station/me`}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
-              {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
+              {lang === 'vi' ? 'Xem Äáº§y Äá»§' : 'Full view'}
             </Link>
             <button onClick={onClose} className="p-1 text-ink-light hover:text-ink transition-colors">
               <X size={20} />
@@ -1487,16 +1501,16 @@ function FicheModal({
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
             <p className="text-ink-light text-sm text-center py-10">
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+              {lang === 'vi' ? 'Äang táº£iâ¦' : 'Loadingâ¦'}
             </p>
           ) : steps.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-ink-light text-sm">
-                {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
+                {lang === 'vi' ? 'ChÆ°a cÃ³ phiáº¿u ká»¹ thuáº­t cho sáº£n pháº©m nÃ y.' : 'No recipe steps added yet.'}
               </p>
               <Link href={`/station/fiche/${productId}?back=/station/me`}
                 className="text-xs font-semibold mt-2 inline-block" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Xem trang phiếu →' : 'View fiche page →'}
+                {lang === 'vi' ? 'Xem trang phiáº¿u â' : 'View fiche page â'}
               </Link>
             </div>
           ) : steps.map(step => (
@@ -1513,12 +1527,12 @@ function FicheModal({
                   <div className="flex gap-4 text-xs text-ink-light">
                     {step.duration_minutes && (
                       <span className="flex items-center gap-1">
-                        <Timer size={11} /> {step.duration_minutes} {lang === 'vi' ? 'phút' : 'min'}
+                        <Timer size={11} /> {step.duration_minutes} {lang === 'vi' ? 'phÃºt' : 'min'}
                       </span>
                     )}
                     {step.temperature_celsius && (
                       <span className="flex items-center gap-1">
-                        <Thermometer size={11} /> {step.temperature_celsius}°C
+                        <Thermometer size={11} /> {step.temperature_celsius}Â°C
                       </span>
                     )}
                   </div>
