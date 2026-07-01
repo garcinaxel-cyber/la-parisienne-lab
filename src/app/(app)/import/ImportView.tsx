@@ -172,8 +172,11 @@ export default function ImportView() {
   async function publish(asDraft: boolean) {
     if (!parsedFiles.length) return;
     setStep('saving');
-    const earliestDate = effectiveLines.map(l => l.delivery_date).filter(Boolean).sort()[0] ?? new Date().toISOString().split('T')[0];
     const supabase = createClient();
+
+    const today = new Date().toISOString().split('T')[0];
+    const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
+    const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
 
     // Look up products by SKU to enrich assignments with image_url + product_id
     const skus = Array.from(new Set(effectiveLines.map(l => l.product_sku).filter(Boolean)));
@@ -185,77 +188,24 @@ export default function ImportView() {
       if (p.sku) productBySku[p.sku] = { id: p.id, image_url: p.main_image_url ?? null, name_en: p.name_en ?? null };
     }
 
-    // Get next order number for this date
-    const { count } = await supabase
-      .from('lab_imports')
-      .select('*', { count: 'exact', head: true })
-      .eq('delivery_date', earliestDate);
-
-    const orderNumber = (count ?? 0) + 1;
-
-    // Determine filenames
-    const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
-    const replFile = parsedFiles.find(pf => pf.sourceType === 'replenishment');
-
-    const { data: importRow, error: importErr } = await supabase
-      .from('lab_imports')
-      .insert({
-        delivery_date: earliestDate,
-        order_number: orderNumber,
-        type: importType,
-        shipped_from_lab: shippedFromLab,
-        notes,
-        status: asDraft ? 'draft' : 'published',
-        filename_sales: salesFile?.filename ?? null,
-        filename_repl: replFile?.filename ?? null,
-        published_at: asDraft ? null : new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (importErr || !importRow) {
-      setError(importErr?.message ?? 'Failed to create import');
-      setStep('preview');
-      return;
-    }
-
-    // Insert assignments — only lines with a valid team (CHECK constraint on lab_assignments)
-    // Lines with unrecognised/empty team are kept in lab_order_lines only (for traceability)
+    // Group assignable lines by delivery_date — one lab_imports record per date
     const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
-    const assignments = assignableLines.map((line, idx) => {
-      const product = productBySku[line.product_sku] ?? null;
-      return {
-        import_id: importRow.id,
-        team: line.team,
-        product_id: product?.id ?? null,
-        product_name_vi: line.product_name_vi,
-        product_name_en: product?.name_en ?? '',
-        image_url: product?.image_url ?? null,
-        variant_label: line.variant_label,
-        total_qty: line.total_qty,
-        qty_to_produce: line.total_qty,
-        qty_produced: 0,
-        status: 'pending',
-        sort_order: idx,
-        breakdown: line.breakdown ?? [],
-      };
-    });
-
-    const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
-    if (assignErr) {
-      setError(assignErr.message);
-      await supabase.from('lab_imports').delete().eq('id', importRow.id);
-      setStep('preview');
-      return;
+    const byDate = new Map<string, typeof assignableLines>();
+    for (const line of assignableLines) {
+      const date = line.delivery_date || today;
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date)!.push(line);
     }
 
-    // Insert raw order lines for traceability (also filtered by excludedSkus)
-    const orderLines = parsedFiles.flatMap(pf =>
-      pf.lines
-        .filter(line => !excludedSkus.has(line.product_sku))
-        .flatMap(line =>
-          line.breakdown.map(b => ({
-            import_id: importRow.id,
+    // Group raw order lines by delivery_date for traceability
+    const orderLinesByDate = new Map<string, any[]>();
+    for (const pf of parsedFiles) {
+      for (const line of pf.lines) {
+        if (excludedSkus.has(line.product_sku)) continue;
+        const date = line.delivery_date || today;
+        if (!orderLinesByDate.has(date)) orderLinesByDate.set(date, []);
+        for (const b of line.breakdown) {
+          orderLinesByDate.get(date)!.push({
             source_type: pf.sourceType,
             order_ref: b.order_ref,
             shop_name: b.shop_name,
@@ -264,13 +214,82 @@ export default function ImportView() {
             team: line.team,
             variant_label: line.variant_label,
             qty: b.qty,
-            delivery_date: line.delivery_date,
-            delivery_time: orderTimes[b.order_ref] || null,
-          }))
-        )
-    );
-    if (orderLines.length > 0) {
-      await supabase.from('lab_order_lines').insert(orderLines);
+            delivery_date: date,
+            delivery_time: orderTimes[b.order_ref] || b.delivery_time || null,
+          });
+        }
+      }
+    }
+
+    const allDates = Array.from(byDate.keys()).sort();
+    const earliestDate = allDates[0] ?? today;
+    let sortOffset = 0;
+
+    // Create one lab_imports + assignments per delivery date
+    for (const date of allDates) {
+      const linesForDate = byDate.get(date)!;
+
+      const { count } = await supabase
+        .from('lab_imports')
+        .select('*', { count: 'exact', head: true })
+        .eq('delivery_date', date);
+      const orderNumber = (count ?? 0) + 1;
+
+      const { data: importRow, error: importErr } = await supabase
+        .from('lab_imports')
+        .insert({
+          delivery_date: date,
+          order_number: orderNumber,
+          type: importType,
+          shipped_from_lab: shippedFromLab,
+          notes,
+          status: asDraft ? 'draft' : 'published',
+          filename_sales: salesFile?.filename ?? null,
+          filename_repl: replFile?.filename ?? null,
+          published_at: asDraft ? null : new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+
+      if (importErr || !importRow) {
+        setError(importErr?.message ?? `Failed to create import for ${date}`);
+        setStep('preview');
+        return;
+      }
+
+      const assignments = linesForDate.map((line, idx) => {
+        const product = productBySku[line.product_sku] ?? null;
+        return {
+          import_id: importRow.id,
+          team: line.team,
+          product_id: product?.id ?? null,
+          product_name_vi: line.product_name_vi,
+          product_name_en: product?.name_en ?? '',
+          image_url: product?.image_url ?? null,
+          variant_label: line.variant_label,
+          total_qty: line.total_qty,
+          qty_to_produce: line.total_qty,
+          qty_produced: 0,
+          status: 'pending',
+          sort_order: sortOffset + idx,
+          breakdown: line.breakdown ?? [],
+        };
+      });
+      sortOffset += linesForDate.length;
+
+      const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
+      if (assignErr) {
+        setError(assignErr.message);
+        await supabase.from('lab_imports').delete().eq('id', importRow.id);
+        setStep('preview');
+        return;
+      }
+
+      // Insert raw order lines for this date
+      const olForDate = (orderLinesByDate.get(date) ?? []).map(ol => ({ ...ol, import_id: importRow.id }));
+      if (olForDate.length > 0) {
+        await supabase.from('lab_order_lines').insert(olForDate);
+      }
     }
 
     setImportedDate(earliestDate);
