@@ -397,7 +397,7 @@ export default function StationView({
     },
     {
       id: 'upcoming',
-      labelVi: 'Sa��p tới',
+      labelVi: 'Sắp tới',
       labelEn: 'À venir',
       count: upcomingData.length,
       icon: <ChevronRight size={14} />,
@@ -420,7 +420,7 @@ export default function StationView({
     onAdvance: advanceStatus,
     onMarkInStock: markInStock,
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
-    onViewFiche: (a: Assignment) => a.product_id = setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
     onNoteUpdate: (id: string, note: string) => setAssignments(prev => prev.map(x => x.id === id ? { ...x, notes: note } : x)),
     onBlocked: (a: Assignment) => { setBlockedReason(''); setBlockedCustom(''); setBlockedModal(a); },
     meta,
@@ -567,7 +567,7 @@ export default function StationView({
                   const st = STATUS_META[a.status];
                   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
                   return (
-                    <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
+                    <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EfC8' : undefined }}>
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
@@ -1501,7 +1501,7 @@ function FicheModal({
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
             <p className="text-ink-light text-sm text-center py-10">
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+              {lang === 'vi' ? '�DAng tải…' : 'Loading…'}
             </p>
           ) : steps.length === 0 ? (
             <div className="text-center py-10">
@@ -1515,7 +1515,7 @@ function FicheModal({
             </div>
           ) : steps.map(step => (
             <div key={step.step_number} className="flex gap-3">
-              <div className="w7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5"
+              <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5"
                 style={{ backgroundColor: '#1A4731' }}>
                 {step.step_number}
               </div>
@@ -1523,7 +1523,7 @@ function FicheModal({
                 <p className="text-sm leading-relaxed" style={{ color: '#1A2C24' }}>
                   {lang === 'vi' ? step.description_vi : (step.description_en || step.description_vi)}
                 </p>
-                {(step.duration_minutes || step.temperature_celsius) && (
+                y(step.duration_minutes || step.temperature_celsius) && (
                   <div className="flex gap-4 text-xs text-ink-light">
                     {step.duration_minutes && (
                       <span className="flex items-center gap-1">
