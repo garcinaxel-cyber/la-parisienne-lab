@@ -74,6 +74,13 @@ type DateSummary = {
   productCount: number;
   totalQty: number;
   doneQty: number;
+  import_ids: string[];
+};
+
+type OrderDetail = {
+  order_ref: string;
+  shop_name: string;
+  items: { product_name_vi: string; variant_label: string; qty: number }[];
 };
 
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
@@ -108,6 +115,9 @@ export default function StationView({
   const [upcomingData, setUpcomingData] = useState<DateSummary[]>([]);
   const [historyData, setHistoryData] = useState<DateSummary[]>([]);
   const [loadingDates, setLoadingDates] = useState(false);
+  const [expandedHistoryDate, setExpandedHistoryDate] = useState<string | null>(null);
+  const [historyDetails, setHistoryDetails] = useState<Record<string, OrderDetail[]>>({});
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
@@ -208,7 +218,8 @@ export default function StationView({
         const byDate = new Map<string, DateSummary>();
         for (const imp of imports) {
           if (!byDate.has(imp.delivery_date))
-            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0 });
+            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [] });
+          byDate.get(imp.delivery_date)!.import_ids.push(imp.id);
         }
         for (const a of asgns ?? []) {
           const imp = imports.find((i: any) => i.id === a.import_id);
@@ -224,6 +235,30 @@ export default function StationView({
         setLoadingDates(false);
       });
   }, [activeTab, team, today]);
+
+  async function loadHistoryDetails(delivery_date: string, import_ids: string[]) {
+    if (historyDetails[delivery_date] !== undefined) return;
+    setLoadingDetails(true);
+    const supabase = createClient();
+    const { data: lines } = await supabase
+      .from('lab_order_lines')
+      .select('order_ref, shop_name, product_name_vi, variant_label, qty')
+      .in('import_id', import_ids)
+      .eq('team', team)
+      .order('order_ref');
+    const byRef = new Map<string, OrderDetail>();
+    for (const line of lines ?? []) {
+      if (!byRef.has(line.order_ref))
+        byRef.set(line.order_ref, { order_ref: line.order_ref, shop_name: line.shop_name, items: [] });
+      byRef.get(line.order_ref)!.items.push({
+        product_name_vi: line.product_name_vi,
+        variant_label: line.variant_label,
+        qty: line.qty,
+      });
+    }
+    setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
+    setLoadingDetails(false);
+  }
 
   async function advanceStatus(a: Assignment) {
     const next = STATUS_FLOW[a.status];
@@ -668,19 +703,67 @@ List size={14} />,
             const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
+            const isExpanded = expandedHistoryDate === d.delivery_date;
+            const details = historyDetails[d.delivery_date];
             return (
-              <button key={d.delivery_date}
-                onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
-                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white"
+              <div key={d.delivery_date}
+                className="rounded-2xl bg-white overflow-hidden"
                 style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}>
-                <div>
-                  <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
-                  <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
-                    {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'}
+                <button
+                  onClick={() => {
+                    if (isExpanded) {
+                      setExpandedHistoryDate(null);
+                    } else {
+                      setExpandedHistoryDate(d.delivery_date);
+                      loadHistoryDetails(d.delivery_date, d.import_ids);
+                    }
+                  }}
+                  className="w-full px-5 py-4 text-left flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
+                    <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
+                      {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'produits'}
+                    </div>
                   </div>
-                </div>
-                <ChevronRight size={16} style={{ color: '#C9A84C' }} />
-              </button>
+                  <ChevronRight size={16}
+                    className="transition-transform duration-200 shrink-0"
+                    style={{ color: '#C9A84C', transform: isExpanded ? 'rotate(90deg)' : 'none' }} />
+                </button>
+                {isExpanded && (
+                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
+                    {loadingDetails && !details && (
+                      <p className="text-center text-xs py-3" style={{ color: '#1A4731' }}>
+                        {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+                      </p>
+                    )}
+                    {details && details.length === 0 && (
+                      <p className="text-center text-xs py-3 text-gray-400">
+                        {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
+                      </p>
+                    )}
+                    {(details ?? []).map(order => (
+                      <div key={order.order_ref} className="rounded-xl p-3 mt-2"
+                        style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold" style={{ color: '#92600A' }}>{order.order_ref}</span>
+                          <span className="text-xs font-medium" style={{ color: '#1A4731' }}>{order.shop_name}</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          {order.items.map((item, i) => (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span style={{ color: '#374151' }}>
+                                {item.product_name_vi}
+                                {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
+                              </span>
+                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
