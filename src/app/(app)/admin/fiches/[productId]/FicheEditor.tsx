@@ -36,6 +36,7 @@ interface Variant {
   weight_g: string;
   is_default: boolean;
   sort_order: number;
+  image_url: string;
 }
 
 interface Ingredient {
@@ -56,9 +57,6 @@ interface AssemblyStep {
   temperature_celsius: number | null;
 }
 
-// variantQty[ingredientIdx][variantIdx] = quantity_grams
-type VarQtyMap = Record<number, Record<number, number | null>>;
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function emptyIngredient(num: number): Ingredient {
@@ -70,7 +68,7 @@ function emptyStep(num: number): AssemblyStep {
 }
 
 function emptyVariant(sortOrder: number): Variant {
-  return { label: '', sku: '', weight_g: '', is_default: false, sort_order: sortOrder };
+  return { label: '', sku: '', weight_g: '', is_default: false, sort_order: sortOrder, image_url: '' };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -82,7 +80,6 @@ export default function FicheEditor({
   variants: initVariants,
   ingredients: initIngredients,
   assemblySteps: initSteps,
-  initVariantQty,
 }: {
   ficheId: string;
   identity: FicheIdentity;
@@ -90,7 +87,6 @@ export default function FicheEditor({
   variants: Variant[];
   ingredients: Ingredient[];
   assemblySteps: AssemblyStep[];
-  initVariantQty?: { step_number: number; variant_id: string; quantity_grams: number | null }[];
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -103,7 +99,7 @@ export default function FicheEditor({
   const [variants, setVariants] = useState<Variant[]>(
     initVariants.length > 0
       ? initVariants
-      : [{ label: 'Standard', sku: '', weight_g: '', is_default: true, sort_order: 0 }]
+      : [{ label: 'Standard', sku: '', weight_g: '', is_default: true, sort_order: 0, image_url: '' }]
   );
   const [ingredients, setIngredients] = useState<Ingredient[]>(
     initIngredients.length > 0 ? initIngredients : [emptyIngredient(1)]
@@ -111,21 +107,6 @@ export default function FicheEditor({
   const [steps, setSteps] = useState<AssemblyStep[]>(
     initSteps.length > 0 ? initSteps : [emptyStep(1)]
   );
-  // variantQty[ingredientIdx][variantIdx] = quantity_grams
-  const [variantQty, setVariantQty] = useState<VarQtyMap>(() => {
-    if (!initVariantQty?.length) return {};
-    const map: VarQtyMap = {};
-    for (const vq of initVariantQty) {
-      const ingIdx = initIngredients.findIndex(i => i.step_number === vq.step_number);
-      const varIdx = initVariants.findIndex(v => v.id === vq.variant_id);
-      if (ingIdx >= 0 && varIdx >= 0) {
-        if (!map[ingIdx]) map[ingIdx] = {};
-        map[ingIdx][varIdx] = vq.quantity_grams;
-      }
-    }
-    return map;
-  });
-
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,20 +129,6 @@ export default function FicheEditor({
   function addVariant() { setVariants(p => [...p, emptyVariant(p.length)]); setSaved(false); }
   function removeVariant(idx: number) {
     setVariants(p => p.filter((_, i) => i !== idx).map((v, i) => ({ ...v, sort_order: i })));
-    setVariantQty(prev => {
-      const next: VarQtyMap = {};
-      for (const [ingIdxStr, varMap] of Object.entries(prev)) {
-        const ingIdx = Number(ingIdxStr);
-        const newVarMap: Record<number, number | null> = {};
-        for (const [varIdxStr, qty] of Object.entries(varMap)) {
-          const vi = Number(varIdxStr);
-          if (vi === idx) continue;
-          newVarMap[vi > idx ? vi - 1 : vi] = qty as number | null;
-        }
-        if (Object.keys(newVarMap).length > 0) next[ingIdx] = newVarMap;
-      }
-      return next;
-    });
     setSaved(false);
   }
   function updateVariant(idx: number, patch: Partial<Variant>) {
@@ -177,15 +144,6 @@ export default function FicheEditor({
   function addIngredient() { setIngredients(p => [...p, emptyIngredient(p.length + 1)]); setSaved(false); }
   function removeIngredient(idx: number) {
     setIngredients(p => p.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step_number: i + 1 })));
-    setVariantQty(prev => {
-      const next: VarQtyMap = {};
-      for (const [k, v] of Object.entries(prev)) {
-        const n = Number(k);
-        if (n === idx) continue;
-        next[n > idx ? n - 1 : n] = v as Record<number, number | null>;
-      }
-      return next;
-    });
     setSaved(false);
   }
   function updateIngredient(idx: number, patch: Partial<Ingredient>) {
@@ -296,18 +254,7 @@ export default function FicheEditor({
       if (insVErr) { setError(insVErr.message); setSaving(false); return; }
     }
 
-    // 2b. Fetch fresh variant IDs (includes newly inserted ones) — map sort_order → id
-    const { data: freshVariants } = await supabase
-      .from('lab_fiche_variants')
-      .select('id, sort_order')
-      .eq('fiche_id', ficheId)
-      .order('sort_order');
-    const varIdxToId: Record<number, string> = {};
-    for (const v of freshVariants ?? []) {
-      varIdxToId[v.sort_order] = v.id;
-    }
-
-    // 3. Steps — delete all + re-insert (cascade deletes variant_quantities)
+    // 3. Steps — delete all + re-insert
     const { error: delErr } = await supabase.from('lab_fiche_steps').delete().eq('fiche_id', ficheId);
     if (delErr) { setError(delErr.message); setSaving(false); return; }
 
@@ -330,42 +277,14 @@ export default function FicheEditor({
         })),
     ];
     if (rows.length > 0) {
-      const { data: insertedSteps, error: insErr } = await supabase
-        .from('lab_fiche_steps')
-        .insert(rows)
-        .select('id, step_type, step_number');
+      const { error: insErr } = await supabase.from('lab_fiche_steps').insert(rows);
       if (insErr) { setError(insErr.message); setSaving(false); return; }
-
-      // 4. Save variant quantities using new step IDs
-      const ingStepIdByNum: Record<number, string> = {};
-      for (const s of insertedSteps ?? []) {
-        if (s.step_type === 'ingredient') ingStepIdByNum[s.step_number] = s.id;
-      }
-      const vqRows: { step_id: string; variant_id: string; quantity_grams: number | null }[] = [];
-      for (const [ingIdxStr, varMap] of Object.entries(variantQty)) {
-        const ingIdx = Number(ingIdxStr);
-        const ing = ingredients[ingIdx];
-        if (!ing || (!ing.description_vi.trim() && !ing.description_en.trim())) continue;
-        const stepId = ingStepIdByNum[ing.step_number];
-        if (!stepId) continue;
-        for (const [varIdxStr, qty] of Object.entries(varMap)) {
-          if (qty == null) continue;
-          const varId = varIdxToId[Number(varIdxStr)];
-          if (!varId) continue;
-          vqRows.push({ step_id: stepId, variant_id: varId, quantity_grams: qty as number });
-        }
-      }
-      if (vqRows.length > 0) {
-        const { error: vqErr } = await supabase.from('lab_fiche_variant_quantities').insert(vqRows);
-        if (vqErr) { setError(vqErr.message); setSaving(false); return; }
-      }
     }
 
     setSaving(false); setSaved(true); router.refresh();
   }
 
   const totalWeight = ingredients.reduce((s, i) => s + (i.quantity_grams ?? 0), 0);
-  const weightedVariants = variants.map((v, idx) => ({ v, idx })).filter(({ v }) => v.weight_g !== '');
 
   const tabs: { key: typeof activeTab; label: string }[] = [
     { key: 'produit',     label: lang === 'vi' ? '① Sản phẩm' : '① Product' },
@@ -425,7 +344,7 @@ export default function FicheEditor({
                 <label className="label text-[10px]">Tên sản phẩm (Tiếng Việt) *</label>
                 <input value={identity.name_vi}
                   onChange={e => { setIdentity(p => ({ ...p, name_vi: e.target.value })); setSaved(false); }}
-                  placeholder="Bánh mì bơ tỏi…" className="input mt-1 w-full text-sm font-medium" />
+                  placeholder="Bánh mì bơ thọi…" className="input mt-1 w-full text-sm font-medium" />
               </div>
               <div>
                 <label className="label text-[10px]">Product name (English)</label>
@@ -443,7 +362,7 @@ export default function FicheEditor({
                   placeholder="Bread / Entremets…" className="input mt-1 w-full text-sm" />
               </div>
               <div>
-                <label className="label text-[10px]">{lang === 'vi' ? 'Hình ảnh' : 'Photo'}</label>
+                <label className="label text-[10px]">{lang === 'vi' ? 'Hình ƣnh' : 'Photo'}</label>
                 <div
                   onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                   onDragLeave={() => setDragOver(false)}
@@ -529,34 +448,36 @@ export default function FicheEditor({
               </div>
               <div className="divide-y divide-border-soft">
                 {variants.map((v, idx) => (
-                  <div key={idx} className="grid grid-cols-12 items-center px-4 py-2.5 gap-2">
-                    <div className="col-span-3">
-                      <input value={v.label}
-                        onChange={e => updateVariant(idx, { label: e.target.value })}
-                        placeholder="Standard, D14…" className="input w-full text-sm py-1.5" />
-                    </div>
-                    <div className="col-span-4">
-                      <input value={v.sku}
-                        onChange={e => updateVariant(idx, { sku: e.target.value })}
-                        placeholder="BCMD14…" className="input w-full text-sm py-1.5 font-mono text-xs" />
-                    </div>
-                    <div className="col-span-2">
-                      <input type="number" min={0} step={1} value={v.weight_g}
-                        onChange={e => updateVariant(idx, { weight_g: e.target.value })}
-                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
-                    </div>
-                    <div className="col-span-2 flex justify-center">
-                      <input type="radio" name="default_variant" checked={v.is_default}
-                        onChange={() => setDefaultVariant(idx)}
-                        className="accent-navy w-4 h-4 cursor-pointer" />
-                    </div>
-                    <div className="col-span-1 flex justify-center">
-                      {variants.length > 1 && (
-                        <button onClick={() => removeVariant(idx)}
-                          className="p-1 text-ink-light hover:text-red-500 transition-colors">
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+                  <div key={idx} className="px-4 py-2.5 space-y-1.5">
+                    <div className="grid grid-cols-12 items-center gap-2">
+                      <div className="col-span-3">
+                        <input value={v.label}
+                          onChange={e => updateVariant(idx, { label: e.target.value })}
+                          placeholder="Standard, D14…" className="input w-full text-sm py-1.5" />
+                      </div>
+                      <div className="col-span-4">
+                        <input value={v.sku}
+                          onChange={e => updateVariant(idx, { sku: e.target.value })}
+                          placeholder="BCMD14…" className="input w-full text-sm py-1.5 font-mono text-xs" />
+                      </div>
+                      <div className="col-span-2">
+                        <input type="number" min={0} step={1} value={v.weight_g}
+                          onChange={e => updateVariant(idx, { weight_g: e.target.value })}
+                          placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                      </div>
+                      <div className="col-span-2 flex justify-center">
+                        <input type="radio" name="default_variant" checked={v.is_default}
+                          onChange={() => setDefaultVariant(idx)}
+                          className="accent-navy w-4 h-4 cursor-pointer" />
+                      </div>
+                      <div className="col-span-1 flex justify-center">
+                        {variants.length > 1 && (
+                          <button onClick={() => removeVariant(idx)}
+                            className="p-1 text-ink-light hover:text-red-500 transition-colors">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {/* Photo URL per variant */}
                     <div className="flex items-center gap-2 pl-0.5">
@@ -571,7 +492,7 @@ export default function FicheEditor({
                       />
                     </div>
                   </div>
-                )})
+                ))}
               </div>
             </div>
           </div>
@@ -625,7 +546,7 @@ export default function FicheEditor({
               <label className="label text-[10px]">Lưu ý nghiêm ngặt — Tiếng Việt</label>
               <textarea value={technique.warning_vi}
                 onChange={e => setTechnique(m => ({ ...m, warning_vi: e.target.value }))}
-                placeholder="Toàn bộ thợ bánh bắt buộc phải cân đong chính xác…"
+                placeholder="Toàn bộ thớ bánh bắt buộc phải cân đong chính xác…"
                 rows={3} className="input mt-1 w-full resize-none text-sm" />
             </div>
             <div>
@@ -647,7 +568,7 @@ export default function FicheEditor({
               {lang === 'vi' ? 'Liệt kê theo thứ tự lắp ráp' : 'List in assembly order'}
             </p>
             <button onClick={recalcPercentages}
-              className="text-xs font-medium text-gold border border-gold/40 rounded-lg px-3 py-1.5 hover:bg-gold/5 transition-colors">
+              className="text-xs font-medium text-gold border border-gold/40 rounded-lg px-3 py-1.5 hover:bv-gold/5 transition-colors">
               {lang === 'vi' ? '⟳ Tính % tự động' : '⟳ Auto-calc %'}
             </button>
           </div>
@@ -657,7 +578,7 @@ export default function FicheEditor({
               <div className="col-span-1 text-center">STT</div>
               <div className="col-span-4">Tên nguyên liệu (VI)</div>
               <div className="col-span-3">Ingredient (EN)</div>
-              <div className="col-span-2 text-center">Qty défaut (gr)</div>
+              <div className="col-span-2 text-center">Qty (gr)</div>
               <div className="col-span-1 text-center">%</div>
               <div className="col-span-1" />
             </div>
@@ -673,7 +594,7 @@ export default function FicheEditor({
                   <div className="col-span-4">
                     <input value={ing.description_vi}
                       onChange={e => updateIngredient(idx, { description_vi: e.target.value })}
-                      placeholder="Đế bánh brioche…" className="input w-full text-sm py-1.5" />
+                      placeholder="Đ� bánh brioche…" className="input w-full text-sm py-1.5" />
                   </div>
                   <div className="col-span-3">
                     <input value={ing.description_en}
@@ -722,72 +643,6 @@ export default function FicheEditor({
             <Plus size={16} />
             {lang === 'vi' ? 'Thêm nguyên liệu' : 'Add ingredient'}
           </button>
-
-          {/* ── Quantités par taille ── */}
-          {weightedVariants.length > 1 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-semibold text-navy">
-                  📐 {lang === 'vi' ? 'Định lượng theo kích thước' : 'Quantities per size'}
-                </h4>
-                <span className="text-[10px] text-ink-light bg-cream px-2 py-0.5 rounded-full border border-border-soft">
-                  {lang === 'vi' ? 'nhập tay — không tự động' : 'manual — not auto-scaled'}
-                </span>
-              </div>
-              <div className="card overflow-x-auto">
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                  <thead>
-                    <tr className="bg-cream/60">
-                      <th className="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-ink-light border-b border-border-soft" style={{ minWidth: '180px' }}>
-                        {lang === 'vi' ? 'Nguyên liệu' : 'Ingredient'}
-                      </th>
-                      {weightedVariants.map(({ v, idx: varIdx }) => (
-                        <th key={varIdx} className="px-3 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-ink-light border-b border-border-soft" style={{ minWidth: '110px' }}>
-                          <div className="font-bold text-navy">{v.label}</div>
-                          <div className="font-normal normal-case text-ink-light">{v.weight_g} gr</div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ingredients.map((ing, ingIdx) => (
-                      (ing.description_vi || ing.description_en) ? (
-                        <tr key={ingIdx} className={ingIdx % 2 === 1 ? 'bg-cream/30' : ''}>
-                          <td className="px-4 py-2 text-sm text-navy border-b border-border-soft" style={{ maxWidth: '200px' }}>
-                            <div className="truncate">{ing.description_vi || ing.description_en}</div>
-                          </td>
-                          {weightedVariants.map(({ v: _v, idx: varIdx }) => (
-                            <td key={varIdx} className="px-2 py-1.5 text-center border-b border-border-soft">
-                              <div className="flex items-center gap-1 justify-center">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={0.1}
-                                  value={variantQty[ingIdx]?.[varIdx] ?? ''}
-                                  onChange={e => {
-                                    const val = e.target.value ? Number(e.target.value) : null;
-                                    setVariantQty(prev => ({
-                                      ...prev,
-                                      [ingIdx]: { ...(prev[ingIdx] ?? {}), [varIdx]: val },
-                                    }));
-                                    setSaved(false);
-                                  }}
-                                  placeholder="—"
-                                  className="input text-sm py-1 text-center"
-                                  style={{ width: '70px' }}
-                                />
-                                <span className="text-[10px] text-ink-light">gr</span>
-                              </div>
-                            </td>
-                          ))}
-                        </tr>
-                      ) : null
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
