@@ -38,6 +38,15 @@ export default async function FicheDetailPage({ params }: { params: { productId:
   const ingredients = steps.filter((s: any) => s.step_type === 'ingredient');
   const assemblySteps = steps.filter((s: any) => s.step_type === 'step' || !s.step_type);
 
+  // Fetch per-variant quantities for ingredient steps
+  const ingredientIds = ingredients.map((s: any) => s.id).filter(Boolean);
+  const { data: variantQuantities } = ingredientIds.length > 0
+    ? await supabase
+        .from('lab_fiche_variant_quantities')
+        .select('step_id, variant_id, quantity_grams')
+        .in('step_id', ingredientIds)
+    : { data: [] as { step_id: string; variant_id: string; quantity_grams: number | null }[] };
+
   return (
     <FicheEditor
       ficheId={fiche.id}
@@ -68,6 +77,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
       }))}
       ingredients={ingredients}
       assemblySteps={assemblySteps}
+      variantQuantities={(variantQuantities ?? []) as any}
     />
   );
 }

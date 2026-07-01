@@ -152,7 +152,7 @@ export default function LabProductsView({ products: initial, categories }: {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-ink-light mb-1.5">
-                {lang === 'vi' ? 'Tên sản phẩm (VI) *'}
+                {lang === 'vi' ? 'Tên sản phẩm (VI) *' : 'Product name (VI) *'}
               </label>
               <input value={form.name_vi} onChange={e => setForm(f => ({ ...f, name_vi: e.target.value }))}
                 className="w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-1"

@@ -80,6 +80,7 @@ export default function FicheEditor({
   variants: initVariants,
   ingredients: initIngredients,
   assemblySteps: initSteps,
+  variantQuantities: initVq = [],
 }: {
   ficheId: string;
   identity: FicheIdentity;
@@ -87,6 +88,7 @@ export default function FicheEditor({
   variants: Variant[];
   ingredients: Ingredient[];
   assemblySteps: AssemblyStep[];
+  variantQuantities?: { step_id: string; variant_id: string; quantity_grams: number | null }[];
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -104,6 +106,16 @@ export default function FicheEditor({
   const [ingredients, setIngredients] = useState<Ingredient[]>(
     initIngredients.length > 0 ? initIngredients : [emptyIngredient(1)]
   );
+  // variantQtyMap[ingredientIndex][variantId] = quantity_grams
+  const [variantQtyMap, setVariantQtyMap] = useState<Record<number, Record<string, number | null>>>(() => {
+    const m: Record<number, Record<string, number | null>> = {};
+    initIngredients.forEach((ing, i) => {
+      if (!ing.id) return;
+      const qtys = initVq.filter(vq => vq.step_id === ing.id);
+      if (qtys.length > 0) m[i] = Object.fromEntries(qtys.map(vq => [vq.variant_id, vq.quantity_grams]));
+    });
+    return m;
+  });
   const [steps, setSteps] = useState<AssemblyStep[]>(
     initSteps.length > 0 ? initSteps : [emptyStep(1)]
   );
@@ -147,10 +159,23 @@ export default function FicheEditor({
   function addIngredient() { setIngredients(p => [...p, emptyIngredient(p.length + 1)]); setSaved(false); }
   function removeIngredient(idx: number) {
     setIngredients(p => p.filter((_, i) => i !== idx).map((s, i) => ({ ...s, step_number: i + 1 })));
+    setVariantQtyMap(m => {
+      const n: typeof m = {};
+      for (const [k, v] of Object.entries(m)) {
+        const ki = Number(k);
+        if (ki < idx) n[ki] = v;
+        else if (ki > idx) n[ki - 1] = v;
+      }
+      return n;
+    });
     setSaved(false);
   }
   function updateIngredient(idx: number, patch: Partial<Ingredient>) {
     setIngredients(p => p.map((s, i) => i === idx ? { ...s, ...patch } : s)); setSaved(false);
+  }
+  function updateVariantQty(ingIdx: number, variantId: string, qty: number | null) {
+    setVariantQtyMap(m => ({ ...m, [ingIdx]: { ...(m[ingIdx] ?? {}), [variantId]: qty } }));
+    setSaved(false);
   }
   function recalcPercentages() {
     const total = ingredients.reduce((s, i) => s + (i.quantity_grams ?? 0), 0);
@@ -272,31 +297,60 @@ export default function FicheEditor({
       if (insVErr) { setError(insVErr.message); setSaving(false); return; }
     }
 
-    // 3. Steps — delete all + re-insert
+    // 3. Steps — delete all + re-insert, capturing ingredient IDs for variant quantities
+    // First get old step IDs to clean up variant quantities
+    const { data: oldStepsData } = await supabase.from('lab_fiche_steps').select('id').eq('fiche_id', ficheId);
+    const oldStepIds = (oldStepsData ?? []).map((s: any) => s.id as string).filter(Boolean);
+    if (oldStepIds.length > 0) {
+      await supabase.from('lab_fiche_variant_quantities').delete().in('step_id', oldStepIds);
+    }
     const { error: delErr } = await supabase.from('lab_fiche_steps').delete().eq('fiche_id', ficheId);
     if (delErr) { setError(delErr.message); setSaving(false); return; }
 
-    const rows = [
-      ...ingredients
-        .filter(i => i.description_vi.trim() || i.description_en.trim())
-        .map(i => ({
-          fiche_id: ficheId, step_type: 'ingredient', step_number: i.step_number,
-          description_vi: i.description_vi, description_en: i.description_en,
-          quantity_grams: i.quantity_grams, percentage: i.percentage,
-          duration_minutes: null, temperature_celsius: null,
-        })),
-      ...steps
-        .filter(s => s.description_vi.trim() || s.description_en.trim())
-        .map(s => ({
-          fiche_id: ficheId, step_type: 'step', step_number: s.step_number,
-          description_vi: s.description_vi, description_en: s.description_en,
-          quantity_grams: null, percentage: null,
-          duration_minutes: s.duration_minutes, temperature_celsius: s.temperature_celsius,
-        })),
-    ];
-    if (rows.length > 0) {
-      const { error: insErr } = await supabase.from('lab_fiche_steps').insert(rows);
-      if (insErr) { setError(insErr.message); setSaving(false); return; }
+    // Insert ingredient steps first (need IDs for variant quantities)
+    const filteredIngredients = ingredients
+      .map((ing, origIdx) => ({ ing, origIdx }))
+      .filter(({ ing }) => ing.description_vi.trim() || ing.description_en.trim());
+    const ingRows = filteredIngredients.map(({ ing }) => ({
+      fiche_id: ficheId, step_type: 'ingredient', step_number: ing.step_number,
+      description_vi: ing.description_vi, description_en: ing.description_en,
+      quantity_grams: ing.quantity_grams, percentage: ing.percentage,
+      duration_minutes: null, temperature_celsius: null,
+    }));
+    let newIngStepIds: string[] = [];
+    if (ingRows.length > 0) {
+      const { data: insIngData, error: insIngErr } = await supabase.from('lab_fiche_steps').insert(ingRows).select('id');
+      if (insIngErr) { setError(insIngErr.message); setSaving(false); return; }
+      newIngStepIds = (insIngData ?? []).map((s: any) => s.id as string);
+    }
+
+    // Insert assembly steps
+    const stepRows = steps
+      .filter(s => s.description_vi.trim() || s.description_en.trim())
+      .map(s => ({
+        fiche_id: ficheId, step_type: 'step', step_number: s.step_number,
+        description_vi: s.description_vi, description_en: s.description_en,
+        quantity_grams: null, percentage: null,
+        duration_minutes: s.duration_minutes, temperature_celsius: s.temperature_celsius,
+      }));
+    if (stepRows.length > 0) {
+      const { error: insStepErr } = await supabase.from('lab_fiche_steps').insert(stepRows);
+      if (insStepErr) { setError(insStepErr.message); setSaving(false); return; }
+    }
+
+    // 4. Variant quantities — write per-variant grammes for each ingredient
+    const vqRows: { step_id: string; variant_id: string; quantity_grams: number | null }[] = [];
+    filteredIngredients.forEach(({ origIdx }, j) => {
+      const stepId = newIngStepIds[j];
+      if (!stepId) return;
+      const qtys = variantQtyMap[origIdx] ?? {};
+      for (const [variantId, qty] of Object.entries(qtys)) {
+        if (qty != null) vqRows.push({ step_id: stepId, variant_id: variantId, quantity_grams: qty });
+      }
+    });
+    if (vqRows.length > 0) {
+      const { error: vqErr } = await supabase.from('lab_fiche_variant_quantities').insert(vqRows);
+      if (vqErr) { setError(vqErr.message); setSaving(false); return; }
     }
 
     setSaving(false); setSaved(true); router.refresh();
@@ -634,39 +688,63 @@ export default function FicheEditor({
 
             <div className="divide-y divide-border-soft">
               {ingredients.map((ing, idx) => (
-                <div key={idx} className="grid grid-cols-12 items-center px-4 py-2.5 gap-2">
-                  <div className="col-span-1 flex justify-center">
-                    <div className="w-6 h-6 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold">
-                      {ing.step_number}
+                <div key={idx} className="px-4 py-2.5 space-y-1.5">
+                  {/* Main ingredient row */}
+                  <div className="grid grid-cols-12 items-center gap-2">
+                    <div className="col-span-1 flex justify-center">
+                      <div className="w-6 h-6 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold">
+                        {ing.step_number}
+                      </div>
+                    </div>
+                    <div className="col-span-4">
+                      <input value={ing.description_vi}
+                        onChange={e => updateIngredient(idx, { description_vi: e.target.value })}
+                        placeholder="Đế bánh brioche…" className="input w-full text-sm py-1.5" />
+                    </div>
+                    <div className="col-span-3">
+                      <input value={ing.description_en}
+                        onChange={e => updateIngredient(idx, { description_en: e.target.value })}
+                        placeholder="Brioche base…" className="input w-full text-sm py-1.5" />
+                    </div>
+                    <div className="col-span-2">
+                      <input type="number" min={0} step={0.1} value={ing.quantity_grams ?? ''}
+                        onChange={e => updateIngredient(idx, { quantity_grams: e.target.value ? Number(e.target.value) : null })}
+                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                    </div>
+                    <div className="col-span-1">
+                      <input type="number" min={0} max={100} step={0.1} value={ing.percentage ?? ''}
+                        onChange={e => updateIngredient(idx, { percentage: e.target.value ? Number(e.target.value) : null })}
+                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      {ingredients.length > 1 && (
+                        <button onClick={() => removeIngredient(idx)} className="p-1 text-ink-light hover:text-red-500 transition-colors">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="col-span-4">
-                    <input value={ing.description_vi}
-                      onChange={e => updateIngredient(idx, { description_vi: e.target.value })}
-                      placeholder="Đ� bánh brioche…" className="input w-full text-sm py-1.5" />
-                  </div>
-                  <div className="col-span-3">
-                    <input value={ing.description_en}
-                      onChange={e => updateIngredient(idx, { description_en: e.target.value })}
-                      placeholder="Brioche base…" className="input w-full text-sm py-1.5" />
-                  </div>
-                  <div className="col-span-2">
-                    <input type="number" min={0} step={0.1} value={ing.quantity_grams ?? ''}
-                      onChange={e => updateIngredient(idx, { quantity_grams: e.target.value ? Number(e.target.value) : null })}
-                      placeholder="—" className="input w-full text-sm py-1.5 text-center" />
-                  </div>
-                  <div className="col-span-1">
-                    <input type="number" min={0} max={100} step={0.1} value={ing.percentage ?? ''}
-                      onChange={e => updateIngredient(idx, { percentage: e.target.value ? Number(e.target.value) : null })}
-                      placeholder="—" className="input w-full text-sm py-1.5 text-center" />
-                  </div>
-                  <div className="col-span-1 flex justify-center">
-                    {ingredients.length > 1 && (
-                      <button onClick={() => removeIngredient(idx)} className="p-1 text-ink-light hover:text-red-500 transition-colors">
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
+                  {/* Per-variant quantities — visible when 2+ saved variants exist */}
+                  {variants.filter(v => v.id).length > 1 && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8">
+                      <span className="text-[10px] text-ink-light font-semibold uppercase tracking-wide shrink-0">
+                        {lang === 'vi' ? 'Qty theo format:' : 'Qty per size:'}
+                      </span>
+                      {variants.filter(v => v.id).map(v => (
+                        <label key={v.id} className="flex items-center gap-1">
+                          <span className="text-ink-light shrink-0 text-[11px]">{v.label}</span>
+                          <input
+                            type="number" min={0} step={0.1}
+                            value={variantQtyMap[idx]?.[v.id!] ?? ''}
+                            onChange={e => updateVariantQty(idx, v.id!, e.target.value ? Number(e.target.value) : null)}
+                            placeholder="—"
+                            className="input w-14 text-xs py-0.5 text-center"
+                          />
+                          <span className="text-[10px] text-ink-light">gr</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
