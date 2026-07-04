@@ -63,7 +63,8 @@ export default function QrCodesPage() {
       <div className="mt-8 p-4 rounded-xl text-sm text-ink-light"
         style={{ backgroundColor: '#F9F6F0', border: '1px solid #E0D49A' }}>
         💡 Tip: Download each QR code as PNG and print at A5 or A6 size. Laminate for durability.
-        Each code links directly to that team's station view — no login required for team tablets.
+        Each code links directly to that team's station view. The tablet must be signed in
+        (use a worker account per team) — anyone not signed in is sent to the login page.
       </div>
     </main>
   );

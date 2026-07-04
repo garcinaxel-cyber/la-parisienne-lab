@@ -24,7 +24,8 @@ type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; deliv
 
 type Assignment = {
   id: string;
-  product_id: string | null;
+  fiche_id: string | null;
+  variant_id: string | null;
   product_name_vi: string;
   product_name_en: string;
   image_url: string | null;
@@ -46,11 +47,13 @@ type Assignment = {
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
 };
 
+// Search result = a lab fiche (id is the fiche_id, variant_id its default variant)
 type SearchProduct = {
   id: string;
   name_vi: string;
   name_en: string | null;
   sku: string | null;
+  variant_id: string | null;
   main_image_url: string | null;
   is_lab_only: boolean;
   category_id: string | null;
@@ -107,7 +110,7 @@ export default function StationView({
   const [updating, setUpdating] = useState<string | null>(null);
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
   const [qtyInput, setQtyInput] = useState(0);
-  const [ficheModal, setFicheModal] = useState<{ productId: string; productName: string } | null>(null);
+  const [ficheModal, setFicheModal] = useState<{ ficheId: string; productName: string } | null>(null);
   const [blockedModal, setBlockedModal] = useState<Assignment | null>(null);
   const [blockedReason, setBlockedReason] = useState('');
   const [blockedCustom, setBlockedCustom] = useState('');
@@ -133,12 +136,15 @@ export default function StationView({
 
   const meta = TEAM_LABELS[team];
 
-  // Fetch categories when modal opens
+  // Fetch categories when modal opens — from lab fiches (free-text category), not the catalogue
   useEffect(() => {
     if (!extraModal || extraCategories.length > 0) return;
     const supabase = createClient();
-    supabase.from('categories').select('id, name_vi, name_en').order('sort_order')
-      .then(({ data }) => setExtraCategories(data ?? []));
+    supabase.from('lab_fiche_meta').select('category').eq('is_active', true).not('category', 'is', null)
+      .then(({ data }) => {
+        const names = Array.from(new Set((data ?? []).map((r: any) => String(r.category).trim()).filter(Boolean))).sort();
+        setExtraCategories(names.map(n => ({ id: n, name_vi: n, name_en: n })));
+      });
   }, [extraModal]);
 
   // Debounced product search — filtered by team + category
@@ -320,7 +326,8 @@ export default function StationView({
       product_name_vi: extraProduct.name_vi,
       product_name_en: extraProduct.name_en ?? '',
       image_url: extraProduct.main_image_url,
-      product_id: extraProduct.id,
+      fiche_id: extraProduct.id,
+      variant_id: extraProduct.variant_id ?? null,
       variant_label: 'Standard',
       total_qty: extraQty,
       qty_to_produce: extraQty,
@@ -333,7 +340,7 @@ export default function StationView({
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
     if (data) {
       setAssignments(prev => [...prev, {
-        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraProduct.sku ?? null, weight_grams: null, category_name_vi: null, category_name_en: null,
+        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraProduct.sku ?? null, weight_grams: null, category_name_vi: extraProduct.subcategory ?? null, category_name_en: extraProduct.subcategory ?? null,
         lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
       }]);
     }
@@ -411,7 +418,8 @@ export default function StationView({
     },
   ];
 
-  const isEmployee = userRole === 'employee';
+  // Read-only roles at the station: worker & viewer (legacy 'employee' kept for safety)
+  const isEmployee = userRole === 'worker' || userRole === 'viewer' || userRole === 'employee';
 
   const sharedCardProps = {
     lang,
@@ -420,7 +428,7 @@ export default function StationView({
     onAdvance: advanceStatus,
     onMarkInStock: markInStock,
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
-    onViewFiche: (a: Assignment) => a.product_id ? setFicheModal({ productId: a.product_id, productName: a.product_name_vi }) : null,
+    onViewFiche: (a: Assignment) => a.fiche_id ? setFicheModal({ ficheId: a.fiche_id, productName: a.product_name_vi }) : null,
     onNoteUpdate: (id: string, note: string) => setAssignments(prev => prev.map(x => x.id === id ? { ...x, notes: note } : x)),
     onBlocked: (a: Assignment) => { setBlockedReason(''); setBlockedCustom(''); setBlockedModal(a); },
     meta,
@@ -799,7 +807,7 @@ export default function StationView({
 
       {/* Fiche modal */}
       {ficheModal && (
-        <FicheModal productId={ficheModal.productId} productName={ficheModal.productName}
+        <FicheModal ficheId={ficheModal.ficheId} productName={ficheModal.productName}
           lang={lang} onClose={() => setFicheModal(null)} />
       )}
 
@@ -1207,8 +1215,8 @@ function ProductionCard({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          {a.product_id ? (
-            <Link href={`/station/fiche/${a.product_id}?back=/station/me`}
+          {a.fiche_id ? (
+            <Link href={`/station/fiche/${a.fiche_id}?back=/station/me`}
               className="font-bold text-base leading-tight block hover:underline"
               style={{ color: '#1A4731' }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
@@ -1340,7 +1348,7 @@ function ProductionCard({
       <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-2"
         style={{ borderTop: '1px solid #F5EFC8' }}>
         <NotesEditor assignmentId={a.id} initialNotes={a.notes} lang={lang} onSaved={onNoteUpdate} />
-        {a.product_id && (
+        {a.fiche_id && (
           <button onClick={() => onViewFiche(a)}
             className="flex items-center gap-1 text-xs font-semibold transition-colors shrink-0"
             style={{ color: '#2D6A4F' }}>
@@ -1435,38 +1443,25 @@ function TermineCard({
 // ─── FICHE MODAL ─────────────────────────────────────────────────────────────
 
 function FicheModal({
-  productId, productName, lang, onClose,
+  ficheId, productName, lang, onClose,
 }: {
-  productId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
+  ficheId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
 }) {
   const [steps, setSteps] = useState<FicheStep[] | null>(null);
-  const [ficheId, setFicheId] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data }) => setIsLoggedIn(!!data.session));
-    // First get fiche meta to get ficheId, then load steps by fiche_id
+    // fiche_id is known directly on the assignment — load steps straight away
     supabase
-      .from('lab_fiche_meta')
-      .select('id')
-      .eq('product_id', productId)
-      .maybeSingle()
-      .then(({ data: meta }) => {
-        setFicheId(meta?.id ?? null);
-        if (meta?.id) {
-          supabase
-            .from('lab_fiche_steps')
-            .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
-            .eq('fiche_id', meta.id)
-            .eq('step_type', 'step')
-            .order('step_number')
-            .then(({ data }) => setSteps(data ?? []));
-        } else {
-          setSteps([]);
-        }
-      });
-  }, [productId]);
+      .from('lab_fiche_steps')
+      .select('step_number, description_vi, description_en, duration_minutes, temperature_celsius')
+      .eq('fiche_id', ficheId)
+      .eq('step_type', 'step')
+      .order('step_number')
+      .then(({ data }) => setSteps(data ?? []));
+  }, [ficheId]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center"
@@ -1480,14 +1475,14 @@ function FicheModal({
             <span className="font-bold text-base" style={{ color: '#1A4731' }}>{productName}</span>
           </div>
           <div className="flex items-center gap-2">
-            {isLoggedIn && ficheId && (
+            {isLoggedIn && (
               <Link href={`/admin/fiches/${ficheId}`}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: '#F0FDF4', color: '#166534' }}>
                 {lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}
               </Link>
             )}
-            <Link href={`/station/fiche/${productId}?back=/station/me`}
+            <Link href={`/station/fiche/${ficheId}?back=/station/me`}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
               {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
@@ -1501,14 +1496,14 @@ function FicheModal({
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
             <p className="text-ink-light text-sm text-center py-10">
-              {lang === 'vi' ? '�DAng tải…' : 'Loading…'}
+              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
             </p>
           ) : steps.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-ink-light text-sm">
                 {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
               </p>
-              <Link href={`/station/fiche/${productId}?back=/station/me`}
+              <Link href={`/station/fiche/${ficheId}?back=/station/me`}
                 className="text-xs font-semibold mt-2 inline-block" style={{ color: '#1A4731' }}>
                 {lang === 'vi' ? 'Xem trang phiếu →' : 'View fiche page →'}
               </Link>
@@ -1523,7 +1518,7 @@ function FicheModal({
                 <p className="text-sm leading-relaxed" style={{ color: '#1A2C24' }}>
                   {lang === 'vi' ? step.description_vi : (step.description_en || step.description_vi)}
                 </p>
-                y(step.duration_minutes || step.temperature_celsius) && (
+                {(step.duration_minutes || step.temperature_celsius) && (
                   <div className="flex gap-4 text-xs text-ink-light">
                     {step.duration_minutes && (
                       <span className="flex items-center gap-1">

@@ -202,7 +202,8 @@ export default function FicheEditor({
     setUploadingImage(true);
     const supabase = createClient();
     const ext = file.name.split('.').pop() ?? 'jpg';
-    const path = `fiches/${ficheId}.${ext}`;
+    // Unique filename per upload — a fixed path + CDN cache made replaced photos appear unchanged
+    const path = `fiches/${ficheId}-${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from('lab-images').upload(path, file, { upsert: true });
     if (!error) {
       const { data: urlData } = supabase.storage.from('lab-images').getPublicUrl(path);
@@ -218,7 +219,8 @@ export default function FicheEditor({
     setUploadingVariantIdx(idx);
     const supabase = createClient();
     const ext = file.name.split('.').pop() ?? 'jpg';
-    const path = `fiches/${ficheId}/v${idx}.${ext}`;
+    // Unique filename per upload — fixes "photo doesn't change" (CDN cached the old URL)
+    const path = `fiches/${ficheId}/v${idx}-${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from('lab-images').upload(path, file, { upsert: true });
     if (!error) {
       const { data: urlData } = supabase.storage.from('lab-images').getPublicUrl(path);

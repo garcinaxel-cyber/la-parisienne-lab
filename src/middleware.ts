@@ -2,13 +2,12 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_PATHS = ['/login'];
-// Station view has its own lightweight auth
-const STATION_PREFIX = '/station';
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
-  if (pathname.startsWith(STATION_PREFIX)) return NextResponse.next();
+  // Stations are NOT public: an unauthenticated visitor (e.g. scanning a QR code)
+  // is redirected to /login. Team tablets stay logged in with a worker account.
 
   let res = NextResponse.next();
   const supabase = createServerClient(

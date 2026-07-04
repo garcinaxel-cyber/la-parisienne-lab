@@ -3,7 +3,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, ChevronDown, ChevronUp, FilePlus } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
-import { parseExcelFile, consolidateLines, type ConsolidatedLine } from '@/lib/excel-parser';
+import { parseExcelFile, consolidateLines, type ConsolidatedLine, type SkippedLine } from '@/lib/excel-parser';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { createFicheFromSku } from './actions';
@@ -14,7 +14,16 @@ interface ParsedImport {
   sourceType: 'sales_order' | 'replenishment';
   filename: string;
   lines: ConsolidatedLine[];
+  skipped: SkippedLine[];
   warnings: string[];
+}
+
+/** Lab fiche variant matched by SKU — the ONLY product reference used (no B2C catalogue) */
+interface VariantMatch {
+  variant_id: string;
+  fiche_id: string;
+  label: string;
+  image_url: string | null;
 }
 
 /** Merge consolidated lines from multiple files: same SKU+variant+team → sum qty, merge breakdown */
@@ -51,8 +60,10 @@ export default function ImportView() {
   const [notes, setNotes] = useState('');
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set(TEAMS));
   const [matchCheck, setMatchCheck] = useState<{ matched: number; unmatched: Array<{ sku: string; name: string }> } | null>(null);
+  const [variantBySku, setVariantBySku] = useState<Record<string, VariantMatch>>({});
   const [excludedSkus, setExcludedSkus] = useState<Set<string>>(new Set());
   const [orderTimes, setOrderTimes] = useState<Record<string, string>>({});
+  const [reportSection, setReportSection] = useState<'orders' | 'products' | null>(null);
   const [creatingFicheSku, setCreatingFicheSku] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -69,7 +80,7 @@ export default function ImportView() {
     setMatchCheck(null);
 
     // First pass: parse all files to get raw lines
-    type RawResult = { sourceType: 'sales_order' | 'replenishment'; filename: string; rawLines: any[]; warnings: string[] };
+    type RawResult = { sourceType: 'sales_order' | 'replenishment'; filename: string; rawLines: any[]; skipped: SkippedLine[]; warnings: string[] };
     const parseRaw: RawResult[] = [];
     for (const file of files) {
       try {
@@ -78,7 +89,7 @@ export default function ImportView() {
           setError(`${file.name}: ${result.errors[0]}`);
           return;
         }
-        parseRaw.push({ sourceType: result.source_type, filename: file.name, rawLines: result.lines, warnings: result.errors });
+        parseRaw.push({ sourceType: result.source_type, filename: file.name, rawLines: result.lines, skipped: result.skipped, warnings: result.errors });
       } catch (e: any) {
         setError(`${file.name}: ${e.message ?? 'Parse error'}`);
         return;
@@ -86,29 +97,31 @@ export default function ImportView() {
     }
     if (!parseRaw.length) return;
 
-    // Look up lab_fiche_variants to get actual variant labels per SKU
+    // Look up lab fiche variants by SKU — the only product reference (no B2C catalogue)
     const allRawSkus = Array.from(new Set(parseRaw.flatMap(r => r.rawLines.map((l: any) => l.product_sku)).filter(Boolean))) as string[];
-    const variantLabelMap: Record<string, string> = {};
+    const vMap: Record<string, VariantMatch> = {};
     if (allRawSkus.length) {
       const supabase = createClient();
       const { data: variantRows } = await supabase
         .from('lab_fiche_variants')
-        .select('sku, label')
+        .select('id, sku, label, fiche_id, image_url')
         .in('sku', allRawSkus);
       for (const v of variantRows ?? []) {
-        if (v.sku) variantLabelMap[v.sku] = v.label;
+        if (v.sku) vMap[v.sku] = { variant_id: v.id, fiche_id: v.fiche_id, label: v.label, image_url: v.image_url ?? null };
       }
     }
+    setVariantBySku(vMap);
 
     // Patch variant_label on each raw line, then consolidate
     const results: ParsedImport[] = parseRaw.map(r => ({
       sourceType: r.sourceType,
       filename: r.filename,
+      skipped: r.skipped,
       warnings: r.warnings,
       lines: consolidateLines(
         r.rawLines.map((l: any) => ({
           ...l,
-          variant_label: variantLabelMap[l.product_sku] ?? l.variant_label,
+          variant_label: vMap[l.product_sku]?.label ?? l.variant_label,
         }))
       ),
     }));
@@ -116,24 +129,17 @@ export default function ImportView() {
     setParsedFiles(results);
     setStep('preview');
 
-    // Match check: SKUs must be in products OR lab_fiche_variants to be considered "matched"
+    // Match check: a SKU is "matched" only if a lab fiche variant carries it
     if (allRawSkus.length) {
-      const supabase = createClient();
       const allLines = mergeLines(results.map(r => r.lines));
-      Promise.all([
-        supabase.from('products').select('sku').in('sku', allRawSkus),
-        supabase.from('lab_fiche_variants').select('sku').in('sku', allRawSkus),
-      ]).then(([{ data: prodData }, { data: varData }]) => {
-        const matched = new Set([...(prodData ?? []), ...(varData ?? [])].map((p: any) => p.sku));
-        setMatchCheck({
-          matched: allRawSkus.filter(s => matched.has(s)).length,
-          unmatched: allRawSkus
-            .filter(s => !matched.has(s))
-            .map(s => ({
-              sku: s,
-              name: allLines.find(l => l.product_sku === s)?.product_name_vi ?? s,
-            })),
-        });
+      setMatchCheck({
+        matched: allRawSkus.filter(s => !!vMap[s]).length,
+        unmatched: allRawSkus
+          .filter(s => !vMap[s])
+          .map(s => ({
+            sku: s,
+            name: allLines.find(l => l.product_sku === s)?.product_name_vi ?? s,
+          })),
       });
     }
   }, []);
@@ -178,15 +184,41 @@ export default function ImportView() {
     const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
     const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
 
-    // Look up products by SKU to enrich assignments with image_url + product_id
-    const skus = Array.from(new Set(effectiveLines.map(l => l.product_sku).filter(Boolean)));
-    const { data: productRows } = skus.length
-      ? await supabase.from('products').select('id, sku, main_image_url, name_en').in('sku', skus)
+    // Enrich from lab fiches only (name_en + image with variant→fiche fallback). No B2C catalogue reads.
+    const ficheIds = Array.from(new Set(
+      effectiveLines.map(l => variantBySku[l.product_sku]?.fiche_id).filter(Boolean)
+    )) as string[];
+    const { data: ficheRows } = ficheIds.length
+      ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url').in('id', ficheIds)
       : { data: [] };
-    const productBySku: Record<string, { id: string; image_url: string | null; name_en: string | null }> = {};
-    for (const p of productRows ?? []) {
-      if (p.sku) productBySku[p.sku] = { id: p.id, image_url: p.main_image_url ?? null, name_en: p.name_en ?? null };
+    const ficheById: Record<string, { name_en: string | null; image_url: string | null }> = {};
+    for (const f of ficheRows ?? []) {
+      ficheById[f.id] = { name_en: f.name_en ?? null, image_url: f.image_url ?? null };
     }
+
+    // Control report — lets assistants verify the import against the Odoo Excel
+    const allSkipped = parsedFiles.flatMap(pf => pf.skipped.map(s => ({ ...s, file: pf.filename })));
+    const excludedLines = mergedLines.filter(l => excludedSkus.has(l.product_sku));
+    const excelQty = mergedLines.reduce((s, l) => s + l.total_qty, 0) + allSkipped.reduce((s, l) => s + (l.qty || 0), 0);
+    const orderRefsAll = Array.from(new Set(effectiveLines.flatMap(l => l.breakdown.map(b => b.order_ref)).filter(Boolean)));
+    const controlReport = {
+      totals: {
+        excel_lines: mergedLines.length + allSkipped.length,
+        excel_qty: excelQty,
+        kept_lines: effectiveLines.length,
+        kept_qty: totalItems,
+        orders: orderRefsAll.length,
+        skipped: allSkipped.length,
+        excluded: excludedLines.length,
+      },
+      by_order: orderRefsAll.map(ref => {
+        const items = effectiveLines.flatMap(l => l.breakdown.filter(b => b.order_ref === ref).map(b => b.qty));
+        return { order_ref: ref, lines: items.length, qty: items.reduce((a, b) => a + b, 0) };
+      }),
+      skipped: allSkipped,
+      excluded: excludedLines.map(l => ({ sku: l.product_sku, name: l.product_name_vi, qty: l.total_qty })),
+      files: parsedFiles.map(pf => pf.filename),
+    };
 
     // Group assignable lines by delivery_date — one lab_imports record per date
     const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
@@ -247,6 +279,7 @@ export default function ImportView() {
           filename_sales: salesFile?.filename ?? null,
           filename_repl: replFile?.filename ?? null,
           published_at: asDraft ? null : new Date().toISOString(),
+          control_report: controlReport,
         })
         .select('id')
         .single();
@@ -258,14 +291,16 @@ export default function ImportView() {
       }
 
       const assignments = linesForDate.map((line, idx) => {
-        const product = productBySku[line.product_sku] ?? null;
+        const variant = variantBySku[line.product_sku] ?? null;
+        const fiche = variant ? ficheById[variant.fiche_id] ?? null : null;
         return {
           import_id: importRow.id,
           team: line.team,
-          product_id: product?.id ?? null,
+          fiche_id: variant?.fiche_id ?? null,
+          variant_id: variant?.variant_id ?? null,
           product_name_vi: line.product_name_vi,
-          product_name_en: product?.name_en ?? '',
-          image_url: product?.image_url ?? null,
+          product_name_en: fiche?.name_en ?? '',
+          image_url: variant?.image_url ?? fiche?.image_url ?? null,
           variant_label: line.variant_label,
           total_qty: line.total_qty,
           qty_to_produce: line.total_qty,
@@ -285,8 +320,13 @@ export default function ImportView() {
         return;
       }
 
-      // Insert raw order lines for this date
-      const olForDate = (orderLinesByDate.get(date) ?? []).map(ol => ({ ...ol, import_id: importRow.id }));
+      // Insert raw order lines for this date (with fiche link when SKU is known)
+      const olForDate = (orderLinesByDate.get(date) ?? []).map(ol => ({
+        ...ol,
+        import_id: importRow.id,
+        fiche_id: variantBySku[ol.product_sku]?.fiche_id ?? null,
+        variant_id: variantBySku[ol.product_sku]?.variant_id ?? null,
+      }));
       if (olForDate.length > 0) {
         await supabase.from('lab_order_lines').insert(olForDate);
       }
@@ -460,6 +500,130 @@ export default function ImportView() {
             </div>
           </div>
 
+          {/* ── Control report: Excel vs import (3 levels) ── */}
+          {(() => {
+            const allSkipped = parsedFiles.flatMap(pf => pf.skipped.map(s => ({ ...s, file: pf.filename })));
+            const skippedQty = allSkipped.reduce((s, l) => s + (l.qty || 0), 0);
+            const excludedList = mergedLines.filter(l => excludedSkus.has(l.product_sku));
+            const excludedQty = excludedList.reduce((s, l) => s + l.total_qty, 0);
+            const excelLines = mergedLines.length + allSkipped.length;
+            const excelQty = mergedLines.reduce((s, l) => s + l.total_qty, 0) + skippedQty;
+            const qtyDelta = excelQty - totalItems;
+            const ok = qtyDelta === 0;
+            // Level 2 — per order
+            const orderRows = Array.from(new Set(
+              effectiveLines.flatMap(l => l.breakdown.map(b => b.order_ref)).filter(Boolean)
+            )).map(ref => {
+              const bs = effectiveLines.flatMap(l => l.breakdown.filter(b => b.order_ref === ref));
+              return { ref, lines: bs.length, qty: bs.reduce((a, b) => a + b.qty, 0) };
+            });
+            // Level 3 — per product: Excel qty vs kept qty
+            const perSku = new Map<string, { name: string; excel: number; kept: number; note: string }>();
+            for (const l of mergedLines) {
+              const kept = excludedSkus.has(l.product_sku) ? 0 : l.total_qty;
+              const cur = perSku.get(l.product_sku) ?? { name: l.product_name_vi, excel: 0, kept: 0, note: '' };
+              cur.excel += l.total_qty; cur.kept += kept;
+              if (excludedSkus.has(l.product_sku)) cur.note = lang === 'vi' ? 'bị loại' : 'excluded';
+              perSku.set(l.product_sku, cur);
+            }
+            for (const s of allSkipped) {
+              const key = s.sku || `(row ${s.row})`;
+              const cur = perSku.get(key) ?? { name: s.name || key, excel: 0, kept: 0, note: '' };
+              cur.excel += s.qty || 0;
+              cur.note = s.reason === 'no_sku' ? (lang === 'vi' ? 'thiếu SKU' : 'missing SKU') : (lang === 'vi' ? 'thiếu số lượng' : 'missing qty');
+              perSku.set(key, cur);
+            }
+            const productRows = Array.from(perSku.entries()).map(([sku, v]) => ({ sku, ...v }));
+            const diffRows = productRows.filter(r => r.excel !== r.kept);
+            return (
+              <div className={`rounded-xl border overflow-hidden ${ok ? 'border-green-200' : 'border-red-200'}`}>
+                {/* Level 1 — banner */}
+                <div className={`px-4 py-3 flex items-center gap-3 text-sm ${ok ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                  {ok ? <CheckCircle2 size={18} className="shrink-0" /> : <AlertCircle size={18} className="shrink-0" />}
+                  <div className="flex-1">
+                    <span className="font-bold">
+                      {lang === 'vi' ? 'Đối chiếu với Excel Odoo : ' : 'Check vs Odoo Excel: '}
+                      {ok
+                        ? (lang === 'vi' ? 'khớp 100%' : '100% match')
+                        : (lang === 'vi' ? `lệch ${qtyDelta} cái` : `${qtyDelta} items missing`)}
+                    </span>
+                    <div className="text-xs mt-0.5 opacity-80">
+                      Excel: {excelLines} {lang === 'vi' ? 'dòng' : 'lines'} · {excelQty} {lang === 'vi' ? 'cái' : 'items'} · {orderRows.length} {lang === 'vi' ? 'đơn' : 'orders'}
+                      {' → '}
+                      {lang === 'vi' ? 'Nhập' : 'Import'}: {effectiveLines.length} {lang === 'vi' ? 'dòng' : 'lines'} · {totalItems} {lang === 'vi' ? 'cái' : 'items'}
+                      {allSkipped.length > 0 && ` · ${allSkipped.length} ${lang === 'vi' ? 'dòng bị bỏ qua' : 'skipped'}`}
+                      {excludedList.length > 0 && ` · ${excludedList.length} ${lang === 'vi' ? 'SKU bị loại' : 'excluded'} (−${excludedQty})`}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => setReportSection(reportSection === 'orders' ? null : 'orders')}
+                      className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${reportSection === 'orders' ? 'bg-white' : 'bg-transparent hover:bg-white/50'}`}>
+                      {lang === 'vi' ? 'Theo đơn' : 'By order'}
+                    </button>
+                    <button onClick={() => setReportSection(reportSection === 'products' ? null : 'products')}
+                      className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${reportSection === 'products' ? 'bg-white' : 'bg-transparent hover:bg-white/50'}`}>
+                      {lang === 'vi' ? 'Theo sản phẩm' : 'By product'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Level 3 quick view — always show discrepancies if any */}
+                {diffRows.length > 0 && reportSection === null && (
+                  <div className="divide-y divide-red-100 bg-white">
+                    {diffRows.map(r => (
+                      <div key={r.sku} className="flex items-center gap-3 px-4 py-2 text-sm">
+                        <code className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-50 text-red-700 shrink-0">{r.sku}</code>
+                        <span className="flex-1 truncate text-navy">{r.name}</span>
+                        <span className="text-xs text-ink-light">Excel ×{r.excel} → {lang === 'vi' ? 'nhập' : 'import'} ×{r.kept}</span>
+                        <span className="text-[10px] font-semibold text-red-600 uppercase">{r.note}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Level 2 — by order */}
+                {reportSection === 'orders' && (
+                  <div className="bg-white max-h-72 overflow-y-auto">
+                    <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50 sticky top-0">
+                      <div className="col-span-6">{lang === 'vi' ? 'Đơn hàng' : 'Order'}</div>
+                      <div className="col-span-3 text-center">{lang === 'vi' ? 'Dòng' : 'Lines'}</div>
+                      <div className="col-span-3 text-center">{lang === 'vi' ? 'SL' : 'Qty'}</div>
+                    </div>
+                    {orderRows.map(r => (
+                      <div key={r.ref} className="grid grid-cols-12 px-4 py-2 text-sm border-t border-border-soft">
+                        <div className="col-span-6 font-mono text-xs text-navy truncate">{r.ref}</div>
+                        <div className="col-span-3 text-center text-ink-light">{r.lines}</div>
+                        <div className="col-span-3 text-center font-bold text-navy">×{r.qty}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Level 3 — by product (full) */}
+                {reportSection === 'products' && (
+                  <div className="bg-white max-h-72 overflow-y-auto">
+                    <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50 sticky top-0">
+                      <div className="col-span-2">SKU</div>
+                      <div className="col-span-5">{lang === 'vi' ? 'Sản phẩm' : 'Product'}</div>
+                      <div className="col-span-2 text-center">Excel</div>
+                      <div className="col-span-2 text-center">{lang === 'vi' ? 'Nhập' : 'Import'}</div>
+                      <div className="col-span-1" />
+                    </div>
+                    {productRows.map(r => (
+                      <div key={r.sku} className={`grid grid-cols-12 px-4 py-2 text-sm border-t border-border-soft ${r.excel !== r.kept ? 'bg-red-50' : ''}`}>
+                        <div className="col-span-2 font-mono text-[10px] text-ink-light truncate">{r.sku}</div>
+                        <div className="col-span-5 truncate text-navy">{r.name}</div>
+                        <div className="col-span-2 text-center">×{r.excel}</div>
+                        <div className={`col-span-2 text-center font-bold ${r.excel !== r.kept ? 'text-red-600' : 'text-navy'}`}>×{r.kept}</div>
+                        <div className="col-span-1 text-[10px] text-red-600 text-right">{r.note}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Parse warnings (format issues from excel parser) */}
           {allWarnings.length > 0 && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
@@ -479,7 +643,7 @@ export default function ImportView() {
                 <AlertCircle size={15} />
                 <span>
                   {matchCheck.unmatched.length}{' '}
-                  {lang === 'vi' ? 'sản phẩm không có trong catalogue' : 'products not found in catalogue'}
+                  {lang === 'vi' ? 'SKU chưa có fiche kỹ thuật lab' : 'SKUs without a lab fiche'}
                 </span>
                 {matchCheck.matched > 0 && (
                   <span className="ml-auto text-amber-600 font-normal text-xs">

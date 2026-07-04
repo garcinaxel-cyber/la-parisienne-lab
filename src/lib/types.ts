@@ -73,7 +73,8 @@ export interface LabAssignment {
   id: string;
   import_id: string;
   team: Team;
-  product_id: string | null;
+  fiche_id: string | null;
+  variant_id: string | null;
   product_name_vi: string;
   product_name_en: string;
   image_url: string | null;

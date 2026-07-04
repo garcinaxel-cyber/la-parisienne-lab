@@ -14,8 +14,19 @@ export interface ParsedLine {
   delivery_time: string | null;
 }
 
+/** A row from the Excel that was NOT imported, with the reason — for the control report */
+export interface SkippedLine {
+  row: number;              // 1-based Excel row number
+  order_ref: string;
+  sku: string;
+  name: string;
+  qty: number;
+  reason: 'no_sku' | 'no_qty';
+}
+
 export interface ParseResult {
   lines: ParsedLine[];
+  skipped: SkippedLine[];
   source_type: SourceType;
   filename: string;
   errors: string[];
@@ -70,13 +81,14 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-  if (rows.length < 2) return { lines: [], source_type: 'sales_order', filename: file.name, errors: ['Empty file'] };
+  if (rows.length < 2) return { lines: [], skipped: [], source_type: 'sales_order', filename: file.name, errors: ['Empty file'] };
 
   const headers = (rows[0] as string[]).map(h => String(h ?? ''));
   const type = detectType(headers);
-  if (!type) return { lines: [], source_type: 'sales_order', filename: file.name, errors: ['Unrecognised file format'] };
+  if (!type) return { lines: [], skipped: [], source_type: 'sales_order', filename: file.name, errors: ['Unrecognised file format'] };
 
   const lines: ParsedLine[] = [];
+  const skipped: SkippedLine[] = [];
 
   if (type === 'sales_order') {
     // Find columns by name — robust to Odoo adding/reordering columns
@@ -100,7 +112,14 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       const name = String(rawName ?? '').replace(/\[.*?\]\s*/, '').trim();
       const team = teamIdx >= 0 ? String(r[teamIdx] ?? '').trim() : '';
       const qty  = qtyIdx >= 0 ? Math.round(Number(r[qtyIdx] ?? 0)) : 0;
-      if (!sku || !qty) continue;
+      if (!sku || !qty) {
+        // Structural rows (order header carry-forward) have neither name nor qty — ignore those silently.
+        // Anything with a product name, SKU or qty is a REAL dropped line → report it.
+        if (name || sku || qty) {
+          skipped.push({ row: i + 1, order_ref: curOrderRef, sku, name, qty, reason: !sku ? 'no_sku' : 'no_qty' });
+        }
+        continue;
+      }
       lines.push({ source_type: 'sales_order', order_ref: curOrderRef, shop_name: curShop,
         product_sku: sku, product_name_vi: name, team: normaliseTeam(team),
         variant_label: 'Standard', qty, delivery_date: curDate, delivery_time: curTime });
@@ -127,7 +146,12 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       const sku  = skuIdx >= 0  ? String(r[skuIdx]  ?? '').trim() : '';
       const team = teamIdx >= 0 ? String(r[teamIdx] ?? '').trim() : '';
       const qty  = qtyIdx >= 0  ? Math.round(Number(r[qtyIdx] ?? 0)) : 0;
-      if (!sku || !qty) continue;
+      if (!sku || !qty) {
+        if (name || sku || qty) {
+          skipped.push({ row: i + 1, order_ref: curRef, sku, name, qty, reason: !sku ? 'no_sku' : 'no_qty' });
+        }
+        continue;
+      }
       lines.push({ source_type: 'replenishment', order_ref: curRef, shop_name: curWarehouse,
         product_sku: sku, product_name_vi: name, team: normaliseTeam(team),
         variant_label: 'Standard', qty, delivery_date: curDate, delivery_time: curTime });
@@ -135,7 +159,7 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   }
 
   if (!lines.length) errors.push('No valid lines found');
-  return { lines, source_type: type, filename: file.name, errors };
+  return { lines, skipped, source_type: type, filename: file.name, errors };
 }
 
 /** Consolidated line ready for lab_assignments insert */

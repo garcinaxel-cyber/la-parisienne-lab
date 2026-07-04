@@ -17,21 +17,16 @@ export default async function FichePage({
 
   const backUrl = searchParams.back ?? '/station/fiches';
 
-  // Try to load from products table (product-linked fiche)
-  const { data: product } = await supabase
-    .from('products')
-    .select('id, name_vi, name_en, main_image_url, sku, subcategory, weight_grams, categories(name_vi, name_en)')
+  // The URL param is the lab fiche id — the B2C catalogue is never read.
+  const { data: metaRaw } = await supabase
+    .from('lab_fiche_meta')
+    .select('*')
     .eq('id', params.productId)
     .maybeSingle();
 
-  // Get fiche meta — by product_id if product exists, by fiche id if standalone
-  const { data: metaRaw } = product
-    ? await supabase.from('lab_fiche_meta').select('*').eq('product_id', params.productId).maybeSingle()
-    : await supabase.from('lab_fiche_meta').select('*').eq('id', params.productId).maybeSingle();
+  if (!metaRaw) redirect(backUrl);
 
-  if (!product && !metaRaw) redirect(backUrl);
-
-  const ficheId = metaRaw?.id ?? null;
+  const ficheId = metaRaw!.id as string;
 
   const [stepsResult, variantsResult] = await Promise.all([
     ficheId
@@ -63,23 +58,21 @@ export default async function FichePage({
         .in('step_id', ingredientStepIds)
     : { data: [] as { step_id: string; variant_id: string; quantity_grams: number | null }[] };
 
-  // Build product data
-  const productData = product ?? {
+  // Build product data from the fiche + its default variant (sku)
+  const variants = (variantsResult.data ?? []) as any[];
+  const defaultVariant = variants.find((v: any) => v.is_default) ?? variants[0] ?? null;
+
+  const normalised = {
     id: metaRaw!.id,
     name_vi: metaRaw!.name_vi,
     name_en: metaRaw!.name_en ?? null,
     main_image_url: metaRaw!.image_url ?? null,
-    sku: null,
-    subcategory: null,
+    sku: defaultVariant?.sku ?? null,
+    subcategory: metaRaw!.category ?? null,
     weight_grams: metaRaw!.weight_grams ?? null,
-    categories: null,
-  };
-
-  const normalised = {
-    ...productData,
-    categories: Array.isArray((productData as any).categories)
-      ? (productData as any).categories[0] ?? null
-      : (productData as any).categories ?? null,
+    categories: metaRaw!.category
+      ? { name_vi: metaRaw!.category, name_en: metaRaw!.category }
+      : null,
   };
 
   return (
@@ -87,7 +80,7 @@ export default async function FichePage({
       product={normalised}
       steps={(stepsResult.data ?? []) as any[]}
       meta={metaRaw ?? null}
-      variants={(variantsResult.data ?? []) as any[]}
+      variants={variants}
       variantQuantities={(variantQtyData ?? []) as any[]}
       backUrl={backUrl}
     />

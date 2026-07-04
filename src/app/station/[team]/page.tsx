@@ -25,27 +25,27 @@ export default async function StationPage({ params }: { params: { team: string }
 
   if (!TEAMS.includes(team)) redirect('/login');
 
-  // Check if current user is a worker (read-only station mode)
-  let isWorker = false;
+  // Current user role (worker/viewer → read-only station mode)
+  let userRole: string | null = null;
   if (session) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', session.user.id)
       .single();
-    isWorker = profile?.role === 'worker';
+    userRole = profile?.role ?? null;
   }
 
   const today = new Date().toISOString().split('T')[0];
 
+  // Lab fiches are the ONLY product reference — zero reads from the B2C catalogue tables.
   const { data: assignments } = await supabase
     .from('lab_assignments')
     .select(`
-      id, product_id, product_name_vi, product_name_en, image_url,
+      id, fiche_id, variant_id, product_name_vi, product_name_en, image_url,
       variant_label, total_qty, qty_to_produce, qty_produced,
       status, is_extra, notes, sort_order, import_id,
-      lab_imports!inner(delivery_date, order_number, type, status),
-      products!product_id(sku)
+      lab_imports!inner(delivery_date, order_number, type, status)
     `)
     .eq('team', team)
     .eq('lab_imports.status', 'published')
@@ -64,47 +64,34 @@ export default async function StationPage({ params }: { params: { team: string }
     breakdownMap[b.id] = Array.isArray(b.breakdown) ? b.breakdown : [];
   }
 
-  const productIds = (assignments ?? [])
-    .map((a: any) => a.product_id)
-    .filter(Boolean) as string[];
-
-  const { data: ficheMeta } = productIds.length > 0
+  // Fiche meta — weight, category, image (fallback when the variant has no photo)
+  const ficheIds = Array.from(new Set(
+    (assignments ?? []).map((a: any) => a.fiche_id).filter(Boolean)
+  )) as string[];
+  const { data: ficheRows } = ficheIds.length > 0
     ? await supabase
         .from('lab_fiche_meta')
-        .select('product_id, weight_grams')
-        .in('product_id', productIds)
+        .select('id, category, weight_grams, image_url')
+        .in('id', ficheIds)
     : { data: [] as any[] };
-
-  const weightMap: Record<string, number | null> = {};
-  for (const m of ficheMeta ?? []) {
-    weightMap[m.product_id] = m.weight_grams ?? null;
+  const ficheById: Record<string, { category: string | null; weight_grams: number | null; image_url: string | null }> = {};
+  for (const f of ficheRows ?? []) {
+    ficheById[f.id] = { category: f.category ?? null, weight_grams: f.weight_grams ?? null, image_url: f.image_url ?? null };
   }
 
-  // Variant-specific image — look up lab_fiche_variants.image_url by SKU
-  const allSkus = (assignments ?? []).map((a: any) => a.products?.sku).filter(Boolean) as string[];
-  const { data: variantImgRows } = allSkus.length > 0
+  // Variants — sku, per-variant weight and photo
+  const variantIds = Array.from(new Set(
+    (assignments ?? []).map((a: any) => a.variant_id).filter(Boolean)
+  )) as string[];
+  const { data: variantRows } = variantIds.length > 0
     ? await supabase
         .from('lab_fiche_variants')
-        .select('sku, image_url')
-        .in('sku', allSkus)
-        .not('image_url', 'is', null)
+        .select('id, sku, weight_g, image_url')
+        .in('id', variantIds)
     : { data: [] as any[] };
-  const variantImgBySku: Record<string, string> = {};
-  for (const v of variantImgRows ?? []) {
-    if (v.sku && v.image_url) variantImgBySku[v.sku] = v.image_url;
-  }
-
-  const { data: productCats } = productIds.length > 0
-    ? await supabase
-        .from('products')
-        .select('id, categories!category_id(name_vi, name_en)')
-        .in('id', productIds)
-    : { data: [] as any[] };
-
-  const categoryNameMap: Record<string, { vi: string; en: string }> = {};
-  for (const p of productCats ?? []) {
-    const cat = Array.isArray(p.categories) ? p.categories[0] : p.categories;
-    if (cat && p.id) categoryNameMap[p.id] = { vi: cat.name_vi ?? '', en: cat.name_en ?? '' };
+  const variantById: Record<string, { sku: string | null; weight_g: number | null; image_url: string | null }> = {};
+  for (const v of variantRows ?? []) {
+    variantById[v.id] = { sku: v.sku ?? null, weight_g: v.weight_g ?? null, image_url: v.image_url ?? null };
   }
 
   const importIds = Array.from(new Set((assignments ?? []).map((a: any) => a.import_id).filter(Boolean))) as string[];
@@ -122,20 +109,24 @@ export default async function StationPage({ params }: { params: { team: string }
     if (ol.order_ref && ol.delivery_time) deliveryTimeByRef[ol.order_ref] = ol.delivery_time;
   }
 
-  const normalised = (assignments ?? []).map((a: any) => ({
-    ...a,
-    sku: a.products?.sku ?? null,
-    image_url: (a.products?.sku && variantImgBySku[a.products.sku]) ? variantImgBySku[a.products.sku] : (a.image_url ?? null),
-    weight_grams: a.product_id ? (weightMap[a.product_id] ?? null) : null,
-    category_name_vi: a.product_id ? (categoryNameMap[a.product_id]?.vi ?? null) : null,
-    category_name_en: a.product_id ? (categoryNameMap[a.product_id]?.en ?? null) : null,
-    breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
-      ...b,
-      delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,
-    })),
-    lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,
-    products: undefined,
-  }));
+  const normalised = (assignments ?? []).map((a: any) => {
+    const variant = a.variant_id ? variantById[a.variant_id] ?? null : null;
+    const fiche = a.fiche_id ? ficheById[a.fiche_id] ?? null : null;
+    return {
+      ...a,
+      sku: variant?.sku ?? null,
+      // Photo priority: variant photo → fiche photo → whatever was stored on the assignment
+      image_url: variant?.image_url ?? fiche?.image_url ?? a.image_url ?? null,
+      weight_grams: variant?.weight_g ?? fiche?.weight_grams ?? null,
+      category_name_vi: fiche?.category ?? null,
+      category_name_en: fiche?.category ?? null,
+      breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
+        ...b,
+        delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,
+      })),
+      lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,
+    };
+  });
 
-  return <StationView team={team} teamSlug={params.team} assignments={normalised} today={today} isWorker={isWorker} />;
+  return <StationView team={team} teamSlug={params.team} assignments={normalised} viewDate={today} today={today} isHistoryView={false} userRole={userRole} />;
 }
