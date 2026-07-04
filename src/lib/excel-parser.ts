@@ -32,19 +32,31 @@ export interface ParseResult {
   errors: string[];
 }
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Round a Date to the nearest 5 minutes (Odoo exports carry ~30s float drift, e.g. 12:59:29 for 13:00) */
+function roundTo5Min(d: Date): Date {
+  return new Date(Math.round(d.getTime() / 300000) * 300000);
+}
+
 function excelDateToISO(val: unknown): { date: string; time: string | null } {
   if (val instanceof Date) {
-    const d = val.toISOString().split('T');
-    const timePart = d[1]?.slice(0, 5) || null;
-    return { date: d[0], time: timePart === '00:00' ? null : timePart };
+    // Use LOCAL date parts, never toISOString(): the Excel value is wall-clock time.
+    // Converting to UTC shifted early-morning deliveries to the previous day
+    // (e.g. 04/07 06:00 in Vietnam became 03/07 23:00 UTC → wrong import date).
+    const r = roundTo5Min(val);
+    const date = `${r.getFullYear()}-${pad2(r.getMonth() + 1)}-${pad2(r.getDate())}`;
+    const timePart = `${pad2(r.getHours())}:${pad2(r.getMinutes())}`;
+    return { date, time: timePart === '00:00' ? null : timePart };
   }
   // Excel serial number — XLSX may return raw numbers even with cellDates:true
   // for certain Odoo date formats. Convert manually: days since 1900-01-01.
+  // The serial encodes wall-clock time, so UTC getters are correct here.
   if (typeof val === 'number' && val > 1) {
-    const jsDate = new Date(Math.round((val - 25569) * 86400 * 1000));
-    const d = jsDate.toISOString().split('T');
-    const timePart = d[1]?.slice(0, 5) || null;
-    return { date: d[0], time: timePart === '00:00' ? null : timePart };
+    const jsDate = roundTo5Min(new Date(Math.round((val - 25569) * 86400 * 1000)));
+    const date = `${jsDate.getUTCFullYear()}-${pad2(jsDate.getUTCMonth() + 1)}-${pad2(jsDate.getUTCDate())}`;
+    const timePart = `${pad2(jsDate.getUTCHours())}:${pad2(jsDate.getUTCMinutes())}`;
+    return { date, time: timePart === '00:00' ? null : timePart };
   }
   if (typeof val === 'string') {
     const parts = val.trim().split(/[\sT]/);
