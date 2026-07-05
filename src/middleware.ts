@@ -9,7 +9,10 @@ export async function middleware(req: NextRequest) {
   // Stations are NOT public: an unauthenticated visitor (e.g. scanning a QR code)
   // is redirected to /login. Team tablets stay logged in with a worker account.
 
-  let res = NextResponse.next();
+  // Expose the pathname to server components (used by the app layout for role routing)
+  const reqHeaders = new Headers(req.headers);
+  reqHeaders.set('x-pathname', pathname);
+  let res = NextResponse.next({ request: { headers: reqHeaders } });
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

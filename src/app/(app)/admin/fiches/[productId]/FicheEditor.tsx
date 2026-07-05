@@ -81,6 +81,7 @@ export default function FicheEditor({
   ingredients: initIngredients,
   assemblySteps: initSteps,
   variantQuantities: initVq = [],
+  recipeOnly = false,
 }: {
   ficheId: string;
   identity: FicheIdentity;
@@ -89,6 +90,8 @@ export default function FicheEditor({
   ingredients: Ingredient[];
   assemblySteps: AssemblyStep[];
   variantQuantities?: { step_id: string; variant_id: string; quantity_grams: number | null }[];
+  /** Chef mode: only ingredients + assembly are editable (RLS enforces this server-side too) */
+  recipeOnly?: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -122,7 +125,7 @@ export default function FicheEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'produit' | 'technique' | 'ingredients' | 'steps'>('produit');
+  const [activeTab, setActiveTab] = useState<'produit' | 'technique' | 'ingredients' | 'steps'>(recipeOnly ? 'ingredients' : 'produit');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -245,6 +248,12 @@ export default function FicheEditor({
     setSaving(true); setError(null);
     const supabase = createClient();
 
+    // Chef mode: identity/variants are not editable — jump straight to recipe content
+    if (recipeOnly) {
+      await saveRecipeContent(supabase);
+      return;
+    }
+
     // 1. Update lab_fiche_meta
     const { error: metaErr } = await supabase.from('lab_fiche_meta').update({
       name_vi: identity.name_vi,
@@ -299,6 +308,12 @@ export default function FicheEditor({
       if (insVErr) { setError(insVErr.message); setSaving(false); return; }
     }
 
+    await saveRecipeContent(supabase);
+  }
+
+  // ── Recipe content (ingredients + assembly + per-variant quantities) ──
+  // Shared by full save (admin) and recipeOnly save (chef).
+  async function saveRecipeContent(supabase: ReturnType<typeof createClient>) {
     // 3. Steps — delete all + re-insert, capturing ingredient IDs for variant quantities
     // First get old step IDs to clean up variant quantities
     const { data: oldStepsData } = await supabase.from('lab_fiche_steps').select('id').eq('fiche_id', ficheId);
@@ -360,19 +375,21 @@ export default function FicheEditor({
 
   const totalWeight = ingredients.reduce((s, i) => s + (i.quantity_grams ?? 0), 0);
 
-  const tabs: { key: typeof activeTab; label: string }[] = [
+  const allTabs: { key: typeof activeTab; label: string }[] = [
     { key: 'produit',     label: lang === 'vi' ? '① Sản phẩm' : '① Product' },
     { key: 'technique',   label: lang === 'vi' ? '② Fiche technique' : '② Technical sheet' },
     { key: 'ingredients', label: lang === 'vi' ? '③ Nguyên liệu' : '③ Ingredients' },
     { key: 'steps',       label: lang === 'vi' ? '④ Quy trình' : '④ Assembly' },
   ];
+  // Chefs only see the recipe tabs — product identity & variants stay admin-only
+  const tabs = recipeOnly ? allTabs.filter(t => t.key === 'ingredients' || t.key === 'steps') : allTabs;
 
   return (
     <div className="space-y-6 max-w-4xl">
 
       {/* Header */}
       <div className="flex items-start gap-3">
-        <Link href="/admin/fiches" className="mt-1 p-1 rounded-lg hover:bg-border-soft transition-colors">
+        <Link href={recipeOnly ? '/station/me' : '/admin/fiches'} className="mt-1 p-1 rounded-lg hover:bg-border-soft transition-colors">
           <ArrowLeft size={20} className="text-ink-light" />
         </Link>
         <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
@@ -840,13 +857,17 @@ export default function FicheEditor({
       {/* Save bar */}
       <div className="flex items-center justify-between pt-2 border-t border-border-soft">
         <div className="flex items-center gap-2">
-          <Link href="/admin/fiches" className="btn-secondary text-sm">
-            {lang === 'vi' ? 'Quay lại danh sách' : 'Back to list'}
+          <Link href={recipeOnly ? '/station/me' : '/admin/fiches'} className="btn-secondary text-sm">
+            {recipeOnly
+              ? (lang === 'vi' ? 'Quay lại trạm' : 'Back to station')
+              : (lang === 'vi' ? 'Quay lại danh sách' : 'Back to list')}
           </Link>
-          <button onClick={deleteFiche} disabled={deleting}
-            className="text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl px-3 py-2 transition-colors">
-            {deleting ? '…' : (lang === 'vi' ? 'Xoá fiche' : 'Delete')}
-          </button>
+          {!recipeOnly && (
+            <button onClick={deleteFiche} disabled={deleting}
+              className="text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-xl px-3 py-2 transition-colors">
+              {deleting ? '…' : (lang === 'vi' ? 'Xoá fiche' : 'Delete')}
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {saved && <span className="text-sm text-emerald-600 font-medium">{lang === 'vi' ? '✓ Đã lưu' : '✓ Saved'}</span>}

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase-server';
 import Sidebar from '@/components/Sidebar';
 
@@ -17,8 +18,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
   if (!profile || !LAB_ROLES.includes(profile.role)) redirect('/login');
 
-  // Chefs and workers go to their station — they don't use the full admin layout
-  if (profile.role === 'chef' || profile.role === 'worker') redirect('/station/me');
+  // Chefs and workers go to their station — they don't use the full admin layout.
+  // Exception: chefs may open the fiche editor (recipe-only mode, gated again in the page + RLS).
+  const pathname = headers().get('x-pathname') ?? '';
+  const chefAllowed = profile.role === 'chef' && pathname.startsWith('/admin/fiches/');
+  if ((profile.role === 'chef' || profile.role === 'worker') && !chefAllowed) redirect('/station/me');
 
   return (
     <div className="flex min-h-screen bg-cream">

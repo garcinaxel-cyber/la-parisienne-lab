@@ -10,7 +10,10 @@ export default async function FicheDetailPage({ params }: { params: { productId:
   if (!session) redirect('/login');
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) redirect('/dashboard');
+  const role = profile?.role ?? '';
+  const isManager = ['admin', 'lab_manager'].includes(role);
+  const isChef = role === 'chef';
+  if (!isManager && !isChef) redirect('/dashboard');
 
   // Read fiche from lab_fiche_meta (params.productId = fiche id)
   const { data: fiche } = await supabase
@@ -19,7 +22,18 @@ export default async function FicheDetailPage({ params }: { params: { productId:
     .eq('id', params.productId)
     .single();
 
-  if (!fiche) redirect('/admin/fiches');
+  if (!fiche) redirect(isChef ? '/station/me' : '/admin/fiches');
+
+  // Chef: recipe-only editing, and only for fiches of their own team (RLS enforces it too)
+  if (isChef) {
+    const { data: labProfile } = await supabase
+      .from('lab_profiles')
+      .select('team')
+      .eq('id', session.user.id)
+      .single();
+    const chefTeam = labProfile?.team ?? null;
+    if (!chefTeam || !(fiche.teams ?? []).includes(chefTeam)) redirect('/station/me');
+  }
 
   const [{ data: allSteps }, { data: variants }] = await Promise.all([
     supabase
@@ -78,6 +92,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
       ingredients={ingredients}
       assemblySteps={assemblySteps}
       variantQuantities={(variantQuantities ?? []) as any}
+      recipeOnly={isChef}
     />
   );
 }
