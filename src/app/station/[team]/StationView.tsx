@@ -20,6 +20,19 @@ function SearchIcon({ size = 15, className = '' }: { size?: number; className?: 
   );
 }
 
+// Skeleton placeholder for a date-summary row (upcoming/history tabs)
+function SkeletonRow() {
+  return (
+    <div className="w-full rounded-2xl px-5 py-4 bg-white flex items-center justify-between" style={{ border: '1px solid #E0D49A' }}>
+      <div className="space-y-2 flex-1">
+        <div className="skeleton h-4 w-40" />
+        <div className="skeleton h-3 w-28" />
+      </div>
+      <div className="skeleton h-4 w-4 rounded-full" />
+    </div>
+  );
+}
+
 type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null };
 
 type Assignment = {
@@ -460,7 +473,7 @@ export default function StationView({
             <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
               {(['vi', 'en'] as const).map(l => (
                 <button key={l} onClick={() => setLang(l)}
-                  className="px-2 py-1 rounded text-xs font-bold transition-colors"
+                  className="px-2 py-1 rounded text-xs font-bold transition-all active:scale-95"
                   style={lang === l
                     ? { backgroundColor: '#FFF4CC', color: '#1A4731' }
                     : { color: 'rgba(255,255,255,0.7)' }
@@ -487,7 +500,7 @@ export default function StationView({
         <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-colors"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
                 : { color: 'rgba(255,255,255,0.55)', borderBottom: '2px solid transparent' }
@@ -667,8 +680,8 @@ export default function StationView({
       {activeTab === 'upcoming' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
-            <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+            <div className="space-y-3">
+              <SkeletonRow /><SkeletonRow /><SkeletonRow />
             </div>
           )}
           {!loadingDates && upcomingData.length === 0 && (
@@ -689,7 +702,7 @@ export default function StationView({
             return (
               <button key={d.delivery_date}
                 onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
-                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white"
+                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white transition-transform active:scale-[0.98]"
                 style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}>
                 <div>
                   <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
@@ -708,8 +721,8 @@ export default function StationView({
       {activeTab === 'history' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
-            <div className="text-center py-16 text-sm font-semibold" style={{ color: '#1A4731' }}>
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
+            <div className="space-y-3">
+              <SkeletonRow /><SkeletonRow /><SkeletonRow />
             </div>
           )}
           {!loadingDates && historyData.length === 0 && (
@@ -740,7 +753,7 @@ export default function StationView({
                       loadHistoryDetails(d.delivery_date, d.import_ids);
                     }
                   }}
-                  className="w-full px-5 py-4 text-left flex items-center justify-between">
+                  className="w-full px-5 py-4 text-left flex items-center justify-between transition-transform active:scale-[0.98]">
                   <div>
                     <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                     <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
@@ -754,9 +767,10 @@ export default function StationView({
                 {isExpanded && (
                   <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
                     {loadingDetails && !details && (
-                      <p className="text-center text-xs py-3" style={{ color: '#1A4731' }}>
-                        {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
-                      </p>
+                      <div className="space-y-2 pt-2">
+                        <div className="skeleton h-12 w-full" />
+                        <div className="skeleton h-12 w-full" />
+                      </div>
                     )}
                     {details && details.length === 0 && (
                       <p className="text-center text-xs py-3 text-gray-400">
@@ -813,9 +827,9 @@ export default function StationView({
 
       {/* Blocked reason modal */}
       {blockedModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+        <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={() => { setBlockedModal(null); setBlockedReason(''); setBlockedCustom(''); }}>
-          <div className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="modal-sheet bg-white w-full max-w-sm rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#DC2626' }}>
@@ -863,9 +877,9 @@ export default function StationView({
 
       {/* Extra production modal */}
       {extraModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+        <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={closeExtraModal}>
-          <div className="bg-white w-full max-w-sm rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="modal-sheet bg-white w-full max-w-sm rounded-t-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>
@@ -886,7 +900,7 @@ export default function StationView({
                 <div className="flex gap-1.5 flex-wrap">
                   <button
                     onClick={() => setSelectedCategory('')}
-                    className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
+                    className="px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95"
                     style={selectedCategory === ''
                       ? { backgroundColor: '#1A4731', color: 'white' }
                       : { backgroundColor: '#F3F4F6', color: '#6B7280' }
@@ -898,7 +912,7 @@ export default function StationView({
                     <button
                       key={cat.id}
                       onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
-                      className="px-3 py-1 rounded-full text-xs font-bold transition-colors"
+                      className="px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95"
                       style={selectedCategory === cat.id
                         ? { backgroundColor: '#1A4731', color: 'white' }
                         : { backgroundColor: '#F3F4F6', color: '#6B7280' }
@@ -1040,8 +1054,8 @@ export default function StationView({
 
       {/* Qty modal */}
       {qtyModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
+        <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-sheet bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-5">
             <div>
               <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-ink-light mt-0.5">
@@ -1464,9 +1478,9 @@ function FicheModal({
   }, [ficheId]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center"
+    <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center"
       style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
-      <div className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl"
+      <div className="modal-sheet bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 shrink-0"
           style={{ borderBottom: '1px solid #E0D49A' }}>
@@ -1495,9 +1509,17 @@ function FicheModal({
 
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           {steps === null ? (
-            <p className="text-ink-light text-sm text-center py-10">
-              {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
-            </p>
+            <div className="space-y-4">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="flex gap-3">
+                  <div className="skeleton w-7 h-7 rounded-full shrink-0" />
+                  <div className="flex-1 space-y-1.5 pt-0.5">
+                    <div className="skeleton h-3.5 w-full" />
+                    <div className="skeleton h-3.5 w-2/3" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : steps.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-ink-light text-sm">
