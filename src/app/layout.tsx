@@ -6,7 +6,10 @@ export const metadata: Metadata = {
   title: 'La Parisienne — Lab',
   description: 'Production management for La Parisienne lab',
   manifest: '/manifest.json',
-  icons: { apple: '/apple-touch-icon.png' },
+  icons: {
+    icon: '/favicon-32.png',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
