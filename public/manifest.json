@@ -4,8 +4,8 @@
   "description": "Production management for La Parisienne kitchen teams",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#faf8f5",
-  "theme_color": "#1a2744",
+  "background_color": "#FFF4CC",
+  "theme_color": "#1A4731",
   "orientation": "portrait-primary",
   "icons": [
     {

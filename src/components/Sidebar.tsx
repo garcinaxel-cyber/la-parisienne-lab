@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, FlaskConical, BookOpen, Scan } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -36,12 +36,10 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
         {/* Logo */}
         <div className="px-6 py-6 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gold flex items-center justify-center">
-              <FlaskConical size={16} className="text-navy" />
-            </div>
+            <img src="/logo-mark-gold.png" alt="" className="w-9 h-9 object-contain shrink-0" />
             <div>
               <div className="font-serif font-bold text-white text-sm leading-tight">La Parisienne</div>
-              <div className="text-gold text-xs font-semibold tracking-widest">LAB</div>
+              <div className="text-gold text-xs font-semibold tracking-widest">MANUFACTURING</div>
             </div>
           </div>
         </div>
@@ -100,8 +98,8 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
       {/* Mobile top bar */}
       <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <FlaskConical size={18} className="text-gold" />
-          <span className="font-serif font-bold">La Parisienne <span className="text-gold text-xs">LAB</span></span>
+          <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain" />
+          <span className="font-serif font-bold">La Parisienne <span className="text-gold text-xs">MANUFACTURING</span></span>
         </div>
         <div className="flex gap-1">
           {NAV.map(({ href, icon: Icon }) => (

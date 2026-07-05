@@ -29,8 +29,9 @@ export default function LoginForm() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
+          <img src="/logo-mark.png" alt="La Parisienne" className="mx-auto h-20 w-auto mb-3" />
           <div className="font-serif text-3xl font-bold text-navy">La Parisienne</div>
-          <div className="mt-1 text-sm font-medium text-gold tracking-widest uppercase">Lab</div>
+          <div className="mt-1 text-sm font-medium text-gold tracking-widest uppercase">Manufacturing</div>
         </div>
 
         <div className="card p-6">
@@ -55,7 +56,7 @@ export default function LoginForm() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-ink-light mt-6">La Parisienne Lab — Internal use only</p>
+        <p className="text-center text-xs text-ink-light mt-6">La Parisienne Manufacturing — Internal use only</p>
       </div>
     </div>
   );

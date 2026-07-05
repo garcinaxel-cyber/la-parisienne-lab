@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
 import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp } from 'lucide-react';
@@ -8,6 +8,24 @@ import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp } fro
 interface Stats { imports_today: number; published_today: number; total_assignments: number; done_assignments: number; blocked: number; }
 
 const PREVIEW_COUNT = 6;
+
+// Animated count-up for KPI numbers — purely cosmetic, no data implications
+function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix?: string; duration?: number }) {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    let raf: number;
+    const start = performance.now();
+    function tick(now: number) {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(value * eased));
+      if (progress < 1) raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+  return <>{display}{suffix}</>;
+}
 
 export default function DashboardView({ stats, imports, assignments, today }:
   { stats: Stats | null; imports: any[]; assignments: any[]; today: string }) {
@@ -36,15 +54,15 @@ export default function DashboardView({ stats, imports, assignments, today }:
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: lang === 'vi' ? 'Đơn nhập hôm nay' : 'Imports today', value: s.imports_today, icon: Package, color: 'text-navy' },
-          { label: lang === 'vi' ? 'Đã phát hành' : 'Published', value: s.published_today, icon: CheckCircle2, color: 'text-green-600' },
-          { label: lang === 'vi' ? 'Tiến độ' : 'Progress', value: `${pct}%`, icon: Clock, color: 'text-gold' },
-          { label: lang === 'vi' ? 'Bị chặn' : 'Blocked', value: s.blocked, icon: AlertCircle, color: 'text-red-500' },
-        ].map(({ label, value, icon: Icon, color }) => (
+          { label: lang === 'vi' ? 'Đơn nhập hôm nay' : 'Imports today', value: s.imports_today, suffix: '', icon: Package, color: 'text-navy' },
+          { label: lang === 'vi' ? 'Đã phát hành' : 'Published', value: s.published_today, suffix: '', icon: CheckCircle2, color: 'text-green-600' },
+          { label: lang === 'vi' ? 'Tiến độ' : 'Progress', value: pct, suffix: '%', icon: Clock, color: 'text-gold' },
+          { label: lang === 'vi' ? 'Bị chặn' : 'Blocked', value: s.blocked, suffix: '', icon: AlertCircle, color: 'text-red-500' },
+        ].map(({ label, value, suffix, icon: Icon, color }) => (
           <div key={label} className="card p-4 flex items-center gap-3">
             <Icon size={22} className={color} />
             <div>
-              <div className="text-2xl font-bold text-navy">{value}</div>
+              <div className="text-2xl font-bold text-navy"><CountUp value={value} suffix={suffix} /></div>
               <div className="text-xs text-ink-light">{label}</div>
             </div>
           </div>
