@@ -32,28 +32,20 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col fixed inset-y-0 left-0 w-64 bg-navy text-white z-30 overflow-hidden">
-        {/* Background watermark — blended into the navy panel */}
-        <img
-          src="/logo-mark-gold.png"
-          alt=""
-          aria-hidden="true"
-          className="pointer-events-none select-none absolute -left-16 bottom-8 w-72 max-w-none opacity-[0.07] rotate-[6deg] -z-10"
-        />
-
+      <aside className="hidden lg:flex flex-col fixed inset-y-0 left-0 w-64 bg-navy text-white z-30">
         {/* Logo */}
         <div className="px-6 py-6 border-b border-white/10">
           <div className="flex items-center gap-3">
             <img src="/logo-mark-gold.png" alt="" className="w-9 h-9 object-contain shrink-0" />
             <div>
               <div className="font-serif font-bold text-white text-sm leading-tight">La Parisienne</div>
-              <div className="text-gold text-xs font-semibold tracking-widest">LAB</div>
+              <div className="text-gold text-xs font-semibold tracking-widest">MANUFACTURING</div>
             </div>
           </div>
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1 relative z-10">
+        <nav className="flex-1 px-3 py-4 space-y-1">
           {NAV.map(({ href, icon: Icon, key }) => (
             <Link key={href} href={href}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
@@ -80,7 +72,7 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
         </nav>
 
         {/* Footer */}
-        <div className="px-3 py-4 border-t border-white/10 space-y-3 relative z-10">
+        <div className="px-3 py-4 border-t border-white/10 space-y-3">
           {/* Lang toggle */}
           <div className="flex gap-1 px-3">
             {(['vi','en'] as const).map(l => (
@@ -107,7 +99,7 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
       <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain" />
-          <span className="font-serif font-bold">La Parisienne <span className="text-gold text-xs">LAB</span></span>
+          <span className="font-serif font-bold">La Parisienne <span className="text-gold text-xs">MANUFACTURING</span></span>
         </div>
         <div className="flex gap-1">
           {NAV.map(({ href, icon: Icon }) => (

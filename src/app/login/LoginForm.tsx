@@ -25,27 +25,13 @@ export default function LoginForm() {
   }
 
   return (
-    <div className="relative min-h-screen bg-cream flex items-center justify-center p-4 overflow-hidden isolate">
-      {/* Background watermark — decorative, blended into the cream backdrop */}
-      <img
-        src="/logo-mark.png"
-        alt=""
-        aria-hidden="true"
-        className="pointer-events-none select-none absolute -right-24 -top-16 w-[520px] max-w-none opacity-[0.06] rotate-[-4deg] -z-10 sm:-right-16 sm:-top-24"
-      />
-      <img
-        src="/logo-mark.png"
-        alt=""
-        aria-hidden="true"
-        className="pointer-events-none select-none absolute -left-32 bottom-[-140px] w-[380px] max-w-none opacity-[0.05] rotate-[8deg] -z-10 hidden sm:block"
-      />
-
+    <div className="min-h-screen bg-cream flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
           <img src="/logo-mark.png" alt="La Parisienne" className="mx-auto h-20 w-auto mb-3" />
           <div className="font-serif text-3xl font-bold text-navy">La Parisienne</div>
-          <div className="mt-1 text-sm font-medium text-gold tracking-widest uppercase">Lab</div>
+          <div className="mt-1 text-sm font-medium text-gold tracking-widest uppercase">Manufacturing</div>
         </div>
 
         <div className="card p-6">
@@ -70,7 +56,7 @@ export default function LoginForm() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-ink-light mt-6">La Parisienne Lab — Internal use only</p>
+        <p className="text-center text-xs text-ink-light mt-6">La Parisienne Manufacturing — Internal use only</p>
       </div>
     </div>
   );
