@@ -35,6 +35,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<'teams' | 'orders'>('teams');
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
   const byTeam = TEAMS.map(team => ({
     team,
@@ -44,16 +45,18 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
   // Per-order progress: each order line inherits the status of its production card
   const asgStatus: Record<string, string> = {};
   for (const a of assignments) asgStatus[`${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.status;
-  const orderMap = new Map<string, { shops: string[]; time: string | null; total: number; ready: number; units: number }>();
+  type OrderLineDetail = { name: string; variant: string; qty: number; team: string; status: string | null };
+  const orderMap = new Map<string, { shops: string[]; time: string | null; total: number; ready: number; units: number; lines: OrderLineDetail[] }>();
   for (const ol of orderLines) {
     if (!ol.order_ref || !ol.qty) continue;
     let o = orderMap.get(ol.order_ref);
-    if (!o) { o = { shops: [], time: null, total: 0, ready: 0, units: 0 }; orderMap.set(ol.order_ref, o); }
+    if (!o) { o = { shops: [], time: null, total: 0, ready: 0, units: 0, lines: [] }; orderMap.set(ol.order_ref, o); }
     if (ol.shop_name && !o.shops.includes(ol.shop_name)) o.shops.push(ol.shop_name);
     if (ol.delivery_time && (!o.time || ol.delivery_time < o.time)) o.time = ol.delivery_time;
-    const st = asgStatus[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`];
+    const st = asgStatus[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`] ?? null;
     o.total += 1; o.units += ol.qty;
     if (st === 'done' || st === 'skip') o.ready += 1;
+    o.lines.push({ name: ol.product_name_vi ?? '', variant: ol.variant_label ?? '', qty: ol.qty, team: ol.team ?? '', status: st });
   }
   const orderRows = Array.from(orderMap.entries())
     .map(([ref, o]) => ({ ref, ...o }))
@@ -118,20 +121,45 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         <div className="card overflow-hidden divide-y divide-border-soft">
           {orderRows.map(o => {
             const opct = o.total ? Math.round(o.ready / o.total * 100) : 0;
+            const isOpen = expandedOrder === o.ref;
             return (
-              <div key={o.ref} className="flex items-center gap-3 px-4 py-2.5">
-                <span className="font-mono text-xs font-bold text-navy shrink-0">{o.ref}</span>
-                <span className="text-xs text-ink-light truncate flex-1">
-                  {o.shops.join(', ')}
-                  {o.time && <span className="ml-2 inline-flex items-center gap-1"><Clock size={11} />{o.time}</span>}
-                </span>
-                <span className="text-xs text-ink-light shrink-0">×{o.units}</span>
-                <span className={`text-xs shrink-0 ${opct === 100 ? 'text-green-600 font-semibold' : 'text-ink-light'}`}>
-                  {o.ready}/{o.total}
-                </span>
-                <div className="w-20 h-1.5 rounded-full bg-border-soft overflow-hidden shrink-0">
-                  <div className="h-full rounded-full transition-all" style={{ width: `${opct}%`, backgroundColor: opct === 100 ? '#16A34A' : '#B45309' }} />
-                </div>
+              <div key={o.ref}>
+                <button onClick={() => setExpandedOrder(isOpen ? null : o.ref)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-cream/50 transition-colors text-left">
+                  {isOpen ? <ChevronUp size={13} className="text-ink-light shrink-0" /> : <ChevronDown size={13} className="text-ink-light shrink-0" />}
+                  <span className="font-mono text-xs font-bold text-navy shrink-0">{o.ref}</span>
+                  <span className="text-xs text-ink-light truncate flex-1">
+                    {o.shops.join(', ')}
+                    {o.time && <span className="ml-2 inline-flex items-center gap-1"><Clock size={11} />{o.time}</span>}
+                  </span>
+                  <span className="text-xs text-ink-light shrink-0">×{o.units}</span>
+                  <span className={`text-xs shrink-0 ${opct === 100 ? 'text-green-600 font-semibold' : 'text-ink-light'}`}>
+                    {o.ready}/{o.total}
+                  </span>
+                  <div className="w-20 h-1.5 rounded-full bg-border-soft overflow-hidden shrink-0">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${opct}%`, backgroundColor: opct === 100 ? '#16A34A' : '#B45309' }} />
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="px-4 pb-3 pt-1 bg-cream/40">
+                    {o.lines.map((l, i) => {
+                      const teamMeta = TEAM_LABELS[l.team as Team];
+                      const st = l.status ? STATUS_META[l.status as AssignmentStatus] : null;
+                      return (
+                        <div key={i} className="flex items-center gap-2 py-1 text-xs border-t border-border-soft/60">
+                          <span className="text-navy truncate flex-1">
+                            {l.name}{l.variant && l.variant !== 'Standard' ? <span className="text-ink-light"> · {l.variant}</span> : null}
+                          </span>
+                          {teamMeta && <span className="font-semibold shrink-0" style={{ color: teamMeta.color }}>{lang === 'vi' ? teamMeta.vi : teamMeta.en}</span>}
+                          <span className="font-bold text-navy shrink-0">×{l.qty}</span>
+                          {st
+                            ? <span className="badge text-white text-[10px] shrink-0" style={{ backgroundColor: st.color }}>{lang === 'vi' ? st.labelVi : st.labelEn}</span>
+                            : <span className="text-[10px] text-ink-light shrink-0">—</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

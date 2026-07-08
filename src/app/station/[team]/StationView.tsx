@@ -451,6 +451,8 @@ export default function StationView({
     onNoteUpdate: (id: string, note: string) => setAssignments(prev => prev.map(x => x.id === id ? { ...x, notes: note } : x)),
     onBlocked: (a: Assignment) => { setBlockedReason(''); setBlockedCustom(''); setBlockedModal(a); },
     meta,
+    // Real station URL — '/station/me' breaks for admins without a lab team (bounced to dashboard)
+    backTo: `/station/${teamSlug}`,
   };
 
   return (
@@ -787,6 +789,32 @@ export default function StationView({
                         {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
                       </p>
                     )}
+                    {/* Consolidated per-product totals — what this day actually requires */}
+                    {details && details.length > 0 && (() => {
+                      const totals = new Map<string, number>();
+                      for (const order of details) {
+                        for (const item of order.items) {
+                          const key = `${item.product_name_vi}${item.variant_label && item.variant_label !== 'Standard' ? ` · ${item.variant_label}` : ''}`;
+                          totals.set(key, (totals.get(key) ?? 0) + item.qty);
+                        }
+                      }
+                      const rows = Array.from(totals.entries()).sort((x, y) => y[1] - x[1]);
+                      return (
+                        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F0F9F4', border: '1px solid #A7D4B8' }}>
+                          <div className="text-xs font-bold mb-1.5" style={{ color: '#1A4731' }}>
+                            {lang === 'vi' ? 'Tổng cần sản xuất' : 'Total to produce'}
+                          </div>
+                          <div className="space-y-0.5">
+                            {rows.map(([name, qty]) => (
+                              <div key={name} className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#374151' }}>{name}</span>
+                                <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{qty}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {(details ?? []).map(order => (
                       <div key={order.order_ref} className="rounded-xl p-3 mt-2"
                         style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
@@ -926,7 +954,7 @@ export default function StationView({
       {/* Fiche modal */}
       {ficheModal && (
         <FicheModal ficheId={ficheModal.ficheId} productName={ficheModal.productName}
-          lang={lang} onClose={() => setFicheModal(null)} />
+          lang={lang} backTo={`/station/${teamSlug}`} onClose={() => setFicheModal(null)} />
       )}
 
       {/* Blocked reason modal */}
@@ -1283,7 +1311,7 @@ function NotesEditor({
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
 function ProductionCard({
-  a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, meta,
+  a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, meta, backTo,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -1296,6 +1324,7 @@ function ProductionCard({
   onNoteUpdate: (id: string, note: string) => void;
   onBlocked: (a: Assignment) => void;
   meta: typeof TEAM_LABELS[Team];
+  backTo: string;
 }) {
   const st = STATUS_META[a.status];
   const isUpdating = updating === a.id;
@@ -1335,7 +1364,7 @@ function ProductionCard({
         {/* Info */}
         <div className="flex-1 min-w-0">
           {a.fiche_id ? (
-            <Link href={`/station/fiche/${a.fiche_id}?back=/station/me`}
+            <Link href={`/station/fiche/${a.fiche_id}?back=${backTo}`}
               className="font-bold text-base leading-tight block hover:underline"
               style={{ color: '#1A4731' }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
@@ -1562,9 +1591,9 @@ function TermineCard({
 // ─── FICHE MODAL ─────────────────────────────────────────────────────────────
 
 function FicheModal({
-  ficheId, productName, lang, onClose,
+  ficheId, productName, lang, backTo, onClose,
 }: {
-  ficheId: string; productName: string; lang: 'vi' | 'en'; onClose: () => void;
+  ficheId: string; productName: string; lang: 'vi' | 'en'; backTo: string; onClose: () => void;
 }) {
   const [steps, setSteps] = useState<FicheStep[] | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -1595,13 +1624,13 @@ function FicheModal({
           </div>
           <div className="flex items-center gap-2">
             {isLoggedIn && (
-              <Link href={`/admin/fiches/${ficheId}?back=/station/me`}
+              <Link href={`/admin/fiches/${ficheId}?back=${backTo}`}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: '#F0FDF4', color: '#166534' }}>
                 {lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}
               </Link>
             )}
-            <Link href={`/station/fiche/${ficheId}?back=/station/me`}
+            <Link href={`/station/fiche/${ficheId}?back=${backTo}`}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               style={{ backgroundColor: '#FFF4CC', color: '#1A4731' }}>
               {lang === 'vi' ? 'Xem đầy đủ' : 'Full view'}
@@ -1630,7 +1659,7 @@ function FicheModal({
               <p className="text-ink-light text-sm">
                 {lang === 'vi' ? 'Chưa có phiếu kỹ thuật cho sản phẩm này.' : 'No recipe steps added yet.'}
               </p>
-              <Link href={`/station/fiche/${ficheId}?back=/station/me`}
+              <Link href={`/station/fiche/${ficheId}?back=${backTo}`}
                 className="text-xs font-semibold mt-2 inline-block" style={{ color: '#1A4731' }}>
                 {lang === 'vi' ? 'Xem trang phiếu →' : 'View fiche page →'}
               </Link>
