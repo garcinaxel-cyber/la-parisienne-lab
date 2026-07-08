@@ -65,6 +65,7 @@ export default function ImportView() {
   const [orderTimes, setOrderTimes] = useState<Record<string, string>>({});
   const [reportSection, setReportSection] = useState<'orders' | 'products' | null>(null);
   const [creatingFicheSku, setCreatingFicheSku] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -74,27 +75,11 @@ export default function ImportView() {
   const effectiveLines = mergedLines.filter(l => !excludedSkus.has(l.product_sku));
   const totalItems = effectiveLines.reduce((sum, l) => sum + l.total_qty, 0);
 
-  const handleFiles = useCallback(async (files: File[]) => {
-    setError(null);
-    setExcludedSkus(new Set());
-    setMatchCheck(null);
+  type RawResult = { sourceType: 'sales_order' | 'replenishment'; filename: string; rawLines: any[]; skipped: SkippedLine[]; warnings: string[] };
 
-    // First pass: parse all files to get raw lines
-    type RawResult = { sourceType: 'sales_order' | 'replenishment'; filename: string; rawLines: any[]; skipped: SkippedLine[]; warnings: string[] };
-    const parseRaw: RawResult[] = [];
-    for (const file of files) {
-      try {
-        const result = await parseExcelFile(file);
-        if (result.errors.length && !result.lines.length) {
-          setError(`${file.name}: ${result.errors[0]}`);
-          return;
-        }
-        parseRaw.push({ sourceType: result.source_type, filename: file.name, rawLines: result.lines, skipped: result.skipped, warnings: result.errors });
-      } catch (e: any) {
-        setError(`${file.name}: ${e.message ?? 'Parse error'}`);
-        return;
-      }
-    }
+  // Shared post-parse pipeline: fiche-variant lookup, consolidation, match check.
+  // Used by both the Excel upload and the Odoo sync.
+  const processRaw = useCallback(async (parseRaw: RawResult[]) => {
     if (!parseRaw.length) return;
 
     // Look up lab fiche variants by SKU — the only product reference (no B2C catalogue)
@@ -143,6 +128,76 @@ export default function ImportView() {
       });
     }
   }, []);
+
+  const handleFiles = useCallback(async (files: File[]) => {
+    setError(null);
+    setExcludedSkus(new Set());
+    setMatchCheck(null);
+
+    // First pass: parse all files to get raw lines
+    const parseRaw: RawResult[] = [];
+    for (const file of files) {
+      try {
+        const result = await parseExcelFile(file);
+        if (result.errors.length && !result.lines.length) {
+          setError(`${file.name}: ${result.errors[0]}`);
+          return;
+        }
+        parseRaw.push({ sourceType: result.source_type, filename: file.name, rawLines: result.lines, skipped: result.skipped, warnings: result.errors });
+      } catch (e: any) {
+        setError(`${file.name}: ${e.message ?? 'Parse error'}`);
+        return;
+      }
+    }
+    await processRaw(parseRaw);
+  }, [processRaw]);
+
+  // ── Sync from Odoo (read-only API) — replaces the manual Excel export ──
+  const syncFromOdoo = useCallback(async () => {
+    setError(null);
+    setExcludedSkus(new Set());
+    setMatchCheck(null);
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/odoo/sync');
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? `Odoo sync failed (${res.status})`);
+      const lines: any[] = j.lines ?? [];
+      const stats = j.stats ?? {};
+      const warnings: string[] = [];
+      if ((stats.already_imported ?? []).length > 0) {
+        warnings.push(`${stats.already_imported.length} ${lang === 'vi' ? 'đơn đã nhập trước đó — bỏ qua' : 'orders already imported — skipped'}: ${stats.already_imported.slice(0, 8).join(', ')}${stats.already_imported.length > 8 ? '…' : ''}`);
+      }
+      if ((stats.multi_team_skus ?? []).length > 0) {
+        warnings.push(`${stats.multi_team_skus.length} ${lang === 'vi' ? 'SKU có nhiều đội — đã chọn đội mặc định của fiche' : 'SKUs have multiple teams — fiche default team applied'}`);
+      }
+      const stamp = new Date().toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const parseRaw: RawResult[] = [];
+      const sales = lines.filter(l => l.source_type === 'sales_order');
+      const repl = lines.filter(l => l.source_type === 'replenishment');
+      if (sales.length) parseRaw.push({ sourceType: 'sales_order', filename: `Odoo Sales (${stamp})`, rawLines: sales, skipped: [], warnings });
+      if (repl.length) parseRaw.push({ sourceType: 'replenishment', filename: `Odoo Replenishment (${stamp})`, rawLines: repl, skipped: [], warnings: sales.length ? [] : warnings });
+      if (!parseRaw.length) {
+        setError(lang === 'vi'
+          ? `Không có đơn mới nào từ Odoo (${stats.sales_orders ?? 0} đơn bán, ${stats.replenishments ?? 0} bổ sung đã kiểm tra).`
+          : `No new orders from Odoo (checked ${stats.sales_orders ?? 0} sales orders, ${stats.replenishments ?? 0} replenishments).`);
+        return;
+      }
+      await processRaw(parseRaw);
+    } catch (e: any) {
+      setError(e?.message ?? 'Odoo sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }, [processRaw, lang]);
+
+  /** Assign a team manually to all lines of a SKU (fiche has no team or several) */
+  const assignTeam = (sku: string, team: string) => {
+    setParsedFiles(prev => prev.map(pf => ({
+      ...pf,
+      lines: pf.lines.map(l => l.product_sku === sku ? { ...l, team } : l),
+    })));
+  };
 
   const toggleExclude = (sku: string) => {
     setExcludedSkus(prev => {
@@ -438,6 +493,30 @@ export default function ImportView() {
             <p className="text-xs text-ink-light mt-3">Sales Order · Stock Replenishment (.xlsx)</p>
           </div>
 
+          {/* Sync directly from Odoo — no manual export needed */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 border-t border-border-soft" />
+            <span className="text-xs text-ink-light uppercase tracking-wider">{lang === 'vi' ? 'hoặc' : 'or'}</span>
+            <div className="flex-1 border-t border-border-soft" />
+          </div>
+          <button
+            onClick={syncFromOdoo}
+            disabled={syncing}
+            className="w-full card p-5 flex items-center justify-center gap-3 hover:border-gold/60 border-2 border-transparent transition-colors disabled:opacity-60"
+            style={{ borderStyle: 'solid' }}
+          >
+            <span className={`inline-block w-4 h-4 rounded-full border-2 border-navy ${syncing ? 'border-t-transparent animate-spin' : ''}`}
+              style={!syncing ? { borderStyle: 'double' } : undefined} />
+            <span className="font-semibold text-navy">
+              {syncing
+                ? (lang === 'vi' ? 'Đang đồng bộ từ Odoo…' : 'Syncing from Odoo…')
+                : (lang === 'vi' ? 'Đồng bộ từ Odoo' : 'Sync from Odoo')}
+            </span>
+            <span className="text-xs text-ink-light">
+              {lang === 'vi' ? '(đơn đã xác nhận, giao từ hôm nay)' : '(confirmed orders, delivering today onwards)'}
+            </span>
+          </button>
+
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -695,10 +774,10 @@ export default function ImportView() {
             </div>
           )}
 
-          {/* Empty team — kept in order history but not assigned to production */}
+          {/* Empty team — assign manually, otherwise kept in history only */}
           {emptyTeamLines.length > 0 && (
-            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
-              <div className="flex items-center gap-2 text-blue-700 text-sm">
+            <div className="rounded-xl bg-blue-50 border border-blue-200 overflow-hidden">
+              <div className="flex items-center gap-2 text-blue-700 text-sm px-3 py-3">
                 <AlertCircle size={15} className="shrink-0" />
                 <span>
                   <span className="font-medium">
@@ -706,9 +785,27 @@ export default function ImportView() {
                   </span>
                   {' — '}
                   {lang === 'vi'
-                    ? 'sẽ được lưu vào lịch sử đơn hàng nhưng không giao cho đội nào.'
-                    : 'saved to order history but not assigned to any production team.'}
+                    ? 'chọn đội bên dưới, nếu không sẽ chỉ lưu vào lịch sử.'
+                    : 'pick a team below, otherwise saved to order history only.'}
                 </span>
+              </div>
+              <div className="divide-y divide-blue-100 bg-white">
+                {Array.from(new Map(emptyTeamLines.map(l => [l.product_sku, l])).values()).map(l => (
+                  <div key={l.product_sku} className="flex items-center gap-3 px-3 py-2">
+                    <code className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-50 text-blue-800 shrink-0">{l.product_sku}</code>
+                    <span className="flex-1 text-sm text-navy truncate">{l.product_name_vi}</span>
+                    <select
+                      value=""
+                      onChange={e => { if (e.target.value) assignTeam(l.product_sku, e.target.value); }}
+                      className="input py-1 text-xs w-40"
+                    >
+                      <option value="">{lang === 'vi' ? 'Chọn đội…' : 'Pick team…'}</option>
+                      {TEAMS.map(t => (
+                        <option key={t} value={t}>{lang === 'vi' ? TEAM_LABELS[t].vi : TEAM_LABELS[t].en}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
               </div>
             </div>
           )}
