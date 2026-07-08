@@ -303,7 +303,13 @@ export default function StationView({
 
   async function saveBlocked() {
     if (!blockedModal) return;
-    const reason = blockedReason === 'other' ? blockedCustom.trim() : blockedReason;
+    // Store a human-readable label (VI = workshop language), not the internal slug
+    const REASON_LABELS: Record<string, string> = {
+      manque_temps: 'Thiếu thời gian / Lack of time',
+      matieres_premieres: 'Thiếu nguyên liệu / Missing ingredients',
+      equipement: 'Sự cố thiết bị / Equipment issue',
+    };
+    const reason = blockedReason === 'other' ? blockedCustom.trim() : (REASON_LABELS[blockedReason] ?? blockedReason);
     if (!reason) return;
     const supabase = createClient();
     const update = { status: 'blocked' as AssignmentStatus, blocked_reason: reason, updated_at: new Date().toISOString() };
@@ -541,9 +547,52 @@ export default function StationView({
               </p>
             </div>
           )}
-          {production.map(a => (
-            <ProductionCard key={a.id} a={a} {...sharedCardProps} />
-          ))}
+          {(() => {
+            // Group by fiche category — a workshop works in stations, not one long list.
+            const OTHER = lang === 'vi' ? 'Khác' : 'Other';
+            const groups = new Map<string, typeof production>();
+            for (const a of production) {
+              const cat = (lang === 'vi' ? a.category_name_vi : a.category_name_en) || a.category_name_vi || OTHER;
+              if (!groups.has(cat)) groups.set(cat, []);
+              groups.get(cat)!.push(a);
+            }
+            const entries = Array.from(groups.entries()).sort((x, y) =>
+              x[0] === OTHER ? 1 : y[0] === OTHER ? -1 : x[0].localeCompare(y[0]));
+            // Single category (or none) → plain list, no chrome
+            if (entries.length <= 1) {
+              return production.map(a => <ProductionCard key={a.id} a={a} {...sharedCardProps} />);
+            }
+            return (
+              <>
+                {/* Category quick-jump chips */}
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-0 z-10 py-2"
+                  style={{ backgroundColor: '#FDF8E7' }}>
+                  {entries.map(([cat, items]) => {
+                    const qty = items.reduce((s, a) => s + a.qty_to_produce, 0);
+                    return (
+                      <a key={cat} href={`#cat-${encodeURIComponent(cat)}`}
+                        className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
+                        style={{ backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+                        {cat} <span style={{ color: '#92600A' }}>· {qty}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+                {entries.map(([cat, items]) => (
+                  <div key={cat} id={`cat-${encodeURIComponent(cat)}`} className="space-y-3 scroll-mt-24">
+                    <div className="flex items-center gap-2 pt-2">
+                      <span className="font-bold text-sm" style={{ color: '#1A4731' }}>{cat}</span>
+                      <span className="text-xs font-medium" style={{ color: '#92600A' }}>
+                        {items.length} {lang === 'vi' ? 'sản phẩm' : 'products'} · {items.reduce((s, a) => s + a.qty_to_produce, 0)} {lang === 'vi' ? 'cái' : 'units'}
+                      </span>
+                      <div className="flex-1 border-t" style={{ borderColor: '#E0D49A' }} />
+                    </div>
+                    {items.map(a => <ProductionCard key={a.id} a={a} {...sharedCardProps} />)}
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -699,19 +748,74 @@ export default function StationView({
             const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
+            const isExpanded = expandedHistoryDate === d.delivery_date;
+            const details = historyDetails[d.delivery_date];
             return (
-              <button key={d.delivery_date}
-                onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
-                className="w-full rounded-2xl px-5 py-4 text-left flex items-center justify-between bg-white transition-transform active:scale-[0.98]"
+              <div key={d.delivery_date}
+                className="rounded-2xl bg-white overflow-hidden"
                 style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}>
-                <div>
-                  <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
-                  <div className="text-xs mt-0.5 font-medium" style={{ color: '#2D6A4F' }}>
-                    {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                <button
+                  onClick={() => {
+                    if (isExpanded) {
+                      setExpandedHistoryDate(null);
+                    } else {
+                      setExpandedHistoryDate(d.delivery_date);
+                      loadHistoryDetails(d.delivery_date, d.import_ids);
+                    }
+                  }}
+                  className="w-full px-5 py-4 text-left flex items-center justify-between transition-transform active:scale-[0.98]">
+                  <div>
+                    <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
+                    <div className="text-xs mt-0.5 font-medium" style={{ color: '#2D6A4F' }}>
+                      {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                    </div>
                   </div>
-                </div>
-                <ChevronRight size={16} style={{ color: '#C9A84C' }} />
-              </button>
+                  <ChevronRight size={16}
+                    className="transition-transform duration-200 shrink-0"
+                    style={{ color: '#C9A84C', transform: isExpanded ? 'rotate(90deg)' : 'none' }} />
+                </button>
+                {isExpanded && (
+                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
+                    {loadingDetails && !details && (
+                      <div className="space-y-2 pt-2">
+                        <div className="skeleton h-12 w-full" />
+                        <div className="skeleton h-12 w-full" />
+                      </div>
+                    )}
+                    {details && details.length === 0 && (
+                      <p className="text-center text-xs py-3 text-gray-400">
+                        {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
+                      </p>
+                    )}
+                    {(details ?? []).map(order => (
+                      <div key={order.order_ref} className="rounded-xl p-3 mt-2"
+                        style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-bold" style={{ color: '#92600A' }}>{order.order_ref}</span>
+                          <span className="text-xs font-medium" style={{ color: '#1A4731' }}>{order.shop_name}</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          {order.items.map((item, i) => (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span style={{ color: '#374151' }}>
+                                {item.product_name_vi}
+                                {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
+                              </span>
+                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
+                      className="w-full mt-2 py-2.5 rounded-xl text-xs font-bold transition-colors"
+                      style={{ backgroundColor: '#F0F9F4', color: '#1A4731', border: '1px solid #A7D4B8' }}>
+                      {lang === 'vi' ? 'Mở ngày này →' : 'Open this day →'}
+                    </button>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -841,9 +945,10 @@ export default function StationView({
             </div>
             <div className="px-5 pb-5 space-y-3">
               {[
-                { value: 'manque_temps', vi: 'Manque de temps', en: 'Lack of time' },
-                { value: 'matieres_premieres', vi: 'Manque de matières premières', en: 'Missing ingredients' },
-                { value: 'other', vi: 'Autre raison', en: 'Other reason' },
+                { value: 'manque_temps', vi: 'Thiếu thời gian', en: 'Lack of time' },
+                { value: 'matieres_premieres', vi: 'Thiếu nguyên liệu', en: 'Missing ingredients' },
+                { value: 'equipement', vi: 'Sự cố thiết bị', en: 'Equipment issue' },
+                { value: 'other', vi: 'Lý do khác', en: 'Other reason' },
               ].map(opt => (
                 <button key={opt.value} onClick={() => setBlockedReason(opt.value)}
                   className="w-full text-left px-4 py-3 rounded-xl font-medium text-sm transition-all"
@@ -1490,7 +1595,7 @@ function FicheModal({
           </div>
           <div className="flex items-center gap-2">
             {isLoggedIn && (
-              <Link href={`/admin/fiches/${ficheId}`}
+              <Link href={`/admin/fiches/${ficheId}?back=/station/me`}
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
                 style={{ backgroundColor: '#F0FDF4', color: '#166534' }}>
                 {lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}

@@ -82,6 +82,7 @@ export default function FicheEditor({
   assemblySteps: initSteps,
   variantQuantities: initVq = [],
   recipeOnly = false,
+  backUrl,
 }: {
   ficheId: string;
   identity: FicheIdentity;
@@ -92,6 +93,8 @@ export default function FicheEditor({
   variantQuantities?: { step_id: string; variant_id: string; quantity_grams: number | null }[];
   /** Chef mode: only ingredients + assembly are editable (RLS enforces this server-side too) */
   recipeOnly?: boolean;
+  /** Where the back buttons lead — preserves the screen the user came from */
+  backUrl?: string;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -389,7 +392,7 @@ export default function FicheEditor({
 
       {/* Header */}
       <div className="flex items-start gap-3">
-        <Link href={recipeOnly ? '/station/me' : '/admin/fiches'} className="mt-1 p-1 rounded-lg hover:bg-border-soft transition-colors">
+        <Link href={backUrl ?? (recipeOnly ? '/station/me' : '/admin/fiches')} className="mt-1 p-1 rounded-lg hover:bg-border-soft transition-colors">
           <ArrowLeft size={20} className="text-ink-light" />
         </Link>
         <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
@@ -857,8 +860,8 @@ export default function FicheEditor({
       {/* Save bar */}
       <div className="flex items-center justify-between pt-2 border-t border-border-soft">
         <div className="flex items-center gap-2">
-          <Link href={recipeOnly ? '/station/me' : '/admin/fiches'} className="btn-secondary text-sm">
-            {recipeOnly
+          <Link href={backUrl ?? (recipeOnly ? '/station/me' : '/admin/fiches')} className="btn-secondary text-sm">
+            {(backUrl ?? '').startsWith('/station') || recipeOnly
               ? (lang === 'vi' ? 'Quay lại trạm' : 'Back to station')
               : (lang === 'vi' ? 'Quay lại danh sách' : 'Back to list')}
           </Link>

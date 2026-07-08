@@ -4,7 +4,7 @@ import FicheEditor from './FicheEditor';
 
 export const revalidate = 0;
 
-export default async function FicheDetailPage({ params }: { params: { productId: string } }) {
+export default async function FicheDetailPage({ params, searchParams }: { params: { productId: string }; searchParams: { back?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/login');
@@ -93,6 +93,7 @@ export default async function FicheDetailPage({ params }: { params: { productId:
       assemblySteps={assemblySteps}
       variantQuantities={(variantQuantities ?? []) as any}
       recipeOnly={isChef}
+      backUrl={searchParams.back ?? (isChef ? '/station/me' : '/admin/fiches')}
     />
   );
 }
