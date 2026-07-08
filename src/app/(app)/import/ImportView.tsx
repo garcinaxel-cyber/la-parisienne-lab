@@ -68,6 +68,11 @@ export default function ImportView() {
   const [syncing, setSyncing] = useState(false);
   // Odoo status per order ref (draft/sent/sale, draft/submitted/approved) — from the sync
   const [odooStates, setOdooStates] = useState<Record<string, string>>({});
+  // Orders modified/cancelled in Odoo AFTER being imported — detected by the sync
+  type OdooChange = { order_ref: string; cancelled: boolean; items: { sku: string; name: string; old_qty: number; new_qty: number }[] };
+  const [odooChanges, setOdooChanges] = useState<OdooChange[]>([]);
+  const [applyingChanges, setApplyingChanges] = useState(false);
+  const [changesApplied, setChangesApplied] = useState<string[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -167,6 +172,8 @@ export default function ImportView() {
       const lines: any[] = j.lines ?? [];
       const stats = j.stats ?? {};
       setOdooStates(stats.order_states ?? {});
+      setOdooChanges(j.changes ?? []);
+      setChangesApplied(null);
       const unconfirmed = Object.values(stats.order_states ?? {}).filter(s => s !== 'sale' && s !== 'approved').length;
       const warnings: string[] = [];
       if (unconfirmed > 0) {
@@ -185,9 +192,11 @@ export default function ImportView() {
       if (sales.length) parseRaw.push({ sourceType: 'sales_order', filename: `Odoo Sales (${stamp})`, rawLines: sales, skipped: [], warnings });
       if (repl.length) parseRaw.push({ sourceType: 'replenishment', filename: `Odoo Replenishment (${stamp})`, rawLines: repl, skipped: [], warnings: sales.length ? [] : warnings });
       if (!parseRaw.length) {
-        setError(lang === 'vi'
-          ? `Không có đơn mới nào từ Odoo (${stats.sales_orders ?? 0} đơn bán, ${stats.replenishments ?? 0} bổ sung đã kiểm tra).`
-          : `No new orders from Odoo (checked ${stats.sales_orders ?? 0} sales orders, ${stats.replenishments ?? 0} replenishments).`);
+        if (!(j.changes ?? []).length) {
+          setError(lang === 'vi'
+            ? `Không có đơn mới nào từ Odoo (${stats.sales_orders ?? 0} đơn bán, ${stats.replenishments ?? 0} bổ sung đã kiểm tra).`
+            : `No new orders from Odoo (checked ${stats.sales_orders ?? 0} sales orders, ${stats.replenishments ?? 0} replenishments).`);
+        }
         return;
       }
       await processRaw(parseRaw);
@@ -197,6 +206,27 @@ export default function ImportView() {
       setSyncing(false);
     }
   }, [processRaw, lang]);
+
+  /** Apply Odoo modifications (qty changes / cancellations) to already-imported cards */
+  const applyOdooChanges = async () => {
+    if (!odooChanges.length) return;
+    setApplyingChanges(true);
+    try {
+      const res = await fetch('/api/odoo/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changes: odooChanges }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? 'Failed to apply changes');
+      setChangesApplied(j.applied ?? []);
+      setOdooChanges([]);
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to apply changes');
+    } finally {
+      setApplyingChanges(false);
+    }
+  };
 
   /** Assign a team manually to all lines of a SKU (fiche has no team or several) */
   const assignTeam = (sku: string, team: string) => {
@@ -477,6 +507,53 @@ export default function ImportView() {
           </label>
         </div>
       </div>
+
+      {/* Orders modified in Odoo after import — proposed updates */}
+      {odooChanges.length > 0 && (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#FCA5A5' }}>
+          <div className="flex items-center gap-2 px-4 py-3 text-sm font-medium" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C' }}>
+            <AlertCircle size={16} />
+            <span className="flex-1">
+              {odooChanges.length} {lang === 'vi' ? 'đơn đã thay đổi trong Odoo sau khi nhập' : 'orders changed in Odoo after import'}
+            </span>
+            <button onClick={applyOdooChanges} disabled={applyingChanges}
+              className="text-xs font-bold px-4 py-2 rounded-xl text-white disabled:opacity-60"
+              style={{ backgroundColor: '#B91C1C' }}>
+              {applyingChanges
+                ? (lang === 'vi' ? 'Đang cập nhật…' : 'Updating…')
+                : (lang === 'vi' ? 'Cập nhật sản xuất' : 'Update production')}
+            </button>
+          </div>
+          <div className="divide-y bg-white" style={{ borderColor: '#FEE2E2' }}>
+            {odooChanges.map(ch => (
+              <div key={ch.order_ref} className="px-4 py-2.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-xs font-semibold text-navy">{ch.order_ref}</span>
+                  {ch.cancelled && (
+                    <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEE2E2', color: '#B91C1C' }}>
+                      {lang === 'vi' ? 'ĐÃ HỦY' : 'CANCELLED'}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {ch.items.map(it => (
+                    <div key={it.sku} className="flex items-center gap-2 text-xs text-ink-light">
+                      <code className="font-mono text-[10px]">{it.sku}</code>
+                      <span className="flex-1 truncate">{it.name}</span>
+                      <span>×{it.old_qty} → <span className={`font-bold ${it.new_qty > it.old_qty ? 'text-green-600' : 'text-red-600'}`}>×{it.new_qty}</span></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {changesApplied && (
+        <div className="p-3 rounded-xl bg-green-50 text-green-700 text-sm">
+          ✓ {changesApplied.length} {lang === 'vi' ? 'dòng đã được cập nhật theo Odoo' : 'lines updated from Odoo'}
+        </div>
+      )}
 
       {/* Upload zone */}
       {step === 'upload' && (
