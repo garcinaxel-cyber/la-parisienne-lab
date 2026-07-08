@@ -20,5 +20,14 @@ export default async function DashboardPage() {
       .limit(500),
   ]);
 
-  return <DashboardView stats={stats} imports={imports ?? []} assignments={recentAssignments ?? []} today={today} />;
+  // Per-order progress for today (assistants' view of the same assignments)
+  const todayImportIds = Array.from(new Set((recentAssignments ?? []).map((a: any) => a.import_id)));
+  const { data: todayOrderLines } = todayImportIds.length
+    ? await supabase.from('lab_order_lines')
+        .select('import_id, team, variant_label, shop_name, qty, order_ref, product_name_vi, delivery_time')
+        .in('import_id', todayImportIds)
+        .limit(1000)
+    : { data: [] as any[] };
+
+  return <DashboardView stats={stats} imports={imports ?? []} assignments={recentAssignments ?? []} orderLines={todayOrderLines ?? []} today={today} />;
 }

@@ -27,18 +27,37 @@ function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix
   return <>{display}{suffix}</>;
 }
 
-export default function DashboardView({ stats, imports, assignments, today }:
-  { stats: Stats | null; imports: any[]; assignments: any[]; today: string }) {
+export default function DashboardView({ stats, imports, assignments, orderLines = [], today }:
+  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; today: string }) {
   const { t, lang } = useI18n();
   const s = stats ?? { imports_today: 0, published_today: 0, total_assignments: 0, done_assignments: 0, blocked: 0 };
   const pct = s.total_assignments ? Math.round(s.done_assignments / s.total_assignments * 100) : 0;
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [viewMode, setViewMode] = useState<'teams' | 'orders'>('teams');
 
   const byTeam = TEAMS.map(team => ({
     team,
     items: assignments.filter((a: any) => a.team === team),
   })).filter(g => g.items.length > 0);
+
+  // Per-order progress: each order line inherits the status of its production card
+  const asgStatus: Record<string, string> = {};
+  for (const a of assignments) asgStatus[`${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.status;
+  const orderMap = new Map<string, { shops: string[]; time: string | null; total: number; ready: number; units: number }>();
+  for (const ol of orderLines) {
+    if (!ol.order_ref || !ol.qty) continue;
+    let o = orderMap.get(ol.order_ref);
+    if (!o) { o = { shops: [], time: null, total: 0, ready: 0, units: 0 }; orderMap.set(ol.order_ref, o); }
+    if (ol.shop_name && !o.shops.includes(ol.shop_name)) o.shops.push(ol.shop_name);
+    if (ol.delivery_time && (!o.time || ol.delivery_time < o.time)) o.time = ol.delivery_time;
+    const st = asgStatus[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`];
+    o.total += 1; o.units += ol.qty;
+    if (st === 'done' || st === 'skip') o.ready += 1;
+  }
+  const orderRows = Array.from(orderMap.entries())
+    .map(([ref, o]) => ({ ref, ...o }))
+    .sort((a, b) => ((a.time ?? '99') < (b.time ?? '99') ? -1 : 1));
 
   return (
     <div className="space-y-6">
@@ -82,8 +101,45 @@ export default function DashboardView({ stats, imports, assignments, today }:
         </div>
       )}
 
+      {/* View toggle: by team (chefs' angle) / by order (assistants' angle) */}
+      {(byTeam.length > 0 || orderRows.length > 0) && (
+        <div className="flex gap-2">
+          {([['teams', lang === 'vi' ? 'Theo đội' : 'By team'], ['orders', lang === 'vi' ? 'Theo đơn hàng' : 'By order']] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setViewMode(key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                viewMode === key ? 'bg-navy text-white' : 'bg-white border border-border-soft text-ink-light hover:text-navy'
+              }`}>{label}</button>
+          ))}
+        </div>
+      )}
+
+      {/* By order — one row per client order, sorted by delivery time */}
+      {viewMode === 'orders' && orderRows.length > 0 && (
+        <div className="card overflow-hidden divide-y divide-border-soft">
+          {orderRows.map(o => {
+            const opct = o.total ? Math.round(o.ready / o.total * 100) : 0;
+            return (
+              <div key={o.ref} className="flex items-center gap-3 px-4 py-2.5">
+                <span className="font-mono text-xs font-bold text-navy shrink-0">{o.ref}</span>
+                <span className="text-xs text-ink-light truncate flex-1">
+                  {o.shops.join(', ')}
+                  {o.time && <span className="ml-2 inline-flex items-center gap-1"><Clock size={11} />{o.time}</span>}
+                </span>
+                <span className="text-xs text-ink-light shrink-0">×{o.units}</span>
+                <span className={`text-xs shrink-0 ${opct === 100 ? 'text-green-600 font-semibold' : 'text-ink-light'}`}>
+                  {o.ready}/{o.total}
+                </span>
+                <div className="w-20 h-1.5 rounded-full bg-border-soft overflow-hidden shrink-0">
+                  <div className="h-full rounded-full transition-all" style={{ width: `${opct}%`, backgroundColor: opct === 100 ? '#16A34A' : '#B45309' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* By team */}
-      {byTeam.length > 0 ? (
+      {viewMode === 'teams' && (byTeam.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {byTeam.map(({ team, items }) => {
             const meta = TEAM_LABELS[team as Team];
@@ -173,7 +229,7 @@ export default function DashboardView({ stats, imports, assignments, today }:
           <p className="text-ink-light">{lang === 'vi' ? 'Chưa có đơn nào được phát hành hôm nay' : 'No orders published yet today'}</p>
           <Link href="/import" className="btn-primary mt-4 mx-auto">{t('import')}</Link>
         </div>
-      )}
+      ))}
 
       {/* Upcoming imports */}
       {imports.length > 0 && (

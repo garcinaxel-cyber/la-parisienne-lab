@@ -310,6 +310,8 @@ export default function ImportView() {
       skipped: allSkipped,
       excluded: excludedLines.map(l => ({ sku: l.product_sku, name: l.product_name_vi, qty: l.total_qty })),
       files: parsedFiles.map(pf => pf.filename),
+      // Odoo status per order ref (filled when the import came from the Odoo sync)
+      order_states: Object.keys(odooStates).length > 0 ? odooStates : undefined,
     };
 
     // Group assignable lines by delivery_date — one lab_imports record per date
