@@ -508,22 +508,24 @@ export default function StationView({
         <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold transition-all active:scale-95"
+              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 text-[10px] sm:text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
                 : { color: 'rgba(255,255,255,0.55)', borderBottom: '2px solid transparent' }
               }>
               {tab.icon}
-              {lang === 'vi' ? tab.labelVi : tab.labelEn}
-              {tab.count > 0 && (
-                <span className="rounded-full px-1.5 py-0.5 text-[10px] font-black"
-                  style={activeTab === tab.id
-                    ? { backgroundColor: '#C9A84C', color: '#1A4731' }
-                    : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
-                  }>
-                  {tab.count}
-                </span>
-              )}
+              <span className="flex items-center gap-1 truncate max-w-full">
+                <span className="truncate">{lang === 'vi' ? tab.labelVi : tab.labelEn}</span>
+                {tab.count > 0 && (
+                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0"
+                    style={activeTab === tab.id
+                      ? { backgroundColor: '#C9A84C', color: '#1A4731' }
+                      : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
+                    }>
+                    {tab.count}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -567,7 +569,7 @@ export default function StationView({
             return (
               <>
                 {/* Category quick-jump chips */}
-                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-0 z-10 py-2"
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-[102px] sm:top-[118px] z-10 py-2"
                   style={{ backgroundColor: '#FDF8E7' }}>
                   {entries.map(([cat, items]) => {
                     const qty = items.reduce((s, a) => s + a.qty_to_produce, 0);
@@ -939,14 +941,17 @@ export default function StationView({
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
-        <div className="fixed bottom-6 inset-x-0 flex justify-center z-10 pointer-events-none">
+        <div className="fixed z-10 pointer-events-none bottom-4 right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+          {/* Round FAB bottom-right on phones (never covers the last card's buttons), labelled pill on bigger screens */}
           <button
             onClick={() => setExtraModal(true)}
-            className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all"
+            className="pointer-events-auto flex items-center justify-center gap-2 rounded-full font-bold text-sm shadow-xl active:scale-95 transition-all w-14 h-14 sm:w-auto sm:h-auto sm:px-5 sm:py-3"
             style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}
+            aria-label={lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
           >
-            <Plus size={16} />
-            {lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}
+            <Plus size={22} className="sm:hidden" />
+            <span className="hidden sm:flex items-center gap-2"><Plus size={16} />{lang === 'vi' ? 'Sản xuất thêm ngoài đơn' : 'Add extra production'}</span>
           </button>
         </div>
       )}
@@ -1328,6 +1333,8 @@ function ProductionCard({
 }) {
   const st = STATUS_META[a.status];
   const isUpdating = updating === a.id;
+  // Breakdown collapsed by default on phones (open on sm+ via CSS)
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const canAdvance = !readOnly && ['pending', 'in_progress'].includes(a.status);
   const canMarkStock = !readOnly && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
   const canBlock = !readOnly && ['pending', 'in_progress'].includes(a.status);
@@ -1351,13 +1358,13 @@ function ProductionCard({
         <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
       )}
 
-      <div className="flex items-start p-4 gap-3">
+      <div className="flex flex-wrap items-start p-3 sm:p-4 gap-3">
         {/* Image */}
         {a.image_url ? (
-          <img src={a.image_url} alt="" className="w-16 h-16 rounded-xl object-cover shrink-0"
+          <img src={a.image_url} alt="" className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl object-cover shrink-0"
             style={{ border: '1px solid #E0D49A' }} loading="lazy" />
         ) : (
-          <div className="w-16 h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
             style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
         )}
 
@@ -1365,12 +1372,12 @@ function ProductionCard({
         <div className="flex-1 min-w-0">
           {a.fiche_id ? (
             <Link href={`/station/fiche/${a.fiche_id}?back=${backTo}`}
-              className="font-bold text-base leading-tight block hover:underline"
+              className="font-bold text-sm sm:text-base leading-tight block hover:underline"
               style={{ color: '#1A4731' }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </Link>
           ) : (
-            <div className="font-bold text-base leading-tight" style={{ color: '#1A4731' }}>
+            <div className="font-bold text-sm sm:text-base leading-tight" style={{ color: '#1A4731' }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </div>
           )}
@@ -1405,7 +1412,7 @@ function ProductionCard({
 
           {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-2xl font-black" style={{ color: meta.color }}>x{a.qty_to_produce}</span>
+            <span className="text-xl sm:text-2xl font-black" style={{ color: meta.color }}>x{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
@@ -1422,18 +1429,18 @@ function ProductionCard({
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-col gap-2 shrink-0">
+        {/* Action buttons — horizontal row below content on phones, column on the right from sm up */}
+        <div className="flex w-full sm:w-auto sm:flex-col gap-2 shrink-0 order-last sm:order-none">
           {canAdvance && (
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
-              className="px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
               style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>
               {isUpdating ? '…' : actionLabel[a.status] ?? ''}
             </button>
           )}
           {canMarkStock && (
             <button onClick={() => onMarkInStock(a)} disabled={isUpdating}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
+              className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
               style={{ border: '1px solid #C4B5FD', color: '#6D28D9', backgroundColor: '#F5F3FF', opacity: isUpdating ? 0.6 : 1 }}>
               <Package size={11} />
               {lang === 'vi' ? 'Có sẵn' : 'In stock'}
@@ -1441,21 +1448,21 @@ function ProductionCard({
           )}
           {a.status === 'in_progress' && !readOnly && (
             <button onClick={() => onPartial(a)}
-              className="px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
+              className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
               style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
               {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
             </button>
           )}
           {canBlock && (
             <button onClick={() => onBlocked(a)} disabled={isUpdating}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
+              className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
               style={{ border: '1px solid #FCA5A5', color: '#DC2626', backgroundColor: '#FEF2F2', opacity: isUpdating ? 0.6 : 1 }}>
               {lang === 'vi' ? 'Chặn' : 'Block'}
             </button>
           )}
           {a.status === 'blocked' && !readOnly && (
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
+              className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
               style={{ border: '1px solid #A7D4B8', color: '#2D6A4F', backgroundColor: '#F0F9F4', opacity: isUpdating ? 0.6 : 1 }}>
               {lang === 'vi' ? 'Mở lại' : 'Unblock'}
             </button>
@@ -1463,14 +1470,25 @@ function ProductionCard({
         </div>
       </div>
 
-      {/* Breakdown — always visible */}
+      {/* Breakdown — tap to expand on phones, always visible from sm up */}
       {breakdown.length > 0 && (
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
-          <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5"
+          <button
+            onClick={() => setShowBreakdown(v => !v)}
+            className="w-full px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 sm:pointer-events-none"
             style={{ color: '#2D6A4F', backgroundColor: '#F0F9F4' }}>
             <Store size={10} />
-            {lang === 'vi' ? 'Chi tiết theo khách hàng' : 'Per-client breakdown'}
-          </div>
+            <span>{lang === 'vi' ? 'Khách hàng' : 'Clients'} · {breakdown.length}</span>
+            {/* Collapsed summary: earliest delivery time hints the deadline without opening */}
+            {!showBreakdown && breakdown.some(b => b.delivery_time) && (
+              <span className="sm:hidden normal-case font-bold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
+                ⏰ {breakdown.map(b => b.delivery_time).filter(Boolean).sort()[0]?.slice(0, 5)}
+              </span>
+            )}
+            <ChevronRight size={11} className={`ml-auto sm:hidden transition-transform ${showBreakdown ? 'rotate-90' : ''}`} />
+          </button>
+          <div className={`${showBreakdown ? '' : 'hidden'} sm:block`}>
           {breakdown.map((b, i) => (
             <div key={i} className="flex items-center justify-between px-4 py-2 text-sm"
               style={{
@@ -1489,6 +1507,7 @@ function ProductionCard({
               <span className="font-black" style={{ color: '#1A4731' }}>x{b.qty}</span>
             </div>
           ))}
+          </div>
         </div>
       )}
 
