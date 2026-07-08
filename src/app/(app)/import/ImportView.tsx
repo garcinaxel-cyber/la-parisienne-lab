@@ -66,6 +66,8 @@ export default function ImportView() {
   const [reportSection, setReportSection] = useState<'orders' | 'products' | null>(null);
   const [creatingFicheSku, setCreatingFicheSku] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // Odoo status per order ref (draft/sent/sale, draft/submitted/approved) — from the sync
+  const [odooStates, setOdooStates] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -164,7 +166,12 @@ export default function ImportView() {
       if (!res.ok) throw new Error(j.error ?? `Odoo sync failed (${res.status})`);
       const lines: any[] = j.lines ?? [];
       const stats = j.stats ?? {};
+      setOdooStates(stats.order_states ?? {});
+      const unconfirmed = Object.values(stats.order_states ?? {}).filter(s => s !== 'sale' && s !== 'approved').length;
       const warnings: string[] = [];
+      if (unconfirmed > 0) {
+        warnings.push(`⚠ ${unconfirmed} ${lang === 'vi' ? 'đơn chưa được xác nhận trong Odoo (nháp/đã gửi) — kiểm tra trước khi phát hành' : 'orders not yet confirmed in Odoo (draft/submitted) — review before publishing'}`);
+      }
       if ((stats.already_imported ?? []).length > 0) {
         warnings.push(`${stats.already_imported.length} ${lang === 'vi' ? 'đơn đã nhập trước đó — bỏ qua' : 'orders already imported — skipped'}: ${stats.already_imported.slice(0, 8).join(', ')}${stats.already_imported.length > 8 ? '…' : ''}`);
       }
@@ -664,17 +671,32 @@ export default function ImportView() {
                 {reportSection === 'orders' && (
                   <div className="bg-white max-h-72 overflow-y-auto">
                     <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50 sticky top-0">
-                      <div className="col-span-6">{lang === 'vi' ? 'Đơn hàng' : 'Order'}</div>
+                      <div className="col-span-5">{lang === 'vi' ? 'Đơn hàng' : 'Order'}</div><div className="col-span-2">{lang === 'vi' ? 'Trạng thái' : 'Status'}</div>
                       <div className="col-span-3 text-center">{lang === 'vi' ? 'Dòng' : 'Lines'}</div>
                       <div className="col-span-3 text-center">{lang === 'vi' ? 'SL' : 'Qty'}</div>
                     </div>
-                    {orderRows.map(r => (
-                      <div key={r.ref} className="grid grid-cols-12 px-4 py-2 text-sm border-t border-border-soft">
-                        <div className="col-span-6 font-mono text-xs text-navy truncate">{r.ref}</div>
-                        <div className="col-span-3 text-center text-ink-light">{r.lines}</div>
-                        <div className="col-span-3 text-center font-bold text-navy">×{r.qty}</div>
-                      </div>
-                    ))}
+                    {orderRows.map(r => {
+                      const st = odooStates[r.ref];
+                      const confirmed = st === 'sale' || st === 'approved';
+                      return (
+                        <div key={r.ref} className="grid grid-cols-12 px-4 py-2 text-sm border-t border-border-soft items-center">
+                          <div className="col-span-5 font-mono text-xs text-navy truncate">{r.ref}</div>
+                          <div className="col-span-2">
+                            {st && (
+                              <span className={`text-[10px] font-semibold rounded-full px-2 py-0.5 ${confirmed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {confirmed
+                                  ? (lang === 'vi' ? 'Đã xác nhận' : 'Confirmed')
+                                  : st === 'submitted' || st === 'sent'
+                                    ? (lang === 'vi' ? 'Đã gửi' : 'Submitted')
+                                    : (lang === 'vi' ? 'Nháp' : 'Draft')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-2 text-center text-ink-light">{r.lines}</div>
+                          <div className="col-span-3 text-center font-bold text-navy">×{r.qty}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 

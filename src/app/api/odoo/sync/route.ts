@@ -27,10 +27,11 @@ export async function GET() {
   const threshold = labTodayUtcThreshold();
 
   try {
-    // ── 1. Confirmed sales orders (delivery today or later) ──
+    // ── 1. Sales orders — everything entered except cancelled (draft quotations included:
+    //     the lab produces from what is ENTERED, confirmation in Odoo comes later) ──
     const orders: any[] = await odooExecute('sale.order', 'search_read',
-      [[['state', '=', 'sale'], ['commitment_date', '>=', threshold]]],
-      { fields: ['name', 'partner_id', 'commitment_date'], limit: 500 });
+      [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]],
+      { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: 500 });
 
     const orderIds = orders.map(o => o.id);
     const soLines: any[] = orderIds.length
@@ -39,10 +40,10 @@ export async function GET() {
           { fields: ['order_id', 'product_id', 'product_uom_qty', 'name'], limit: 4000 })
       : [];
 
-    // ── 2. Approved replenishment requests (delivery today or later) ──
+    // ── 2. Replenishment requests — draft/submitted/approved (everything entered, not yet shipped) ──
     const repls: any[] = await odooExecute('stock.replenishment.request', 'search_read',
-      [[['state', '=', 'approved'], ['delivery_date', '>=', threshold]]],
-      { fields: ['name', 'warehouse_id', 'delivery_date'], limit: 200 });
+      [[['state', 'in', ['draft', 'submitted', 'approved']], ['delivery_date', '>=', threshold]]],
+      { fields: ['name', 'warehouse_id', 'delivery_date', 'state'], limit: 200 });
 
     const replIds = repls.map(r => r.id);
     const replLines: any[] = replIds.length
@@ -145,6 +146,12 @@ export async function GET() {
       });
     }
 
+    // Odoo status per order ref — shown in the control report so assistants
+    // can spot lines that are still unconfirmed quotations before publishing
+    const orderStates: Record<string, string> = {};
+    for (const o of orders) orderStates[o.name] = o.state;      // draft | sent | sale
+    for (const r of repls) orderStates[r.name] = r.state;       // draft | submitted | approved
+
     return NextResponse.json({
       lines,
       stats: {
@@ -152,6 +159,7 @@ export async function GET() {
         replenishments: repls.length,
         already_imported: Array.from(skippedRefs),
         multi_team_skus: Array.from(multiTeamSkus),
+        order_states: orderStates,
       },
       synced_at: new Date().toISOString(),
     });
