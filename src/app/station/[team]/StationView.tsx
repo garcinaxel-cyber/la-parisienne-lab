@@ -459,29 +459,29 @@ export default function StationView({
     <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
       {/* Top bar */}
       <header className="sticky top-0 z-20" style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
-              <FlaskConical size={18} className="text-white" />
+        <div className="max-w-3xl mx-auto px-2.5 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+            <div className="hidden min-[380px]:flex w-8 h-8 sm:w-9 sm:h-9 rounded-xl items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
+              <FlaskConical size={17} className="text-white" />
             </div>
-            <div className="min-w-0 text-center">
-              <div className="text-white font-bold text-sm leading-tight truncate">
+            <div className="min-w-0 text-left">
+              <div className="text-white font-bold text-[13px] sm:text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
-              <div className="text-[11px] truncate">
-                <span className="font-bold text-yellow-300">HÔM NAY · </span>
-                <span className="text-white/70">{formatDate(today)}</span>
+              <div className="text-[10px] sm:text-[11px] truncate">
+                <span className="font-bold text-yellow-300">{lang === 'vi' ? 'HÔM NAY' : 'TODAY'}</span>
+                <span className="text-white/70 hidden min-[400px]:inline"> · {formatDate(today)}</span>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <div className="rounded-full px-2 sm:px-3 py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
               {doneQty}/{totalQty}
             </div>
             <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
               {(['vi', 'en'] as const).map(l => (
                 <button key={l} onClick={() => setLang(l)}
-                  className="px-2 py-1 rounded text-xs font-bold transition-all active:scale-95"
+                  className="px-1.5 sm:px-2 py-1 rounded text-[11px] sm:text-xs font-bold transition-all active:scale-95"
                   style={lang === l
                     ? { backgroundColor: '#FFF4CC', color: '#1A4731' }
                     : { color: 'rgba(255,255,255,0.7)' }
@@ -489,14 +489,14 @@ export default function StationView({
               ))}
             </div>
             <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
-              <BookOpen size={15} />
+              <BookOpen size={14} />
             </Link>
             <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
-              className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
-              <LogOut size={15} />
+              <LogOut size={14} />
             </button>
           </div>
         </div>

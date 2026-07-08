@@ -95,27 +95,42 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain" />
-          <span className="font-serif font-bold">La Parisienne <span className="text-gold text-xs">MANUFACTURING</span></span>
+      {/* Mobile top bar — labels under icons, active state, horizontal scroll if needed */}
+      <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white">
+        <div className="px-3 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain shrink-0" />
+            <span className="font-serif font-bold text-sm truncate">La Parisienne</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <div className="flex gap-0.5 rounded-lg p-0.5 bg-white/10">
+              {(['vi','en'] as const).map(l => (
+                <button key={l} onClick={() => setLang(l)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${lang === l ? 'bg-gold text-navy' : 'text-white/60'}`}>
+                  {l.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button onClick={logout} className="p-1.5 rounded-lg hover:bg-white/10" aria-label={t('logout')}>
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
-        <div className="flex gap-1">
-          {NAV.map(({ href, icon: Icon }) => (
-            <Link key={href} href={href}
-              className={`p-2 rounded-lg transition-colors ${pathname === href ? 'bg-white/20' : 'hover:bg-white/10'}`}>
-              <Icon size={18} />
-            </Link>
-          ))}
-          {isAdmin && ADMIN_NAV.map(({ href, icon: Icon }) => (
-            <Link key={href} href={href} className="p-2 rounded-lg hover:bg-white/10">
-              <Icon size={18} />
-            </Link>
-          ))}
-        </div>
+        <nav className="flex overflow-x-auto border-t border-white/10">
+          {[...NAV, ...(isAdmin ? ADMIN_NAV : [])].map(({ href, icon: Icon, key }) => {
+            const active = pathname === href || pathname.startsWith(href + '/');
+            return (
+              <Link key={href} href={href}
+                className={`flex-1 min-w-[64px] flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
+                  active ? 'text-gold border-b-2 border-gold' : 'text-white/60 border-b-2 border-transparent'
+                }`}>
+                <Icon size={17} />
+                <span className="truncate max-w-[72px]">{t(key)}</span>
+              </Link>
+            );
+          })}
+        </nav>
       </header>
-      <div className="lg:hidden h-14" /> {/* Spacer */}
     </>
   );
 }
