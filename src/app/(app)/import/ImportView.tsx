@@ -671,8 +671,9 @@ export default function ImportView() {
                 {reportSection === 'orders' && (
                   <div className="bg-white max-h-72 overflow-y-auto">
                     <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50 sticky top-0">
-                      <div className="col-span-5">{lang === 'vi' ? 'Đơn hàng' : 'Order'}</div><div className="col-span-2">{lang === 'vi' ? 'Trạng thái' : 'Status'}</div>
-                      <div className="col-span-3 text-center">{lang === 'vi' ? 'Dòng' : 'Lines'}</div>
+                      <div className="col-span-5">{lang === 'vi' ? 'Đơn hàng' : 'Order'}</div>
+                      <div className="col-span-2">{lang === 'vi' ? 'Trạng thái' : 'Status'}</div>
+                      <div className="col-span-2 text-center">{lang === 'vi' ? 'Dòng' : 'Lines'}</div>
                       <div className="col-span-3 text-center">{lang === 'vi' ? 'SL' : 'Qty'}</div>
                     </div>
                     {orderRows.map(r => {
