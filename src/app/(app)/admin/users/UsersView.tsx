@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserCog, Save, AlertCircle, UserPlus, X } from 'lucide-react';
+import { UserCog, Save, AlertCircle, UserPlus, X, KeyRound } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
-import { inviteLabUser } from './actions';
+import { inviteLabUser, generateResetLink } from './actions';
 
 const LAB_ROLES = ['lab_manager', 'assistant', 'chef', 'worker'] as const;
 const EDITABLE_ROLES = LAB_ROLES; // admins are shown read-only
@@ -23,6 +23,24 @@ export default function UsersView({ users }: { users: UserRow[] }) {
   const [editing, setEditing] = useState<Record<string, { role: string; team: string | null }>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [linkFor, setLinkFor] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState<string | null>(null);
+
+  // Generate a password-reset link (no email sent — bypasses the rate limit)
+  // and copy it so the admin can send it via Zalo.
+  async function copyResetLink(userId: string) {
+    setLinkFor(userId); setLinkCopied(null); setError(null);
+    const { link, error: err } = await generateResetLink(userId);
+    setLinkFor(null);
+    if (err || !link) { setError(err ?? 'Failed'); return; }
+    try {
+      await navigator.clipboard.writeText(link);
+      setLinkCopied(userId);
+      setTimeout(() => setLinkCopied(null), 3000);
+    } catch {
+      prompt(lang === 'vi' ? 'Sao chép liên kết:' : 'Copy this link:', link);
+    }
+  }
 
   // Invite modal state
   const [showInvite, setShowInvite] = useState(false);
@@ -308,8 +326,22 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                   )}
                 </div>
 
-                {/* Save button */}
-                <div className="col-span-3 md:col-span-2 flex justify-end">
+                {/* Actions: reset link + save */}
+                <div className="col-span-3 md:col-span-2 flex justify-end items-center gap-1.5">
+                  {!isAdmin && (
+                    <button
+                      onClick={() => copyResetLink(user.id)}
+                      disabled={linkFor === user.id}
+                      title={lang === 'vi' ? 'Sao chép liên kết đặt lại mật khẩu (gửi qua Zalo)' : 'Copy password-reset link (send via Zalo)'}
+                      className="p-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors"
+                      style={linkCopied === user.id
+                        ? { borderColor: '#16A34A', color: '#16A34A', backgroundColor: '#F0FDF4' }
+                        : { borderColor: '#E0D49A', color: '#92600A' }}
+                    >
+                      <KeyRound size={12} />
+                      {linkFor === user.id ? '…' : linkCopied === user.id ? '✓' : null}
+                    </button>
+                  )}
                   {isDirty && (
                     <button
                       onClick={() => save(user)}
