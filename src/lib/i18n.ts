@@ -6,7 +6,7 @@ export type Lang = 'en' | 'vi';
 const T = {
   en: {
     // Nav
-    dashboard: 'Dashboard', import: 'Import Orders', orders: 'Production Orders',
+    dashboard: 'Dashboard', import: 'Import Orders', orders: 'Production Orders', analytics: 'Analytics',
     admin: 'Admin', users: 'Users', logout: 'Log out', labProducts: 'Lab Products', qr_codes: 'QR Codes', settings: 'Settings',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hung',
@@ -52,7 +52,7 @@ const T = {
   },
   vi: {
     // Nav
-    dashboard: 'Tổng quan', import: 'Nhập đơn hàng', orders: 'Đơn sản xuất',
+    dashboard: 'Tổng quan', import: 'Nhập đơn hàng', orders: 'Đơn sản xuất', analytics: 'Phân tích',
     admin: 'Quản trị', users: 'Người dùng', logout: 'Đăng xuất', labProducts: 'Sản phẩm Lab', qr_codes: 'Mã QR', settings: 'Cài đặt',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hưng',

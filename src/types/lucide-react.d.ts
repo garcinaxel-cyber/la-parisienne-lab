@@ -12,6 +12,7 @@ declare module 'lucide-react' {
   export const ChevronRight: LucideIcon;
   export const ChevronUp: LucideIcon;
   export const ClipboardList: LucideIcon;
+  export const TrendingUp: LucideIcon;
   export const Clock: LucideIcon;
   export const FileSpreadsheet: LucideIcon;
   export const FilePlus: LucideIcon;
