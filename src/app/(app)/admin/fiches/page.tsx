@@ -1,7 +1,10 @@
 import { createClient } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { BookOpen, Plus, Tag } from 'lucide-react';
+import { BookOpen, Plus, Tag, Users } from 'lucide-react';
+import { TEAM_LABELS, type Team } from '@/lib/types';
+
+const hasTeam = (f: any) => Array.isArray(f.teams) && f.teams.length > 0;
 
 export const revalidate = 0;
 
@@ -18,7 +21,7 @@ async function createFiche() {
   if (data?.id) redirect(`/admin/fiches/${data.id}`);
 }
 
-export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string } }) {
+export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string; filter?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/login');
@@ -42,12 +45,15 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
 
   const allFiches = fiches ?? [];
   const selectedCat = searchParams?.cat ?? '';
+  const noTeamFilter = searchParams?.filter === 'no-team';
+  const noTeamCount = allFiches.filter((f: any) => !hasTeam(f)).length;
 
   // All unique categories for filter chips
   const allCats = Array.from(new Set(allFiches.map((f: any) => f.category ?? 'Khác'))).sort() as string[];
 
   // Filter then group
-  const filtered = selectedCat ? allFiches.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : allFiches;
+  let filtered = selectedCat ? allFiches.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : allFiches;
+  if (noTeamFilter) filtered = filtered.filter((f: any) => !hasTeam(f));
   const catGroups = new Map<string, typeof allFiches>();
   for (const f of filtered) {
     const cat = (f as any).category ?? 'Khác';
@@ -71,8 +77,21 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
         </form>
       </div>
 
+      {/* "No team assigned" filter — surfaces fiches that won't dispatch to any station */}
+      {noTeamCount > 0 && (
+        <div className="pb-2">
+          <Link href={noTeamFilter ? '/admin/fiches' : '/admin/fiches?filter=no-team'}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${
+              noTeamFilter ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400'
+            }`}>
+            <Users size={12} />
+            {noTeamFilter ? 'Đang lọc: chưa gán đội · Filtering: no team' : `${noTeamCount} chưa gán đội · without a team`}
+          </Link>
+        </div>
+      )}
+
       {/* Category filter chips */}
-      {allCats.length > 1 && (
+      {allCats.length > 1 && !noTeamFilter && (
         <div className="flex gap-2 flex-wrap pb-2">
           <Link href="/admin/fiches"
             className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!selectedCat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
@@ -113,9 +132,10 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
 }
 
 function FicheCard({ fiche, steps }: {
-  fiche: { id: string; name_vi: string; name_en?: string | null; image_url?: string | null; b2c_sku_ref?: string | null };
+  fiche: { id: string; name_vi: string; name_en?: string | null; image_url?: string | null; b2c_sku_ref?: string | null; teams?: string[] | null };
   steps: number;
 }) {
+  const teams = Array.isArray(fiche.teams) ? fiche.teams : [];
   return (
     <Link
       href={`/admin/fiches/${fiche.id}`}
@@ -131,10 +151,27 @@ function FicheCard({ fiche, steps }: {
       <div className="flex-1 min-w-0">
         <div className="font-medium text-navy truncate">{fiche.name_vi}</div>
         {fiche.name_en && <div className="text-xs text-ink-light truncate">{fiche.name_en}</div>}
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
           {fiche.b2c_sku_ref && (
             <span className="inline-flex items-center gap-0.5 text-[10px] text-ink-light">
               <Tag size={9} />{fiche.b2c_sku_ref}
+            </span>
+          )}
+          {/* Teams — or a clear warning when none assigned */}
+          {teams.length > 0 ? (
+            teams.map(t => {
+              const meta = TEAM_LABELS[t as Team];
+              return (
+                <span key={t} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                  style={{ backgroundColor: meta?.bg ?? '#F1EFE8', color: meta?.color ?? '#5F5E5A' }}>
+                  {meta ? meta.en.replace('Team ', '') : t}
+                </span>
+              );
+            })
+          ) : (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+              style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+              <Users size={9} /> Chưa gán đội · No team
             </span>
           )}
           {steps === 0 ? (
