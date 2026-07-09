@@ -73,6 +73,8 @@ export default function ImportView() {
   const [odooChanges, setOdooChanges] = useState<OdooChange[]>([]);
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [changesApplied, setChangesApplied] = useState<string[] | null>(null);
+  // One-glance result of the last sync: X new / Y modified / Z up to date
+  const [syncSummary, setSyncSummary] = useState<{ newOrders: number; changed: number; upToDate: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // All merged + consolidated lines across all uploaded files
@@ -174,6 +176,13 @@ export default function ImportView() {
       setOdooStates(stats.order_states ?? {});
       setOdooChanges(j.changes ?? []);
       setChangesApplied(null);
+      const newRefs = new Set(lines.map((l: any) => l.order_ref).filter(Boolean)).size;
+      const changedCount = (j.changes ?? []).length;
+      setSyncSummary({
+        newOrders: newRefs,
+        changed: changedCount,
+        upToDate: Math.max(0, (stats.already_imported ?? []).length ? new Set(stats.already_imported).size - changedCount : 0),
+      });
       const unconfirmed = Object.values(stats.order_states ?? {}).filter(s => s !== 'sale' && s !== 'approved').length;
       const warnings: string[] = [];
       if (unconfirmed > 0) {
@@ -509,6 +518,25 @@ export default function ImportView() {
           </label>
         </div>
       </div>
+
+      {/* Sync result at a glance: new / modified / up-to-date */}
+      {syncSummary && (
+        <div className="card p-4 flex items-center gap-4 flex-wrap text-sm">
+          <span className="font-bold text-navy">{lang === 'vi' ? 'Kết quả đồng bộ:' : 'Sync result:'}</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#16A34A' }} />
+            <b>{syncSummary.newOrders}</b> {lang === 'vi' ? 'đơn mới' : 'new orders'}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#DC2626' }} />
+            <b>{syncSummary.changed}</b> {lang === 'vi' ? 'đơn bị sửa trong Odoo' : 'modified in Odoo'}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#9CA3AF' }} />
+            <b>{syncSummary.upToDate}</b> {lang === 'vi' ? 'đã cập nhật' : 'already up to date'}
+          </span>
+        </div>
+      )}
 
       {/* Orders modified in Odoo after import — proposed updates */}
       {odooChanges.length > 0 && (

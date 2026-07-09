@@ -73,6 +73,24 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         <Link href="/import" className="btn-primary">{t('import')}</Link>
       </div>
 
+      {/* Draft imports waiting for review — created by the hourly Odoo auto-sync */}
+      {imports.some((i: any) => i.status === 'draft') && (
+        <Link href={`/orders/${imports.find((i: any) => i.status === 'draft')?.delivery_date}`}
+          className="card p-4 flex items-center gap-3 border-2 transition-colors hover:bg-amber-50"
+          style={{ borderColor: '#F59E0B', backgroundColor: '#FFFBEB' }}>
+          <AlertCircle size={20} className="text-amber-600 shrink-0" />
+          <div className="flex-1">
+            <div className="font-bold text-sm text-amber-800">
+              {imports.filter((i: any) => i.status === 'draft').length} {lang === 'vi' ? 'bản nháp đang chờ duyệt' : 'draft imports waiting for review'}
+            </div>
+            <div className="text-xs text-amber-700">
+              {lang === 'vi' ? 'Đồng bộ tự động từ Odoo — kiểm tra và phát hành' : 'Auto-synced from Odoo — review and publish'}
+            </div>
+          </div>
+          <ChevronDown size={16} className="text-amber-600 -rotate-90" />
+        </Link>
+      )}
+
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
