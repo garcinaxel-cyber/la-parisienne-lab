@@ -6,6 +6,8 @@ const PUBLIC_PATHS = ['/login'];
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
+  // The cron endpoint has no session — it authenticates with its own CRON_SECRET
+  if (pathname.startsWith('/api/odoo/cron')) return NextResponse.next();
   // Stations are NOT public: an unauthenticated visitor (e.g. scanning a QR code)
   // is redirected to /login. Team tablets stay logged in with a worker account.
 
