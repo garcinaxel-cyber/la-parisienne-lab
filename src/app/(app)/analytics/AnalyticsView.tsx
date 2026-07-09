@@ -124,10 +124,16 @@ export default function AnalyticsView({ days, kpis, teams, topProducts, reasons,
           <h2 className="font-semibold text-sm text-navy mb-3">{lang === 'vi' ? 'Sản lượng theo ngày' : 'Volume per day'}</h2>
           {daily.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
             <>
-              <div className="flex items-end gap-1 h-24">
+              <div className="flex items-end gap-1 h-28">
                 {daily.slice(-14).map(d => (
-                  <div key={d.date} className="flex-1 rounded-t transition-all" title={`${d.date}: ${d.units}`}
-                    style={{ height: `${Math.max(4, d.units / maxUnits * 100)}%`, backgroundColor: d.completion === 100 ? '#16A34A' : '#0369a1' }} />
+                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+                    <span className="text-[10px] font-bold text-navy mb-0.5">{d.units.toLocaleString()}</span>
+                    <div className="w-full rounded-t transition-all"
+                      style={{ height: `${Math.max(6, d.units / maxUnits * 100)}%`, backgroundColor: d.completion === 100 ? '#16A34A' : '#0369a1' }} />
+                    <span className="text-[9px] text-ink-light mt-1 truncate w-full text-center">
+                      {new Date(d.date + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' })}
+                    </span>
+                  </div>
                 ))}
               </div>
               <div className="text-[10px] text-ink-light mt-1.5 text-center">

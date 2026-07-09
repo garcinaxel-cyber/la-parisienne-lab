@@ -12,7 +12,7 @@ const NAV = [
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
 ];
 const ADMIN_NAV = [
-  { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const },
+  { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },
   { href: '/admin/users',     icon: Users,    key: 'users'     as const },
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
@@ -60,7 +60,7 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
           {isAdmin && (
             <div className="pt-4 mt-4 border-t border-white/10">
               <p className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">Admin</p>
-              {ADMIN_NAV.map(({ href, icon: Icon, key }) => (
+              {ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map(({ href, icon: Icon, key }) => (
                 <Link key={href} href={href}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                     pathname.startsWith(href) ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
@@ -118,7 +118,7 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
           </div>
         </div>
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV, ...(isAdmin ? ADMIN_NAV : [])].map(({ href, icon: Icon, key }) => {
+          {[...NAV, ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map(({ href, icon: Icon, key }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link key={href} href={href}

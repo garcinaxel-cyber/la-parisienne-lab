@@ -9,7 +9,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) redirect('/dashboard');
+  if (profile?.role !== 'admin') redirect('/dashboard');
 
   const days = searchParams.range === '7' ? 7 : searchParams.range === '90' ? 90 : 30;
   const today = new Date();
