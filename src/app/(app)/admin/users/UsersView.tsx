@@ -46,6 +46,8 @@ export default function UsersView({ users }: { users: UserRow[] }) {
   const [showInvite, setShowInvite] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteForm, setInviteForm] = useState<{
     email: string; fullName: string;
@@ -66,12 +68,27 @@ export default function UsersView({ users }: { users: UserRow[] }) {
     setInviting(false);
     if (res.error) { setInviteError(res.error); return; }
     setInviteSuccess(true);
-    setTimeout(() => {
-      setShowInvite(false);
-      setInviteSuccess(false);
-      setInviteForm({ email: '', fullName: '', role: 'chef', team: '' });
-      router.refresh();
-    }, 1500);
+    setInviteLink(res.link ?? null);
+    router.refresh();
+  }
+
+  function resetInvite() {
+    setShowInvite(false);
+    setInviteSuccess(false);
+    setInviteLink(null);
+    setInviteLinkCopied(false);
+    setInviteForm({ email: '', fullName: '', role: 'chef', team: '' });
+  }
+
+  async function copyInviteLink() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setInviteLinkCopied(true);
+      setTimeout(() => setInviteLinkCopied(false), 3000);
+    } catch {
+      prompt(lang === 'vi' ? 'Sao chép liên kết:' : 'Copy this link:', inviteLink);
+    }
   }
 
   function getEdit(user: UserRow) {
@@ -154,26 +171,53 @@ export default function UsersView({ users }: { users: UserRow[] }) {
       {/* Invite modal */}
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-          onClick={() => setShowInvite(false)}>
+          onClick={resetInvite}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-bold text-lg text-navy">
                 {lang === 'vi' ? 'Mời thành viên mới' : 'Invite new member'}
               </h2>
-              <button onClick={() => setShowInvite(false)} className="text-ink-light hover:text-ink">
+              <button onClick={resetInvite} className="text-ink-light hover:text-ink">
                 <X size={18} />
               </button>
             </div>
 
             {inviteSuccess ? (
-              <div className="text-center py-6">
-                <div className="text-4xl mb-2">✅</div>
-                <p className="font-semibold text-navy">
-                  {lang === 'vi' ? 'Đã gửi email mời!' : 'Invitation sent!'}
-                </p>
-                <p className="text-sm text-ink-light mt-1">
-                  {inviteForm.email}
-                </p>
+              <div className="py-4 space-y-4">
+                <div className="text-center">
+                  <div className="text-4xl mb-2">✅</div>
+                  <p className="font-semibold text-navy">
+                    {lang === 'vi' ? 'Đã tạo tài khoản!' : 'Account created!'}
+                  </p>
+                  <p className="text-sm text-ink-light mt-1">{inviteForm.fullName} · {inviteForm.email}</p>
+                </div>
+                {inviteLink ? (
+                  <>
+                    <p className="text-sm text-center text-ink">
+                      {lang === 'vi'
+                        ? 'Gửi liên kết này cho họ qua Zalo để đặt mật khẩu:'
+                        : 'Send them this link via Zalo to set their password:'}
+                    </p>
+                    <div className="rounded-xl border px-3 py-2 text-[11px] font-mono break-all bg-cream/50" style={{ borderColor: '#E0D49A' }}>
+                      {inviteLink}
+                    </div>
+                    <button onClick={copyInviteLink}
+                      className="w-full py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2"
+                      style={{ backgroundColor: inviteLinkCopied ? '#16A34A' : '#1A4731' }}>
+                      <KeyRound size={15} />
+                      {inviteLinkCopied
+                        ? (lang === 'vi' ? '✓ Đã sao chép' : '✓ Copied')
+                        : (lang === 'vi' ? 'Sao chép liên kết' : 'Copy link')}
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-sm text-center text-amber-700">
+                    {lang === 'vi' ? 'Tài khoản đã tạo. Dùng nút 🔑 để lấy liên kết đặt mật khẩu.' : 'Account created. Use the 🔑 button to get the password link.'}
+                  </p>
+                )}
+                <button onClick={resetInvite} className="btn-secondary w-full">
+                  {lang === 'vi' ? 'Xong' : 'Done'}
+                </button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -228,19 +272,19 @@ export default function UsersView({ users }: { users: UserRow[] }) {
 
                 <div className="text-xs text-ink-light bg-cream/60 rounded-xl p-3">
                   {lang === 'vi'
-                    ? 'Người dùng nhận email để đặt mật khẩu. Họ chỉ có quyền truy cập Lab App — không phải Catalogue App.'
-                    : 'The user receives an email to set their password. They get Lab App access only — not the Catalogue App.'}
+                    ? 'Tài khoản được tạo ngay và bạn nhận liên kết để gửi qua Zalo (không cần email). Chỉ truy cập Lab App — không phải Catalogue App.'
+                    : 'The account is created instantly and you get a link to share via Zalo (no email needed). Lab App access only — not the Catalogue App.'}
                 </div>
 
                 <div className="flex gap-3 pt-1">
-                  <button onClick={() => setShowInvite(false)} className="btn-secondary flex-1">
+                  <button onClick={resetInvite} className="btn-secondary flex-1">
                     {lang === 'vi' ? 'Hủy' : 'Cancel'}
                   </button>
                   <button
                     onClick={submitInvite}
                     disabled={inviting || !inviteForm.email || !inviteForm.fullName || (['chef', 'worker'].includes(inviteForm.role) && !inviteForm.team)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2">
-                    {inviting ? '…' : (lang === 'vi' ? 'Gửi lời mời' : 'Send invite')}
+                    {inviting ? '…' : (lang === 'vi' ? 'Tạo tài khoản' : 'Create account')}
                   </button>
                 </div>
               </div>
