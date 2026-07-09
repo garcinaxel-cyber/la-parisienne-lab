@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Eye, EyeOff } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 
 // Landing page for invite + password-recovery email links.
@@ -12,6 +13,7 @@ export default function SetPasswordPage() {
   const [sessionOk, setSessionOk] = useState(false);
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -102,13 +104,20 @@ export default function SetPasswordPage() {
                   Tối thiểu 8 ký tự / At least 8 characters
                 </p>
               </div>
+              <div className="relative">
+                <input
+                  type={showPw ? 'text' : 'password'} value={pw1} onChange={e => setPw1(e.target.value)}
+                  placeholder="Mật khẩu mới / New password"
+                  className="w-full rounded-xl border pl-3 pr-10 py-3 focus:outline-none focus:ring-1"
+                  style={{ borderColor: '#E0D49A', fontSize: 16 }} autoFocus />
+                <button type="button" onClick={() => setShowPw(v => !v)}
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-ink-light">
+                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               <input
-                type="password" value={pw1} onChange={e => setPw1(e.target.value)}
-                placeholder="Mật khẩu mới / New password"
-                className="w-full rounded-xl border px-3 py-3 focus:outline-none focus:ring-1"
-                style={{ borderColor: '#E0D49A', fontSize: 16 }} autoFocus />
-              <input
-                type="password" value={pw2} onChange={e => setPw2(e.target.value)}
+                type={showPw ? 'text' : 'password'} value={pw2} onChange={e => setPw2(e.target.value)}
                 placeholder="Nhập lại / Confirm password"
                 className="w-full rounded-xl border px-3 py-3 focus:outline-none focus:ring-1"
                 style={{ borderColor: '#E0D49A', fontSize: 16 }} />
