@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { ClipboardList, Users } from 'lucide-react';
 import OrderReviewView from './OrderReviewView';
 import OrdersCommandView from './OrdersCommandView';
+import PublishBar from './PublishBar';
 
 // Two views over the same data:
 //  - "By order"  : the assistants' cockpit (one row per client order, Odoo status + production progress)
@@ -13,13 +14,19 @@ export default function OrdersTabs(props: {
   imports: any[];
   assignments: any[];
   orderLines: any[];
+  unmatchedProducts: { sku: string; name: string; qty: number }[];
   userRole: string | null;
 }) {
   const { lang } = useI18n();
   const [view, setView] = useState<'orders' | 'teams'>('orders');
+  const canManage = ['admin', 'lab_manager', 'assistant'].includes(props.userRole ?? '');
 
   return (
     <div className="space-y-4">
+      {/* Publish + unmatched-products bar — shared across both views */}
+      <PublishBar date={props.date} imports={props.imports}
+        unmatchedProducts={props.unmatchedProducts} canManage={canManage} />
+
       <div className="flex gap-1 border-b border-border-soft">
         {[
           { key: 'orders' as const, icon: ClipboardList, label: lang === 'vi' ? 'Theo đơn hàng' : 'By order' },

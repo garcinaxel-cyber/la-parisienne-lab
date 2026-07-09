@@ -50,6 +50,24 @@ export default async function OrderDatePage({ params }: { params: { date: string
     ...a, breakdown: breakdownMap[a.id] ?? [],
   }));
 
+  // Products in the orders that have NO lab fiche → they won't become production cards.
+  // Surface them in the publish bar so the assistant can create a fiche or exclude them.
+  const orderLineSkus = Array.from(new Set(
+    (orderLinesResult.data ?? []).map((l: any) => l.product_sku).filter(Boolean)
+  )) as string[];
+  const { data: matchedVariants } = orderLineSkus.length > 0
+    ? await supabase.from('lab_fiche_variants').select('sku').in('sku', orderLineSkus)
+    : { data: [] as any[] };
+  const matchedSkuSet = new Set((matchedVariants ?? []).map((v: any) => v.sku));
+  const unmatchedMap = new Map<string, { sku: string; name: string; qty: number }>();
+  for (const l of orderLinesResult.data ?? []) {
+    if (!l.product_sku || matchedSkuSet.has(l.product_sku)) continue;
+    const cur = unmatchedMap.get(l.product_sku) ?? { sku: l.product_sku, name: l.product_name_vi ?? l.product_sku, qty: 0 };
+    cur.qty += l.qty ?? 0;
+    unmatchedMap.set(l.product_sku, cur);
+  }
+  const unmatchedProducts = Array.from(unmatchedMap.values());
+
     const profile = userResult.data.session
         ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
     : null;
@@ -60,6 +78,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
       imports={imports ?? []}
       assignments={assignments}
       orderLines={orderLinesResult.data ?? []}
+      unmatchedProducts={unmatchedProducts}
       userRole={profile?.role ?? null}
     />
   );

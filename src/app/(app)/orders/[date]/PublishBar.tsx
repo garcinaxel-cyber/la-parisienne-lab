@@ -1,0 +1,111 @@
+'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useI18n } from '@/lib/i18n';
+import { AlertCircle, CheckCircle2, FilePlus, Send } from 'lucide-react';
+import { publishImportAction } from './actions';
+import { createFicheFromSku } from '../../import/actions';
+
+type Unmatched = { sku: string; name: string; qty: number };
+
+// Shared publish/status bar shown above BOTH order views (by order + by team).
+// One place to: see draft/published status, resolve products without a recipe
+// card (create fiche / ignore), and publish — no need to switch tabs.
+export default function PublishBar({ date, imports, unmatchedProducts, canManage }: {
+  date: string; imports: any[]; unmatchedProducts: Unmatched[]; canManage: boolean;
+}) {
+  const { lang } = useI18n();
+  const router = useRouter();
+  const [publishing, setPublishing] = useState<string | null>(null);
+  const [creating, setCreating] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const drafts = imports.filter(i => i.status === 'draft');
+  const published = imports.filter(i => i.status === 'published');
+
+  async function publish(id: string) {
+    setPublishing(id); setError(null);
+    const res = await publishImportAction(id, date);
+    setPublishing(null);
+    if (res?.error) { setError(res.error); return; }
+    router.refresh();
+  }
+
+  async function createFiche(sku: string, name: string) {
+    setCreating(sku); setError(null);
+    const { ficheId, error } = await createFicheFromSku(sku, name);
+    if (error || !ficheId) { setCreating(null); setError(error ?? 'Failed'); return; }
+    router.push(`/admin/fiches/${ficheId}?back=/orders/${date}`);
+  }
+
+  if (!canManage && !drafts.length) return null;
+
+  return (
+    <div className="space-y-3">
+      {/* Products without a recipe card — won't be produced */}
+      {unmatchedProducts.length > 0 && (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#FCD34D' }}>
+          <div className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium" style={{ backgroundColor: '#FFFBEB', color: '#92600A' }}>
+            <AlertCircle size={16} className="shrink-0" />
+            <span>
+              {unmatchedProducts.length} {lang === 'vi'
+                ? 'sản phẩm chưa có phiếu kỹ thuật — sẽ KHÔNG được sản xuất'
+                : 'products without a recipe card — will NOT be produced'}
+            </span>
+          </div>
+          <div className="divide-y divide-amber-100 bg-white">
+            {unmatchedProducts.map(p => (
+              <div key={p.sku} className="flex items-center gap-2 px-4 py-2 text-sm">
+                <code className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>{p.sku}</code>
+                <span className="flex-1 truncate text-navy">{p.name}</span>
+                <span className="text-xs text-ink-light shrink-0">×{p.qty}</span>
+                {canManage && (
+                  <button onClick={() => createFiche(p.sku, p.name)} disabled={creating === p.sku || !!creating}
+                    className="text-xs font-semibold px-3 py-1 rounded-full shrink-0 flex items-center gap-1 disabled:opacity-50"
+                    style={{ backgroundColor: '#1A4731', color: 'white' }}>
+                    <FilePlus size={11} />
+                    {creating === p.sku ? '…' : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Draft imports awaiting publish */}
+      {canManage && drafts.map(imp => (
+        <div key={imp.id} className="card p-3 flex items-center gap-3 flex-wrap">
+          <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+            {lang === 'vi' ? 'NHÁP' : 'DRAFT'}
+          </span>
+          <span className="text-sm text-navy flex-1 min-w-0">
+            {imp.type === 'daily' ? (lang === 'vi' ? 'Đơn chính' : 'Main order') : (lang === 'vi' ? 'Đơn khẩn' : 'Urgent')} #{imp.order_number}
+            {imp.control_report?.auto && (
+              <span className="ml-2 text-xs text-ink-light">· {lang === 'vi' ? 'Tự động từ Odoo' : 'Auto from Odoo'}</span>
+            )}
+          </span>
+          <button onClick={() => publish(imp.id)} disabled={publishing === imp.id}
+            className="btn-primary text-sm py-2 px-4 flex items-center gap-2 shrink-0">
+            <Send size={14} />
+            {publishing === imp.id ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publish')}
+          </button>
+        </div>
+      ))}
+
+      {/* All published */}
+      {canManage && !drafts.length && published.length > 0 && (
+        <div className="flex items-center gap-2 text-sm px-1" style={{ color: '#16A34A' }}>
+          <CheckCircle2 size={15} />
+          {lang === 'vi' ? 'Tất cả đã phát hành' : 'All published'}
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
+          <AlertCircle size={14} className="shrink-0 mt-0.5" /><span>{error}</span>
+        </div>
+      )}
+    </div>
+  );
+}
