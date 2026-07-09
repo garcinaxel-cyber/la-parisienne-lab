@@ -19,9 +19,11 @@ export async function inviteLabUser(data: {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // 1. Invite user — sends email with a setup link
+  // 1. Invite user — sends email with a setup link landing on our set-password page
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://la-parisienne-lab.vercel.app';
   const { data: authData, error: authErr } = await supabase.auth.admin.inviteUserByEmail(email, {
     data: { full_name: fullName },
+    redirectTo: `${siteUrl}/auth/set-password`,
   });
   if (authErr) return { error: authErr.message };
 
