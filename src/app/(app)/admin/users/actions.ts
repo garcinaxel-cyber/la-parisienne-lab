@@ -68,6 +68,9 @@ export async function generateResetLink(userId: string): Promise<{ link?: string
     email,
     options: { redirectTo: `${siteUrl}/auth/set-password` },
   });
-  if (error || !data?.properties?.action_link) return { error: error?.message ?? 'Failed to generate link' };
-  return { link: data.properties.action_link, email };
+  if (error || !data?.properties?.hashed_token) return { error: error?.message ?? 'Failed to generate link' };
+  // Build a token_hash link — verifiable on ANY device (no PKCE code_verifier needed,
+  // unlike the default action_link which fails when opened on a different device)
+  const link = `${siteUrl}/auth/set-password?token_hash=${data.properties.hashed_token}&type=recovery`;
+  return { link, email };
 }

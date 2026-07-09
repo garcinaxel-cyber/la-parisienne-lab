@@ -18,22 +18,42 @@ export default function SetPasswordPage() {
 
   useEffect(() => {
     const supabase = createClient();
-    let tries = 0;
-    // The browser client exchanges the ?code= from the email link automatically —
-    // poll briefly until the session materialises.
-    const timer = setInterval(async () => {
-      tries++;
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        setSessionOk(true);
+    (async () => {
+      const url = new URL(window.location.href);
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+
+      // 1. Error passed back by Supabase (expired/consumed link)
+      if (hash.get('error') || url.searchParams.get('error')) { setReady(true); return; }
+
+      // 2. token_hash link (admin 🔑 button / invite) — verify works on any device
+      const tokenHash = url.searchParams.get('token_hash');
+      const type = url.searchParams.get('type');
+      if (tokenHash && type) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type as any });
+        setSessionOk(!error);
         setReady(true);
-        clearInterval(timer);
-      } else if (tries > 10) {
-        setReady(true);
-        clearInterval(timer);
+        return;
       }
-    }, 500);
-    return () => clearInterval(timer);
+
+      // 3. Implicit fragment tokens (#access_token / #refresh_token)
+      const at = hash.get('access_token');
+      const rt = hash.get('refresh_token');
+      if (at && rt) {
+        const { error } = await supabase.auth.setSession({ access_token: at, refresh_token: rt });
+        setSessionOk(!error);
+        setReady(true);
+        return;
+      }
+
+      // 4. PKCE ?code= (only works on the initiating device) — let the client try, then poll
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries++;
+        const { data } = await supabase.auth.getSession();
+        if (data.session) { setSessionOk(true); setReady(true); clearInterval(timer); }
+        else if (tries > 8) { setReady(true); clearInterval(timer); }
+      }, 500);
+    })();
   }, []);
 
   async function save() {
