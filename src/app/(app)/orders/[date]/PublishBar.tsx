@@ -3,22 +3,31 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { AlertCircle, CheckCircle2, FilePlus, Send } from 'lucide-react';
-import { publishImportAction } from './actions';
+import { publishImportAction, generateMissingCardsAction } from './actions';
 import { createFicheFromSku } from '../../import/actions';
 
 type Unmatched = { sku: string; name: string; qty: number };
 
 // Shared publish/status bar shown above BOTH order views (by order + by team).
 // One place to: see draft/published status, resolve products without a recipe
-// card (create fiche / ignore), and publish — no need to switch tabs.
-export default function PublishBar({ date, imports, unmatchedProducts, canManage }: {
-  date: string; imports: any[]; unmatchedProducts: Unmatched[]; canManage: boolean;
+// card (create fiche / ignore), generate cards for fiches added post-publish, and publish.
+export default function PublishBar({ date, imports, unmatchedProducts, missingCardsCount, canManage }: {
+  date: string; imports: any[]; unmatchedProducts: Unmatched[]; missingCardsCount: number; canManage: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
   const [publishing, setPublishing] = useState<string | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function generateMissing() {
+    setGenerating(true); setError(null);
+    const res = await generateMissingCardsAction(date);
+    setGenerating(false);
+    if (res?.error) { setError(res.error); return; }
+    router.refresh();
+  }
 
   const drafts = imports.filter(i => i.status === 'draft');
   const published = imports.filter(i => i.status === 'published');
@@ -93,8 +102,26 @@ export default function PublishBar({ date, imports, unmatchedProducts, canManage
         </div>
       ))}
 
+      {/* Missing production cards — fiches added after publish */}
+      {canManage && missingCardsCount > 0 && (
+        <div className="card p-3 flex items-center gap-3 flex-wrap" style={{ borderColor: '#93C5FD', borderWidth: 1 }}>
+          <AlertCircle size={16} className="shrink-0" style={{ color: '#2563EB' }} />
+          <span className="text-sm flex-1 min-w-0" style={{ color: '#1E40AF' }}>
+            {missingCardsCount} {lang === 'vi'
+              ? 'sản phẩm đã có phiếu nhưng chưa có thẻ sản xuất'
+              : 'products now have a recipe card but no production card'}
+          </span>
+          <button onClick={generateMissing} disabled={generating}
+            className="text-sm py-2 px-4 rounded-xl font-bold text-white flex items-center gap-2 shrink-0"
+            style={{ backgroundColor: '#2563EB' }}>
+            <FilePlus size={14} />
+            {generating ? '…' : (lang === 'vi' ? 'Tạo thẻ còn thiếu' : 'Generate missing cards')}
+          </button>
+        </div>
+      )}
+
       {/* All published */}
-      {canManage && !drafts.length && published.length > 0 && (
+      {canManage && !drafts.length && published.length > 0 && missingCardsCount === 0 && (
         <div className="flex items-center gap-2 text-sm px-1" style={{ color: '#16A34A' }}>
           <CheckCircle2 size={15} />
           {lang === 'vi' ? 'Tất cả đã phát hành' : 'All published'}

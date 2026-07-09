@@ -49,3 +49,89 @@ export async function publishImportAction(
   revalidatePath(`/orders/${date}`);
   return {};
 }
+
+// Create production cards for order lines that now have a recipe card but had none
+// when the import was published (e.g. a fiche was added afterwards). Scans all
+// published imports for the date and backfills any missing assignment.
+export async function generateMissingCardsAction(
+  date: string,
+): Promise<{ created?: number; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase
+    .from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? ''))
+    return { error: 'Not authorized' };
+
+  const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
+
+  const { data: imports } = await supabase
+    .from('lab_imports').select('id').eq('delivery_date', date).eq('status', 'published');
+  const importIds = (imports ?? []).map((i: any) => i.id);
+  if (!importIds.length) return { created: 0 };
+
+  const { data: orderLines } = await supabase
+    .from('lab_order_lines')
+    .select('import_id, order_ref, shop_name, product_sku, product_name_vi, variant_label, qty, delivery_time')
+    .in('import_id', importIds);
+  if (!orderLines?.length) return { created: 0 };
+
+  // Resolve SKU → variant → fiche (team, name_en, image)
+  const skus = Array.from(new Set(orderLines.map(l => l.product_sku).filter(Boolean)));
+  const { data: variants } = await supabase
+    .from('lab_fiche_variants').select('id, sku, label, fiche_id, image_url').in('sku', skus);
+  const vBySku: Record<string, any> = {};
+  for (const v of variants ?? []) if (v.sku) vBySku[v.sku] = v;
+  const ficheIds = Array.from(new Set((variants ?? []).map(v => v.fiche_id).filter(Boolean)));
+  const { data: fiches } = ficheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url, teams').in('id', ficheIds)
+    : { data: [] as any[] };
+  const fById: Record<string, any> = {};
+  for (const f of fiches ?? []) fById[f.id] = f;
+
+  // Existing assignments keyed by import+team+variant+name
+  const { data: existing } = await supabase
+    .from('lab_assignments').select('import_id, team, variant_label, product_name_vi').in('import_id', importIds);
+  const existingKeys = new Set((existing ?? []).map((a: any) =>
+    `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`));
+
+  // Group order lines that now resolve to a fiche/team, per import+team+variant+name
+  type Group = { import_id: string; team: string; variant_label: string; name: string;
+    fiche_id: string; variant_id: string; name_en: string; image_url: string | null;
+    total: number; breakdown: any[] };
+  const groups = new Map<string, Group>();
+  for (const l of orderLines) {
+    const v = l.product_sku ? vBySku[l.product_sku] : null;
+    if (!v) continue;                       // still no fiche → skip
+    const f = fById[v.fiche_id];
+    const team = (f?.teams ?? [])[0] ?? '';
+    if (!TEAMS.includes(team)) continue;    // no assignable team
+    const variantLabel = v.label ?? l.variant_label ?? 'Standard';
+    const key = `${l.import_id}||${team}||${variantLabel}||${l.product_name_vi}`;
+    if (existingKeys.has(key)) continue;    // card already exists
+    let g = groups.get(key);
+    if (!g) {
+      g = { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi,
+        fiche_id: v.fiche_id, variant_id: v.id, name_en: f?.name_en ?? '',
+        image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [] };
+      groups.set(key, g);
+    }
+    g.total += l.qty ?? 0;
+    g.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time ?? null });
+  }
+
+  const toInsert = Array.from(groups.values()).filter(g => g.total > 0).map((g, idx) => ({
+    import_id: g.import_id, team: g.team, fiche_id: g.fiche_id, variant_id: g.variant_id,
+    product_name_vi: g.name, product_name_en: g.name_en, image_url: g.image_url,
+    variant_label: g.variant_label, total_qty: g.total, qty_to_produce: g.total, qty_produced: 0,
+    status: 'pending', sort_order: 5000 + idx, breakdown: g.breakdown,
+  }));
+  if (!toInsert.length) return { created: 0 };
+
+  const { error } = await supabase.from('lab_assignments').insert(toInsert);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/orders/${date}`);
+  return { created: toInsert.length };
+}
