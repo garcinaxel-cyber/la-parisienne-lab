@@ -27,9 +27,20 @@ function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix
   return <>{display}{suffix}</>;
 }
 
-export default function DashboardView({ stats, imports, assignments, orderLines = [], today }:
-  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; today: string }) {
+export default function DashboardView({ stats, imports, assignments, orderLines = [], pendingChanges = [], today }:
+  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; pendingChanges?: any[]; today: string }) {
   const { t, lang } = useI18n();
+  const [applyingChanges, setApplyingChanges] = useState(false);
+  const [changesDone, setChangesDone] = useState(false);
+
+  async function applyChanges() {
+    setApplyingChanges(true);
+    const { applyPendingChangesAction } = await import('@/app/(app)/odoo-changes-actions');
+    await applyPendingChangesAction();
+    setApplyingChanges(false);
+    setChangesDone(true);
+    setTimeout(() => window.location.reload(), 800);
+  }
   const s = stats ?? { imports_today: 0, published_today: 0, total_assignments: 0, done_assignments: 0, blocked: 0 };
   const pct = s.total_assignments ? Math.round(s.done_assignments / s.total_assignments * 100) : 0;
 
@@ -72,6 +83,47 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         </div>
         <Link href="/import" className="btn-primary">{t('import')}</Link>
       </div>
+
+      {/* Odoo modifications detected by the auto-sync — awaiting review */}
+      {pendingChanges.length > 0 && !changesDone && (
+        <div className="rounded-2xl border-2 overflow-hidden" style={{ borderColor: '#DC2626' }}>
+          <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#FEF2F2' }}>
+            <AlertCircle size={20} className="shrink-0" style={{ color: '#DC2626' }} />
+            <div className="flex-1">
+              <div className="font-bold text-sm" style={{ color: '#B91C1C' }}>
+                {pendingChanges.length} {lang === 'vi' ? 'đơn đã thay đổi trong Odoo' : 'orders changed in Odoo'}
+              </div>
+              <div className="text-xs" style={{ color: '#B91C1C' }}>
+                {lang === 'vi' ? 'Đồng bộ tự động phát hiện — kiểm tra và cập nhật sản xuất' : 'Detected by auto-sync — review and update production'}
+              </div>
+            </div>
+            <button onClick={applyChanges} disabled={applyingChanges}
+              className="text-xs font-bold px-4 py-2 rounded-xl text-white shrink-0 disabled:opacity-60"
+              style={{ backgroundColor: '#B91C1C' }}>
+              {applyingChanges ? '…' : (lang === 'vi' ? 'Cập nhật' : 'Update production')}
+            </button>
+          </div>
+          <div className="divide-y bg-white" style={{ borderColor: '#FEE2E2' }}>
+            {pendingChanges.slice(0, 8).map((ch: any) => (
+              <div key={ch.order_ref} className="px-4 py-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-xs font-semibold text-navy">{ch.order_ref}</span>
+                  {ch.cancelled && <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEE2E2', color: '#B91C1C' }}>{lang === 'vi' ? 'ĐÃ HỦY' : 'CANCELLED'}</span>}
+                  {ch.delivery_date && <span className="text-xs text-ink-light">{ch.delivery_date}</span>}
+                </div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(ch.items ?? []).map((it: any) => (
+                    <div key={it.sku} className="flex items-center gap-2 text-xs text-ink-light">
+                      <span className="flex-1 truncate">{it.name ?? it.sku}</span>
+                      <span>×{it.old_qty ?? 0} → <span className={`font-bold ${(it.new_qty ?? 0) > (it.old_qty ?? 0) ? 'text-green-600' : 'text-red-600'}`}>×{it.new_qty}</span></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Draft imports waiting for review — created by the hourly Odoo auto-sync */}
       {imports.some((i: any) => i.status === 'draft') && (

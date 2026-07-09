@@ -54,6 +54,10 @@ const products: any[] = productIds.length
 const skuByProductId: Record<number, { sku: string; name: string }> = {};
 for (const p of products) skuByProductId[p.id] = { sku: p.default_code || '', name: p.name || '' };
 
+// Permanently excluded SKUs (packaging, drinks, stickers…) — never imported
+const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+
 // ── 4. Team resolution from lab fiches (SKU → variant → fiche.teams[0]) ──
 const allSkus = Array.from(new Set(Object.values(skuByProductId).map(p => p.sku).filter(Boolean)));
 const { data: variantRows } = allSkus.length
@@ -161,7 +165,7 @@ for (const l of soLines) {
   if (alreadyImported.has(order.name)) { skippedRefs.add(order.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
   const qty = Math.round(Number(l.product_uom_qty ?? 0));
-  if (!prod.sku || !qty) continue;
+  if (!prod.sku || !qty || excludedSet.has(prod.sku)) continue;
   const dt = odooDateTimeToLocal(order.commitment_date);
   const t = teamBySku[prod.sku];
   if (t?.multi) multiTeamSkus.add(prod.sku);
@@ -185,7 +189,7 @@ for (const l of replLines) {
   if (alreadyImported.has(req.name)) { skippedRefs.add(req.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
   const qty = Math.round(Number(l.quantity_requested ?? 0));
-  if (!prod.sku || !qty) continue;
+  if (!prod.sku || !qty || excludedSet.has(prod.sku)) continue;
   const dt = odooDateTimeToLocal(req.delivery_date);
   const t = teamBySku[prod.sku];
   if (t?.multi) multiTeamSkus.add(prod.sku);

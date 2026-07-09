@@ -28,6 +28,19 @@ export async function GET(req: Request) {
     const result = await runOdooSync(supabase as any);
     const lines = result.lines;
 
+    // Persist detected modifications/cancellations for later human review.
+    // Never auto-applied — surfaced as a "changes to review" queue in the app.
+    if (result.changes.length) {
+      const dateByRef: Record<string, string> = {};
+      for (const l of lines) if (l.order_ref && l.delivery_date) dateByRef[l.order_ref] = l.delivery_date;
+      const refs = result.changes.map(c => c.order_ref);
+      await supabase.from('lab_odoo_changes').delete().in('order_ref', refs).eq('status', 'pending');
+      await supabase.from('lab_odoo_changes').insert(result.changes.map(c => ({
+        order_ref: c.order_ref, cancelled: c.cancelled, items: c.items,
+        delivery_date: dateByRef[c.order_ref] ?? null, status: 'pending',
+      })));
+    }
+
     if (!lines.length) {
       return NextResponse.json({
         created_imports: 0, new_lines: 0,

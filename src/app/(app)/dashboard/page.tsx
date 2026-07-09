@@ -29,5 +29,13 @@ export default async function DashboardPage() {
         .limit(1000)
     : { data: [] as any[] };
 
-  return <DashboardView stats={stats} imports={imports ?? []} assignments={recentAssignments ?? []} orderLines={todayOrderLines ?? []} today={today} />;
+  // Pending Odoo modifications detected by the auto-sync, awaiting review
+  const { data: pendingChanges } = await supabase
+    .from('lab_odoo_changes')
+    .select('order_ref, cancelled, items, delivery_date')
+    .eq('status', 'pending')
+    .order('detected_at', { ascending: false })
+    .limit(50);
+
+  return <DashboardView stats={stats} imports={imports ?? []} assignments={recentAssignments ?? []} orderLines={todayOrderLines ?? []} pendingChanges={pendingChanges ?? []} today={today} />;
 }

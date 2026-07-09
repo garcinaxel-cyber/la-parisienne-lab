@@ -59,9 +59,14 @@ export default async function OrderDatePage({ params }: { params: { date: string
     ? await supabase.from('lab_fiche_variants').select('sku').in('sku', orderLineSkus)
     : { data: [] as any[] };
   const matchedSkuSet = new Set((matchedVariants ?? []).map((v: any) => v.sku));
+  // SKUs permanently marked "not produced" (packaging, drinks…) — never warn about them
+  const { data: excludedRows } = orderLineSkus.length > 0
+    ? await supabase.from('lab_excluded_skus').select('sku').in('sku', orderLineSkus)
+    : { data: [] as any[] };
+  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
   const unmatchedMap = new Map<string, { sku: string; name: string; qty: number }>();
   for (const l of orderLinesResult.data ?? []) {
-    if (!l.product_sku || matchedSkuSet.has(l.product_sku)) continue;
+    if (!l.product_sku || matchedSkuSet.has(l.product_sku) || excludedSkuSet.has(l.product_sku)) continue;
     const cur = unmatchedMap.get(l.product_sku) ?? { sku: l.product_sku, name: l.product_name_vi ?? l.product_sku, qty: 0 };
     cur.qty += l.qty ?? 0;
     unmatchedMap.set(l.product_sku, cur);

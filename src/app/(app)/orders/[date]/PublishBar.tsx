@@ -2,24 +2,34 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { AlertCircle, CheckCircle2, FilePlus, Send } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FilePlus, Send, Ban } from 'lucide-react';
 import { publishImportAction, generateMissingCardsAction } from './actions';
 import { createFicheFromSku } from '../../import/actions';
+import { excludeSkuAction } from '../../odoo-changes-actions';
 
 type Unmatched = { sku: string; name: string; qty: number };
 
 // Shared publish/status bar shown above BOTH order views (by order + by team).
 // One place to: see draft/published status, resolve products without a recipe
 // card (create fiche / ignore), generate cards for fiches added post-publish, and publish.
-export default function PublishBar({ date, imports, unmatchedProducts, missingCardsCount, canManage }: {
-  date: string; imports: any[]; unmatchedProducts: Unmatched[]; missingCardsCount: number; canManage: boolean;
+export default function PublishBar({ date, imports, orderLines = [], unmatchedProducts, missingCardsCount, canManage }: {
+  date: string; imports: any[]; orderLines?: any[]; unmatchedProducts: Unmatched[]; missingCardsCount: number; canManage: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
   const [publishing, setPublishing] = useState<string | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [excluding, setExcluding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function exclude(sku: string, name: string) {
+    setExcluding(sku); setError(null);
+    const res = await excludeSkuAction(sku, name);
+    setExcluding(null);
+    if (res?.error) { setError(res.error); return; }
+    router.refresh();
+  }
 
   async function generateMissing() {
     setGenerating(true); setError(null);
@@ -69,12 +79,21 @@ export default function PublishBar({ date, imports, unmatchedProducts, missingCa
                 <span className="flex-1 truncate text-navy">{p.name}</span>
                 <span className="text-xs text-ink-light shrink-0">×{p.qty}</span>
                 {canManage && (
-                  <button onClick={() => createFiche(p.sku, p.name)} disabled={creating === p.sku || !!creating}
-                    className="text-xs font-semibold px-3 py-1 rounded-full shrink-0 flex items-center gap-1 disabled:opacity-50"
-                    style={{ backgroundColor: '#1A4731', color: 'white' }}>
-                    <FilePlus size={11} />
-                    {creating === p.sku ? '…' : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
-                  </button>
+                  <>
+                    <button onClick={() => exclude(p.sku, p.name)} disabled={excluding === p.sku}
+                      className="text-xs font-semibold px-3 py-1 rounded-full shrink-0 flex items-center gap-1 border disabled:opacity-50"
+                      style={{ borderColor: '#D1D5DB', color: '#6B7280' }}
+                      title={lang === 'vi' ? 'Không sản xuất (bao bì, đồ uống…)' : 'Not produced (packaging, drinks…)'}>
+                      <Ban size={11} />
+                      {excluding === p.sku ? '…' : (lang === 'vi' ? 'Không SX' : 'Not produced')}
+                    </button>
+                    <button onClick={() => createFiche(p.sku, p.name)} disabled={creating === p.sku || !!creating}
+                      className="text-xs font-semibold px-3 py-1 rounded-full shrink-0 flex items-center gap-1 disabled:opacity-50"
+                      style={{ backgroundColor: '#1A4731', color: 'white' }}>
+                      <FilePlus size={11} />
+                      {creating === p.sku ? '…' : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
+                    </button>
+                  </>
                 )}
               </div>
             ))}
@@ -99,6 +118,23 @@ export default function PublishBar({ date, imports, unmatchedProducts, missingCa
             <Send size={14} />
             {publishing === imp.id ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publish')}
           </button>
+          {/* Which client orders are in this draft (all new — drafts never contain modifications) */}
+          {(() => {
+            const refs = Array.from(new Set(
+              orderLines.filter((l: any) => l.import_id === imp.id).map((l: any) => l.order_ref).filter(Boolean)
+            ));
+            if (!refs.length) return null;
+            return (
+              <div className="w-full flex flex-wrap gap-1.5 mt-1">
+                <span className="text-[10px] text-ink-light uppercase tracking-wider mr-1 self-center">
+                  {lang === 'vi' ? 'Đơn mới' : 'New orders'}:
+                </span>
+                {refs.map((r: any) => (
+                  <span key={r} className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>{r}</span>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       ))}
 

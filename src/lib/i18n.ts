@@ -7,7 +7,7 @@ const T = {
   en: {
     // Nav
     dashboard: 'Dashboard', import: 'Import Orders', orders: 'Production Orders', analytics: 'Analytics',
-    admin: 'Admin', users: 'Users', logout: 'Log out', labProducts: 'Lab Products', qr_codes: 'QR Codes', settings: 'Settings',
+    admin: 'Admin', users: 'Users', logout: 'Log out', labProducts: 'Lab Products', qr_codes: 'QR Codes', settings: 'Settings', excluded: 'Non-production',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hung',
     team_entremet: 'Team Entremet', team_baker: 'Team Baker',
@@ -53,7 +53,7 @@ const T = {
   vi: {
     // Nav
     dashboard: 'Tổng quan', import: 'Nhập đơn hàng', orders: 'Đơn sản xuất', analytics: 'Phân tích',
-    admin: 'Quản trị', users: 'Người dùng', logout: 'Đăng xuất', labProducts: 'Sản phẩm Lab', qr_codes: 'Mã QR', settings: 'Cài đặt',
+    admin: 'Quản trị', users: 'Người dùng', logout: 'Đăng xuất', labProducts: 'Sản phẩm Lab', qr_codes: 'Mã QR', settings: 'Cài đặt', excluded: 'Không sản xuất',
     // Teams
     team_baby_mama: 'Team Baby Mama', team_hung: 'Team Hưng',
     team_entremet: 'Team Entremet', team_baker: 'Team Baker',

@@ -25,7 +25,7 @@ export default function OrdersTabs(props: {
   return (
     <div className="space-y-4">
       {/* Publish + unmatched-products bar — shared across both views */}
-      <PublishBar date={props.date} imports={props.imports}
+      <PublishBar date={props.date} imports={props.imports} orderLines={props.orderLines}
         unmatchedProducts={props.unmatchedProducts}
         missingCardsCount={props.missingCardsCount} canManage={canManage} />
 
