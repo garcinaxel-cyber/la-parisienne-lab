@@ -51,7 +51,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   for (const a of rows) {
     const date = dateByImport[a.import_id];
     unitsPlanned += a.total_qty ?? 0;
-    unitsProduced += (isDone(a.status) ? (a.total_qty ?? 0) : (a.qty_produced ?? 0));
+    // Units actually PRODUCED — in-stock (skip) was not made, so it counts 0.
+    // 'done' = fully made; 'partial' = what was made so far.
+    unitsProduced += a.status === 'done' ? (a.qty_produced || a.total_qty || 0)
+      : a.status === 'partial' ? (a.qty_produced ?? 0)
+      : 0;
     if (isDone(a.status)) doneCards++;
     if (a.status === 'blocked') {
       blockedCards++;
