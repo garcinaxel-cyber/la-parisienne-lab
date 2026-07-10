@@ -51,6 +51,32 @@ export async function excludeSkuAction(sku: string, name: string, reason?: strin
   return {};
 }
 
+// From a "changed in Odoo" banner (dashboard/import): mark ONE sku as never-produced.
+// Excludes it AND strips it from every pending change; a change with no items left is resolved.
+export async function excludeChangeSkuAction(sku: string, name: string): Promise<{ error?: string }> {
+  const { supabase, ok, userId } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  const { error } = await supabase.from('lab_excluded_skus')
+    .upsert({ sku, product_name: name, reason: 'packaging/not produced', excluded_by: userId }, { onConflict: 'sku' });
+  if (error) return { error: error.message };
+
+  const { data: pending } = await supabase
+    .from('lab_odoo_changes').select('id, items').eq('status', 'pending');
+  for (const row of pending ?? []) {
+    const items = (row.items ?? []).filter((it: any) => it.sku !== sku);
+    if (items.length === (row.items ?? []).length) continue; // this sku wasn't in the row
+    if (items.length === 0) {
+      await supabase.from('lab_odoo_changes')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('id', row.id);
+    } else {
+      await supabase.from('lab_odoo_changes').update({ items }).eq('id', row.id);
+    }
+  }
+  revalidatePath('/dashboard');
+  revalidatePath('/orders', 'layout');
+  return {};
+}
+
 export async function unexcludeSkuAction(sku: string): Promise<{ error?: string }> {
   const { supabase, ok } = await guard();
   if (!ok) return { error: 'Not authorized' };

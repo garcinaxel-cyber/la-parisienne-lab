@@ -45,6 +45,14 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
     setChangesDone(true);
     setTimeout(() => window.location.reload(), 800);
   }
+
+  const [excludingSku, setExcludingSku] = useState<string | null>(null);
+  async function excludeItem(sku: string, name: string) {
+    setExcludingSku(sku);
+    const { excludeChangeSkuAction } = await import('@/app/(app)/odoo-changes-actions');
+    await excludeChangeSkuAction(sku, name);
+    window.location.reload();
+  }
   const s = stats ?? { imports_today: 0, published_today: 0, total_assignments: 0, done_assignments: 0, blocked: 0 };
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -125,6 +133,12 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
                     <div key={it.sku} className="flex items-center gap-2 text-xs text-ink-light">
                       <span className="flex-1 truncate">{it.name ?? it.sku}</span>
                       <span>×{it.old_qty ?? 0} → <span className={`font-bold ${(it.new_qty ?? 0) > (it.old_qty ?? 0) ? 'text-green-600' : 'text-red-600'}`}>×{it.new_qty}</span></span>
+                      <button onClick={() => excludeItem(it.sku, it.name ?? it.sku)} disabled={excludingSku === it.sku}
+                        className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-lg border disabled:opacity-50"
+                        style={{ borderColor: '#D1D5DB', color: '#6B7280' }}
+                        title={lang === 'vi' ? 'Sản phẩm này không sản xuất' : 'This product is not produced'}>
+                        {excludingSku === it.sku ? '…' : (lang === 'vi' ? 'Không SX' : 'Not produced')}
+                      </button>
                     </div>
                   ))}
                 </div>

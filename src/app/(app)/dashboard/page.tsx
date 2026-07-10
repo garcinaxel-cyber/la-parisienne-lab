@@ -25,7 +25,7 @@ export default async function DashboardPage() {
     return { assignments: asg ?? [], orderLines: ol ?? [] };
   }
 
-  const [{ data: stats }, { data: imports }, todayData, tomorrowData, { data: pendingChanges }] = await Promise.all([
+  const [{ data: stats }, { data: imports }, todayData, tomorrowData, { data: pendingChangesRaw }, { data: excludedRows }] = await Promise.all([
     supabase.rpc('lab_dashboard_stats', { p_date: today }),
     supabase.from('lab_imports').select('id,delivery_date,order_number,type,status,shipped_from_lab,imported_at')
       .gte('delivery_date', today).order('delivery_date').order('order_number').limit(10),
@@ -33,10 +33,17 @@ export default async function DashboardPage() {
     loadDay(tomorrow),
     supabase.from('lab_odoo_changes').select('order_ref, cancelled, items, delivery_date')
       .eq('status', 'pending').order('detected_at', { ascending: false }).limit(50),
+    supabase.from('lab_excluded_skus').select('sku'),
   ]);
+
+  // Hide already-excluded SKUs (packaging, drinks…) from the changes banner; drop empty rows.
+  const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+  const pendingChanges = (pendingChangesRaw ?? [])
+    .map((ch: any) => ({ ...ch, items: (ch.items ?? []).filter((it: any) => !excludedSet.has(it.sku)) }))
+    .filter((ch: any) => ch.items.length > 0);
 
   return <DashboardView stats={stats} imports={imports ?? []}
     assignments={todayData.assignments} orderLines={todayData.orderLines}
     tomorrowAssignments={tomorrowData.assignments} tomorrowOrderLines={tomorrowData.orderLines}
-    pendingChanges={pendingChanges ?? []} today={today} tomorrow={tomorrow} />;
+    pendingChanges={pendingChanges} today={today} tomorrow={tomorrow} />;
 }
