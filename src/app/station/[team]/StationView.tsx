@@ -107,19 +107,26 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 };
 
 export default function StationView({
-  team, teamSlug, assignments: initial, viewDate, today, isHistoryView, userRole,
+  team, teamSlug, assignments: initial, tomorrowAssignments = [], viewDate, today, tomorrow, isHistoryView, userRole,
 }: {
   team: Team;
   teamSlug: string;
   assignments: Assignment[];
+  tomorrowAssignments?: Assignment[];
   viewDate: string;
   today: string;
+  tomorrow?: string;
   isHistoryView: boolean;
   userRole?: string | null;
 }) {
   const { lang, setLang } = useI18n();
   const router = useRouter();
-  const [assignments, setAssignments] = useState(initial);
+  // Production day sub-toggle: today (default) or tomorrow (pre-production)
+  const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
+  const [todayAssignments, setTodayAssignments] = useState(initial);
+  const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
+  const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
+  const setAssignments = prodDay === 'tomorrow' ? setTomorrowAsg : setTodayAssignments;
   const [updating, setUpdating] = useState<string | null>(null);
   const [qtyModal, setQtyModal] = useState<Assignment | null>(null);
   const [qtyInput, setQtyInput] = useState(0);
@@ -183,10 +190,10 @@ export default function StationView({
     return () => clearTimeout(timer);
   }, [extraSearch, extraModal, extraProduct, team, selectedCategory]);
 
-  // Supabase Realtime
+  // Supabase Realtime — covers both today + tomorrow imports, updates whichever list holds the id
   useEffect(() => {
     const supabase = createClient();
-    const importIds = Array.from(new Set(initial.map(a => a.import_id)));
+    const importIds = Array.from(new Set([...initial, ...tomorrowAssignments].map(a => a.import_id)));
     if (importIds.length === 0) return;
 
     const channel = supabase
@@ -197,14 +204,14 @@ export default function StationView({
         table: 'lab_assignments',
         filter: `import_id=in.(${importIds.join(',')})`,
       }, payload => {
-        setAssignments(prev => prev.map(a =>
-          a.id === payload.new.id ? { ...a, ...payload.new } : a
-        ));
+        const patch = (a: Assignment) => a.id === payload.new.id ? { ...a, ...payload.new } : a;
+        setTodayAssignments(prev => prev.map(patch));
+        setTomorrowAsg(prev => prev.map(patch));
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [team, initial]);
+  }, [team, initial, tomorrowAssignments]);
 
   // Lazy-load upcoming / history dates
   useEffect(() => {
@@ -533,22 +540,69 @@ export default function StationView({
 
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
-          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done for today!'}
+          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done!'}
         </div>
       )}
 
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+          {/* Today / Tomorrow sub-toggle — chefs pre-produce tomorrow's order the day before */}
+          {tomorrow && (
+            <div className="flex gap-2">
+              {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
+                const list = d === 'tomorrow' ? tomorrowAsg : todayAssignments;
+                const remaining = list.filter(a => a.status === 'pending' || a.status === 'in_progress').length;
+                const active = prodDay === d;
+                return (
+                  <button key={d} onClick={() => setProdDay(d)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    style={active
+                      ? { backgroundColor: '#1A4731', color: 'white' }
+                      : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>
+                    {label}
+                    {list.length > 0 && (
+                      <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
+                        style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                        {remaining}/{list.length}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* "Ahead" banner when producing tomorrow */}
+          {prodDay === 'tomorrow' && (
+            <div className="rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm font-semibold"
+              style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #93C5FD' }}>
+              ⏩ {lang === 'vi'
+                ? `Sản xuất trước cho ngày mai — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
+                : `Producing ahead for tomorrow — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
+            </div>
+          )}
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
-              <p className="font-semibold" style={{ color: '#1A4731' }}>
-                {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
-              </p>
-              <p className="text-sm mt-1 text-ink-light">
-                {lang === 'vi' ? 'Tất cả đã hoàn thành hoặc có sẵn' : 'All items are done or in stock'}
-              </p>
+              {prodDay === 'tomorrow' && assignments.length === 0 ? (
+                <>
+                  <p className="font-semibold" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Chưa có đơn cho ngày mai' : 'No order published for tomorrow yet'}
+                  </p>
+                  <p className="text-sm mt-1 text-ink-light">
+                    {lang === 'vi' ? 'Đơn ngày mai sẽ hiện ở đây khi được phát hành' : "Tomorrow's order will appear here once published"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Không có sản phẩm cần làm' : 'Nothing left to produce'}
+                  </p>
+                  <p className="text-sm mt-1 text-ink-light">
+                    {lang === 'vi' ? 'Tất cả đã hoàn thành hoặc có sẵn' : 'All items are done or in stock'}
+                  </p>
+                </>
+              )}
             </div>
           )}
           {(() => {
