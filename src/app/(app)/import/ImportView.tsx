@@ -269,6 +269,17 @@ export default function ImportView() {
     setExcludingSku(null);
   };
 
+  // From the "changed in Odoo" card: mark a line as never-produced (packaging, drinks…).
+  // Adds it to lab_excluded_skus and drops it from the changes list so it stops resurfacing.
+  const excludeChangeItem = async (sku: string, name: string) => {
+    setExcludingSku(sku);
+    await excludeSkuAction(sku, name);
+    setOdooChanges(prev => prev
+      .map(ch => ({ ...ch, items: ch.items.filter(it => it.sku !== sku) }))
+      .filter(ch => ch.items.length > 0));
+    setExcludingSku(null);
+  };
+
   const toggleExclude = (sku: string) => {
     setExcludedSkus(prev => {
       const next = new Set(prev);
@@ -466,6 +477,15 @@ export default function ImportView() {
                       <code className="font-mono text-[10px]">{it.sku}</code>
                       <span className="flex-1 truncate">{it.name}</span>
                       <span>×{it.old_qty} → <span className={`font-bold ${it.new_qty > it.old_qty ? 'text-green-600' : 'text-red-600'}`}>×{it.new_qty}</span></span>
+                      <button
+                        onClick={() => excludeChangeItem(it.sku, it.name)}
+                        disabled={excludingSku === it.sku}
+                        className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-lg border disabled:opacity-50"
+                        style={{ borderColor: '#D1D5DB', color: '#6B7280' }}
+                        title={lang === 'vi' ? 'Sản phẩm này không sản xuất' : 'This product is not produced'}
+                      >
+                        {excludingSku === it.sku ? '…' : (lang === 'vi' ? 'Không SX' : 'Not produced')}
+                      </button>
                     </div>
                   ))}
                 </div>

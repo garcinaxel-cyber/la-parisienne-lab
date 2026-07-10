@@ -137,6 +137,7 @@ const pushChange = (ref: string, c: { sku: string; name: string; old_qty: number
 };
 for (const [k, lab] of Object.entries(labQtyByRefSku)) {
   const [ref, sku] = k.split('||');
+  if (excludedSet.has(sku)) continue; // packaging/drinks — never produced, ignore qty changes
   if (!alreadyImported.has(ref)) continue;
   if (cancelledRefs.includes(ref)) { pushChange(ref, { sku, name: lab.name, old_qty: lab.qty, new_qty: 0 }); continue; }
   if (!refsSeenInOdoo.has(ref)) continue; // ref not in scope anymore but not cancelled — leave untouched
@@ -146,6 +147,7 @@ for (const [k, lab] of Object.entries(labQtyByRefSku)) {
 }
 for (const [k, odoo] of Object.entries(odooQtyByRefSku)) {
   const [ref, sku] = k.split('||');
+  if (excludedSet.has(sku)) continue; // packaging/drinks — never produced, don't flag as "added"
   if (!labQtyByRefSku[k]) pushChange(ref, { sku, name: odoo.name, old_qty: 0, new_qty: odoo.qty });
 }
 const changes = Object.entries(changesByRef).map(([order_ref, items]) => ({
