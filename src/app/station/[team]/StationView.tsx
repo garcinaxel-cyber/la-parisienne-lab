@@ -393,12 +393,15 @@ export default function StationView({
   const production = assignments.filter(a => ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
   const termine = assignments.filter(a => ['done', 'skip'].includes(a.status));
 
-  const totalQty = assignments.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
-  const doneQty = assignments.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
-  // Completion = cards handled (done OR in stock) / total cards. In-stock counts as handled,
+  // Order-based cards only (exclude extra production — it belongs to no client order).
+  // Order fulfillment metrics are measured on these, not on ad-hoc extras.
+  const orderCards = assignments.filter(a => !a.is_extra);
+  const totalQty = orderCards.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
+  const doneQty = orderCards.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
+  // Completion = cards handled (done OR in stock) / total order cards. In-stock counts as handled,
   // so a fully-in-stock day shows 100% (nothing to produce) instead of a misleading 0%.
-  const handledCards = assignments.filter(a => a.status === 'done' || a.status === 'skip').length;
-  const pct = assignments.length ? Math.round(handledCards / assignments.length * 100) : 0;
+  const handledCards = orderCards.filter(a => a.status === 'done' || a.status === 'skip').length;
+  const pct = orderCards.length ? Math.round(handledCards / orderCards.length * 100) : 0;
 
   const inProgressCount = assignments.filter(a => a.status === 'in_progress').length;
   const pendingCount = assignments.filter(a => a.status === 'pending').length;
@@ -427,7 +430,7 @@ export default function StationView({
       id: 'commande',
       labelVi: 'Đơn hàng',
       labelEn: 'Orders',
-      count: assignments.length,
+      count: orderCards.length, // client orders only, no extra production
       icon: <ClipboardList size={14} />,
     },
     {
@@ -553,7 +556,7 @@ export default function StationView({
         <div className="max-w-3xl mx-auto px-4 pt-4 space-y-2.5">
           <div className="flex gap-2">
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
-              const list = d === 'tomorrow' ? tomorrowAsg : todayAssignments;
+              const list = (d === 'tomorrow' ? tomorrowAsg : todayAssignments).filter(a => !a.is_extra);
               const handled = list.filter(a => a.status === 'done' || a.status === 'skip').length;
               const active = prodDay === d;
               const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00')
@@ -669,10 +672,12 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── BON DE COMMANDE TAB ─── */}
-      {activeTab === 'commande' && (
+      {/* ─── BON DE COMMANDE TAB — client orders only (no extra production) ─── */}
+      {activeTab === 'commande' && (() => {
+        const orderList = assignments.filter(a => !a.is_extra);
+        return (
         <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
-          {assignments.length === 0 ? (
+          {orderList.length === 0 ? (
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
               <p className="font-semibold text-ink-light">
@@ -693,7 +698,7 @@ export default function StationView({
                       : (lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary")}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
-                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}
+                    {orderList.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}
                   </div>
                 </div>
                 <div className="text-right">
@@ -710,7 +715,7 @@ export default function StationView({
                   <span>{lang === 'vi' ? 'Sản phẩm' : 'Product'}</span>
                   <span>{lang === 'vi' ? 'Số lượng' : 'Qty'}</span>
                 </div>
-                {assignments.map((a, i) => {
+                {orderList.map((a, i) => {
                   const st = STATUS_META[a.status];
                   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
                   return (
@@ -781,7 +786,8 @@ export default function StationView({
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ─── TERMINÉ TAB — split: from orders vs extra production ─── */}
       {activeTab === 'termine' && (
