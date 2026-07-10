@@ -676,20 +676,24 @@ export default function StationView({
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
               <p className="font-semibold text-ink-light">
-                {lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today'}
+                {prodDay === 'tomorrow'
+                  ? (lang === 'vi' ? 'Chưa có đơn hàng ngày mai' : 'No orders for tomorrow')
+                  : (lang === 'vi' ? 'Chưa có đơn hàng hôm nay' : 'No orders for today')}
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Summary header */}
+              {/* Summary header — day-aware label + completion (in-stock counts as handled) */}
               <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
                 <div>
                   <div className="font-bold text-base">
-                    {lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary"}
+                    {prodDay === 'tomorrow'
+                      ? (lang === 'vi' ? 'Tổng đơn hàng ngày mai' : "Tomorrow's order summary")
+                      : (lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary")}
                   </div>
                   <div className="text-white/70 text-sm mt-0.5">
-                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                    {assignments.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}
                   </div>
                 </div>
                 <div className="text-right">
@@ -779,7 +783,7 @@ export default function StationView({
         </div>
       )}
 
-      {/* ─── TERMINÉ TAB ─── */}
+      {/* ─── TERMINÉ TAB — split: from orders vs extra production ─── */}
       {activeTab === 'termine' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
           {termine.length === 0 ? (
@@ -789,12 +793,33 @@ export default function StationView({
                 {lang === 'vi' ? 'Chưa có sản phẩm hoàn thành' : 'No completed items yet'}
               </p>
             </div>
-          ) : (
-            termine.map(a => (
-              <TermineCard key={a.id} a={a} lang={lang} meta={meta}
-                onAdvance={advanceStatus} updating={updating} />
-            ))
-          )}
+          ) : (() => {
+            const fromOrder = termine.filter(a => !a.is_extra);
+            const extra = termine.filter(a => a.is_extra);
+            const Section = ({ title, count, items, color, bg }: { title: string; count: number; items: Assignment[]; color: string; bg: string }) => (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full" style={{ backgroundColor: bg, color }}>
+                    {title} · {count}
+                  </span>
+                  <div className="flex-1 border-t" style={{ borderColor: '#E0D49A' }} />
+                </div>
+                {items.map(a => (
+                  <TermineCard key={a.id} a={a} lang={lang} meta={meta} onAdvance={advanceStatus} updating={updating} />
+                ))}
+              </div>
+            );
+            return (
+              <>
+                {fromOrder.length > 0 && (
+                  <Section title={lang === 'vi' ? 'Theo đơn hàng' : 'From orders'} count={fromOrder.length} items={fromOrder} color="#2D6A4F" bg="#F0F9F4" />
+                )}
+                {extra.length > 0 && (
+                  <Section title={lang === 'vi' ? 'Sản xuất thêm' : 'Extra production'} count={extra.length} items={extra} color="#92600A" bg="#FEF3C7" />
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
