@@ -6,7 +6,9 @@ import { useI18n } from '@/lib/i18n';
 import { parseExcelFile, consolidateLines, type ConsolidatedLine, type SkippedLine } from '@/lib/excel-parser';
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { persistImportsFromLines } from '@/lib/import-persist';
 import { createFicheFromSku } from './actions';
+import { excludeSkuAction } from '../odoo-changes-actions';
 
 type Step = 'upload' | 'preview' | 'saving' | 'done';
 
@@ -91,11 +93,22 @@ export default function ImportView() {
   const processRaw = useCallback(async (parseRaw: RawResult[]) => {
     if (!parseRaw.length) return;
 
+    const supabase = createClient();
+    // Permanent non-production list (packaging, drinks…) — filtered in EVERY path
+    // (Excel + Odoo), consistent with the auto-sync which filters at source.
+    const rawSkusForExcl = Array.from(new Set(parseRaw.flatMap(r => r.rawLines.map((l: any) => l.product_sku)).filter(Boolean))) as string[];
+    const { data: exclRows } = rawSkusForExcl.length
+      ? await supabase.from('lab_excluded_skus').select('sku').in('sku', rawSkusForExcl)
+      : { data: [] as any[] };
+    const excludedPermanent = new Set((exclRows ?? []).map((r: any) => r.sku));
+    if (excludedPermanent.size > 0) {
+      parseRaw = parseRaw.map(r => ({ ...r, rawLines: r.rawLines.filter((l: any) => !excludedPermanent.has(l.product_sku)) }));
+    }
+
     // Look up lab fiche variants by SKU — the only product reference (no B2C catalogue)
     const allRawSkus = Array.from(new Set(parseRaw.flatMap(r => r.rawLines.map((l: any) => l.product_sku)).filter(Boolean))) as string[];
     const vMap: Record<string, VariantMatch> = {};
     if (allRawSkus.length) {
-      const supabase = createClient();
       const { data: variantRows } = await supabase
         .from('lab_fiche_variants')
         .select('id, sku, label, fiche_id, image_url')
@@ -245,6 +258,17 @@ export default function ImportView() {
     })));
   };
 
+  const [excludingSku, setExcludingSku] = useState<string | null>(null);
+  // Permanent "not produced" — same concept as the publish bar / packaging list.
+  // Adds to lab_excluded_skus AND removes it from the current import.
+  const permanentExclude = async (sku: string, name: string) => {
+    setExcludingSku(sku);
+    await excludeSkuAction(sku, name);
+    setParsedFiles(prev => prev.map(pf => ({ ...pf, lines: pf.lines.filter(l => l.product_sku !== sku) })));
+    setMatchCheck(prev => prev ? { ...prev, unmatched: prev.unmatched.filter(u => u.sku !== sku) } : prev);
+    setExcludingSku(null);
+  };
+
   const toggleExclude = (sku: string) => {
     setExcludedSkus(prev => {
       const next = new Set(prev);
@@ -281,161 +305,32 @@ export default function ImportView() {
     setStep('saving');
     const supabase = createClient();
 
-    const today = new Date().toISOString().split('T')[0];
     const salesFile = parsedFiles.find(pf => pf.sourceType === 'sales_order');
     const replFile  = parsedFiles.find(pf => pf.sourceType === 'replenishment');
 
-    // Enrich from lab fiches only (name_en + image with variant→fiche fallback). No B2C catalogue reads.
-    const ficheIds = Array.from(new Set(
-      effectiveLines.map(l => variantBySku[l.product_sku]?.fiche_id).filter(Boolean)
-    )) as string[];
-    const { data: ficheRows } = ficheIds.length
-      ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url').in('id', ficheIds)
-      : { data: [] };
-    const ficheById: Record<string, { name_en: string | null; image_url: string | null }> = {};
-    for (const f of ficheRows ?? []) {
-      ficheById[f.id] = { name_en: f.name_en ?? null, image_url: f.image_url ?? null };
-    }
-
-    // Control report — lets assistants verify the import against the Odoo Excel
+    // Build the inputs for the SHARED persistence path (same as the auto-sync cron)
     const allSkipped = parsedFiles.flatMap(pf => pf.skipped.map(s => ({ ...s, file: pf.filename })));
-    const excludedLines = mergedLines.filter(l => excludedSkus.has(l.product_sku));
-    const excelQty = mergedLines.reduce((s, l) => s + l.total_qty, 0) + allSkipped.reduce((s, l) => s + (l.qty || 0), 0);
-    const orderRefsAll = Array.from(new Set(effectiveLines.flatMap(l => l.breakdown.map(b => b.order_ref)).filter(Boolean)));
-    const controlReport = {
-      totals: {
-        excel_lines: mergedLines.length + allSkipped.length,
-        excel_qty: excelQty,
-        kept_lines: effectiveLines.length,
-        kept_qty: totalItems,
-        orders: orderRefsAll.length,
-        skipped: allSkipped.length,
-        excluded: excludedLines.length,
-      },
-      by_order: orderRefsAll.map(ref => {
-        const items = effectiveLines.flatMap(l => l.breakdown.filter(b => b.order_ref === ref).map(b => b.qty));
-        return { order_ref: ref, lines: items.length, qty: items.reduce((a, b) => a + b, 0) };
-      }),
+    const excludedList = mergedLines
+      .filter(l => excludedSkus.has(l.product_sku))
+      .map(l => ({ sku: l.product_sku, name: l.product_name_vi, qty: l.total_qty }));
+    const sourceTypeByRef: Record<string, string> = {};
+    for (const pf of parsedFiles) for (const l of pf.lines) for (const b of l.breakdown) if (b.order_ref) sourceTypeByRef[b.order_ref] = pf.sourceType;
+
+    const { earliestDate, error: persistErr } = await persistImportsFromLines(supabase, effectiveLines, {
+      status: asDraft ? 'draft' : 'published',
+      type: importType,
+      notes,
+      shippedFromLab,
+      filenameSales: salesFile?.filename ?? null,
+      filenameRepl: replFile?.filename ?? null,
+      orderStates: Object.keys(odooStates).length > 0 ? odooStates : undefined,
+      sourceTypeByRef,
+      deliveryTimeByRef: orderTimes,
       skipped: allSkipped,
-      excluded: excludedLines.map(l => ({ sku: l.product_sku, name: l.product_name_vi, qty: l.total_qty })),
-      files: parsedFiles.map(pf => pf.filename),
-      // Odoo status per order ref (filled when the import came from the Odoo sync)
-      order_states: Object.keys(odooStates).length > 0 ? odooStates : undefined,
-    };
-
-    // Group assignable lines by delivery_date — one lab_imports record per date
-    const assignableLines = effectiveLines.filter(l => (TEAMS as string[]).includes(l.team));
-    const byDate = new Map<string, typeof assignableLines>();
-    for (const line of assignableLines) {
-      const date = line.delivery_date || today;
-      if (!byDate.has(date)) byDate.set(date, []);
-      byDate.get(date)!.push(line);
-    }
-
-    // Group raw order lines by delivery_date for traceability
-    const orderLinesByDate = new Map<string, any[]>();
-    for (const pf of parsedFiles) {
-      for (const line of pf.lines) {
-        if (excludedSkus.has(line.product_sku)) continue;
-        const date = line.delivery_date || today;
-        if (!orderLinesByDate.has(date)) orderLinesByDate.set(date, []);
-        for (const b of line.breakdown) {
-          orderLinesByDate.get(date)!.push({
-            source_type: pf.sourceType,
-            order_ref: b.order_ref,
-            shop_name: b.shop_name,
-            product_sku: line.product_sku,
-            product_name_vi: line.product_name_vi,
-            team: line.team,
-            variant_label: line.variant_label,
-            qty: b.qty,
-            delivery_date: date,
-            delivery_time: orderTimes[b.order_ref] || b.delivery_time || null,
-          });
-        }
-      }
-    }
-
-    const allDates = Array.from(byDate.keys()).sort();
-    const earliestDate = allDates[0] ?? today;
-    let sortOffset = 0;
-
-    // Create one lab_imports + assignments per delivery date
-    for (const date of allDates) {
-      const linesForDate = byDate.get(date)!;
-
-      const { count } = await supabase
-        .from('lab_imports')
-        .select('*', { count: 'exact', head: true })
-        .eq('delivery_date', date);
-      const orderNumber = (count ?? 0) + 1;
-
-      const { data: importRow, error: importErr } = await supabase
-        .from('lab_imports')
-        .insert({
-          delivery_date: date,
-          order_number: orderNumber,
-          type: importType,
-          shipped_from_lab: shippedFromLab,
-          notes,
-          status: asDraft ? 'draft' : 'published',
-          filename_sales: salesFile?.filename ?? null,
-          filename_repl: replFile?.filename ?? null,
-          published_at: asDraft ? null : new Date().toISOString(),
-          control_report: controlReport,
-        })
-        .select('id')
-        .single();
-
-      if (importErr || !importRow) {
-        setError(importErr?.message ?? `Failed to create import for ${date}`);
-        setStep('preview');
-        return;
-      }
-
-      const assignments = linesForDate.map((line, idx) => {
-        const variant = variantBySku[line.product_sku] ?? null;
-        const fiche = variant ? ficheById[variant.fiche_id] ?? null : null;
-        return {
-          import_id: importRow.id,
-          team: line.team,
-          fiche_id: variant?.fiche_id ?? null,
-          variant_id: variant?.variant_id ?? null,
-          product_name_vi: line.product_name_vi,
-          product_name_en: fiche?.name_en ?? '',
-          image_url: variant?.image_url ?? fiche?.image_url ?? null,
-          variant_label: line.variant_label,
-          total_qty: line.total_qty,
-          qty_to_produce: line.total_qty,
-          qty_produced: 0,
-          status: 'pending',
-          sort_order: sortOffset + idx,
-          breakdown: line.breakdown ?? [],
-        };
-      });
-      sortOffset += linesForDate.length;
-
-      const { error: assignErr } = await supabase.from('lab_assignments').insert(assignments);
-      if (assignErr) {
-        setError(assignErr.message);
-        await supabase.from('lab_imports').delete().eq('id', importRow.id);
-        setStep('preview');
-        return;
-      }
-
-      // Insert raw order lines for this date (with fiche link when SKU is known)
-      const olForDate = (orderLinesByDate.get(date) ?? []).map(ol => ({
-        ...ol,
-        import_id: importRow.id,
-        fiche_id: variantBySku[ol.product_sku]?.fiche_id ?? null,
-        variant_id: variantBySku[ol.product_sku]?.variant_id ?? null,
-      }));
-      if (olForDate.length > 0) {
-        await supabase.from('lab_order_lines').insert(olForDate);
-      }
-    }
-
-    setImportedDate(earliestDate);
+      excluded: excludedList,
+    });
+    if (persistErr) { setError(persistErr); setStep('preview'); return; }
+    setImportedDate(earliestDate ?? new Date().toISOString().split('T')[0]);
     setStep('done');
   }
 
@@ -880,6 +775,16 @@ export default function ImportView() {
                             : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
                         </button>
                       )}
+                      {!isExcluded && (
+                        <button
+                          onClick={() => permanentExclude(sku, name)}
+                          disabled={excludingSku === sku}
+                          title={lang === 'vi' ? 'Không bao giờ sản xuất (bao bì, đồ uống…)' : 'Never produce (packaging, drinks…)'}
+                          className="text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          {excludingSku === sku ? '…' : (lang === 'vi' ? 'Không SX' : 'Not produced')}
+                        </button>
+                      )}
                       <button
                         onClick={() => toggleExclude(sku)}
                         className={`text-xs font-semibold px-3 py-1 rounded-full transition-colors shrink-0 ${
@@ -890,7 +795,7 @@ export default function ImportView() {
                       >
                         {isExcluded
                           ? (lang === 'vi' ? 'Giữ lại' : 'Keep')
-                          : (lang === 'vi' ? 'Loại bỏ' : 'Exclude')}
+                          : (lang === 'vi' ? 'Bỏ qua lần này' : 'Skip once')}
                       </button>
                     </div>
                   );
@@ -898,8 +803,8 @@ export default function ImportView() {
               </div>
               <div className="px-4 py-2 bg-amber-50 text-xs text-amber-600">
                 {lang === 'vi'
-                  ? 'Tạo phiếu kỹ thuật trước hoặc giữ lại để nhập bình thường (không có ảnh hay phiếu).'
-                  : 'Create a recipe card first, or keep to import normally (without photo or recipe card).'}
+                  ? '"Tạo phiếu" = thêm công thức · "Không SX" = không bao giờ (bao bì) · "Bỏ qua lần này" = chỉ lần nhập này.'
+                  : '"Create fiche" = add a recipe · "Not produced" = never (packaging) · "Skip once" = this import only.'}
               </div>
             </div>
           )}
