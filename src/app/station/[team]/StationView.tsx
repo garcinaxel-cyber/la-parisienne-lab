@@ -395,7 +395,10 @@ export default function StationView({
 
   const totalQty = assignments.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
   const doneQty = assignments.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
-  const pct = totalQty ? Math.round(doneQty / totalQty * 100) : 0;
+  // Completion = cards handled (done OR in stock) / total cards. In-stock counts as handled,
+  // so a fully-in-stock day shows 100% (nothing to produce) instead of a misleading 0%.
+  const handledCards = assignments.filter(a => a.status === 'done' || a.status === 'skip').length;
+  const pct = assignments.length ? Math.round(handledCards / assignments.length * 100) : 0;
 
   const inProgressCount = assignments.filter(a => a.status === 'in_progress').length;
   const pendingCount = assignments.filter(a => a.status === 'pending').length;
@@ -551,7 +554,7 @@ export default function StationView({
           <div className="flex gap-2">
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
               const list = d === 'tomorrow' ? tomorrowAsg : todayAssignments;
-              const remaining = list.filter(a => a.status === 'pending' || a.status === 'in_progress').length;
+              const handled = list.filter(a => a.status === 'done' || a.status === 'skip').length;
               const active = prodDay === d;
               const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00')
                 .toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
@@ -566,7 +569,7 @@ export default function StationView({
                   {list.length > 0 && (
                     <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
                       style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
-                      {remaining}/{list.length}
+                      {handled}/{list.length}
                     </span>
                   )}
                 </button>

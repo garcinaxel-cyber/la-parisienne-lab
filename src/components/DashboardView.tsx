@@ -46,11 +46,16 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
     setTimeout(() => window.location.reload(), 800);
   }
   const s = stats ?? { imports_today: 0, published_today: 0, total_assignments: 0, done_assignments: 0, blocked: 0 };
-  const pct = s.total_assignments ? Math.round(s.done_assignments / s.total_assignments * 100) : 0;
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<'teams' | 'orders'>('teams');
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+
+  // Completion for the selected day: cards handled (done OR in stock) / total cards.
+  // In-stock counts as handled, so a fully-in-stock day reads 100%, not a confusing 0%.
+  const handledCards = dayAssignments.filter((a: any) => a.status === 'done' || a.status === 'skip').length;
+  const pct = dayAssignments.length ? Math.round(handledCards / dayAssignments.length * 100) : 0;
+  const blockedCount = dayAssignments.filter((a: any) => a.status === 'blocked').length;
 
   const byTeam = TEAMS.map(team => ({
     team,
@@ -153,7 +158,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
           { label: lang === 'vi' ? 'Đơn nhập hôm nay' : 'Imports today', value: s.imports_today, suffix: '', icon: Package, color: 'text-navy' },
           { label: lang === 'vi' ? 'Đã phát hành' : 'Published', value: s.published_today, suffix: '', icon: CheckCircle2, color: 'text-green-600' },
           { label: lang === 'vi' ? 'Tiến độ' : 'Progress', value: pct, suffix: '%', icon: Clock, color: 'text-gold' },
-          { label: lang === 'vi' ? 'Bị chặn' : 'Blocked', value: s.blocked, suffix: '', icon: AlertCircle, color: 'text-red-500' },
+          { label: lang === 'vi' ? 'Bị chặn' : 'Blocked', value: blockedCount, suffix: '', icon: AlertCircle, color: 'text-red-500' },
         ].map(({ label, value, suffix, icon: Icon, color }) => (
           <div key={label} className="card p-4 flex items-center gap-3">
             <Icon size={22} className={color} />
@@ -165,12 +170,12 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         ))}
       </div>
 
-      {/* Progress bar */}
-      {s.total_assignments > 0 && (
+      {/* Progress bar — handled cards (done + in stock) / total for the selected day */}
+      {dayAssignments.length > 0 && (
         <div className="card p-4">
           <div className="flex justify-between text-sm mb-2">
             <span className="font-medium text-navy">{lang === 'vi' ? 'Tiến độ sản xuất' : 'Production progress'}</span>
-            <span className="text-ink-light">{s.done_assignments}/{s.total_assignments}</span>
+            <span className="text-ink-light">{handledCards}/{dayAssignments.length} {lang === 'vi' ? 'thẻ' : 'cards'}</span>
           </div>
           <div className="h-3 rounded-full bg-border-soft overflow-hidden">
             <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
