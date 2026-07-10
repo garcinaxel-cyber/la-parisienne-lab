@@ -27,11 +27,15 @@ function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix
   return <>{display}{suffix}</>;
 }
 
-export default function DashboardView({ stats, imports, assignments, orderLines = [], pendingChanges = [], today }:
-  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; pendingChanges?: any[]; today: string }) {
+export default function DashboardView({ stats, imports, assignments, orderLines = [], tomorrowAssignments = [], tomorrowOrderLines = [], pendingChanges = [], today, tomorrow }:
+  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; tomorrowAssignments?: any[]; tomorrowOrderLines?: any[]; pendingChanges?: any[]; today: string; tomorrow?: string }) {
   const { t, lang } = useI18n();
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [changesDone, setChangesDone] = useState(false);
+  // Which day's production breakdown to show (today default / tomorrow)
+  const [dashDay, setDashDay] = useState<'today' | 'tomorrow'>('today');
+  const dayAssignments = dashDay === 'tomorrow' ? tomorrowAssignments : assignments;
+  const dayOrderLines = dashDay === 'tomorrow' ? tomorrowOrderLines : orderLines;
 
   async function applyChanges() {
     setApplyingChanges(true);
@@ -50,15 +54,15 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
 
   const byTeam = TEAMS.map(team => ({
     team,
-    items: assignments.filter((a: any) => a.team === team),
+    items: dayAssignments.filter((a: any) => a.team === team),
   })).filter(g => g.items.length > 0);
 
   // Per-order progress: each order line inherits the status of its production card
   const asgStatus: Record<string, string> = {};
-  for (const a of assignments) asgStatus[`${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.status;
+  for (const a of dayAssignments) asgStatus[`${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.status;
   type OrderLineDetail = { name: string; variant: string; qty: number; team: string; status: string | null };
   const orderMap = new Map<string, { shops: string[]; time: string | null; total: number; ready: number; units: number; lines: OrderLineDetail[] }>();
-  for (const ol of orderLines) {
+  for (const ol of dayOrderLines) {
     if (!ol.order_ref || !ol.qty) continue;
     let o = orderMap.get(ol.order_ref);
     if (!o) { o = { shops: [], time: null, total: 0, ready: 0, units: 0, lines: [] }; orderMap.set(ol.order_ref, o); }
@@ -171,6 +175,41 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
           <div className="h-3 rounded-full bg-border-soft overflow-hidden">
             <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
           </div>
+        </div>
+      )}
+
+      {/* Day selector — production breakdown for today or tomorrow */}
+      {tomorrow && (tomorrowAssignments.length > 0 || byTeam.length > 0 || orderRows.length > 0) && (
+        <div className="flex gap-2">
+          {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
+            const list = d === 'tomorrow' ? tomorrowAssignments : assignments;
+            const done = list.filter((a: any) => a.status === 'done' || a.status === 'skip').length;
+            const active = dashDay === d;
+            const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
+            return (
+              <button key={d} onClick={() => setDashDay(d)}
+                className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 ${
+                  active ? 'bg-navy text-white' : 'bg-white border border-border-soft text-navy hover:border-navy/40'
+                }`}>
+                <span>{label}</span>
+                <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
+                {list.length > 0 && (
+                  <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
+                    style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                    {done}/{list.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {dashDay === 'tomorrow' && (
+        <div className="rounded-xl px-4 py-2 flex items-center gap-2 text-sm font-semibold"
+          style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #93C5FD' }}>
+          ⏩ {lang === 'vi'
+            ? `Đang xem NGÀY MAI — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
+            : `Viewing TOMORROW — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
         </div>
       )}
 

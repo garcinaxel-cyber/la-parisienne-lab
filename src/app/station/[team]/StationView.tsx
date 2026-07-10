@@ -544,6 +544,46 @@ export default function StationView({
         </div>
       </header>
 
+      {/* Shared Today / Tomorrow day selector — applies to Production, Orders AND Done tabs
+          so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
+      {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine') && (
+        <div className="max-w-3xl mx-auto px-4 pt-4 space-y-2.5">
+          <div className="flex gap-2">
+            {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
+              const list = d === 'tomorrow' ? tomorrowAsg : todayAssignments;
+              const remaining = list.filter(a => a.status === 'pending' || a.status === 'in_progress').length;
+              const active = prodDay === d;
+              const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00')
+                .toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
+              return (
+                <button key={d} onClick={() => setProdDay(d)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  style={active
+                    ? { backgroundColor: '#1A4731', color: 'white' }
+                    : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>
+                  <span>{label}</span>
+                  <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
+                  {list.length > 0 && (
+                    <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
+                      style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                      {remaining}/{list.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {prodDay === 'tomorrow' && (
+            <div className="rounded-xl px-4 py-2 flex items-center gap-2 text-sm font-semibold"
+              style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #93C5FD' }}>
+              ⏩ {lang === 'vi'
+                ? `Đang xem NGÀY MAI — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
+                : `Viewing TOMORROW — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
+            </div>
+          )}
+        </div>
+      )}
+
       {pct === 100 && assignments.length > 0 && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
           {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done!'}
@@ -553,40 +593,6 @@ export default function StationView({
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
-          {/* Today / Tomorrow sub-toggle — chefs pre-produce tomorrow's order the day before */}
-          {tomorrow && (
-            <div className="flex gap-2">
-              {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
-                const list = d === 'tomorrow' ? tomorrowAsg : todayAssignments;
-                const remaining = list.filter(a => a.status === 'pending' || a.status === 'in_progress').length;
-                const active = prodDay === d;
-                return (
-                  <button key={d} onClick={() => setProdDay(d)}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                    style={active
-                      ? { backgroundColor: '#1A4731', color: 'white' }
-                      : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>
-                    {label}
-                    {list.length > 0 && (
-                      <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
-                        style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
-                        {remaining}/{list.length}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {/* "Ahead" banner when producing tomorrow */}
-          {prodDay === 'tomorrow' && (
-            <div className="rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm font-semibold"
-              style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #93C5FD' }}>
-              ⏩ {lang === 'vi'
-                ? `Sản xuất trước cho ngày mai — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
-                : `Producing ahead for tomorrow — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
-            </div>
-          )}
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
