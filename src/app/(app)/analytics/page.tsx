@@ -11,7 +11,8 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (profile?.role !== 'admin') redirect('/dashboard');
 
-  const days = searchParams.range === '7' ? 7 : searchParams.range === '90' ? 90 : 30;
+  const range = searchParams.range ?? '30';
+  const days = range === 'today' ? 1 : range === '7' ? 7 : range === '90' ? 90 : 30;
   const today = new Date();
   const from = new Date(today);
   from.setDate(from.getDate() - days + 1);
@@ -89,5 +90,5 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     completion: v.total ? Math.round(v.done / v.total * 100) : 0,
   })).sort((a, b) => a.date.localeCompare(b.date));
 
-  return <AnalyticsView days={days} kpis={kpis} teams={teams} topProducts={topProducts} reasons={reasons} daily={daily} />;
+  return <AnalyticsView range={range} days={days} kpis={kpis} teams={teams} topProducts={topProducts} reasons={reasons} daily={daily} />;
 }

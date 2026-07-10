@@ -16,6 +16,7 @@ export default function OrdersTabs(props: {
   orderLines: any[];
   unmatchedProducts: { sku: string; name: string; qty: number }[];
   missingCardsCount: number;
+  missingCards: { name: string; team: string; qty: number }[];
   userRole: string | null;
 }) {
   const { lang } = useI18n();
@@ -27,7 +28,7 @@ export default function OrdersTabs(props: {
       {/* Publish + unmatched-products bar — shared across both views */}
       <PublishBar date={props.date} imports={props.imports} orderLines={props.orderLines}
         unmatchedProducts={props.unmatchedProducts}
-        missingCardsCount={props.missingCardsCount} canManage={canManage} />
+        missingCardsCount={props.missingCardsCount} missingCards={props.missingCards} canManage={canManage} />
 
       <div className="flex gap-1 border-b border-border-soft">
         {[

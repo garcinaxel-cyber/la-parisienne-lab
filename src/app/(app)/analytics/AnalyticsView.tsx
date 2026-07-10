@@ -8,16 +8,15 @@ type Kpis = { unitsProduced: number; unitsPlanned: number; completion: number; o
 type TeamStat = { team: string; completion: number; units: number };
 type Daily = { date: string; units: number; total: number; done: number; completion: number };
 
-export default function AnalyticsView({ days, kpis, teams, topProducts, reasons, daily }: {
-  days: number; kpis: Kpis; teams: TeamStat[];
+export default function AnalyticsView({ range, days, kpis, teams, topProducts, reasons, daily }: {
+  range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
   reasons: { reason: string; count: number }[];
   daily: Daily[];
 }) {
   const { lang } = useI18n();
   const router = useRouter();
-  const params = useSearchParams();
-  const current = params.get('range') ?? '30';
+  const current = range;
 
   const setRange = (r: string) => router.push(`/analytics?range=${r}`);
   const maxUnits = Math.max(1, ...daily.map(d => d.units));
@@ -37,11 +36,11 @@ export default function AnalyticsView({ days, kpis, teams, topProducts, reasons,
             {lang === 'vi' ? 'Phân tích & lịch sử' : 'Analytics & history'}
           </h1>
           <p className="text-ink-light text-sm mt-0.5">
-            {lang === 'vi' ? `${days} ngày qua` : `Last ${days} days`}
+            {range === 'today' ? (lang === 'vi' ? 'Hôm nay' : 'Today') : (lang === 'vi' ? `${days} ngày qua` : `Last ${days} days`)}
           </p>
         </div>
         <div className="flex gap-1.5">
-          {[['7', '7' + (lang === 'vi' ? ' ngày' : 'd')], ['30', '30' + (lang === 'vi' ? ' ngày' : 'd')], ['90', '90' + (lang === 'vi' ? ' ngày' : 'd')]].map(([r, label]) => (
+          {[['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['7', '7' + (lang === 'vi' ? ' ngày' : 'd')], ['30', '30' + (lang === 'vi' ? ' ngày' : 'd')], ['90', '90' + (lang === 'vi' ? ' ngày' : 'd')]].map(([r, label]) => (
             <button key={r} onClick={() => setRange(r)}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                 current === r ? 'bg-navy text-white' : 'bg-white border border-border-soft text-ink-light hover:text-navy'

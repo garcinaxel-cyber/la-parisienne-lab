@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { AlertCircle, CheckCircle2, FilePlus, Send, Ban } from 'lucide-react';
+import { TEAM_LABELS, type Team } from '@/lib/types';
 import { publishImportAction, generateMissingCardsAction } from './actions';
 import { createFicheFromSku } from '../../import/actions';
 import { excludeSkuAction } from '../../odoo-changes-actions';
@@ -12,8 +13,8 @@ type Unmatched = { sku: string; name: string; qty: number };
 // Shared publish/status bar shown above BOTH order views (by order + by team).
 // One place to: see draft/published status, resolve products without a recipe
 // card (create fiche / ignore), generate cards for fiches added post-publish, and publish.
-export default function PublishBar({ date, imports, orderLines = [], unmatchedProducts, missingCardsCount, canManage }: {
-  date: string; imports: any[]; orderLines?: any[]; unmatchedProducts: Unmatched[]; missingCardsCount: number; canManage: boolean;
+export default function PublishBar({ date, imports, orderLines = [], unmatchedProducts, missingCardsCount, missingCards = [], canManage }: {
+  date: string; imports: any[]; orderLines?: any[]; unmatchedProducts: Unmatched[]; missingCardsCount: number; missingCards?: { name: string; team: string; qty: number }[]; canManage: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -140,19 +141,35 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
 
       {/* Missing production cards — fiches added after publish */}
       {canManage && missingCardsCount > 0 && (
-        <div className="card p-3 flex items-center gap-3 flex-wrap" style={{ borderColor: '#93C5FD', borderWidth: 1 }}>
-          <AlertCircle size={16} className="shrink-0" style={{ color: '#2563EB' }} />
-          <span className="text-sm flex-1 min-w-0" style={{ color: '#1E40AF' }}>
-            {missingCardsCount} {lang === 'vi'
-              ? 'sản phẩm đã có phiếu nhưng chưa có thẻ sản xuất'
-              : 'products now have a recipe card but no production card'}
-          </span>
-          <button onClick={generateMissing} disabled={generating}
-            className="text-sm py-2 px-4 rounded-xl font-bold text-white flex items-center gap-2 shrink-0"
-            style={{ backgroundColor: '#2563EB' }}>
-            <FilePlus size={14} />
-            {generating ? '…' : (lang === 'vi' ? 'Tạo thẻ còn thiếu' : 'Generate missing cards')}
-          </button>
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#93C5FD' }}>
+          <div className="p-3 flex items-center gap-3 flex-wrap" style={{ backgroundColor: '#EFF6FF' }}>
+            <AlertCircle size={16} className="shrink-0" style={{ color: '#2563EB' }} />
+            <span className="text-sm flex-1 min-w-0" style={{ color: '#1E40AF' }}>
+              {missingCardsCount} {lang === 'vi'
+                ? 'sản phẩm đã có phiếu nhưng chưa có thẻ sản xuất'
+                : 'products now have a recipe card but no production card'}
+            </span>
+            <button onClick={generateMissing} disabled={generating}
+              className="text-sm py-2 px-4 rounded-xl font-bold text-white flex items-center gap-2 shrink-0"
+              style={{ backgroundColor: '#2563EB' }}>
+              <FilePlus size={14} />
+              {generating ? '…' : (lang === 'vi' ? 'Tạo thẻ còn thiếu' : 'Generate missing cards')}
+            </button>
+          </div>
+          {missingCards.length > 0 && (
+            <div className="divide-y bg-white" style={{ borderColor: '#DBEAFE' }}>
+              {missingCards.map((p, i) => {
+                const meta = TEAM_LABELS[p.team as Team];
+                return (
+                  <div key={i} className="flex items-center gap-2 px-4 py-1.5 text-sm">
+                    <span className="flex-1 truncate text-navy">{p.name}</span>
+                    {meta && <span className="text-[10px] font-semibold" style={{ color: meta.color }}>{lang === 'vi' ? meta.vi : meta.en}</span>}
+                    <span className="text-xs font-bold text-navy shrink-0">×{p.qty}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

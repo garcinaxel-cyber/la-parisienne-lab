@@ -92,7 +92,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
       for (const f of fm ?? []) ficheTeams.set(f.id, (f.teams ?? [])[0] ?? '');
     }
   }
-  const missingKeys = new Set<string>();
+  const missingMap = new Map<string, { name: string; team: string; qty: number }>();
   for (const l of orderLinesResult.data ?? []) {
     if (!publishedImportIds.has(l.import_id)) continue;
     const v = l.product_sku ? variantBySkuForMissing.get(l.product_sku) : null;
@@ -100,9 +100,13 @@ export default async function OrderDatePage({ params }: { params: { date: string
     const team = ficheTeams.get(v.fiche_id) ?? '';
     if (!['baby_mama', 'hung', 'entremet', 'baker'].includes(team)) continue;
     const key = `${l.import_id}||${team}||${v.label}||${l.product_name_vi}`;
-    if (!asgKeys.has(key)) missingKeys.add(key);
+    if (asgKeys.has(key)) continue;
+    const cur = missingMap.get(key) ?? { name: l.product_name_vi, team, qty: 0 };
+    cur.qty += l.qty ?? 0;
+    missingMap.set(key, cur);
   }
-  const missingCardsCount = missingKeys.size;
+  const missingCards = Array.from(missingMap.values());
+  const missingCardsCount = missingCards.length;
 
     const profile = userResult.data.session
         ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
@@ -116,6 +120,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
       orderLines={orderLinesResult.data ?? []}
       unmatchedProducts={unmatchedProducts}
       missingCardsCount={missingCardsCount}
+      missingCards={missingCards}
       userRole={profile?.role ?? null}
     />
   );
