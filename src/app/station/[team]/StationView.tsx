@@ -52,6 +52,7 @@ type Assignment = {
   sort_order: number;
   import_id: string;
   is_extra?: boolean;
+  produced_ahead?: boolean;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -286,13 +287,16 @@ export default function StationView({
     setLoadingDetails(false);
   }
 
+  // Producing tomorrow (or any future day) = produced ahead of the delivery date
+  const isAhead = prodDay === 'tomorrow';
+
   async function advanceStatus(a: Assignment) {
     const next = STATUS_FLOW[a.status];
     if (!next) return;
     setUpdating(a.id);
     const supabase = createClient();
     const update: any = { status: next, updated_at: new Date().toISOString() };
-    if (next === 'done') update.qty_produced = a.qty_to_produce;
+    if (next === 'done') { update.qty_produced = a.qty_to_produce; update.produced_ahead = isAhead; }
     if (a.status === 'blocked') update.blocked_reason = null;
     await supabase.from('lab_assignments').update(update).eq('id', a.id);
     setAssignments(prev => prev.map(x => x.id === a.id ? { ...x, ...update } : x));
@@ -302,7 +306,7 @@ export default function StationView({
   async function markInStock(a: Assignment) {
     setUpdating(a.id);
     const supabase = createClient();
-    const update = { status: 'skip' as AssignmentStatus, updated_at: new Date().toISOString() };
+    const update = { status: 'skip' as AssignmentStatus, updated_at: new Date().toISOString(), produced_ahead: isAhead };
     await supabase.from('lab_assignments').update(update).eq('id', a.id);
     setAssignments(prev => prev.map(x => x.id === a.id ? { ...x, ...update } : x));
     setUpdating(null);
@@ -330,10 +334,12 @@ export default function StationView({
   async function savePartial() {
     if (!qtyModal) return;
     const supabase = createClient();
+    const isDone = qtyInput >= qtyModal.qty_to_produce;
     const update = {
-      status: qtyInput >= qtyModal.qty_to_produce ? 'done' : 'partial' as AssignmentStatus,
+      status: (isDone ? 'done' : 'partial') as AssignmentStatus,
       qty_produced: qtyInput,
       updated_at: new Date().toISOString(),
+      produced_ahead: isDone ? isAhead : false,
     };
     await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
     setAssignments(prev => prev.map(x => x.id === qtyModal.id ? { ...x, ...update } : x));
@@ -1594,14 +1600,15 @@ function TermineCard({
   updating: string | null;
 }) {
   const isSkip = a.status === 'skip';
+  const ahead = !!a.produced_ahead && !isSkip; // done in advance of the delivery day
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
   return (
     <div className="rounded-2xl overflow-hidden"
       style={{
-        backgroundColor: isSkip ? '#F5F3FF' : 'white',
-        border: isSkip ? '1.5px solid #C4B5FD' : '1px solid #E0D49A',
-        opacity: isSkip ? 1 : 0.75,
+        backgroundColor: isSkip ? '#F5F3FF' : ahead ? '#EFF6FF' : 'white',
+        border: isSkip ? '1.5px solid #C4B5FD' : ahead ? '1.5px solid #93C5FD' : '1px solid #E0D49A',
+        opacity: isSkip ? 1 : ahead ? 1 : 0.75,
       }}>
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
@@ -1626,9 +1633,15 @@ function TermineCard({
                 {lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'}
               </span>
             ) : (
-              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: '#059669' }}>
+              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: ahead ? '#1E40AF' : '#059669' }}>
                 <CheckCircle2 size={11} />
                 {lang === 'vi' ? `Đã làm x${a.qty_produced}` : `Done x${a.qty_produced}`}
+              </span>
+            )}
+            {ahead && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                style={{ backgroundColor: '#DBEAFE', color: '#1E40AF' }}>
+                ⏩ {lang === 'vi' ? 'Làm trước' : 'Ahead'}
               </span>
             )}
             <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>

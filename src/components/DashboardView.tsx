@@ -267,9 +267,15 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
                           <div className="text-sm font-medium text-navy truncate">{a.product_name_vi}</div>
                           {a.variant_label !== 'Standard' && <div className="text-xs text-ink-light">{a.variant_label}</div>}
                         </div>
-                        <div className="flex items-center gap-3 ml-3 shrink-0">
+                        <div className="flex items-center gap-2 ml-3 shrink-0">
                           <span className="text-sm font-bold text-navy">x{a.total_qty}</span>
-                          <span className="badge text-white text-[10px]" style={{ backgroundColor: st.color }}>
+                          {a.produced_ahead && a.status === 'done' && (
+                            <span className="badge text-[10px]" style={{ backgroundColor: '#DBEAFE', color: '#1E40AF' }}>
+                              ⏩ {lang === 'vi' ? 'Trước' : 'Ahead'}
+                            </span>
+                          )}
+                          <span className="badge text-white text-[10px]"
+                            style={{ backgroundColor: a.produced_ahead && a.status === 'done' ? '#2563EB' : st.color }}>
                             {lang === 'vi' ? st.labelVi : st.labelEn}
                           </span>
                         </div>

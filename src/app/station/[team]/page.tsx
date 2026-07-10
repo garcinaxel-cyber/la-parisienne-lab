@@ -49,7 +49,7 @@ export default async function StationPage({ params }: { params: { team: string }
       .select(`
         id, fiche_id, variant_id, product_name_vi, product_name_en, image_url,
         variant_label, total_qty, qty_to_produce, qty_produced,
-        status, is_extra, notes, sort_order, import_id,
+        status, is_extra, produced_ahead, notes, sort_order, import_id,
         lab_imports!inner(delivery_date, order_number, type, status)
       `)
       .eq('team', team)
