@@ -571,7 +571,8 @@ export default function StationView({
                     : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>
                   <span>{label}</span>
                   <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
-                  {list.length > 0 && (
+                  {/* Progress badge only where progress matters — not on the Done tab (a record, not a to-do) */}
+                  {list.length > 0 && activeTab !== 'termine' && (
                     <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
                       style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
                       {handled}/{list.length}
@@ -592,7 +593,8 @@ export default function StationView({
         </div>
       )}
 
-      {pct === 100 && assignments.length > 0 && (
+      {/* Celebratory banner only on the work tabs, not on Done (which is just a production record) */}
+      {pct === 100 && assignments.length > 0 && activeTab !== 'termine' && (
         <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
           {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done!'}
         </div>
