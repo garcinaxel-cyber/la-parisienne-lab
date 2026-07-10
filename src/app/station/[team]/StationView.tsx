@@ -124,6 +124,7 @@ export default function StationView({
   const router = useRouter();
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
+  const [showInStock, setShowInStock] = useState(false);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -391,7 +392,8 @@ export default function StationView({
   }
 
   const production = assignments.filter(a => ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
-  const termine = assignments.filter(a => ['done', 'skip'].includes(a.status));
+  const inStock = assignments.filter(a => a.status === 'skip'); // available, not produced
+  const termine = assignments.filter(a => a.status === 'done');  // Done = actually produced only
 
   // Order-based cards only (exclude extra production — it belongs to no client order).
   // Order fulfillment metrics are measured on these, not on ad-hoc extras.
@@ -669,6 +671,43 @@ export default function StationView({
               </>
             );
           })()}
+
+          {/* In-stock (skip) items — available, not produced. Collapsed, with revert. */}
+          {inStock.length > 0 && !isEmployee && (
+            <div className="rounded-2xl overflow-hidden mt-2" style={{ border: '1px solid #C4B5FD', backgroundColor: '#F5F3FF' }}>
+              <button onClick={() => setShowInStock(v => !v)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-bold" style={{ color: '#6D28D9' }}>
+                <Package size={15} />
+                <span>{lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'} · {inStock.length}</span>
+                <span className="text-xs font-normal" style={{ color: '#8B5CF6' }}>
+                  ({lang === 'vi' ? 'không cần làm' : 'no need to produce'})
+                </span>
+                <ChevronRight size={15} className={`ml-auto transition-transform ${showInStock ? 'rotate-90' : ''}`} />
+              </button>
+              {showInStock && (
+                <div className="divide-y" style={{ borderColor: '#EDE9FE' }}>
+                  {inStock.map(a => (
+                    <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 bg-white">
+                      {a.image_url
+                        ? <img src={a.image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
+                        : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>
+                          {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+                        </div>
+                        <div className="text-xs" style={{ color: '#8B5CF6' }}>×{a.qty_to_produce}</div>
+                      </div>
+                      <button onClick={() => advanceStatus(a)} disabled={updating === a.id}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-all shrink-0"
+                        style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', opacity: updating === a.id ? 0.6 : 1 }}>
+                        {lang === 'vi' ? 'Cần làm' : 'Produce'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
