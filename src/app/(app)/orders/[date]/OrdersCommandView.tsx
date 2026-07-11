@@ -193,10 +193,6 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                         <div key={i} className="grid grid-cols-12 py-1.5 text-sm items-center border-t border-border-soft/60">
                           <div className="col-span-5 min-w-0">
                             <span className="text-navy truncate block text-[13px]">{l.name}</span>
-                            {l.note && (
-                              <span className="mt-0.5 text-[11px] font-medium rounded px-1.5 py-0.5 inline-block"
-                                style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>✎ {l.note}</span>
-                            )}
                           </div>
                           <div className="col-span-2 text-xs text-ink-light">{l.variant !== 'Standard' ? l.variant : '–'}</div>
                           <div className="col-span-1 text-center font-bold text-navy">×{l.qty}</div>

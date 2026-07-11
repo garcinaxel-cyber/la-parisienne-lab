@@ -820,8 +820,6 @@ export default function StationView({
                 {orderList.map((a, i) => {
                   const st = STATUS_META[a.status];
                   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
-                  const rowNotes = breakdown.filter(b => b.note && String(b.note).trim())
-                    .map(b => ({ ref: b.order_ref ?? '', note: String(b.note).trim() }));
                   return (
                     <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EfC8' : undefined, opacity: a.cancelled ? 0.65 : 1 }}>
                       {/* Product row */}
@@ -865,17 +863,6 @@ export default function StationView({
                               </span>
                             )}
                           </div>
-                          {rowNotes.length > 0 && (
-                            <div className="mt-1 flex flex-col gap-1">
-                              {rowNotes.map((n, ni) => (
-                                <div key={ni} className="text-[11px] font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
-                                  style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-                                  <PenLine size={12} className="mt-0.5 shrink-0" />
-                                  <span>{n.note}{rowNotes.length > 1 && n.ref ? <span className="opacity-60"> · {n.ref}</span> : null}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
                         </div>
                         <div className="text-2xl font-black shrink-0"
                           style={{ color: a.cancelled ? '#9CA3AF' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>
@@ -1632,10 +1619,6 @@ function ProductionCard({
   const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
   const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status);
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
-  // Odoo per-order notes (design instructions etc.) — deduped, order ref kept for context
-  const cardNotes = breakdown
-    .filter(b => b.note && String(b.note).trim())
-    .map(b => ({ ref: b.order_ref ?? '', note: String(b.note).trim() }));
 
   const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
@@ -1731,19 +1714,6 @@ function ProductionCard({
             <div className="mt-1 text-xs font-medium rounded-lg px-2 py-1 inline-block"
               style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
               ⚠ {a.blocked_reason}
-            </div>
-          )}
-
-          {/* Odoo product notes (design instructions etc.) — one chip per note */}
-          {cardNotes.length > 0 && (
-            <div className="mt-1.5 flex flex-col gap-1">
-              {cardNotes.map((n, i) => (
-                <div key={i} className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
-                  style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-                  <PenLine size={13} className="mt-0.5 shrink-0" />
-                  <span>{n.note}{cardNotes.length > 1 && n.ref ? <span className="opacity-60"> · {n.ref}</span> : null}</span>
-                </div>
-              ))}
             </div>
           )}
         </div>
