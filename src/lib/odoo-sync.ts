@@ -150,11 +150,15 @@ for (const [k, odoo] of Object.entries(odooQtyByRefSku)) {
   if (excludedSet.has(sku)) continue; // packaging/drinks — never produced, don't flag as "added"
   if (!labQtyByRefSku[k]) pushChange(ref, { sku, name: odoo.name, old_qty: 0, new_qty: odoo.qty });
 }
-const changes = Object.entries(changesByRef).map(([order_ref, items]) => ({
-  order_ref,
-  cancelled: cancelledRefs.includes(order_ref),
-  items,
-}));
+const changes = Object.entries(changesByRef)
+  // Drop no-op items (old == new, e.g. a line long ago zeroed that Odoo no longer has) —
+  // they aren't real changes and would otherwise re-surface on every sync.
+  .map(([order_ref, items]) => ({
+    order_ref,
+    cancelled: cancelledRefs.includes(order_ref),
+    items: items.filter(it => it.old_qty !== it.new_qty),
+  }))
+  .filter(c => c.cancelled || c.items.length > 0);
 
 // ── 6. Build ParsedLine[] (same shape as the Excel parser output) ──
 const lines: any[] = [];

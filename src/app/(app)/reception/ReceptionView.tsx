@@ -2,14 +2,16 @@
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { PackageCheck, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight } from 'lucide-react';
 
 type Line = {
   id: string; product_name_vi: string; product_name_en: string | null;
   sku: string | null; variant_label: string | null; image_url: string | null;
   qty_sent: number; qty_received: number | null;
+  discrepancy_reason?: string | null; discrepancy_note?: string | null;
 };
 type Bon = { id: string; team: string; created_by_name: string | null; created_at: string; lines: Line[] };
+type HistBon = Bon & { received_by_name: string | null; received_at: string | null };
 
 const REASONS = [
   { v: 'casse', vi: 'Vỡ / hỏng', en: 'Broken / damaged' },
@@ -18,9 +20,13 @@ const REASONS = [
   { v: 'other', vi: 'Khác', en: 'Other' },
 ];
 
-export default function ReceptionView({ bons }: { bons: Bon[] }) {
+export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; history?: HistBon[] }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
+  const [showHistory, setShowHistory] = useState(false);
+  const reasonLabel = (v: string | null | undefined) => {
+    const r = REASONS.find(x => x.v === v); return r ? (vi ? r.vi : r.en) : (v ?? '');
+  };
   const [state, setState] = useState<Record<string, { qty: string; reason: string; note: string }>>(() => {
     const s: Record<string, { qty: string; reason: string; note: string }> = {};
     for (const b of bons) for (const l of b.lines) s[l.id] = { qty: String(l.qty_received ?? l.qty_sent), reason: '', note: '' };
@@ -193,6 +199,58 @@ export default function ReceptionView({ bons }: { bons: Bon[] }) {
             </div>
           );
         })
+      )}
+
+      {/* History — validated transfer notes (read-only) */}
+      {history.length > 0 && (
+        <div className="pt-2">
+          <button onClick={() => setShowHistory(v => !v)}
+            className="flex items-center gap-2 text-sm font-semibold text-ink-light hover:text-navy transition-colors">
+            <ChevronRight size={16} className={`transition-transform ${showHistory ? 'rotate-90' : ''}`} />
+            {vi ? 'Lịch sử đã nhận' : 'Received history'} · {history.length}
+          </button>
+          {showHistory && (
+            <div className="mt-3 space-y-3">
+              {history.map(h => {
+                const meta = TEAM_LABELS[h.team as Team];
+                const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+                const diffs = h.lines.filter(l => l.qty_received != null && l.qty_received !== l.qty_sent).length;
+                return (
+                  <div key={h.id} className="card overflow-hidden" style={{ opacity: 0.95 }}>
+                    <div className="flex items-center justify-between px-4 py-2.5" style={{ backgroundColor: '#F0FDF4' }}>
+                      <div className="text-sm font-semibold text-navy">
+                        {vi ? 'Phiếu' : 'Note'} #{h.id.slice(0, 6).toUpperCase()}
+                        <span className="text-ink-light font-normal"> · {h.created_by_name ?? '—'} · {meta ? (vi ? meta.vi : meta.en) : h.team}</span>
+                      </div>
+                      <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 inline-flex items-center gap-1" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
+                        <CheckCircle2 size={12} /> {vi ? 'đã nhận' : 'received'}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-border-soft">
+                      {h.lines.map(l => {
+                        const diff = (l.qty_received ?? 0) - l.qty_sent;
+                        return (
+                          <div key={l.id} className="px-4 py-2 grid grid-cols-12 items-center gap-2 text-sm">
+                            <span className="col-span-6 text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</span>
+                            <span className="col-span-2 text-center text-ink-light">×{l.qty_sent}</span>
+                            <span className="col-span-4 text-center font-semibold">
+                              →&nbsp;×{l.qty_received ?? '—'}
+                              {diff !== 0 && <span className="ml-1 text-xs font-bold" style={{ color: '#DC2626' }}>({diff > 0 ? '+' : ''}{diff} · {reasonLabel(l.discrepancy_reason)})</span>}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="px-4 py-2 text-xs text-ink-light" style={{ backgroundColor: '#F9FAFB' }}>
+                      {vi ? 'Nhận bởi' : 'Received by'} {h.received_by_name ?? '—'} · {recAt}
+                      {diffs > 0 && <span className="ml-2" style={{ color: '#DC2626' }}>· {diffs} {vi ? 'chênh lệch' : 'discrepancy'}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
