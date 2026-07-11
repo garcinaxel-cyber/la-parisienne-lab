@@ -21,7 +21,7 @@ export default async function BirthdayCakesPage() {
   // 2. READ the already-imported order lines for those fiches (upcoming) — no new order is created
   const { data: lines } = bcFicheIds.length
     ? await supabase.from('lab_order_lines')
-        .select('id, order_ref, product_name_vi, product_name_en, shop_name, delivery_date, delivery_time, qty, product_sku, source_type')
+        .select('id, order_ref, product_name_vi, shop_name, delivery_date, delivery_time, qty, product_sku, source_type')
         .in('fiche_id', bcFicheIds)
         .gte('delivery_date', today)
         .order('delivery_date').order('delivery_time')
