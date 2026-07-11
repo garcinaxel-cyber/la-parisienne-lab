@@ -32,6 +32,7 @@ interface FicheVariant {
   sku: string | null;
   weight_g: number | null;
   is_default: boolean;
+  image_url: string | null;
 }
 
 interface VariantQuantity {
@@ -267,10 +268,13 @@ export default function FicheView({
           <div>
             <div style={{ fontSize: '10px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '1.5px', fontFamily: 'Arial, sans-serif', marginBottom: '8px', borderBottom: '1px solid #ddd', paddingBottom: '4px' }}>
               {lang === 'vi' ? 'HÌNH ẢNH THÀNH PHẨM CHUẨN' : 'REFERENCE PRODUCT IMAGE'}
+              {selectedVariant?.image_url && (
+                <span style={{ marginLeft: '8px', fontWeight: 400, color: '#C5932A', letterSpacing: 'normal' }}>— {selectedVariant.label}</span>
+              )}
             </div>
             <div style={{ border: '1.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', minHeight: '160px', backgroundColor: '#f9f9f9', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {product.main_image_url ? (
-                <img src={product.main_image_url} alt={product.name_vi} style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} />
+              {(selectedVariant?.image_url ?? product.main_image_url) ? (
+                <img src={selectedVariant?.image_url ?? product.main_image_url ?? undefined} alt={product.name_vi} style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} />
               ) : (
                 <div style={{ fontSize: '11px', color: '#aaa', fontFamily: 'Arial, sans-serif', textAlign: 'center', padding: '20px' }}>
                   [ {lang === 'vi' ? 'Không gian dán ảnh chuẩn' : 'Reference photo placeholder'} ]

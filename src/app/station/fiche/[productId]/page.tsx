@@ -39,7 +39,7 @@ export default async function FichePage({
     ficheId
       ? supabase
           .from('lab_fiche_variants')
-          .select('id, label, sku, weight_g, is_default')
+          .select('id, label, sku, weight_g, is_default, image_url')
           .eq('fiche_id', ficheId)
           .order('sort_order')
       : Promise.resolve({ data: [] }),
