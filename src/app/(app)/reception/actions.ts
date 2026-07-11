@@ -59,3 +59,38 @@ export async function receiveStockTransferAction(
   revalidatePath('/dashboard');
   return { ok: true };
 }
+
+// Validate ONE line of a transfer. When it was the last un-received line, the whole
+// note auto-closes (status = received). Lets assistants receive product by product.
+export async function receiveTransferLineAction(
+  transferId: string, lineId: string, qtyReceived: number, reason?: string | null, note?: string | null,
+): Promise<{ ok?: boolean; closed?: boolean; error?: string }> {
+  const { supabase, ok, userId, name } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+
+  const { data: line } = await supabase
+    .from('lab_stock_transfer_lines').select('qty_sent').eq('id', lineId).single();
+  const sent = line?.qty_sent ?? qtyReceived;
+  const qty = Math.round(qtyReceived);
+  const isDiscrepancy = qty !== sent;
+  if (isDiscrepancy && !(reason && reason.trim())) return { error: 'A reason is required for a discrepancy' };
+
+  await supabase.from('lab_stock_transfer_lines').update({
+    qty_received: qty,
+    discrepancy_reason: isDiscrepancy ? reason : null,
+    discrepancy_note: isDiscrepancy ? (note ?? null) : null,
+  }).eq('id', lineId);
+
+  const { data: remaining } = await supabase
+    .from('lab_stock_transfer_lines').select('id').eq('transfer_id', transferId).is('qty_received', null);
+  let closed = false;
+  if (!remaining || remaining.length === 0) {
+    await supabase.from('lab_stock_transfers').update({
+      status: 'received', received_by: userId, received_by_name: name, received_at: new Date().toISOString(),
+    }).eq('id', transferId);
+    closed = true;
+  }
+  revalidatePath('/reception');
+  revalidatePath('/dashboard');
+  return { ok: true, closed };
+}
