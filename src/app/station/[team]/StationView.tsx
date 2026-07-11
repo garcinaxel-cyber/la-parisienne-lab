@@ -55,6 +55,8 @@ type Assignment = {
   produced_ahead?: boolean;
   cancelled?: boolean;
   transferred?: boolean;
+  bc_message?: string | null;
+  bc_ready_time?: string | null;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -1714,6 +1716,24 @@ function ProductionCard({
             <div className="mt-1 text-xs font-medium rounded-lg px-2 py-1 inline-block"
               style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
               ⚠ {a.blocked_reason}
+            </div>
+          )}
+
+          {/* Birthday cake: ready-by deadline (red) + message on the cake */}
+          {(a.bc_ready_time || a.bc_message) && (
+            <div className="mt-1.5 flex flex-col gap-1 items-start">
+              {a.bc_ready_time && (
+                <span className="text-[11px] font-bold rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
+                  <Clock size={12} /> {lang === 'vi' ? 'Cần xong' : 'Ready by'} {a.bc_ready_time.slice(0, 5)}
+                </span>
+              )}
+              {a.bc_message && (
+                <span className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
+                  style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                  🎂 <span style={{ fontWeight: 500 }}>{a.bc_message}</span>
+                </span>
+              )}
             </div>
           )}
         </div>
