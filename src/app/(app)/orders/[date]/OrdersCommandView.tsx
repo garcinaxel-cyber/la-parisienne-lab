@@ -38,7 +38,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
 
   type OrderRow = {
     ref: string; source: string; shops: string[]; time: string | null;
-    lines: { sku: string; name: string; variant: string; qty: number; team: string; status: AssignmentStatus | null }[];
+    lines: { sku: string; name: string; variant: string; qty: number; team: string; status: AssignmentStatus | null; note?: string | null }[];
   };
 
   const orders: OrderRow[] = useMemo(() => {
@@ -55,7 +55,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
       const asg = asgByKey[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`] ?? null;
       row.lines.push({
         sku: ol.product_sku ?? '', name: ol.product_name_vi ?? '', variant: ol.variant_label ?? '',
-        qty: ol.qty, team: ol.team ?? '', status: asg?.status ?? null,
+        qty: ol.qty, team: ol.team ?? '', status: asg?.status ?? null, note: ol.note ?? null,
       });
     }
     return Array.from(byRef.values()).sort((a, b) => (a.time ?? '99') < (b.time ?? '99') ? -1 : 1);
@@ -193,6 +193,10 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                         <div key={i} className="grid grid-cols-12 py-1.5 text-sm items-center border-t border-border-soft/60">
                           <div className="col-span-5 min-w-0">
                             <span className="text-navy truncate block text-[13px]">{l.name}</span>
+                            {l.note && (
+                              <span className="mt-0.5 text-[11px] font-medium rounded px-1.5 py-0.5 inline-block"
+                                style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>✎ {l.note}</span>
+                            )}
                           </div>
                           <div className="col-span-2 text-xs text-ink-light">{l.variant !== 'Standard' ? l.variant : '–'}</div>
                           <div className="col-span-1 text-center font-bold text-navy">×{l.qty}</div>

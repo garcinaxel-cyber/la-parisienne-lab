@@ -33,7 +33,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const [{ data: assignments }, { data: rangeOrderLines }, { data: changeRows }, { data: excludedRows }] = await Promise.all([
     importIds.length
       ? supabase.from('lab_assignments')
-          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason')
+          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, cancelled')
           .in('import_id', importIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
     importIds.length
@@ -103,6 +103,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const perDay: Record<string, { units: number; total: number; done: number }> = {};
 
   for (const a of rows) {
+    if (a.cancelled) continue; // cancelled cards are out of every production metric
     const date = dateByImport[a.import_id];
     unitsPlanned += a.total_qty ?? 0;
     // Units actually PRODUCED — in-stock (skip) was not made, so it counts 0.

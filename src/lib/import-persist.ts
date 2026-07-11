@@ -126,6 +126,7 @@ export async function persistImportsFromLines(
       product_sku: line.product_sku, product_name_vi: line.product_name_vi,
       team: line.team, variant_label: line.variant_label, qty: b.qty,
       delivery_date: date,
+      note: b.note ?? null,
       delivery_time: opts.deliveryTimeByRef?.[b.order_ref] ?? b.delivery_time ?? null,
       fiche_id: vBySku[line.product_sku]?.fiche_id ?? null,
       variant_id: vBySku[line.product_sku]?.id ?? null,

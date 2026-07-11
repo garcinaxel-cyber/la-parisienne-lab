@@ -12,6 +12,7 @@ export interface ParsedLine {
   qty: number;
   delivery_date: string;  // ISO date
   delivery_time: string | null;
+  note?: string | null;   // per-line note authored in Odoo (design instructions etc.)
 }
 
 /** A row from the Excel that was NOT imported, with the reason — for the control report */
@@ -182,7 +183,7 @@ export interface ConsolidatedLine {
   variant_label: string;
   delivery_date: string; // ISO date from Excel — kept as grouping key
   total_qty: number;
-  breakdown: { shop_name: string; order_ref: string; qty: number; delivery_time?: string | null }[];
+  breakdown: { shop_name: string; order_ref: string; qty: number; delivery_time?: string | null; note?: string | null }[];
 }
 
 /** Consolidate parsed lines into assignment groups (team + sku + variant + date).
@@ -195,12 +196,12 @@ export function consolidateLines(lines: ParsedLine[]): ConsolidatedLine[] {
     const existing = map.get(key);
     if (existing) {
       existing.total_qty += l.qty;
-      existing.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time });
+      existing.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time, note: l.note ?? null });
     } else {
       map.set(key, {
         team: l.team, product_sku: l.product_sku, product_name_vi: l.product_name_vi,
         variant_label: l.variant_label, delivery_date: l.delivery_date, total_qty: l.qty,
-        breakdown: [{ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time }],
+        breakdown: [{ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time, note: l.note ?? null }],
       });
     }
   }

@@ -61,13 +61,15 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
 
   // Completion for the selected day: cards handled (done OR in stock) / total cards.
   // In-stock counts as handled, so a fully-in-stock day reads 100%, not a confusing 0%.
-  const handledCards = dayAssignments.filter((a: any) => a.status === 'done' || a.status === 'skip').length;
-  const pct = dayAssignments.length ? Math.round(handledCards / dayAssignments.length * 100) : 0;
-  const blockedCount = dayAssignments.filter((a: any) => a.status === 'blocked').length;
+  // Cancelled cards (Odoo qty → 0) are out of progress everywhere.
+  const activeDay = dayAssignments.filter((a: any) => !a.cancelled);
+  const handledCards = activeDay.filter((a: any) => a.status === 'done' || a.status === 'skip').length;
+  const pct = activeDay.length ? Math.round(handledCards / activeDay.length * 100) : 0;
+  const blockedCount = activeDay.filter((a: any) => a.status === 'blocked').length;
 
   const byTeam = TEAMS.map(team => ({
     team,
-    items: dayAssignments.filter((a: any) => a.team === team),
+    items: activeDay.filter((a: any) => a.team === team),
   })).filter(g => g.items.length > 0);
 
   // Per-order progress: each order line inherits the status of its production card

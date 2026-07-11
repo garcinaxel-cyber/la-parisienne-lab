@@ -63,9 +63,13 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         const note = ch.cancelled
           ? `⚠ ${ch.order_ref} annulée dans Odoo (−${oldTotal})`
           : `Odoo ${stamp}: ${ch.order_ref} ${delta > 0 ? '+' : ''}${delta}`;
+        const newTotal = Math.max(0, (asg.total_qty ?? 0) + delta);
+        // Whole card down to 0 → mark cancelled (kept visible, struck through, out of progress).
+        // Re-added later (total back above 0) → un-cancel.
         await supabase.from('lab_assignments').update({
-          total_qty: Math.max(0, (asg.total_qty ?? 0) + delta),
+          total_qty: newTotal,
           qty_to_produce: Math.max(0, (asg.qty_to_produce ?? 0) + delta),
+          cancelled: newTotal === 0,
           breakdown,
           notes: asg.notes ? `${asg.notes}\n${note}` : note,
           updated_at: new Date().toISOString(),
@@ -130,6 +134,7 @@ async function createLineAndCard(
       await supabase.from('lab_assignments').update({
         total_qty: (asg.total_qty ?? 0) + item.new_qty,
         qty_to_produce: (asg.qty_to_produce ?? 0) + item.new_qty,
+        cancelled: false, // demand came back
         breakdown, updated_at: new Date().toISOString(),
       }).eq('id', asg.id);
     } else {

@@ -40,7 +40,7 @@ const replIds = repls.map(r => r.id);
 const replLines: any[] = replIds.length
   ? await odooExecute('stock.replenishment.request.line', 'search_read',
       [[['request_id', 'in', replIds]]],
-      { fields: ['request_id', 'product_id', 'quantity_requested'], limit: 2000 })
+      { fields: ['request_id', 'product_id', 'quantity_requested', 'name'], limit: 2000 })
   : [];
 
 // ── 3. SKUs for all products involved ──
@@ -161,6 +161,15 @@ const lines: any[] = [];
 const skippedRefs = new Set<string>();
 let multiTeamSkus = new Set<string>();
 
+// A salesperson's note lives on the Odoo line's `name`, AFTER the first line
+// (which is the product label). Everything past the first newline = the note.
+const extractNote = (raw: unknown): string | null => {
+  const s = String(raw ?? '');
+  if (!s.includes('\n')) return null;
+  const note = s.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
+  return note || null;
+};
+
 for (const l of soLines) {
   const order = orderById[l.order_id?.[0]];
   if (!order) continue;
@@ -182,6 +191,7 @@ for (const l of soLines) {
     qty,
     delivery_date: dt.date,
     delivery_time: dt.time,
+    note: extractNote(l.name),
   });
 }
 
@@ -206,6 +216,7 @@ for (const l of replLines) {
     qty,
     delivery_date: dt.date,
     delivery_time: dt.time,
+    note: extractNote(l.name),
   });
 }
 

@@ -12,7 +12,7 @@ export default async function DashboardPage() {
   // Load a day's assignments + order lines (assistants' by-team and by-order views)
   async function loadDay(date: string) {
     const { data: asg } = await supabase.from('lab_assignments')
-      .select('id,team,product_name_vi,variant_label,total_qty,qty_produced,status,produced_ahead,import_id,lab_imports!inner(delivery_date,order_number,status)')
+      .select('id,team,product_name_vi,variant_label,total_qty,qty_produced,status,produced_ahead,cancelled,import_id,lab_imports!inner(delivery_date,order_number,status)')
       .eq('lab_imports.status', 'published')
       .eq('lab_imports.delivery_date', date)
       .order('team').order('sort_order').limit(500);

@@ -33,7 +33,7 @@ function SkeletonRow() {
   );
 }
 
-type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null };
+type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null; note?: string | null };
 
 type Assignment = {
   id: string;
@@ -53,6 +53,7 @@ type Assignment = {
   import_id: string;
   is_extra?: boolean;
   produced_ahead?: boolean;
+  cancelled?: boolean;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -391,13 +392,16 @@ export default function StationView({
     setSelectedCategory('');
   }
 
-  const production = assignments.filter(a => ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
-  const inStock = assignments.filter(a => a.status === 'skip'); // available, not produced
-  const termine = assignments.filter(a => a.status === 'done');  // Done = actually produced only
+  // Cancelled = Odoo qty dropped to 0 after import. Kept visible (struck through) but
+  // out of every active list and out of progress.
+  const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status));
+  const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip'); // available, not produced
+  const termine = assignments.filter(a => !a.cancelled && a.status === 'done');  // Done = actually produced only
+  const cancelledCards = assignments.filter(a => a.cancelled);
 
   // Order-based cards only (exclude extra production — it belongs to no client order).
   // Order fulfillment metrics are measured on these, not on ad-hoc extras.
-  const orderCards = assignments.filter(a => !a.is_extra);
+  const orderCards = assignments.filter(a => !a.is_extra && !a.cancelled);
   const totalQty = orderCards.filter(a => a.status !== 'skip').reduce((s, a) => s + a.qty_to_produce, 0);
   const doneQty = orderCards.filter(a => a.status === 'done').reduce((s, a) => s + a.qty_produced, 0);
   // Completion = cards handled (done OR in stock) / total order cards. In-stock counts as handled,
@@ -710,6 +714,22 @@ export default function StationView({
               )}
             </div>
           )}
+
+          {/* Cancelled — Odoo qty dropped to 0 after publishing. Kept visible, struck through. */}
+          {cancelledCards.length > 0 && (
+            <div className="mt-2 space-y-3">
+              <div className="flex items-center gap-2 pt-2">
+                <span className="font-bold text-sm" style={{ color: '#6B7280' }}>
+                  {lang === 'vi' ? '✕ Đã hủy' : '✕ Cancelled'}
+                </span>
+                <span className="text-xs font-medium" style={{ color: '#9CA3AF' }}>
+                  {cancelledCards.length} · {lang === 'vi' ? 'không cần làm' : 'do not produce'}
+                </span>
+                <div className="flex-1 border-t" style={{ borderColor: '#E5E7EB' }} />
+              </div>
+              {cancelledCards.map(a => <ProductionCard key={a.id} a={a} {...sharedCardProps} />)}
+            </div>
+          )}
         </div>
       )}
 
@@ -759,8 +779,10 @@ export default function StationView({
                 {orderList.map((a, i) => {
                   const st = STATUS_META[a.status];
                   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+                  const rowNotes = breakdown.filter(b => b.note && String(b.note).trim())
+                    .map(b => ({ ref: b.order_ref ?? '', note: String(b.note).trim() }));
                   return (
-                    <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EfC8' : undefined }}>
+                    <div key={a.id} style={{ borderTop: i > 0 ? '1px solid #F5EfC8' : undefined, opacity: a.cancelled ? 0.65 : 1 }}>
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
@@ -771,7 +793,8 @@ export default function StationView({
                             style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <div className="font-bold text-sm" style={{ color: '#1A4731' }}>
+                          <div className="font-bold text-sm"
+                            style={{ color: a.cancelled ? '#9CA3AF' : '#1A4731', textDecoration: a.cancelled ? 'line-through' : undefined }}>
                             {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -789,13 +812,32 @@ export default function StationView({
                                 {lang === 'vi' ? a.category_name_vi : (a.category_name_en || a.category_name_vi)}
                               </span>
                             )}
-                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
-                              style={{ backgroundColor: st.color }}>
-                              {lang === 'vi' ? st.labelVi : st.labelEn}
-                            </span>
+                            {a.cancelled ? (
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
+                                style={{ backgroundColor: '#E5E7EB', color: '#6B7280' }}>
+                                {lang === 'vi' ? '✕ Đã hủy' : '✕ Cancelled'}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                                style={{ backgroundColor: st.color }}>
+                                {lang === 'vi' ? st.labelVi : st.labelEn}
+                              </span>
+                            )}
                           </div>
+                          {rowNotes.length > 0 && (
+                            <div className="mt-1 flex flex-col gap-1">
+                              {rowNotes.map((n, ni) => (
+                                <div key={ni} className="text-[11px] font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
+                                  style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                                  <PenLine size={12} className="mt-0.5 shrink-0" />
+                                  <span>{n.note}{rowNotes.length > 1 && n.ref ? <span className="opacity-60"> · {n.ref}</span> : null}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-2xl font-black shrink-0" style={{ color: meta.color }}>
+                        <div className="text-2xl font-black shrink-0"
+                          style={{ color: a.cancelled ? '#9CA3AF' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>
                           x{a.qty_to_produce}
                         </div>
                       </div>
@@ -1476,10 +1518,14 @@ function ProductionCard({
   const isUpdating = updating === a.id;
   // Breakdown collapsed by default on phones (open on sm+ via CSS)
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const canAdvance = !readOnly && ['pending', 'in_progress'].includes(a.status);
-  const canMarkStock = !readOnly && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
-  const canBlock = !readOnly && ['pending', 'in_progress'].includes(a.status);
+  const canAdvance = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status);
+  const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
+  const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status);
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+  // Odoo per-order notes (design instructions etc.) — deduped, order ref kept for context
+  const cardNotes = breakdown
+    .filter(b => b.note && String(b.note).trim())
+    .map(b => ({ ref: b.order_ref ?? '', note: String(b.note).trim() }));
 
   const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
@@ -1489,13 +1535,14 @@ function ProductionCard({
   return (
     <div className="rounded-2xl overflow-hidden"
       style={{
-        backgroundColor: 'white',
-        border: '1px solid #E0D49A',
-        boxShadow: '0 1px 4px rgba(26,71,49,0.07)',
+        backgroundColor: a.cancelled ? '#F9FAFB' : 'white',
+        border: a.cancelled ? '1px solid #E5E7EB' : '1px solid #E0D49A',
+        boxShadow: a.cancelled ? 'none' : '0 1px 4px rgba(26,71,49,0.07)',
+        opacity: a.cancelled ? 0.7 : 1,
       }}>
 
       {/* Status stripe for in_progress */}
-      {a.status === 'in_progress' && (
+      {a.status === 'in_progress' && !a.cancelled && (
         <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
       )}
 
@@ -1514,11 +1561,12 @@ function ProductionCard({
           {a.fiche_id ? (
             <Link href={`/station/fiche/${a.fiche_id}?back=${backTo}`}
               className="font-bold text-sm sm:text-base leading-tight block hover:underline"
-              style={{ color: '#1A4731' }}>
+              style={{ color: a.cancelled ? '#9CA3AF' : '#1A4731', textDecoration: a.cancelled ? 'line-through' : undefined }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </Link>
           ) : (
-            <div className="font-bold text-sm sm:text-base leading-tight" style={{ color: '#1A4731' }}>
+            <div className="font-bold text-sm sm:text-base leading-tight"
+              style={{ color: a.cancelled ? '#9CA3AF' : '#1A4731', textDecoration: a.cancelled ? 'line-through' : undefined }}>
               {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
             </div>
           )}
@@ -1553,19 +1601,39 @@ function ProductionCard({
 
           {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-xl sm:text-2xl font-black" style={{ color: meta.color }}>x{a.qty_to_produce}</span>
+            <span className="text-xl sm:text-2xl font-black" style={{ color: a.cancelled ? '#9CA3AF' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>x{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
-            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white"
-              style={{ backgroundColor: st.color }}>
-              {lang === 'vi' ? st.labelVi : st.labelEn}
-            </span>
+            {a.cancelled ? (
+              <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold"
+                style={{ backgroundColor: '#E5E7EB', color: '#6B7280' }}>
+                {lang === 'vi' ? '✕ Đã hủy' : '✕ Cancelled'}
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white"
+                style={{ backgroundColor: st.color }}>
+                {lang === 'vi' ? st.labelVi : st.labelEn}
+              </span>
+            )}
           </div>
-          {a.status === 'blocked' && a.blocked_reason && (
+          {a.status === 'blocked' && a.blocked_reason && !a.cancelled && (
             <div className="mt-1 text-xs font-medium rounded-lg px-2 py-1 inline-block"
               style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
               ⚠ {a.blocked_reason}
+            </div>
+          )}
+
+          {/* Odoo product notes (design instructions etc.) — one chip per note */}
+          {cardNotes.length > 0 && (
+            <div className="mt-1.5 flex flex-col gap-1">
+              {cardNotes.map((n, i) => (
+                <div key={i} className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
+                  style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                  <PenLine size={13} className="mt-0.5 shrink-0" />
+                  <span>{n.note}{cardNotes.length > 1 && n.ref ? <span className="opacity-60"> · {n.ref}</span> : null}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
