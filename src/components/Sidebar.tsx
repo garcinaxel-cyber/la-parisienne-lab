@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageImport } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -10,7 +10,7 @@ const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const },
   { href: '/import',    icon: Upload,          key: 'import'    as const },
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
-  { href: '/reception', icon: PackageImport,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
+  { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
 ];
 const ADMIN_NAV = [
   { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },

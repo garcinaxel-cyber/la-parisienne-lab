@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { PackageImport, PackageCheck, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { PackageCheck, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 type Line = {
   id: string; product_name_vi: string; product_name_en: string | null;
@@ -55,7 +55,7 @@ export default function ReceptionView({ bons }: { bons: Bon[] }) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2">
-            <PackageImport size={24} /> {vi ? 'Nhập kho' : 'Stock reception'}
+            <PackageCheck size={24} /> {vi ? 'Nhập kho' : 'Stock reception'}
           </h1>
           <p className="text-ink-light text-sm mt-0.5">
             {vi ? 'Xác nhận số lượng nhận từ các phiếu chuyển kho.' : 'Confirm the quantities received from transfer notes.'}

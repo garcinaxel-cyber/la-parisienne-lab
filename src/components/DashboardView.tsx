@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
-import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp, PackageImport } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp, PackageCheck } from 'lucide-react';
 
 interface Stats { imports_today: number; published_today: number; total_assignments: number; done_assignments: number; blocked: number; }
 
@@ -155,7 +155,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         <Link href="/reception"
           className="card p-4 flex items-center gap-3 border-2 transition-colors hover:bg-blue-50"
           style={{ borderColor: '#3B82F6', backgroundColor: '#EFF6FF' }}>
-          <PackageImport size={20} className="text-blue-600 shrink-0" />
+          <PackageCheck size={20} className="text-blue-600 shrink-0" />
           <div className="flex-1">
             <div className="font-bold text-sm text-blue-800">
               {pendingTransfers} {lang === 'vi' ? 'phiếu chờ nhận kho' : (pendingTransfers > 1 ? 'transfer notes awaiting reception' : 'transfer note awaiting reception')}
