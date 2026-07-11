@@ -40,7 +40,7 @@ const replIds = repls.map(r => r.id);
 const replLines: any[] = replIds.length
   ? await odooExecute('stock.replenishment.request.line', 'search_read',
       [[['request_id', 'in', replIds]]],
-      { fields: ['request_id', 'product_id', 'quantity_requested', 'name'], limit: 2000 })
+      { fields: ['request_id', 'product_id', 'quantity_requested'], limit: 2000 })
   : [];
 
 // ── 3. SKUs for all products involved ──
@@ -216,7 +216,7 @@ for (const l of replLines) {
     qty,
     delivery_date: dt.date,
     delivery_time: dt.time,
-    note: extractNote(l.name),
+    note: null, // replenishment lines carry no salesperson note
   });
 }
 
