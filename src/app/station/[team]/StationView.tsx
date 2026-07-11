@@ -54,6 +54,7 @@ type Assignment = {
   is_extra?: boolean;
   produced_ahead?: boolean;
   cancelled?: boolean;
+  transferred?: boolean;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -144,6 +145,11 @@ export default function StationView({
   const [expandedHistoryDate, setExpandedHistoryDate] = useState<string | null>(null);
   const [historyDetails, setHistoryDetails] = useState<Record<string, OrderDetail[]>>({});
   const [loadingDetails, setLoadingDetails] = useState(false);
+
+  // Stock transfer (send finished products to stock)
+  const [stockModal, setStockModal] = useState(false);
+  const [stockSel, setStockSel] = useState<Record<string, { on: boolean; qty: string }>>({});
+  const [sendingStock, setSendingStock] = useState(false);
 
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
@@ -390,6 +396,41 @@ export default function StationView({
     setExtraQty(1);
     setExtraQtyInput('1');
     setSelectedCategory('');
+  }
+
+  // Open the "send to stock" bon: preselect every finished, not-yet-transferred product
+  function openStockModal() {
+    const sel: Record<string, { on: boolean; qty: string }> = {};
+    for (const a of assignments) {
+      if (a.status === 'done' && !a.cancelled && !a.transferred) {
+        sel[a.id] = { on: true, qty: String(a.qty_produced || a.qty_to_produce || a.total_qty || 0) };
+      }
+    }
+    setStockSel(sel);
+    setStockModal(true);
+  }
+
+  async function submitStockTransfer() {
+    const chosen = assignments.filter(a => stockSel[a.id]?.on && Number(stockSel[a.id].qty) > 0);
+    if (!chosen.length) return;
+    setSendingStock(true);
+    const { submitStockTransferAction } = await import('./stock-actions');
+    const res = await submitStockTransferAction(team, chosen.map(a => ({
+      assignmentId: a.id,
+      productNameVi: a.product_name_vi,
+      productNameEn: a.product_name_en ?? '',
+      sku: a.sku ?? null,
+      variantLabel: a.variant_label ?? 'Standard',
+      imageUrl: a.image_url ?? null,
+      deliveryDate: a.lab_imports?.delivery_date ?? null,
+      qtySent: Number(stockSel[a.id].qty),
+    })));
+    if (res.ok) {
+      const ids = new Set(chosen.map(a => a.id));
+      setAssignments(prev => prev.map(x => ids.has(x.id) ? { ...x, transferred: true } : x));
+      setStockModal(false);
+    }
+    setSendingStock(false);
   }
 
   // Cancelled = Odoo qty dropped to 0 after import. Kept visible (struck through) but
@@ -875,6 +916,15 @@ export default function StationView({
       {/* ─── TERMINÉ TAB — split: from orders vs extra production ─── */}
       {activeTab === 'termine' && (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
+          {/* Send finished products to stock (chef only, not history view) */}
+          {!isEmployee && !isHistoryView && termine.some(a => !a.transferred) && (
+            <button onClick={openStockModal}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-sm active:scale-[0.99] transition-all"
+              style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+              <Package size={16} />
+              {lang === 'vi' ? 'Chuyển vào kho' : 'Send to stock'}
+            </button>
+          )}
           {termine.length === 0 ? (
             <div className="text-center py-20">
               <Clock size={48} className="mx-auto mb-3 text-ink-light" />
@@ -1138,6 +1188,66 @@ export default function StationView({
           </button>
         </div>
       )}
+
+      {/* Send-to-stock transfer note (bon de transfert) */}
+      {stockModal && (() => {
+        const sendable = termine.filter(a => !a.transferred);
+        const chosen = sendable.filter(a => stockSel[a.id]?.on && Number(stockSel[a.id]?.qty) > 0);
+        return (
+          <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            onClick={() => !sendingStock && setStockModal(false)}>
+            <div className="modal-sheet bg-white w-full max-w-lg rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: '1px solid #E0D49A' }}>
+                <div className="flex items-center gap-2">
+                  <Package size={18} style={{ color: '#1D4ED8' }} />
+                  <span className="font-bold text-base" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Chuyển vào kho' : 'Send to stock'}
+                  </span>
+                </div>
+                <button onClick={() => !sendingStock && setStockModal(false)} className="p-1 text-ink-light hover:text-ink"><X size={20} /></button>
+              </div>
+              <div className="px-5 py-2 text-xs text-ink-light shrink-0">
+                {lang === 'vi' ? 'Chọn sản phẩm và số lượng gửi vào kho.' : 'Pick the products and quantity sent to stock.'}
+              </div>
+              <div className="overflow-y-auto flex-1 px-3 py-2 space-y-1.5">
+                {sendable.map(a => {
+                  const sel = stockSel[a.id] ?? { on: false, qty: '0' };
+                  return (
+                    <div key={a.id} className="flex items-center gap-3 p-2.5 rounded-xl"
+                      style={{ backgroundColor: sel.on ? '#EFF6FF' : '#F9FAFB', border: '1px solid', borderColor: sel.on ? '#BFDBFE' : '#E5E7EB' }}>
+                      <button onClick={() => setStockSel(p => ({ ...p, [a.id]: { ...sel, on: !sel.on } }))}
+                        className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center"
+                        style={{ backgroundColor: sel.on ? '#1D4ED8' : 'white', border: '1px solid', borderColor: sel.on ? '#1D4ED8' : '#D1D5DB' }}>
+                        {sel.on && <CheckCircle2 size={16} className="text-white" />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>
+                          {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+                        </div>
+                        <div className="text-[11px] text-ink-light">{lang === 'vi' ? 'Đã làm' : 'Produced'}: {a.qty_produced || a.total_qty}</div>
+                      </div>
+                      <input type="number" value={sel.qty} disabled={!sel.on}
+                        onChange={e => setStockSel(p => ({ ...p, [a.id]: { ...sel, qty: e.target.value } }))}
+                        className="w-16 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
+                        style={{ border: '1px solid #D1D5DB', opacity: sel.on ? 1 : 0.5 }} />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-5 py-4 shrink-0 flex items-center justify-between gap-3" style={{ borderTop: '1px solid #E0D49A' }}>
+                <span className="text-sm text-ink-light">
+                  {chosen.length} {lang === 'vi' ? 'sản phẩm' : 'products'}
+                </span>
+                <button onClick={submitStockTransfer} disabled={sendingStock || chosen.length === 0}
+                  className="px-5 py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-50"
+                  style={{ backgroundColor: '#1D4ED8' }}>
+                  {sendingStock ? '…' : (lang === 'vi' ? 'Gửi phiếu' : 'Send transfer')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Fiche modal */}
       {ficheModal && (
@@ -1791,6 +1901,12 @@ function TermineCard({
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
                 style={{ backgroundColor: '#DBEAFE', color: '#1E40AF' }}>
                 ⏩ {lang === 'vi' ? 'Làm trước' : 'Ahead'}
+              </span>
+            )}
+            {a.transferred && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>
+                <Package size={10} />{lang === 'vi' ? 'Đã chuyển kho' : 'Sent to stock'}
               </span>
             )}
             <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>

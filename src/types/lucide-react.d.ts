@@ -54,4 +54,8 @@ declare module 'lucide-react' {
   export const BellRing: LucideIcon;
   export const CheckCheck: LucideIcon;
   export const Webhook: LucideIcon;
+  export const PackageImport: LucideIcon;
+  export const PackageCheck: LucideIcon;
+  export const AlertTriangle: LucideIcon;
+  export const Truck: LucideIcon;
 }

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
-import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp, PackageImport } from 'lucide-react';
 
 interface Stats { imports_today: number; published_today: number; total_assignments: number; done_assignments: number; blocked: number; }
 
@@ -27,8 +27,8 @@ function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix
   return <>{display}{suffix}</>;
 }
 
-export default function DashboardView({ stats, imports, assignments, orderLines = [], tomorrowAssignments = [], tomorrowOrderLines = [], pendingChanges = [], today, tomorrow }:
-  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; tomorrowAssignments?: any[]; tomorrowOrderLines?: any[]; pendingChanges?: any[]; today: string; tomorrow?: string }) {
+export default function DashboardView({ stats, imports, assignments, orderLines = [], tomorrowAssignments = [], tomorrowOrderLines = [], pendingChanges = [], pendingTransfers = 0, today, tomorrow }:
+  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; tomorrowAssignments?: any[]; tomorrowOrderLines?: any[]; pendingChanges?: any[]; pendingTransfers?: number; today: string; tomorrow?: string }) {
   const { t, lang } = useI18n();
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [changesDone, setChangesDone] = useState(false);
@@ -148,6 +148,24 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
             ))}
           </div>
         </div>
+      )}
+
+      {/* Transfer notes awaiting stock reception */}
+      {pendingTransfers > 0 && (
+        <Link href="/reception"
+          className="card p-4 flex items-center gap-3 border-2 transition-colors hover:bg-blue-50"
+          style={{ borderColor: '#3B82F6', backgroundColor: '#EFF6FF' }}>
+          <PackageImport size={20} className="text-blue-600 shrink-0" />
+          <div className="flex-1">
+            <div className="font-bold text-sm text-blue-800">
+              {pendingTransfers} {lang === 'vi' ? 'phiếu chờ nhận kho' : (pendingTransfers > 1 ? 'transfer notes awaiting reception' : 'transfer note awaiting reception')}
+            </div>
+            <div className="text-xs text-blue-700">
+              {lang === 'vi' ? 'Xác nhận số lượng nhận từ sản xuất' : 'Confirm the quantities received from production'}
+            </div>
+          </div>
+          <ChevronDown size={16} className="text-blue-600 -rotate-90" />
+        </Link>
       )}
 
       {/* Draft imports waiting for review — created by the hourly Odoo auto-sync */}

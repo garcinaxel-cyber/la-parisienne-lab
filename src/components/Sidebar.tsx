@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageImport } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -10,6 +10,7 @@ const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const },
   { href: '/import',    icon: Upload,          key: 'import'    as const },
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
+  { href: '/reception', icon: PackageImport,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
 ];
 const ADMIN_NAV = [
   { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },
@@ -19,10 +20,12 @@ const ADMIN_NAV = [
   { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
 ];
 
-export default function Sidebar({ profile }: { profile: { full_name: string; role: UserRole } | null }) {
+export default function Sidebar({ profile, pendingTransfers = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number }) {
   const { t, lang, setLang } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
+  const labelFor = (it: { key?: string; labelVi?: string; labelEn?: string }) =>
+    it.labelVi ? (lang === 'vi' ? it.labelVi : it.labelEn) : t(it.key as any);
 
   async function logout() {
     await createClient().auth.signOut();
@@ -48,16 +51,22 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map(({ href, icon: Icon, key }) => (
-            <Link key={href} href={href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                pathname === href || pathname.startsWith(href + '/')
-                  ? 'bg-white/15 text-white'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}>
-              <Icon size={18} />{t(key)}
-            </Link>
-          ))}
+          {NAV.map((item) => {
+            const { href, icon: Icon } = item;
+            return (
+              <Link key={href} href={href}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                  pathname === href || pathname.startsWith(href + '/')
+                    ? 'bg-white/15 text-white'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white'
+                }`}>
+                <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
+                {href === '/reception' && pendingTransfers > 0 && (
+                  <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingTransfers}</span>
+                )}
+              </Link>
+            );
+          })}
           {isAdmin && (
             <div className="pt-4 mt-4 border-t border-white/10">
               <p className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">Admin</p>
@@ -119,15 +128,19 @@ export default function Sidebar({ profile }: { profile: { full_name: string; rol
           </div>
         </div>
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV, ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map(({ href, icon: Icon, key }) => {
+          {[...NAV, ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
+            const { href, icon: Icon } = item;
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link key={href} href={href}
-                className={`flex-1 min-w-[64px] flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
+                className={`relative flex-1 min-w-[64px] flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
                   active ? 'text-gold border-b-2 border-gold' : 'text-white/60 border-b-2 border-transparent'
                 }`}>
                 <Icon size={17} />
-                <span className="truncate max-w-[72px]">{t(key)}</span>
+                <span className="truncate max-w-[72px]">{labelFor(item)}</span>
+                {href === '/reception' && pendingTransfers > 0 && (
+                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{pendingTransfers}</span>
+                )}
               </Link>
             );
           })}

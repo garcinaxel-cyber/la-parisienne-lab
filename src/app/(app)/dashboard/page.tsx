@@ -36,6 +36,9 @@ export default async function DashboardPage() {
     supabase.from('lab_excluded_skus').select('sku'),
   ]);
 
+  const { count: pendingTransfers } = await supabase
+    .from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+
   // Hide already-excluded SKUs (packaging, drinks…) from the changes banner; drop empty rows.
   const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
   const pendingChanges = (pendingChangesRaw ?? [])
@@ -45,5 +48,5 @@ export default async function DashboardPage() {
   return <DashboardView stats={stats} imports={imports ?? []}
     assignments={todayData.assignments} orderLines={todayData.orderLines}
     tomorrowAssignments={tomorrowData.assignments} tomorrowOrderLines={tomorrowData.orderLines}
-    pendingChanges={pendingChanges} today={today} tomorrow={tomorrow} />;
+    pendingChanges={pendingChanges} pendingTransfers={pendingTransfers ?? 0} today={today} tomorrow={tomorrow} />;
 }

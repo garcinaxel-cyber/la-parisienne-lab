@@ -24,9 +24,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const chefAllowed = profile.role === 'chef' && pathname.startsWith('/admin/fiches/');
   if ((profile.role === 'chef' || profile.role === 'worker') && !chefAllowed) redirect('/station/me');
 
+  // Badge on the "Stock reception" nav item — transfer notes awaiting reception
+  const { count: pendingTransfers } = await supabase
+    .from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>
