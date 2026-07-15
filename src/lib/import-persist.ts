@@ -43,9 +43,29 @@ export async function persistImportsFromLines(
   const fById: Record<string, any> = {};
   for (const f of ficheRows ?? []) fById[f.id] = f;
 
+  // Guard against double-import: never re-create an order that already exists in another
+  // import (e.g. an hourly auto-sync draft that appeared between a manual sync's fetch and
+  // its publish). We drop only those already-present order refs; brand-new orders are
+  // untouched, so a normal publish behaves exactly as before.
+  const allRefs = Array.from(new Set(consolidated.flatMap(l => l.breakdown.map((b: any) => b.order_ref)).filter(Boolean)));
+  let alreadyRefs = new Set<string>();
+  if (allRefs.length) {
+    const { data: exRows } = await supabase
+      .from('lab_order_lines').select('order_ref').in('order_ref', allRefs).gte('delivery_date', today);
+    alreadyRefs = new Set((exRows ?? []).map((r: any) => r.order_ref));
+  }
+  const toPersist = alreadyRefs.size
+    ? consolidated
+        .map(l => {
+          const bd = l.breakdown.filter((b: any) => !alreadyRefs.has(b.order_ref));
+          return { ...l, breakdown: bd, total_qty: bd.reduce((s: number, b: any) => s + b.qty, 0) };
+        })
+        .filter(l => l.breakdown.length > 0)
+    : consolidated;
+
   // Group by delivery date — one import each
   const byDate = new Map<string, ConsolidatedLine[]>();
-  for (const line of consolidated) {
+  for (const line of toPersist) {
     const date = line.delivery_date || today;
     (byDate.get(date) ?? byDate.set(date, []).get(date)!).push(line);
   }
@@ -57,8 +77,12 @@ export async function persistImportsFromLines(
     const dateLines = byDate.get(date)!;
     const orderRefs = Array.from(new Set(dateLines.flatMap(l => l.breakdown.map((b: any) => b.order_ref)).filter(Boolean)));
 
-    const { count } = await supabase
-      .from('lab_imports').select('*', { count: 'exact', head: true }).eq('delivery_date', date);
+    // order_number = highest existing + 1 (robust to deleted imports leaving numbering gaps;
+    // count+1 could collide with a surviving import after a deletion)
+    const { data: maxRow } = await supabase
+      .from('lab_imports').select('order_number').eq('delivery_date', date)
+      .order('order_number', { ascending: false }).limit(1).maybeSingle();
+    const orderNumber = (maxRow?.order_number ?? 0) + 1;
 
     // Consistent control report (same shape for manual + auto)
     const controlReport = {
@@ -84,7 +108,7 @@ export async function persistImportsFromLines(
 
     const { data: importRow, error: impErr } = await supabase.from('lab_imports').insert({
       delivery_date: date,
-      order_number: (count ?? 0) + 1,
+      order_number: orderNumber,
       type: opts.type ?? 'daily',
       shipped_from_lab: !!opts.shippedFromLab,
       notes: opts.notes ?? (opts.auto ? 'Auto-sync Odoo' : ''),
