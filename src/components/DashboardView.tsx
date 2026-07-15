@@ -209,7 +209,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         <div className="card p-4">
           <div className="flex justify-between text-sm mb-2">
             <span className="font-medium text-navy">{lang === 'vi' ? 'Tiến độ sản xuất' : 'Production progress'}</span>
-            <span className="text-ink-light">{handledCards}/{dayAssignments.length} {lang === 'vi' ? 'thẻ' : 'cards'}</span>
+            <span className="text-ink-light">{handledCards}/{activeDay.length} {lang === 'vi' ? 'thẻ' : 'cards'}</span>
           </div>
           <div className="h-3 rounded-full bg-border-soft overflow-hidden">
             <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -221,7 +221,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
       {tomorrow && (tomorrowAssignments.length > 0 || byTeam.length > 0 || orderRows.length > 0) && (
         <div className="flex gap-2">
           {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
-            const list = d === 'tomorrow' ? tomorrowAssignments : assignments;
+            const list = (d === 'tomorrow' ? tomorrowAssignments : assignments).filter((a: any) => !a.cancelled);
             const done = list.filter((a: any) => a.status === 'done' || a.status === 'skip').length;
             const active = dashDay === d;
             const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
