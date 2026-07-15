@@ -51,33 +51,32 @@ export async function GET(req: NextRequest) {
     else agg.set(key, { sku, appName: a.product_name_vi ?? '', qty });
   }
 
-  // 4) Real Odoo labels + unit of measure, matched by SKU (default_code). Read-only.
+  // 4) Real Odoo product NAME, matched by SKU (default_code). Read-only.
+  // Odoo's import matches the product on its plain name, WITHOUT the [SKU] prefix,
+  // so we take the `name` field (not display_name). The SKU is used only to look up
+  // the right Odoo name — it never appears in the file.
   const skus = Array.from(agg.values()).map(r => r.sku).filter(Boolean) as string[];
-  const odooBySku: Record<string, { label: string; uom: string }> = {};
+  const nameBySku: Record<string, string> = {};
   if (skus.length && odooConfigured()) {
     try {
       const products: any[] = await odooExecute(
         'product.product', 'search_read',
         [[['default_code', 'in', skus]]],
-        { fields: ['default_code', 'display_name', 'uom_id'] },
+        { fields: ['default_code', 'name'] },
       );
       for (const p of products ?? []) {
-        if (!p.default_code) continue;
-        const uom = Array.isArray(p.uom_id) ? p.uom_id[1] : 'Units';
-        odooBySku[p.default_code] = { label: p.display_name ?? `[${p.default_code}]`, uom: uom || 'Units' };
+        if (p.default_code && p.name) nameBySku[p.default_code] = p.name;
       }
     } catch {
-      // Odoo unreachable → fall back to SKU-based labels below; file still usable.
+      // Odoo unreachable → fall back to the app name below; file still usable.
     }
   }
 
-  // 5) Build rows: Product = Odoo display name ([SKU] Name) when known, else [SKU] appName.
+  // 5) Build rows: Product = Odoo product name (no SKU). Fallback = app name.
   const rows = Array.from(agg.values())
     .map(r => {
-      const odoo = r.sku ? odooBySku[r.sku] : undefined;
-      const label = odoo?.label ?? (r.sku ? `[${r.sku}] ${r.appName}` : r.appName);
-      const uom = odoo?.uom ?? 'Units';
-      return { label, uom, qty: r.qty };
+      const label = (r.sku && nameBySku[r.sku]) ? nameBySku[r.sku] : r.appName;
+      return { label, qty: r.qty };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 
