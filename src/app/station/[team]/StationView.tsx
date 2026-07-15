@@ -129,6 +129,7 @@ export default function StationView({
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
   const [showInStock, setShowInStock] = useState(false);
+  const [showRecap, setShowRecap] = useState(true);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -674,6 +675,49 @@ export default function StationView({
               )}
             </div>
           )}
+          {/* Compact recap: total to produce per SKU (aggregated across all cards) for the selected day */}
+          {production.length > 0 && (() => {
+            const OTHER = lang === 'vi' ? 'Khác' : 'Other';
+            const m = new Map<string, { name: string; sku: string | null; cat: string; qty: number }>();
+            for (const a of production) {
+              const key = a.sku || a.product_name_vi;
+              const cat = (lang === 'vi' ? a.category_name_vi : a.category_name_en) || a.category_name_vi || OTHER;
+              const name = lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi);
+              const e = m.get(key) ?? { name, sku: a.sku ?? null, cat, qty: 0 };
+              e.qty += a.qty_to_produce;
+              m.set(key, e);
+            }
+            const items = Array.from(m.values());
+            const totalUnits = items.reduce((s, r) => s + r.qty, 0);
+            const cats = Array.from(new Set(items.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
+            return (
+              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
+                <button onClick={() => setShowRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#1A4731' }}>
+                  <span className="text-sm font-bold">📋 {lang === 'vi' ? 'Tổng cần làm' : 'Total à produire'}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs font-bold" style={{ color: '#F0D98A' }}>{items.length} · {totalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                    <ChevronRight size={16} className={`transition-transform ${showRecap ? 'rotate-90' : ''}`} />
+                  </span>
+                </button>
+                {showRecap && (
+                  <div className="grid grid-cols-2 bg-white">
+                    {cats.flatMap(cat => [
+                      <div key={`c-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+                        style={{ backgroundColor: '#FBF6E3', color: '#92600A', borderTop: '1px solid #F0EAD0' }}>{cat}</div>,
+                      ...items.filter(r => r.cat === cat).map((r, i) => (
+                        <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
+                          style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
+                          <span className="flex-1 truncate" style={{ color: '#1A4731' }}>{r.name}{r.sku && <span className="ml-1 text-[9px] font-mono text-ink-light">{r.sku}</span>}</span>
+                          <span className="font-black shrink-0" style={{ color: '#92600A' }}>×{r.qty}</span>
+                        </div>
+                      )),
+                    ])}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {(() => {
             // Group by fiche category — a workshop works in stations, not one long list.
             const OTHER = lang === 'vi' ? 'Khác' : 'Other';
