@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
-import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp, PackageCheck, Download } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Package, ChevronDown, ChevronUp, PackageCheck } from 'lucide-react';
 
 interface Stats { imports_today: number; published_today: number; total_assignments: number; done_assignments: number; blocked: number; }
 
@@ -250,17 +250,6 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
             ? `Đang xem NGÀY MAI — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
             : `Viewing TOMORROW — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
         </div>
-      )}
-
-      {/* End-of-day production export → Odoo (all "Done" cards for the selected day, extra included) */}
-      {dayAssignments.some((a: any) => !a.cancelled && a.status === 'done') && (
-        <a
-          href={`/api/lab/production-export?date=${dashDay === 'tomorrow' && tomorrow ? tomorrow : today}`}
-          className="inline-flex items-center gap-2 self-start px-4 py-2 rounded-xl text-sm font-bold bg-navy text-white hover:bg-navy/90 transition-colors"
-        >
-          <Download size={15} />
-          {lang === 'vi' ? 'Xuất sản xuất (Excel → Odoo)' : 'Export production (Excel → Odoo)'}
-        </a>
       )}
 
       {/* View toggle: by team (chefs' angle) / by order (assistants' angle) */}
