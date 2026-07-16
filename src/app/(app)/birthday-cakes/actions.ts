@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache';
 // Never creates or duplicates an order — only the extra fields, keyed by order_line_id.
 export async function saveBirthdayDetailAction(
   orderLineId: string,
-  fields: { message?: string | null; readyTime?: string | null; deliveredBy?: string | null },
+  fields: { message?: string | null; readyTime?: string | null; deliveredBy?: string | null; deliveryAddress?: string | null },
 ): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
@@ -19,6 +19,7 @@ export async function saveBirthdayDetailAction(
     message: fields.message ?? null,
     ready_time: fields.readyTime ?? null,
     delivered_by: fields.deliveredBy ?? null,
+    delivery_address: fields.deliveryAddress ?? null,
     updated_by: session.user.id,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'order_line_id' });
