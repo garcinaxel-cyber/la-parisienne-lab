@@ -185,6 +185,61 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string,
   return { ok: true };
 }
 
+// "Not this one" — the suggested Odoo order is NOT this manual cake. Remember the rejection so
+// we stop suggesting it, and create the Odoo order's own production card (the pipeline had skipped it).
+export async function rejectMatchAction(manualCakeId: string, orderRef: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+
+  const { data: mc } = await supabase.from('lab_manual_cakes')
+    .select('id, product_sku, delivery_date, rejected_order_refs').eq('id', manualCakeId).maybeSingle();
+  if (!mc) return { error: 'Cake not found' };
+
+  const rejected = Array.from(new Set([...(mc.rejected_order_refs ?? []), orderRef]));
+  await supabase.from('lab_manual_cakes').update({ rejected_order_refs: rejected }).eq('id', manualCakeId);
+
+  // Create the production card for that order's line(s), which the pipeline skipped.
+  const { data: oLines } = await supabase.from('lab_order_lines')
+    .select('id, import_id, team, variant_label, product_name_vi, product_sku, shop_name, qty, delivery_time')
+    .eq('order_ref', orderRef).eq('product_sku', mc.product_sku).eq('delivery_date', mc.delivery_date);
+  if (!oLines?.length) return { ok: true };
+
+  const skus = Array.from(new Set(oLines.map((l: any) => l.product_sku).filter(Boolean)));
+  const { data: variants } = await supabase.from('lab_fiche_variants').select('id, sku, label, fiche_id, image_url').in('sku', skus);
+  const vBySku: Record<string, any> = {};
+  for (const v of variants ?? []) if (v.sku) vBySku[v.sku] = v;
+  const ficheIds = Array.from(new Set((variants ?? []).map((v: any) => v.fiche_id).filter(Boolean)));
+  const { data: fiches } = ficheIds.length ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url, teams').in('id', ficheIds) : { data: [] as any[] };
+  const fById: Record<string, any> = {};
+  for (const f of fiches ?? []) fById[f.id] = f;
+
+  const TEAMS4 = ['baby_mama', 'hung', 'entremet', 'baker'];
+  const groups = new Map<string, any>();
+  for (const l of oLines) {
+    const v = l.product_sku ? vBySku[l.product_sku] : null; if (!v) continue;
+    const f = fById[v.fiche_id]; const team = (f?.teams ?? [])[0] ?? '';
+    if (!TEAMS4.includes(team)) continue;
+    const variantLabel = v.label ?? l.variant_label ?? 'Standard';
+    const key = `${l.import_id}||${team}||${variantLabel}||${l.product_name_vi}`;
+    const g = groups.get(key) ?? { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi, fiche_id: v.fiche_id, variant_id: v.id, name_en: f?.name_en ?? '', image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [] as any[] };
+    g.total += l.qty ?? 0;
+    g.breakdown.push({ shop_name: l.shop_name, order_ref: orderRef, qty: l.qty, delivery_time: l.delivery_time ?? null });
+    groups.set(key, g);
+  }
+  const rows = Array.from(groups.values()).filter((g: any) => g.total > 0).map((g: any, idx: number) => ({
+    import_id: g.import_id, team: g.team, fiche_id: g.fiche_id, variant_id: g.variant_id,
+    product_name_vi: g.name, product_name_en: g.name_en, image_url: g.image_url, variant_label: g.variant_label,
+    total_qty: g.total, qty_to_produce: g.total, qty_produced: 0, status: 'pending', sort_order: 5000 + idx, breakdown: g.breakdown,
+  }));
+  if (rows.length) await supabase.from('lab_assignments').insert(rows);
+
+  revalidatePath('/birthday-cakes');
+  return { ok: true };
+}
+
 // Delete a manual cake (and its production card)
 export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();

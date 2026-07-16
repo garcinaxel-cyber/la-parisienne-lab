@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS lab_manual_cakes (
   needs_odoo        boolean NOT NULL DEFAULT true,
   matched_order_ref text,
   matched_at        timestamptz,
+  rejected_order_refs text[] NOT NULL DEFAULT '{}',  -- Odoo refs the assistant said are NOT this cake
   assignment_id     uuid REFERENCES lab_assignments(id) ON DELETE SET NULL,
   import_id         uuid REFERENCES lab_imports(id) ON DELETE SET NULL,
   created_by        uuid,

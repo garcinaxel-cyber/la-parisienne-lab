@@ -82,6 +82,13 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     await confirmMatchAction(c.manualId, c.suggestedRef, c.sku ?? undefined);
     setBusy(null); router.refresh();
   }
+  async function rejectMatch(c: Cake) {
+    if (!c.manualId || !c.suggestedRef) return;
+    setBusy(c.id);
+    const { rejectMatchAction } = await import('./actions');
+    await rejectMatchAction(c.manualId, c.suggestedRef);
+    setBusy(null); router.refresh();
+  }
 
   // Manual link: pick an Odoo order to link this manual cake to (fallback when auto-detect misses)
   const [linkFor, setLinkFor] = useState<Cake | null>(null);
@@ -210,11 +217,15 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                     <div className="mt-3 rounded-xl px-3 py-2.5 flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD' }}>
                       <FileText size={15} style={{ color: '#1E40AF' }} className="shrink-0" />
                       <span className="text-xs flex-1" style={{ color: '#1E40AF' }}>
-                        {vi ? 'Đã tìm thấy trong đơn Odoo' : 'Found in Odoo order'} <span className="font-mono font-bold">{c.suggestedRef}</span>{c.suggestedShop ? ` · ${c.suggestedShop}` : ''} — {vi ? 'liên kết?' : 'link?'}
+                        {vi ? 'Đơn Odoo' : 'Odoo order'} <span className="font-mono font-bold">{c.suggestedRef}</span>{c.suggestedShop ? ` · ${c.suggestedShop}` : ''} — {vi ? 'là bánh này?' : 'is this cake?'}
                       </span>
                       <button onClick={() => confirmMatch(c)} disabled={busy === c.id}
                         className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#1E40AF' }}>
-                        <CheckCircle2 size={13} /> {busy === c.id ? '…' : (vi ? 'Liên kết' : 'Link')}
+                        <CheckCircle2 size={13} /> {busy === c.id ? '…' : (vi ? 'Xác nhận' : 'Confirm')}
+                      </button>
+                      <button onClick={() => rejectMatch(c)} disabled={busy === c.id}
+                        className="text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1 disabled:opacity-40" style={{ borderColor: '#93C5FD', color: '#1E40AF' }}>
+                        {busy === c.id ? '…' : (vi ? 'Không phải' : 'Not this one')}
                       </button>
                     </div>
                   )}

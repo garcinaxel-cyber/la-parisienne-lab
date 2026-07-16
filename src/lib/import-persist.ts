@@ -73,6 +73,13 @@ export async function persistImportsFromLines(
   const allDates = Array.from(byDate.keys()).sort();
   let createdImports = 0;
 
+  // Birthday cakes: a line already covered by an unmatched manual cake (same SKU + delivery date)
+  // must NOT get its own production card — the manual cake IS the single card. The Odoo order line
+  // is still imported (for the record); the assistant confirms the match in the Birthday tab.
+  const { data: pendingCakes } = await supabase
+    .from('lab_manual_cakes').select('product_sku, delivery_date').is('matched_order_ref', null).eq('needs_odoo', true);
+  const pendingCakeSet = new Set((pendingCakes ?? []).map((m: any) => `${m.product_sku}||${m.delivery_date}`));
+
   for (const date of allDates) {
     const dateLines = byDate.get(date)!;
     const orderRefs = Array.from(new Set(dateLines.flatMap(l => l.breakdown.map((b: any) => b.order_ref)).filter(Boolean)));
@@ -120,8 +127,9 @@ export async function persistImportsFromLines(
     }).select('id').single();
     if (impErr || !importRow) return { createdImports, earliestDate: allDates[0] ?? null, error: impErr?.message };
 
-    // Production cards — only lines whose SKU resolves to a team
-    const assignable = dateLines.filter(l => TEAMS.includes(l.team));
+    // Production cards — only lines whose SKU resolves to a team, and NOT already covered by a
+    // pending manual cake (same SKU + date) — see pendingCakeSet above.
+    const assignable = dateLines.filter(l => TEAMS.includes(l.team) && !pendingCakeSet.has(`${l.product_sku}||${date}`));
     if (assignable.length) {
       const { error: asgErr } = await supabase.from('lab_assignments').insert(assignable.map((line, idx) => {
         const v = vBySku[line.product_sku] ?? null;

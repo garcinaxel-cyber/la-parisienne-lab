@@ -11,6 +11,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
     .from('lab_imports')
     .select('id, delivery_date, order_number, type, status, shipped_from_lab, notes, imported_at, published_at, published_by_name, control_report')
     .eq('delivery_date', date)
+    .neq('notes', '__manual_cakes__') // hide the internal manual-cakes container
     .order('order_number');
 
   const importIds = (imports ?? []).map((i: any) => i.id);

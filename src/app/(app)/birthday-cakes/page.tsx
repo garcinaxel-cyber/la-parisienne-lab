@@ -67,7 +67,7 @@ export default async function BirthdayCakesPage() {
 
   // Manual cakes created in the app (not yet matched to an Odoo order)
   const { data: manual } = await supabase.from('lab_manual_cakes')
-    .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo')
+    .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, rejected_order_refs')
     .is('matched_order_ref', null)
     .gte('delivery_date', today)
     .order('delivery_date');
@@ -77,13 +77,16 @@ export default async function BirthdayCakesPage() {
   const { data: matchLines } = mcSkus.length
     ? await supabase.from('lab_order_lines').select('product_sku, delivery_date, order_ref, shop_name').in('product_sku', mcSkus).gte('delivery_date', today)
     : { data: [] as any[] };
-  const matchBySkuDate: Record<string, { ref: string; shop: string | null }> = {};
+  const matchBySkuDate: Record<string, { ref: string; shop: string | null }[]> = {};
   for (const l of matchLines ?? []) {
+    if (!l.order_ref) continue;
     const k = `${l.product_sku}||${l.delivery_date}`;
-    if (l.order_ref && !matchBySkuDate[k]) matchBySkuDate[k] = { ref: l.order_ref, shop: l.shop_name ?? null };
+    const arr = (matchBySkuDate[k] ??= []);
+    if (!arr.find(x => x.ref === l.order_ref)) arr.push({ ref: l.order_ref, shop: l.shop_name ?? null });
   }
   const manualCakes = (manual ?? []).map((m: any) => {
-    const sug = matchBySkuDate[`${m.product_sku}||${m.delivery_date}`] ?? null;
+    const rejected = new Set<string>(m.rejected_order_refs ?? []);
+    const sug = (matchBySkuDate[`${m.product_sku}||${m.delivery_date}`] ?? []).find(c => !rejected.has(c.ref)) ?? null;
     return {
       id: m.id,
       source: 'manual' as const, manualId: m.id as string | null, needsOdoo: !!m.needs_odoo,

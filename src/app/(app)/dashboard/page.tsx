@@ -34,7 +34,7 @@ export default async function DashboardPage() {
   const [{ data: stats }, { data: imports }, todayData, tomorrowData, { data: pendingChangesRaw }, { data: excludedRows }] = await Promise.all([
     supabase.rpc('lab_dashboard_stats', { p_date: today }),
     supabase.from('lab_imports').select('id,delivery_date,order_number,type,status,shipped_from_lab,imported_at')
-      .gte('delivery_date', today).order('delivery_date').order('order_number').limit(10),
+      .neq('notes', '__manual_cakes__').gte('delivery_date', today).order('delivery_date').order('order_number').limit(10),
     loadDay(today),
     loadDay(tomorrow),
     supabase.from('lab_odoo_changes').select('order_ref, cancelled, items, delivery_date')
