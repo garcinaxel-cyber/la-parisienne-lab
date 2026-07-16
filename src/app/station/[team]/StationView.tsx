@@ -149,6 +149,8 @@ export default function StationView({
   const [loadingDates, setLoadingDates] = useState(false);
   const [expandedHistoryDate, setExpandedHistoryDate] = useState<string | null>(null);
   const [historyDetails, setHistoryDetails] = useState<Record<string, OrderDetail[]>>({});
+  const [historyProduction, setHistoryProduction] = useState<Record<string, { name: string; variant: string; qty: number; is_extra: boolean }[]>>({});
+  const [historySub, setHistorySub] = useState<'orders' | 'production'>('orders');
   const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Stock transfer (send finished products to stock)
@@ -281,12 +283,15 @@ export default function StationView({
     if (historyDetails[delivery_date] !== undefined) return;
     setLoadingDetails(true);
     const supabase = createClient();
-    const { data: lines } = await supabase
-      .from('lab_order_lines')
-      .select('order_ref, shop_name, product_name_vi, variant_label, qty')
-      .in('import_id', import_ids)
-      .eq('team', team)
-      .order('order_ref');
+    // Orders (what was to produce) + real production (what was actually made) in parallel
+    const [{ data: lines }, { data: prod }] = await Promise.all([
+      supabase.from('lab_order_lines')
+        .select('order_ref, shop_name, product_name_vi, variant_label, qty')
+        .in('import_id', import_ids).eq('team', team).order('order_ref'),
+      supabase.from('lab_assignments')
+        .select('product_name_vi, variant_label, qty_produced, is_extra, status, cancelled')
+        .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
+    ]);
     const byRef = new Map<string, OrderDetail>();
     for (const line of lines ?? []) {
       if (!byRef.has(line.order_ref))
@@ -298,6 +303,17 @@ export default function StationView({
       });
     }
     setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
+    // Production: aggregate produced quantity per product+variant (extras flagged)
+    const byProd = new Map<string, { name: string; variant: string; qty: number; is_extra: boolean }>();
+    for (const a of prod ?? []) {
+      if (a.cancelled) continue;
+      const key = `${a.product_name_vi}||${a.variant_label}||${a.is_extra ? 1 : 0}`;
+      const cur = byProd.get(key) ?? { name: a.product_name_vi, variant: a.variant_label, qty: 0, is_extra: !!a.is_extra };
+      cur.qty += a.qty_produced ?? 0;
+      byProd.set(key, cur);
+    }
+    setHistoryProduction(prev => ({ ...prev, [delivery_date]: Array.from(byProd.values())
+      .sort((x, y) => (x.is_extra ? 1 : 0) - (y.is_extra ? 1 : 0) || x.name.localeCompare(y.name)) }));
     setLoadingDetails(false);
   }
 
@@ -1170,18 +1186,54 @@ export default function StationView({
                 </button>
                 {isExpanded && (
                   <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
+                    {/* Sub-tabs: orders (what was to produce) vs production (what was made) */}
+                    <div className="flex gap-2 pt-3">
+                      {([['orders', lang === 'vi' ? 'Đơn hàng' : 'Commandes'], ['production', lang === 'vi' ? 'Đã sản xuất' : 'Production']] as const).map(([key, label]) => (
+                        <button key={key} onClick={() => setHistorySub(key)}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors"
+                          style={historySub === key
+                            ? { backgroundColor: '#1A4731', color: 'white' }
+                            : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                     {loadingDetails && !details && (
                       <div className="space-y-2 pt-2">
                         <div className="skeleton h-12 w-full" />
                         <div className="skeleton h-12 w-full" />
                       </div>
                     )}
-                    {details && details.length === 0 && (
+                    {/* PRODUCTION view — what the team actually produced (Done cards, extra included) */}
+                    {historySub === 'production' && details && (
+                      (historyProduction[d.delivery_date] ?? []).length === 0 ? (
+                        <p className="text-center text-xs py-3 text-gray-400">
+                          {lang === 'vi' ? 'Không có sản xuất' : 'Aucune production'}
+                        </p>
+                      ) : (
+                        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F0F9F4', border: '1px solid #C6E6D3' }}>
+                          <div className="space-y-0.5">
+                            {(historyProduction[d.delivery_date] ?? []).map((p, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#374151' }}>
+                                  {p.name}
+                                  {p.variant && p.variant !== 'Standard' ? <span className="ml-1 text-gray-400">· {p.variant}</span> : null}
+                                  {p.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
+                                </span>
+                                <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{p.qty}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    )}
+                    {/* ORDERS view — the client orders that were to produce */}
+                    {historySub === 'orders' && details && details.length === 0 && (
                       <p className="text-center text-xs py-3 text-gray-400">
                         {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
                       </p>
                     )}
-                    {(details ?? []).map(order => (
+                    {historySub === 'orders' && (details ?? []).map(order => (
                       <div key={order.order_ref} className="rounded-xl p-3 mt-2"
                         style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
                         <div className="flex items-center justify-between mb-1.5">
