@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import StationView from './StationView';
 import type { Team } from '@/lib/types';
 import { TEAMS } from '@/lib/types';
+import { filterByPublished } from '@/lib/published-cards';
 
 export const revalidate = 0;
 
@@ -110,7 +111,13 @@ export default async function StationPage({ params }: { params: { team: string }
       if (d.ready_time && (!e.ready || d.ready_time < e.ready)) e.ready = d.ready_time;
     }
 
-    return (assignments ?? []).map((a: any) => {
+    // Which client orders of this day are published — chefs only see published portions.
+    const { data: pubRows } = importIds.length > 0
+      ? await supabase.from('lab_order_lines').select('order_ref').eq('delivery_date', date).eq('published', true)
+      : { data: [] as any[] };
+    const publishedRefs = new Set((pubRows ?? []).map((r: any) => r.order_ref).filter(Boolean));
+
+    const mapped = (assignments ?? []).map((a: any) => {
       const variant = a.variant_id ? variantById[a.variant_id] ?? null : null;
       const fiche = a.fiche_id ? ficheById[a.fiche_id] ?? null : null;
       return {
@@ -129,6 +136,7 @@ export default async function StationPage({ params }: { params: { team: string }
         lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,
       };
     });
+    return filterByPublished(mapped, publishedRefs);
   }
 
   const [todayAssignments, tomorrowAssignments] = await Promise.all([loadDay(today), loadDay(tomorrow)]);

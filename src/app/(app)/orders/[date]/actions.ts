@@ -26,6 +26,12 @@ export async function publishImportAction(
     .eq('id', importId);
   if (updateError) return { error: updateError.message };
 
+  // Whole-import publish = publish ALL its client orders (per-order publishing is the
+  // default now; this button is the "publish everything" shortcut).
+  await supabase.from('lab_order_lines')
+    .update({ published: true, published_at: new Date().toISOString(), published_by: session.user.id, published_by_name: profile?.full_name ?? null })
+    .eq('import_id', importId).eq('published', false);
+
   // Notifications — best-effort
   const { data: imp } = await supabase
     .from('lab_imports').select('type, order_number').eq('id', importId).single();
@@ -47,6 +53,69 @@ export async function publishImportAction(
     const teamLabel = (TEAM_LABELS as any)[s.target]?.vi ?? s.target;
     const msg = `🍰 La Parisienne Lab\n📋 ${orderLabel} #${imp?.order_number} — ${dateStr}\n✅ Đã phát hành cho ${teamLabel}: ${count} sản phẩm cần sản xuất`;
     await sendZaloWebhook(s.zalo_webhook_url, msg);
+  }
+
+  revalidatePath(`/orders/${date}`);
+  return {};
+}
+
+// Publish a SINGLE client order (order_ref) of a day. Its production shows up for the chefs
+// (their card quantities reflect only published orders — see filterByPublished). The import
+// is flagged published as soon as one of its orders is. Read-only towards Odoo.
+export async function publishOrderAction(orderRef: string, date: string): Promise<{ error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase
+    .from('profiles').select('role, full_name').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? ''))
+    return { error: 'Not authorized' };
+
+  const { data: lines, error: selErr } = await supabase
+    .from('lab_order_lines').select('import_id').eq('order_ref', orderRef).eq('delivery_date', date);
+  if (selErr) return { error: selErr.message };
+  const importIds = Array.from(new Set((lines ?? []).map((l: any) => l.import_id)));
+  if (!importIds.length) return { error: 'Order not found' };
+
+  const { error: upErr } = await supabase.from('lab_order_lines')
+    .update({ published: true, published_at: new Date().toISOString(), published_by: session.user.id, published_by_name: profile?.full_name ?? null })
+    .eq('order_ref', orderRef).eq('delivery_date', date).eq('published', false);
+  if (upErr) return { error: upErr.message };
+
+  // Flag the parent import(s) published (first time only, to record who/when)
+  await supabase.from('lab_imports')
+    .update({ status: 'published', published_at: new Date().toISOString(), published_by: session.user.id, published_by_name: profile?.full_name ?? null })
+    .in('id', importIds).neq('status', 'published');
+
+  revalidatePath(`/orders/${date}`);
+  return {};
+}
+
+// Un-publish a single client order — removes its production from the chefs (their card
+// quantities drop back). If the import has no published order left, it returns to draft.
+export async function unpublishOrderAction(orderRef: string, date: string): Promise<{ error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase
+    .from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? ''))
+    return { error: 'Not authorized' };
+
+  const { data: lines } = await supabase
+    .from('lab_order_lines').select('import_id').eq('order_ref', orderRef).eq('delivery_date', date);
+  const importIds = Array.from(new Set((lines ?? []).map((l: any) => l.import_id)));
+
+  const { error: upErr } = await supabase.from('lab_order_lines')
+    .update({ published: false, published_at: null, published_by: null, published_by_name: null })
+    .eq('order_ref', orderRef).eq('delivery_date', date);
+  if (upErr) return { error: upErr.message };
+
+  // Any import that no longer has a published order goes back to draft
+  for (const importId of importIds) {
+    const { count } = await supabase.from('lab_order_lines')
+      .select('*', { count: 'exact', head: true }).eq('import_id', importId).eq('published', true);
+    if (!count) await supabase.from('lab_imports').update({ status: 'draft' }).eq('id', importId);
   }
 
   revalidatePath(`/orders/${date}`);
