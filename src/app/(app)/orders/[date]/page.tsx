@@ -113,6 +113,11 @@ export default async function OrderDatePage({ params }: { params: { date: string
         ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
     : null;
 
+  // Odoo orders whose cake is produced via a linked manual cake (no own production card).
+  const { data: matchedCakes } = await supabase.from('lab_manual_cakes')
+    .select('matched_order_ref, product_sku').eq('delivery_date', date).not('matched_order_ref', 'is', null);
+  const producedManually = Array.from(new Set((matchedCakes ?? []).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
+
   return (
     <OrdersTabs
       date={date}
@@ -122,6 +127,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
       unmatchedProducts={unmatchedProducts}
       missingCardsCount={missingCardsCount}
       missingCards={missingCards}
+      producedManually={producedManually}
       userRole={profile?.role ?? null}
     />
   );

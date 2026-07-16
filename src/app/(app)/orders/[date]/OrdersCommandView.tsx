@@ -8,12 +8,13 @@ import { ChevronDown, ChevronRight, Clock, Package, CheckCircle2, AlertCircle, A
 
 // The assistants' cockpit: one row per client order (sales order or replenishment request),
 // with the Odoo status, delivery time, and per-line production progress.
-export default function OrdersCommandView({ date, imports, assignments, orderLines, userRole }: {
-  date: string; imports: any[]; assignments: any[]; orderLines: any[]; userRole: string | null;
+export default function OrdersCommandView({ date, imports, assignments, orderLines, producedManually = [], userRole }: {
+  date: string; imports: any[]; assignments: any[]; orderLines: any[]; producedManually?: string[]; userRole: string | null;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
   const canManage = ['admin', 'lab_manager', 'assistant'].includes(userRole ?? '');
+  const producedSet = useMemo(() => new Set(producedManually), [producedManually]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sourceFilter, setSourceFilter] = useState<'all' | 'sales_order' | 'replenishment'>('all');
   const [shopFilter, setShopFilter] = useState('');
@@ -240,7 +241,9 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                           <div className="col-span-2 text-right">
                             {st
                               ? <span className="badge text-white text-[10px]" style={{ backgroundColor: st.color }}>{lang === 'vi' ? st.labelVi : st.labelEn}</span>
-                              : <span className="text-[10px] text-ink-light">{lang === 'vi' ? 'Chưa giao đội' : 'Not assigned'}</span>}
+                              : producedSet.has(`${o.ref}||${l.sku}`)
+                                ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>{lang === 'vi' ? 'Đang sản xuất' : 'In production'}</span>
+                                : <span className="text-[10px] text-ink-light">{lang === 'vi' ? 'Chưa giao đội' : 'Not assigned'}</span>}
                           </div>
                         </div>
                       );

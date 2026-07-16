@@ -17,6 +17,7 @@ export default function OrdersTabs(props: {
   unmatchedProducts: { sku: string; name: string; qty: number }[];
   missingCardsCount: number;
   missingCards: { name: string; team: string; qty: number }[];
+  producedManually?: string[];
   userRole: string | null;
 }) {
   const { lang } = useI18n();
