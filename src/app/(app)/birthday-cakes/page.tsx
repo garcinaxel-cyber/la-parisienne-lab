@@ -96,18 +96,18 @@ export default async function BirthdayCakesPage() {
   const { data: bcVars } = bcFicheIds.length
     ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, label, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
     : { data: [] as any[] };
-  const productChoices = (bcVars ?? []).map((v: any) => {
+  const productChoices = (bcVars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
-    if (!f) return null;
+    if (!f) return [];
     const label = v.label && v.label !== 'Standard' ? v.label : '';
-    return {
+    return [{
       ficheId: f.id, variantId: v.id, sku: v.sku ?? null,
       nameVi: label ? `${f.name_vi} · ${label}` : f.name_vi,
       nameEn: label ? `${f.name_en ?? f.name_vi} · ${label}` : (f.name_en ?? f.name_vi),
       imageUrl: v.image_url ?? f.image_url ?? null,
       team: (f.teams ?? [])[0] ?? '',
-    };
-  }).filter(Boolean).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
+    }];
+  }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
 
   return <BirthdayCakesView cakes={cakes} productChoices={productChoices} today={today} />;
 }
