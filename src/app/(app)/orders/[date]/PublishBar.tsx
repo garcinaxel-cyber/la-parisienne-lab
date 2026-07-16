@@ -139,6 +139,17 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
         </div>
       ))}
 
+      {/* Published imports — who published (traceability) */}
+      {canManage && published.map(imp => (
+        <div key={imp.id} className="flex items-center gap-2 text-xs px-1" style={{ color: '#16A34A' }}>
+          <CheckCircle2 size={13} className="shrink-0" />
+          <span>
+            {imp.type === 'daily' ? (lang === 'vi' ? 'Đơn chính' : 'Main order') : (lang === 'vi' ? 'Đơn khẩn' : 'Urgent')} #{imp.order_number} · {lang === 'vi' ? 'Đã phát hành' : 'Publié'}
+            {imp.published_by_name ? <> · {lang === 'vi' ? 'bởi' : 'par'} <span className="font-semibold">{imp.published_by_name}</span></> : null}
+          </span>
+        </div>
+      ))}
+
       {/* Missing production cards — fiches added after publish */}
       {canManage && missingCardsCount > 0 && (
         <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#93C5FD' }}>

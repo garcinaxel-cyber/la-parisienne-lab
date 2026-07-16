@@ -9,7 +9,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
 
   const { data: imports } = await supabase
     .from('lab_imports')
-    .select('id, delivery_date, order_number, type, status, shipped_from_lab, notes, imported_at, published_at, control_report')
+    .select('id, delivery_date, order_number, type, status, shipped_from_lab, notes, imported_at, published_at, published_by_name, control_report')
     .eq('delivery_date', date)
     .order('order_number');
 

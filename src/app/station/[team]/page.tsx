@@ -25,15 +25,18 @@ export default async function StationPage({ params }: { params: { team: string }
 
   if (!TEAMS.includes(team)) redirect('/login');
 
-  // Current user role (worker/viewer → read-only station mode)
+  // Current user role (worker/viewer → read-only station mode) + name (for production traceability)
   let userRole: string | null = null;
+  let userName: string | null = null;
+  const userId: string | null = session?.user.id ?? null;
   if (session) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, full_name')
       .eq('id', session.user.id)
       .single();
     userRole = profile?.role ?? null;
+    userName = profile?.full_name ?? null;
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -50,6 +53,7 @@ export default async function StationPage({ params }: { params: { team: string }
         id, fiche_id, variant_id, product_name_vi, product_name_en, image_url,
         variant_label, total_qty, qty_to_produce, qty_produced,
         status, is_extra, produced_ahead, cancelled, transferred, notes, sort_order, import_id,
+        produced_by_name, produced_at,
         lab_imports!inner(delivery_date, order_number, type, status)
       `)
       .eq('team', team)
@@ -131,5 +135,5 @@ export default async function StationPage({ params }: { params: { team: string }
 
   return <StationView team={team} teamSlug={params.team}
     assignments={todayAssignments} tomorrowAssignments={tomorrowAssignments}
-    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} />;
+    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} userId={userId} userName={userName} />;
 }

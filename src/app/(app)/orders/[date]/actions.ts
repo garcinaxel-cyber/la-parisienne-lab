@@ -13,13 +13,16 @@ export async function publishImportAction(
   if (!session) return { error: 'Not authenticated' };
 
   const { data: profile } = await supabase
-    .from('profiles').select('role').eq('id', session.user.id).single();
+    .from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? ''))
     return { error: 'Not authorized' };
 
   const { error: updateError } = await supabase
     .from('lab_imports')
-    .update({ status: 'published', published_at: new Date().toISOString() })
+    .update({
+      status: 'published', published_at: new Date().toISOString(),
+      published_by: session.user.id, published_by_name: profile?.full_name ?? null,
+    })
     .eq('id', importId);
   if (updateError) return { error: updateError.message };
 
