@@ -73,10 +73,12 @@ type SearchProduct = {
   sku: string | null;
   variant_id: string | null;
   main_image_url: string | null;
+  variants?: { id: string; sku: string | null; label: string; image_url: string | null }[];
   is_lab_only: boolean;
   category_id: string | null;
   subcategory: string | null;
 };
+type ExtraVariant = { id: string; sku: string | null; label: string; image_url: string | null };
 
 type Category = { id: string; name_vi: string; name_en: string };
 
@@ -159,6 +161,7 @@ export default function StationView({
   const [extraSearch, setExtraSearch] = useState('');
   const [extraResults, setExtraResults] = useState<SearchProduct[]>([]);
   const [extraProduct, setExtraProduct] = useState<SearchProduct | null>(null);
+  const [extraVariant, setExtraVariant] = useState<ExtraVariant | null>(null);
   const [extraQty, setExtraQty] = useState(1);
   const [extraQtyInput, setExtraQtyInput] = useState('1');
   const [savingExtra, setSavingExtra] = useState(false);
@@ -368,10 +371,10 @@ export default function StationView({
       team,
       product_name_vi: extraProduct.name_vi,
       product_name_en: extraProduct.name_en ?? '',
-      image_url: extraProduct.main_image_url,
+      image_url: extraVariant?.image_url ?? extraProduct.main_image_url,
       fiche_id: extraProduct.id,
-      variant_id: extraProduct.variant_id ?? null,
-      variant_label: 'Standard',
+      variant_id: extraVariant?.id ?? extraProduct.variant_id ?? null,
+      variant_label: extraVariant?.label ?? 'Standard',
       total_qty: extraQty,
       qty_to_produce: extraQty,
       qty_produced: extraQty,
@@ -383,7 +386,7 @@ export default function StationView({
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
     if (data) {
       setAssignments(prev => [...prev, {
-        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraProduct.sku ?? null, weight_grams: null, category_name_vi: extraProduct.subcategory ?? null, category_name_en: extraProduct.subcategory ?? null,
+        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraVariant?.sku ?? extraProduct.sku ?? null, weight_grams: null, category_name_vi: extraProduct.subcategory ?? null, category_name_en: extraProduct.subcategory ?? null,
         lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
       }]);
     }
@@ -396,6 +399,7 @@ export default function StationView({
     setExtraSearch('');
     setExtraResults([]);
     setExtraProduct(null);
+    setExtraVariant(null);
     setExtraQty(1);
     setExtraQtyInput('1');
     setSelectedCategory('');
@@ -1390,15 +1394,15 @@ export default function StationView({
 
               {extraProduct ? (
                 <div className="flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
-                  {extraProduct.main_image_url ? (
-                    <img src={extraProduct.main_image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                  {(extraVariant?.image_url ?? extraProduct.main_image_url) ? (
+                    <img src={extraVariant?.image_url ?? extraProduct.main_image_url ?? undefined} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                   ) : (
                     <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>{extraProduct.name_vi}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      {extraProduct.sku && <span className="text-[10px] font-mono text-ink-light">{extraProduct.sku}</span>}
+                      {(extraVariant?.sku ?? extraProduct.sku) && <span className="text-[10px] font-mono text-ink-light">{extraVariant?.sku ?? extraProduct.sku}</span>}
                       <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
                         style={extraProduct.is_lab_only
                           ? { backgroundColor: '#EDE9FE', color: '#6D28D9' }
@@ -1408,7 +1412,7 @@ export default function StationView({
                       </span>
                     </div>
                   </div>
-                  <button onClick={() => { setExtraProduct(null); setExtraSearch(''); }}
+                  <button onClick={() => { setExtraProduct(null); setExtraVariant(null); setExtraSearch(''); }}
                     className="p-1 text-ink-light shrink-0"><X size={16} /></button>
                 </div>
               ) : (
@@ -1430,7 +1434,7 @@ export default function StationView({
                     <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
                       {extraResults.map((p, i) => (
                         <button key={p.id}
-                          onClick={() => setExtraProduct(p)}
+                          onClick={() => { setExtraProduct(p); setExtraVariant(p.variants?.[0] ?? null); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-green-50 active:bg-green-100"
                           style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
                           {p.main_image_url ? (
@@ -1460,6 +1464,28 @@ export default function StationView({
                       {lang === 'vi' ? 'Không tìm thấy sản phẩm nào' : 'No products found'}
                     </p>
                   )}
+                </div>
+              )}
+
+              {extraProduct && (extraProduct.variants?.length ?? 0) > 1 && (
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
+                    {lang === 'vi' ? 'Chọn loại' : 'Choisir la variante'}
+                  </label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {extraProduct.variants!.map(v => {
+                      const on = extraVariant?.id === v.id;
+                      return (
+                        <button key={v.id} onClick={() => setExtraVariant(v)}
+                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors"
+                          style={on
+                            ? { backgroundColor: '#1A4731', color: 'white' }
+                            : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+                          {v.label}{v.sku ? ` · ${v.sku}` : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

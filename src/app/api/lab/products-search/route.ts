@@ -47,26 +47,28 @@ export async function GET(req: NextRequest) {
   const { data: fiches, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Default variant per fiche (for SKU + variant_id + per-variant photo)
+  // All variants per fiche (default first) — so extra production can target a specific
+  // variant, not only the default one.
   const ficheIds = (fiches ?? []).map(f => f.id);
   const { data: variants } = ficheIds.length
     ? await supabase
         .from('lab_fiche_variants')
-        .select('id, fiche_id, sku, image_url, is_default, sort_order')
+        .select('id, fiche_id, sku, label, image_url, is_default, sort_order')
         .in('fiche_id', ficheIds)
         .order('is_default', { ascending: false })
         .order('sort_order')
     : { data: [] as any[] };
 
-  const defaultVariant: Record<string, { id: string; sku: string | null; image_url: string | null }> = {};
+  const variantsByFiche: Record<string, { id: string; sku: string | null; label: string; image_url: string | null }[]> = {};
   for (const v of variants ?? []) {
-    if (!defaultVariant[v.fiche_id]) {
-      defaultVariant[v.fiche_id] = { id: v.id, sku: v.sku ?? null, image_url: v.image_url ?? null };
-    }
+    (variantsByFiche[v.fiche_id] ??= []).push({
+      id: v.id, sku: v.sku ?? null, label: v.label ?? 'Standard', image_url: v.image_url ?? null,
+    });
   }
 
   const results = (fiches ?? []).map(f => {
-    const dv = defaultVariant[f.id] ?? null;
+    const vs = variantsByFiche[f.id] ?? [];
+    const dv = vs[0] ?? null; // default variant (is_default first)
     return {
       id: f.id,
       name_vi: f.name_vi,
@@ -74,6 +76,7 @@ export async function GET(req: NextRequest) {
       sku: dv?.sku ?? null,
       variant_id: dv?.id ?? null,
       main_image_url: dv?.image_url ?? f.image_url ?? null,
+      variants: vs,
       is_lab_only: true,
       category_id: f.category ?? null,
       subcategory: f.category ?? null,
