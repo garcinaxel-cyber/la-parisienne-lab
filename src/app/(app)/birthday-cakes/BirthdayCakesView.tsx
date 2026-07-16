@@ -254,7 +254,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                     className="w-full rounded-lg pl-9 pr-3 py-2 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                 </div>
                 {filtered.length > 0 && (
-                  <div className="mt-2 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB', maxHeight: 220, overflowY: 'auto' }}>
+                  <div className="mt-2 rounded-lg" style={{ border: '1px solid #E5E7EB', maxHeight: '52vh', overflowY: 'auto' }}>
                     {filtered.map((p, i) => (
                       <button key={p.variantId ?? p.ficheId} onClick={() => setChosen(p)}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-green-50" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
@@ -276,6 +276,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
               <p className="text-xs text-red-600">{vi ? 'Sản phẩm chưa có đội — hoàn thiện phiếu kỹ thuật.' : 'Product has no team — complete the recipe card.'}</p>
             )}
 
+            {chosen && (<>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs font-semibold text-ink-light block">{vi ? 'Số lượng' : 'Quantity'}</label>
@@ -306,6 +307,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
               <label className="text-xs font-semibold text-ink-light block">{vi ? 'Lời chúc' : 'Message'}</label>
               <input type="text" value={form.message} onChange={ev => setForm(f => ({ ...f, message: ev.target.value }))} placeholder={vi ? 'Chữ trên bánh…' : 'Text on the cake…'} className="w-full rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #93C5FD' }} />
             </div>
+            </>)}
 
             {createErr && <p className="text-xs text-red-600">{createErr}</p>}
             <div className="flex gap-2 pt-1">

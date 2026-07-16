@@ -96,14 +96,23 @@ export default async function BirthdayCakesPage() {
   const { data: bcVars } = bcFicheIds.length
     ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, label, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
     : { data: [] as any[] };
+  // The readable product name lives on the Odoo order lines (fiche name_vi is often empty).
+  const bcSkusAll = Array.from(new Set((bcVars ?? []).map((v: any) => v.sku).filter(Boolean)));
+  const { data: nameRows } = bcSkusAll.length
+    ? await supabase.from('lab_order_lines').select('product_sku, product_name_vi').in('product_sku', bcSkusAll).limit(3000)
+    : { data: [] as any[] };
+  const nameBySku: Record<string, string> = {};
+  for (const r of nameRows ?? []) if (r.product_sku && r.product_name_vi && !nameBySku[r.product_sku]) nameBySku[r.product_sku] = r.product_name_vi;
   const productChoices = (bcVars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
     if (!f) return [];
     const label = v.label && v.label !== 'Standard' ? v.label : '';
+    const orderName = v.sku ? nameBySku[v.sku] : null;
+    const nameVi = orderName || (label ? `${f.name_vi || ''} · ${label}`.trim() : (f.name_vi || v.sku || ''));
     return [{
       ficheId: f.id, variantId: v.id, sku: v.sku ?? null,
-      nameVi: label ? `${f.name_vi} · ${label}` : f.name_vi,
-      nameEn: label ? `${f.name_en ?? f.name_vi} · ${label}` : (f.name_en ?? f.name_vi),
+      nameVi,
+      nameEn: f.name_en || nameVi,
       imageUrl: v.image_url ?? f.image_url ?? null,
       team: (f.teams ?? [])[0] ?? '',
     }];
