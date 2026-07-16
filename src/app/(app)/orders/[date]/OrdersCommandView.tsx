@@ -193,7 +193,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                   </button>
                   {o.published && o.publishedBy && (
                     <span className="text-[10px] text-ink-light shrink-0 hidden sm:inline">
-                      {lang === 'vi' ? 'bởi' : 'par'} {o.publishedBy}
+                      {lang === 'vi' ? 'bởi' : 'by'} {o.publishedBy}
                     </span>
                   )}
                   {canManage && (
@@ -201,12 +201,12 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                       {o.published ? (
                         <button onClick={() => togglePublish(o.ref, false)} disabled={busyRef === o.ref}
                           className="text-[11px] font-semibold px-3 py-1.5 rounded-full border border-border-soft text-ink-light hover:text-navy disabled:opacity-50">
-                          {busyRef === o.ref ? '…' : (lang === 'vi' ? 'Bỏ phát hành' : 'Dépublier')}
+                          {busyRef === o.ref ? '…' : (lang === 'vi' ? 'Bỏ phát hành' : 'Unpublish')}
                         </button>
                       ) : (
                         <button onClick={() => togglePublish(o.ref, true)} disabled={busyRef === o.ref}
                           className="text-[11px] font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
-                          <Send size={12} />{busyRef === o.ref ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publier')}
+                          <Send size={12} />{busyRef === o.ref ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publish')}
                         </button>
                       )}
                     </div>

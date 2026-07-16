@@ -48,8 +48,11 @@ export default async function BirthdayCakesPage() {
   const byLine: Record<string, any> = {};
   for (const d of details ?? []) byLine[d.order_line_id] = d;
 
-  const cakes = (lines ?? []).map(l => ({
+  const odooCakes = (lines ?? []).map(l => ({
     id: l.id,
+    source: 'odoo' as const, manualId: null as string | null, needsOdoo: false,
+    suggestedRef: null as string | null, suggestedShop: null as string | null,
+    sku: (l.product_sku ?? null) as string | null,
     order_ref: l.order_ref,
     name: l.product_name_vi,
     shop: l.shop_name,
@@ -62,5 +65,77 @@ export default async function BirthdayCakesPage() {
     delivery_address: byLine[l.id]?.delivery_address ?? '',
   }));
 
-  return <BirthdayCakesView cakes={cakes} />;
+  // Manual cakes created in the app (not yet matched to an Odoo order)
+  const { data: manual } = await supabase.from('lab_manual_cakes')
+    .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo')
+    .is('matched_order_ref', null)
+    .gte('delivery_date', today)
+    .order('delivery_date');
+  // Phase 2 detection: a manual cake matches an Odoo order when a real order line exists with
+  // the same SKU + delivery date. Computed live (human confirms before it's linked).
+  const mcSkus = Array.from(new Set((manual ?? []).map((m: any) => m.product_sku).filter(Boolean)));
+  const { data: matchLines } = mcSkus.length
+    ? await supabase.from('lab_order_lines').select('product_sku, delivery_date, order_ref, shop_name').in('product_sku', mcSkus).gte('delivery_date', today)
+    : { data: [] as any[] };
+  const matchBySkuDate: Record<string, { ref: string; shop: string | null }> = {};
+  for (const l of matchLines ?? []) {
+    const k = `${l.product_sku}||${l.delivery_date}`;
+    if (l.order_ref && !matchBySkuDate[k]) matchBySkuDate[k] = { ref: l.order_ref, shop: l.shop_name ?? null };
+  }
+  const manualCakes = (manual ?? []).map((m: any) => {
+    const sug = matchBySkuDate[`${m.product_sku}||${m.delivery_date}`] ?? null;
+    return {
+      id: m.id,
+      source: 'manual' as const, manualId: m.id as string | null, needsOdoo: !!m.needs_odoo,
+      suggestedRef: (sug?.ref ?? null) as string | null, suggestedShop: (sug?.shop ?? null) as string | null,
+      sku: (m.product_sku ?? null) as string | null,
+      order_ref: '',
+      name: m.product_name_vi,
+      shop: m.delivered_by ?? null,
+      delivery_date: m.delivery_date,
+      delivery_time: null as string | null,
+      qty: m.qty,
+      message: m.message ?? '',
+      ready_time: m.ready_time ?? '',
+      delivered_by: m.delivered_by ?? '',
+      delivery_address: m.delivery_address ?? '',
+    };
+  });
+
+  const cakes = [...odooCakes, ...manualCakes];
+
+  // Products available for a new manual cake — ONE entry per variant (not only the default),
+  // so any size/flavour of a birthday cake can be chosen.
+  const { data: bcFichesFull } = bcFicheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, name_vi, name_en, teams, image_url').in('id', bcFicheIds)
+    : { data: [] as any[] };
+  const ficheById: Record<string, any> = {};
+  for (const f of bcFichesFull ?? []) ficheById[f.id] = f;
+  const { data: bcVars } = bcFicheIds.length
+    ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, label, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
+    : { data: [] as any[] };
+  // The readable product name lives on the Odoo order lines (fiche name_vi is often empty).
+  const bcSkusAll = Array.from(new Set((bcVars ?? []).map((v: any) => v.sku).filter(Boolean)));
+  const { data: nameRows } = bcSkusAll.length
+    ? await supabase.from('lab_order_lines').select('product_sku, product_name_vi').in('product_sku', bcSkusAll).limit(3000)
+    : { data: [] as any[] };
+  const nameBySku: Record<string, string> = {};
+  for (const r of nameRows ?? []) if (r.product_sku && r.product_name_vi && !nameBySku[r.product_sku]) nameBySku[r.product_sku] = r.product_name_vi;
+  const productChoices = (bcVars ?? []).flatMap((v: any) => {
+    const f = ficheById[v.fiche_id];
+    if (!f) return [];
+    const label = v.label && v.label !== 'Standard' ? v.label : '';
+    const orderName = v.sku ? nameBySku[v.sku] : null;
+    const nameVi = orderName
+      || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : (v.sku || (label ? `· ${label}` : '')));
+    return [{
+      ficheId: f.id, variantId: v.id, sku: v.sku ?? null,
+      nameVi,
+      nameEn: f.name_en || nameVi,
+      imageUrl: v.image_url ?? f.image_url ?? null,
+      team: (f.teams ?? [])[0] ?? '',
+    }];
+  }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
+
+  return <BirthdayCakesView cakes={cakes} productChoices={productChoices} today={today} />;
 }

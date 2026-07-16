@@ -94,8 +94,11 @@ export default async function StationPage({ params }: { params: { team: string }
 
     // Birthday-cake complementary info (message + ready-by time) entered by assistants —
     // attached to this team's cards by product name. Read-only for chefs.
+    // Birthday-cake messages are matched to the card BY PRODUCT NAME. We must NOT filter these
+    // order lines by team: a product whose fiche was created after import keeps an empty team
+    // on its line, so filtering by team would drop its message. Matching by name is enough.
     const { data: teamLines } = importIds.length > 0
-      ? await supabase.from('lab_order_lines').select('id, product_name_vi').in('import_id', importIds).eq('team', team)
+      ? await supabase.from('lab_order_lines').select('id, product_name_vi').in('import_id', importIds)
       : { data: [] as any[] };
     const nameByLineId: Record<string, string> = {};
     for (const l of teamLines ?? []) nameByLineId[l.id] = l.product_name_vi;
@@ -110,6 +113,14 @@ export default async function StationPage({ params }: { params: { team: string }
       if (d.message) e.messages.push(d.message);
       if (d.ready_time && (!e.ready || d.ready_time < e.ready)) e.ready = d.ready_time;
     }
+
+    // Manual (app-created) cakes: their message / ready-time is linked to the card directly.
+    const asgIds = (assignments ?? []).map((a: any) => a.id);
+    const { data: manualCakes } = asgIds.length > 0
+      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time').in('assignment_id', asgIds)
+      : { data: [] as any[] };
+    const manualByAsg: Record<string, { message: string | null; ready_time: string | null }> = {};
+    for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = { message: m.message, ready_time: m.ready_time };
 
     // Which client orders of this day are published — chefs only see published portions.
     const { data: pubRows } = importIds.length > 0
@@ -127,8 +138,8 @@ export default async function StationPage({ params }: { params: { team: string }
         weight_grams: variant?.weight_g ?? fiche?.weight_grams ?? null,
         category_name_vi: fiche?.category ?? null,
         category_name_en: fiche?.category ?? null,
-        bc_message: bcByProduct[a.product_name_vi]?.messages.join(' · ') || null,
-        bc_ready_time: bcByProduct[a.product_name_vi]?.ready || null,
+        bc_message: bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
+        bc_ready_time: bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
         breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
           ...b,
           delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,

@@ -189,7 +189,7 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
       {canManage && !allOrdersPublished && unpublishedOrders.length > 0 && published.length > 0 && (
         <div className="flex items-center gap-2 text-sm px-1" style={{ color: '#B45309' }}>
           <AlertCircle size={15} />
-          {unpublishedOrders.length} {lang === 'vi' ? 'đơn chưa phát hành' : (unpublishedOrders.length > 1 ? 'commandes non publiées' : 'commande non publiée')}
+          {unpublishedOrders.length} {lang === 'vi' ? 'đơn chưa phát hành' : (unpublishedOrders.length > 1 ? 'orders not published' : 'order not published')}
         </div>
       )}
 
