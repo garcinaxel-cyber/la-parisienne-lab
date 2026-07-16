@@ -31,7 +31,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
     importIds.length > 0
       ? supabase
           .from('lab_order_lines')
-          .select('import_id, team, variant_label, shop_name, qty, order_ref, product_sku, product_name_vi, delivery_time, source_type, note, published')
+          .select('import_id, team, variant_label, shop_name, qty, order_ref, product_sku, product_name_vi, delivery_time, source_type, note, published, published_by_name')
           .in('import_id', importIds)
           .order('shop_name')
       : Promise.resolve({ data: [] }),
