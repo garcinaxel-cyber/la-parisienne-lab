@@ -65,14 +65,14 @@ export default async function BirthdayCakesPage() {
 
   // Manual cakes created in the app (not yet matched to an Odoo order)
   const { data: manual } = await supabase.from('lab_manual_cakes')
-    .select('id, product_name_vi, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, customer_name')
+    .select('id, product_name_vi, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo')
     .is('matched_order_ref', null)
     .gte('delivery_date', today)
     .order('delivery_date');
   const manualCakes = (manual ?? []).map(m => ({
     id: m.id,
     source: 'manual' as const, manualId: m.id as string | null, needsOdoo: !!m.needs_odoo,
-    order_ref: m.customer_name ? m.customer_name : 'Manuel',
+    order_ref: '',
     name: m.product_name_vi,
     shop: m.delivered_by ?? null,
     delivery_date: m.delivery_date,

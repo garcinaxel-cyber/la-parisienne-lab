@@ -46,9 +46,9 @@ export async function createManualCakeAction(input: {
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
-  if (!TEAMS.includes(input.team)) return { error: 'Produit sans équipe valide (fiche à compléter)' };
-  if (!input.qty || input.qty < 1) return { error: 'Quantité invalide' };
-  if (!input.deliveryDate) return { error: 'Date manquante' };
+  if (!TEAMS.includes(input.team)) return { error: 'Product has no valid team — complete the recipe card' };
+  if (!input.qty || input.qty < 1) return { error: 'Invalid quantity' };
+  if (!input.deliveryDate) return { error: 'Missing delivery date' };
 
   // Find or create the per-day "manual" container (one per day, reused)
   let importId: string;
