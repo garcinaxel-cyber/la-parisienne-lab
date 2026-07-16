@@ -168,10 +168,13 @@ export async function generateMissingCardsAction(
   const existingKeys = new Set((existing ?? []).map((a: any) =>
     `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`));
 
-  // Skip SKUs already covered by an unmatched manual cake for this date (the manual card is the card)
-  const { data: pendingCakes } = await supabase
-    .from('lab_manual_cakes').select('product_sku').eq('delivery_date', date).is('matched_order_ref', null).eq('needs_odoo', true);
-  const pendingSkus = new Set((pendingCakes ?? []).map((m: any) => m.product_sku).filter(Boolean));
+  // Skip lines already covered by a manual cake for this date (the manual card IS the card):
+  //  - unmatched cake → matched by SKU (any order of that cake that day)
+  //  - confirmed cake → matched by order_ref + SKU (that specific Odoo order)
+  const { data: manualCakes } = await supabase
+    .from('lab_manual_cakes').select('product_sku, matched_order_ref').eq('delivery_date', date);
+  const pendingSkus = new Set((manualCakes ?? []).filter((m: any) => !m.matched_order_ref).map((m: any) => m.product_sku).filter(Boolean));
+  const matchedRefSku = new Set((manualCakes ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`));
 
   // Group order lines that now resolve to a fiche/team, per import+team+variant+name
   type Group = { import_id: string; team: string; variant_label: string; name: string;
@@ -181,7 +184,7 @@ export async function generateMissingCardsAction(
   for (const l of orderLines) {
     const v = l.product_sku ? vBySku[l.product_sku] : null;
     if (!v) continue;                       // still no fiche → skip
-    if (l.product_sku && pendingSkus.has(l.product_sku)) continue; // covered by a manual cake
+    if (l.product_sku && (pendingSkus.has(l.product_sku) || matchedRefSku.has(`${l.order_ref}||${l.product_sku}`))) continue; // covered by a manual cake
     const f = fById[v.fiche_id];
     const team = (f?.teams ?? [])[0] ?? '';
     if (!TEAMS.includes(team)) continue;    // no assignable team

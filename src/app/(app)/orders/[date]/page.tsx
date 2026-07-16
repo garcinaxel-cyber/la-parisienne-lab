@@ -93,9 +93,19 @@ export default async function OrderDatePage({ params }: { params: { date: string
       for (const f of fm ?? []) ficheTeams.set(f.id, (f.teams ?? [])[0] ?? '');
     }
   }
+  // A line covered by a manual cake (pending → by SKU, confirmed → by order_ref+SKU) already has
+  // its production card (the manual one). It must NOT be flagged as "missing" — otherwise the
+  // assistant would recreate the exact duplicate the manual-cake flow is designed to avoid.
+  const { data: manualCakesForDate } = await supabase.from('lab_manual_cakes')
+    .select('product_sku, matched_order_ref').eq('delivery_date', date);
+  const manualPendingSkus = new Set((manualCakesForDate ?? []).filter((m: any) => !m.matched_order_ref).map((m: any) => m.product_sku).filter(Boolean));
+  const producedManually = Array.from(new Set((manualCakesForDate ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
+  const producedManuallySet = new Set(producedManually);
+
   const missingMap = new Map<string, { name: string; team: string; qty: number }>();
   for (const l of orderLinesResult.data ?? []) {
     if (!publishedImportIds.has(l.import_id)) continue;
+    if (l.product_sku && (manualPendingSkus.has(l.product_sku) || producedManuallySet.has(`${l.order_ref}||${l.product_sku}`))) continue;
     const v = l.product_sku ? variantBySkuForMissing.get(l.product_sku) : null;
     if (!v) continue;
     const team = ficheTeams.get(v.fiche_id) ?? '';
@@ -113,10 +123,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
         ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
     : null;
 
-  // Odoo orders whose cake is produced via a linked manual cake (no own production card).
-  const { data: matchedCakes } = await supabase.from('lab_manual_cakes')
-    .select('matched_order_ref, product_sku').eq('delivery_date', date).not('matched_order_ref', 'is', null);
-  const producedManually = Array.from(new Set((matchedCakes ?? []).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
+  // producedManually (Odoo orders whose cake is made via a linked manual cake) is computed above.
 
   return (
     <OrdersTabs
