@@ -42,6 +42,11 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
 
   const drafts = imports.filter(i => i.status === 'draft');
   const published = imports.filter(i => i.status === 'published');
+  // Per-order publishing: "all published" means every client order is released, not just
+  // that the import lot is flagged published (a lot flips to published once ONE order is).
+  const orderRefsAll = Array.from(new Set(orderLines.map((l: any) => l.order_ref).filter(Boolean)));
+  const unpublishedOrders = orderRefsAll.filter(ref => orderLines.some((l: any) => l.order_ref === ref && !l.published));
+  const allOrdersPublished = orderRefsAll.length > 0 && unpublishedOrders.length === 0;
 
   async function publish(id: string) {
     setPublishing(id); setError(null);
@@ -173,11 +178,18 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
         </div>
       )}
 
-      {/* All published */}
-      {canManage && !drafts.length && published.length > 0 && missingCardsCount === 0 && (
+      {/* All orders published */}
+      {canManage && allOrdersPublished && missingCardsCount === 0 && (
         <div className="flex items-center gap-2 text-sm px-1" style={{ color: '#16A34A' }}>
           <CheckCircle2 size={15} />
-          {lang === 'vi' ? 'Tất cả đã phát hành' : 'All published'}
+          {lang === 'vi' ? 'Tất cả đơn đã phát hành' : 'All orders published'}
+        </div>
+      )}
+      {/* Some orders still to publish (per-order) */}
+      {canManage && !allOrdersPublished && unpublishedOrders.length > 0 && published.length > 0 && (
+        <div className="flex items-center gap-2 text-sm px-1" style={{ color: '#B45309' }}>
+          <AlertCircle size={15} />
+          {unpublishedOrders.length} {lang === 'vi' ? 'đơn chưa phát hành' : (unpublishedOrders.length > 1 ? 'commandes non publiées' : 'commande non publiée')}
         </div>
       )}
 
