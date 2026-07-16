@@ -94,8 +94,11 @@ export default async function StationPage({ params }: { params: { team: string }
 
     // Birthday-cake complementary info (message + ready-by time) entered by assistants —
     // attached to this team's cards by product name. Read-only for chefs.
+    // Birthday-cake messages are matched to the card BY PRODUCT NAME. We must NOT filter these
+    // order lines by team: a product whose fiche was created after import keeps an empty team
+    // on its line, so filtering by team would drop its message. Matching by name is enough.
     const { data: teamLines } = importIds.length > 0
-      ? await supabase.from('lab_order_lines').select('id, product_name_vi').in('import_id', importIds).eq('team', team)
+      ? await supabase.from('lab_order_lines').select('id, product_name_vi').in('import_id', importIds)
       : { data: [] as any[] };
     const nameByLineId: Record<string, string> = {};
     for (const l of teamLines ?? []) nameByLineId[l.id] = l.product_name_vi;
