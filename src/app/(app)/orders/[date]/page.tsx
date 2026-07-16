@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase-server';
 import OrdersTabs from './OrdersTabs';
 
-export const revalidate = 30;
+export const revalidate = 0; // always fresh — a just-imported/saved order must appear immediately
 
 export default async function OrderDatePage({ params }: { params: { date: string } }) {
   const supabase = createClient();

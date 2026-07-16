@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase-server';
 import OrdersListView from './OrdersListView';
 
-export const revalidate = 30;
+export const revalidate = 0; // always fresh — new imports must appear immediately
 
 export default async function OrdersPage() {
   const supabase = createClient();
