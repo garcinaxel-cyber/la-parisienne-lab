@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { Store, Clock, Truck, Save, CheckCircle2, FileText, MapPin, Plus, X, Trash2, Search } from 'lucide-react';
@@ -29,6 +29,17 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Seed edit state for any cake not yet known (e.g. a freshly created manual cake after refresh),
+  // otherwise edits[c.id] is undefined and the render would crash.
+  useEffect(() => {
+    setEdits(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const c of cakes) if (!next[c.id]) { next[c.id] = { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by, delivery_address: c.delivery_address }; changed = true; }
+      return changed ? next : prev;
+    });
+  }, [cakes]);
 
   const upd = (id: string, patch: Partial<Edit>) => {
     setEdits(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -167,7 +178,9 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
               <span className="text-xs font-normal">· {byDate.get(date)!.length} {vi ? 'bánh' : 'cakes'}</span>
             </div>
             {byDate.get(date)!.map(c => {
-              const e = edits[c.id];
+              // Fallback prevents a crash on the first render after a new cake appears (before the
+              // seeding effect runs).
+              const e = edits[c.id] ?? { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by, delivery_address: c.delivery_address };
               const col = shopColor(c.shop);
               const manual = c.source === 'manual';
               return (
