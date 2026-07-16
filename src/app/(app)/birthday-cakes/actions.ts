@@ -126,7 +126,7 @@ export async function markManualCakeEnteredAction(id: string, entered: boolean):
 // The manual production card is KEPT (produced qty preserved); the Odoo order's duplicate
 // contribution is removed from its production card (subtract this order's lines), and the
 // manual cake's info is copied onto the Odoo order line so nothing is lost.
-export async function confirmMatchAction(manualCakeId: string, orderRef: string): Promise<{ ok?: boolean; error?: string }> {
+export async function confirmMatchAction(manualCakeId: string, orderRef: string, targetSku?: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { error: 'Not authenticated' };
@@ -137,10 +137,14 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string)
     .select('id, product_sku, delivery_date, message, ready_time, delivered_by, delivery_address').eq('id', manualCakeId).maybeSingle();
   if (!mc) return { error: 'Cake not found' };
 
-  // The Odoo order lines that this manual cake covers (same order + SKU + date)
-  const { data: oLines } = await supabase.from('lab_order_lines')
+  // The Odoo order line(s) this manual cake covers. Auto-match uses the manual cake's SKU;
+  // a human "Link to order" passes the picked Odoo line's SKU (works even if the fiche SKU differs).
+  const sku = targetSku || mc.product_sku;
+  let q = supabase.from('lab_order_lines')
     .select('id, import_id, team, variant_label, product_name_vi, qty')
-    .eq('order_ref', orderRef).eq('product_sku', mc.product_sku).eq('delivery_date', mc.delivery_date);
+    .eq('order_ref', orderRef).eq('delivery_date', mc.delivery_date);
+  q = sku ? q.eq('product_sku', sku) : q;
+  const { data: oLines } = await q;
   if (!oLines?.length) return { error: 'Odoo order line not found' };
 
   // Copy the manual cake's complementary info onto the Odoo order line(s)

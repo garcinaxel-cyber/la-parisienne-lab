@@ -6,7 +6,7 @@ import { Store, Clock, Truck, Save, CheckCircle2, FileText, MapPin, Plus, X, Tra
 
 type Cake = {
   id: string; source: 'odoo' | 'manual'; manualId: string | null; needsOdoo: boolean;
-  suggestedRef?: string | null; suggestedShop?: string | null;
+  suggestedRef?: string | null; suggestedShop?: string | null; sku?: string | null;
   order_ref: string; name: string; shop: string | null;
   delivery_date: string; delivery_time: string | null; qty: number;
   message: string; ready_time: string; delivered_by: string; delivery_address: string;
@@ -68,8 +68,19 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     if (!c.manualId || !c.suggestedRef) return;
     setBusy(c.id);
     const { confirmMatchAction } = await import('./actions');
-    await confirmMatchAction(c.manualId, c.suggestedRef);
+    await confirmMatchAction(c.manualId, c.suggestedRef, c.sku ?? undefined);
     setBusy(null); router.refresh();
+  }
+
+  // Manual link: pick an Odoo order to link this manual cake to (fallback when auto-detect misses)
+  const [linkFor, setLinkFor] = useState<Cake | null>(null);
+  const odooCandidates = cakes.filter(c => c.source === 'odoo');
+  async function doManualLink(target: Cake) {
+    if (!linkFor?.manualId || !target.order_ref) return;
+    setBusy(linkFor.id);
+    const { confirmMatchAction } = await import('./actions');
+    await confirmMatchAction(linkFor.manualId, target.order_ref, target.sku ?? undefined);
+    setLinkFor(null); setBusy(null); router.refresh();
   }
 
   // ── New manual cake modal ──
@@ -226,6 +237,12 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                       </button>
                     )}
                     {manual && c.needsOdoo && (
+                      <button onClick={() => setLinkFor(c)} disabled={busy === c.id}
+                        className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#93C5FD', color: '#1E40AF' }}>
+                        <FileText size={14} /> {vi ? 'Liên kết đơn Odoo' : 'Link Odoo order'}
+                      </button>
+                    )}
+                    {manual && c.needsOdoo && (
                       <button onClick={() => markEntered(c)} disabled={busy === c.id}
                         className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#C9A84C', color: '#92600A' }}>
                         <CheckCircle2 size={14} /> {busy === c.id ? '…' : (vi ? 'Đã nhập Odoo' : 'Entered in Odoo')}
@@ -337,6 +354,39 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                 {creating ? '…' : (vi ? 'Tạo bánh' : 'Create cake')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {linkFor && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => setLinkFor(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-navy text-lg">{vi ? 'Liên kết đơn Odoo' : 'Link to an Odoo order'}</h2>
+              <button onClick={() => setLinkFor(null)} className="p-1 text-ink-light"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-ink-light">{vi ? 'Chọn đơn Odoo tương ứng với' : 'Pick the Odoo order that matches'} <span className="font-semibold text-navy">{linkFor.name}</span>.</p>
+            {odooCandidates.length === 0 ? (
+              <p className="text-sm text-ink-light text-center py-4">{vi ? 'Không có đơn Odoo nào' : 'No Odoo birthday-cake orders yet'}</p>
+            ) : (
+              <div className="rounded-lg" style={{ border: '1px solid #E5E7EB', maxHeight: '55vh', overflowY: 'auto' }}>
+                {odooCandidates.map((o, i) => (
+                  <button key={o.id} onClick={() => doManualLink(o)} disabled={busy === linkFor.id}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{o.name}</div>
+                      <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-bold">{o.order_ref}</span>
+                        {o.shop && <span>· {o.shop}</span>}
+                        <span>· {new Date(o.delivery_date + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short' })}</span>
+                      </div>
+                    </div>
+                    {o.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{o.sku}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
