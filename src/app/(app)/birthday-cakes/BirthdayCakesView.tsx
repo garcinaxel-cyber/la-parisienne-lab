@@ -256,12 +256,13 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                 {filtered.length > 0 && (
                   <div className="mt-2 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB', maxHeight: 220, overflowY: 'auto' }}>
                     {filtered.map((p, i) => (
-                      <button key={p.ficheId} onClick={() => setChosen(p)}
+                      <button key={p.variantId ?? p.ficheId} onClick={() => setChosen(p)}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-green-50" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                         {p.imageUrl
                           ? <img src={p.imageUrl} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
                           : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🎂</div>}
-                        <span className="text-sm truncate" style={{ color: '#1A4731' }}>{p.nameVi}</span>
+                        <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi || p.nameEn || p.sku || '—'}</span>
+                        {p.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{p.sku}</span>}
                       </button>
                     ))}
                   </div>

@@ -86,23 +86,28 @@ export default async function BirthdayCakesPage() {
 
   const cakes = [...odooCakes, ...manualCakes];
 
-  // Products available for a new manual cake (Birthday cake fiches + their default variant)
+  // Products available for a new manual cake — ONE entry per variant (not only the default),
+  // so any size/flavour of a birthday cake can be chosen.
   const { data: bcFichesFull } = bcFicheIds.length
     ? await supabase.from('lab_fiche_meta').select('id, name_vi, name_en, teams, image_url').in('id', bcFicheIds)
     : { data: [] as any[] };
+  const ficheById: Record<string, any> = {};
+  for (const f of bcFichesFull ?? []) ficheById[f.id] = f;
   const { data: bcVars } = bcFicheIds.length
-    ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
+    ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, label, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
     : { data: [] as any[] };
-  const dvByFiche: Record<string, any> = {};
-  for (const v of bcVars ?? []) if (!dvByFiche[v.fiche_id]) dvByFiche[v.fiche_id] = v;
-  const productChoices = (bcFichesFull ?? []).map((f: any) => {
-    const dv = dvByFiche[f.id] ?? null;
+  const productChoices = (bcVars ?? []).map((v: any) => {
+    const f = ficheById[v.fiche_id];
+    if (!f) return null;
+    const label = v.label && v.label !== 'Standard' ? v.label : '';
     return {
-      ficheId: f.id, variantId: dv?.id ?? null, sku: dv?.sku ?? null,
-      nameVi: f.name_vi, nameEn: f.name_en ?? '', imageUrl: dv?.image_url ?? f.image_url ?? null,
+      ficheId: f.id, variantId: v.id, sku: v.sku ?? null,
+      nameVi: label ? `${f.name_vi} · ${label}` : f.name_vi,
+      nameEn: label ? `${f.name_en ?? f.name_vi} · ${label}` : (f.name_en ?? f.name_vi),
+      imageUrl: v.image_url ?? f.image_url ?? null,
       team: (f.teams ?? [])[0] ?? '',
     };
-  }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
+  }).filter(Boolean).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
 
   return <BirthdayCakesView cakes={cakes} productChoices={productChoices} today={today} />;
 }
