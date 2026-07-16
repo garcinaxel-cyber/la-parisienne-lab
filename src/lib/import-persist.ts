@@ -130,8 +130,9 @@ export async function persistImportsFromLines(
     // Production cards — only lines whose SKU resolves to a team, and NOT already covered by a
     // pending manual cake (same SKU + date) — see pendingCakeSet above.
     const assignable = dateLines.filter(l => TEAMS.includes(l.team) && !pendingCakeSet.has(`${l.product_sku}||${date}`));
+    const asgIdByKey: Record<string, string> = {}; // card key (team|variant|name) → assignment id, to stamp order lines
     if (assignable.length) {
-      const { error: asgErr } = await supabase.from('lab_assignments').insert(assignable.map((line, idx) => {
+      const { data: insertedAsgs, error: asgErr } = await supabase.from('lab_assignments').insert(assignable.map((line, idx) => {
         const v = vBySku[line.product_sku] ?? null;
         const f = v ? fById[v.fiche_id] ?? null : null;
         return {
@@ -143,11 +144,12 @@ export async function persistImportsFromLines(
           total_qty: line.total_qty, qty_to_produce: line.total_qty, qty_produced: 0,
           status: 'pending', sort_order: idx, breakdown: line.breakdown ?? [],
         };
-      }));
+      })).select('id, team, variant_label, product_name_vi');
       if (asgErr) {
         await supabase.from('lab_imports').delete().eq('id', importRow.id);
         return { createdImports, earliestDate: allDates[0] ?? null, error: asgErr.message };
       }
+      for (const a of insertedAsgs ?? []) asgIdByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.id;
     }
 
     // Raw order lines (one per breakdown entry) for traceability + per-order views
@@ -162,6 +164,7 @@ export async function persistImportsFromLines(
       delivery_time: opts.deliveryTimeByRef?.[b.order_ref] ?? b.delivery_time ?? null,
       fiche_id: vBySku[line.product_sku]?.fiche_id ?? null,
       variant_id: vBySku[line.product_sku]?.id ?? null,
+      assignment_id: asgIdByKey[`${line.team}||${line.variant_label}||${line.product_name_vi}`] ?? null,
     })));
     if (olRows.length) await supabase.from('lab_order_lines').insert(olRows);
     createdImports++;

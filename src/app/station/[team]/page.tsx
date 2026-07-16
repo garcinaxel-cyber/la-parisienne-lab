@@ -92,26 +92,27 @@ export default async function StationPage({ params }: { params: { team: string }
     const deliveryTimeByRef: Record<string, string> = {};
     for (const ol of orderLineDeliveries ?? []) if (ol.order_ref && ol.delivery_time) deliveryTimeByRef[ol.order_ref] = ol.delivery_time;
 
-    // Birthday-cake complementary info (message + ready-by time) entered by assistants —
-    // attached to this team's cards by product name. Read-only for chefs.
-    // Birthday-cake messages are matched to the card BY PRODUCT NAME. We must NOT filter these
-    // order lines by team: a product whose fiche was created after import keeps an empty team
-    // on its line, so filtering by team would drop its message. Matching by name is enough.
+    // Birthday-cake complementary info (message + ready-by time) entered by assistants,
+    // shown read-only to the chef. Linked to the card BY assignment_id (exact link stamped at
+    // import, v19) — with a product-name fallback for legacy lines imported before the stamp.
     const { data: teamLines } = importIds.length > 0
-      ? await supabase.from('lab_order_lines').select('id, product_name_vi').in('import_id', importIds)
+      ? await supabase.from('lab_order_lines').select('id, product_name_vi, assignment_id').in('import_id', importIds)
       : { data: [] as any[] };
-    const nameByLineId: Record<string, string> = {};
-    for (const l of teamLines ?? []) nameByLineId[l.id] = l.product_name_vi;
+    const lineById: Record<string, { name: string; asgId: string | null }> = {};
+    for (const l of teamLines ?? []) lineById[l.id] = { name: l.product_name_vi, asgId: l.assignment_id ?? null };
     const teamLineIds = (teamLines ?? []).map((l: any) => l.id);
     const { data: bcDetails } = teamLineIds.length > 0
       ? await supabase.from('lab_birthday_details').select('order_line_id, message, ready_time').in('order_line_id', teamLineIds)
       : { data: [] as any[] };
-    const bcByProduct: Record<string, { messages: string[]; ready: string | null }> = {};
+    const bcByAsg: Record<string, { messages: string[]; ready: string | null }> = {};
+    const bcByProduct: Record<string, { messages: string[]; ready: string | null }> = {}; // legacy name fallback
     for (const d of bcDetails ?? []) {
-      const pn = nameByLineId[d.order_line_id]; if (!pn) continue;
-      const e = (bcByProduct[pn] ??= { messages: [], ready: null });
-      if (d.message) e.messages.push(d.message);
-      if (d.ready_time && (!e.ready || d.ready_time < e.ready)) e.ready = d.ready_time;
+      const line = lineById[d.order_line_id]; if (!line) continue;
+      const bucket = line.asgId
+        ? (bcByAsg[line.asgId] ??= { messages: [], ready: null })
+        : (bcByProduct[line.name] ??= { messages: [], ready: null });
+      if (d.message) bucket.messages.push(d.message);
+      if (d.ready_time && (!bucket.ready || d.ready_time < bucket.ready)) bucket.ready = d.ready_time;
     }
 
     // Manual (app-created) cakes: their message / ready-time is linked to the card directly.
@@ -138,8 +139,8 @@ export default async function StationPage({ params }: { params: { team: string }
         weight_grams: variant?.weight_g ?? fiche?.weight_grams ?? null,
         category_name_vi: fiche?.category ?? null,
         category_name_en: fiche?.category ?? null,
-        bc_message: bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
-        bc_ready_time: bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
+        bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
+        bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
         breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
           ...b,
           delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,
