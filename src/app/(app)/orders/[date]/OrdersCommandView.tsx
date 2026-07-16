@@ -49,7 +49,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
   }, [assignments]);
 
   type OrderRow = {
-    ref: string; source: string; shops: string[]; time: string | null; published: boolean;
+    ref: string; source: string; shops: string[]; time: string | null; published: boolean; publishedBy: string | null;
     lines: { sku: string; name: string; variant: string; qty: number; team: string; status: AssignmentStatus | null; note?: string | null }[];
   };
 
@@ -59,10 +59,11 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
       if (!ol.order_ref || !ol.qty) continue;
       let row = byRef.get(ol.order_ref);
       if (!row) {
-        row = { ref: ol.order_ref, source: ol.source_type, shops: [], time: null, published: false, lines: [] };
+        row = { ref: ol.order_ref, source: ol.source_type, shops: [], time: null, published: false, publishedBy: null, lines: [] };
         byRef.set(ol.order_ref, row);
       }
       if (ol.published) row.published = true;
+      if (ol.published_by_name && !row.publishedBy) row.publishedBy = ol.published_by_name;
       if (ol.shop_name && !row.shops.includes(ol.shop_name)) row.shops.push(ol.shop_name);
       if (ol.delivery_time && (!row.time || ol.delivery_time < row.time)) row.time = ol.delivery_time;
       const asg = asgByKey[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`] ?? null;
@@ -190,6 +191,11 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                       <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#16A34A' : '#B45309' }} />
                     </div>
                   </button>
+                  {o.published && o.publishedBy && (
+                    <span className="text-[10px] text-ink-light shrink-0 hidden sm:inline">
+                      {lang === 'vi' ? 'bởi' : 'par'} {o.publishedBy}
+                    </span>
+                  )}
                   {canManage && (
                     <div className="pr-3 pl-2 shrink-0">
                       {o.published ? (
