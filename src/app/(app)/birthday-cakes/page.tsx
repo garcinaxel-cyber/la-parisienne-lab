@@ -17,15 +17,27 @@ export default async function BirthdayCakesPage() {
   const { data: bcFiches } = await supabase
     .from('lab_fiche_meta').select('id').eq('category', 'Birthday cake');
   const bcFicheIds = (bcFiches ?? []).map(f => f.id);
-
-  // 2. READ the already-imported order lines for those fiches (upcoming) — no new order is created
-  const { data: lines } = bcFicheIds.length
-    ? await supabase.from('lab_order_lines')
-        .select('id, order_ref, product_name_vi, shop_name, delivery_date, delivery_time, qty, product_sku, source_type')
-        .in('fiche_id', bcFicheIds)
-        .gte('delivery_date', today)
-        .order('delivery_date').order('delivery_time')
+  // …and their SKUs — so a line still matches even if its fiche_id wasn't set at import
+  // (product got its recipe card AFTER the order was imported → line.fiche_id stays null).
+  const { data: bcVariants } = bcFicheIds.length
+    ? await supabase.from('lab_fiche_variants').select('sku').in('fiche_id', bcFicheIds)
     : { data: [] as any[] };
+  const bcSkus = Array.from(new Set((bcVariants ?? []).map((v: any) => v.sku).filter(Boolean)));
+
+  // 2. READ the already-imported order lines (upcoming) — matched by fiche_id OR by SKU.
+  const lineCols = 'id, order_ref, product_name_vi, shop_name, delivery_date, delivery_time, qty, product_sku, source_type';
+  const [byFicheRes, bySkuRes] = await Promise.all([
+    bcFicheIds.length
+      ? supabase.from('lab_order_lines').select(lineCols).in('fiche_id', bcFicheIds).gte('delivery_date', today)
+      : Promise.resolve({ data: [] as any[] }),
+    bcSkus.length
+      ? supabase.from('lab_order_lines').select(lineCols).in('product_sku', bcSkus).gte('delivery_date', today)
+      : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const byId = new Map<string, any>();
+  for (const l of [...(byFicheRes.data ?? []), ...(bySkuRes.data ?? [])]) byId.set(l.id, l);
+  const lines = Array.from(byId.values())
+    .sort((a, b) => (a.delivery_date + (a.delivery_time ?? '')).localeCompare(b.delivery_date + (b.delivery_time ?? '')));
 
   // 3. Attach the complementary info (message / ready time / who delivers)
   const lineIds = (lines ?? []).map(l => l.id);

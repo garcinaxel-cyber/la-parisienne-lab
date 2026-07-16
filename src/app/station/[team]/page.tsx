@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import StationView from './StationView';
 import type { Team } from '@/lib/types';
 import { TEAMS } from '@/lib/types';
+import { filterByPublished } from '@/lib/published-cards';
 
 export const revalidate = 0;
 
@@ -25,15 +26,18 @@ export default async function StationPage({ params }: { params: { team: string }
 
   if (!TEAMS.includes(team)) redirect('/login');
 
-  // Current user role (worker/viewer → read-only station mode)
+  // Current user role (worker/viewer → read-only station mode) + name (for production traceability)
   let userRole: string | null = null;
+  let userName: string | null = null;
+  const userId: string | null = session?.user.id ?? null;
   if (session) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, full_name')
       .eq('id', session.user.id)
       .single();
     userRole = profile?.role ?? null;
+    userName = profile?.full_name ?? null;
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -50,6 +54,7 @@ export default async function StationPage({ params }: { params: { team: string }
         id, fiche_id, variant_id, product_name_vi, product_name_en, image_url,
         variant_label, total_qty, qty_to_produce, qty_produced,
         status, is_extra, produced_ahead, cancelled, transferred, notes, sort_order, import_id,
+        produced_by_name, produced_at,
         lab_imports!inner(delivery_date, order_number, type, status)
       `)
       .eq('team', team)
@@ -106,7 +111,13 @@ export default async function StationPage({ params }: { params: { team: string }
       if (d.ready_time && (!e.ready || d.ready_time < e.ready)) e.ready = d.ready_time;
     }
 
-    return (assignments ?? []).map((a: any) => {
+    // Which client orders of this day are published — chefs only see published portions.
+    const { data: pubRows } = importIds.length > 0
+      ? await supabase.from('lab_order_lines').select('order_ref').eq('delivery_date', date).eq('published', true)
+      : { data: [] as any[] };
+    const publishedRefs = new Set((pubRows ?? []).map((r: any) => r.order_ref).filter(Boolean));
+
+    const mapped = (assignments ?? []).map((a: any) => {
       const variant = a.variant_id ? variantById[a.variant_id] ?? null : null;
       const fiche = a.fiche_id ? ficheById[a.fiche_id] ?? null : null;
       return {
@@ -125,11 +136,12 @@ export default async function StationPage({ params }: { params: { team: string }
         lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,
       };
     });
+    return filterByPublished(mapped, publishedRefs);
   }
 
   const [todayAssignments, tomorrowAssignments] = await Promise.all([loadDay(today), loadDay(tomorrow)]);
 
   return <StationView team={team} teamSlug={params.team}
     assignments={todayAssignments} tomorrowAssignments={tomorrowAssignments}
-    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} />;
+    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} userId={userId} userName={userName} />;
 }

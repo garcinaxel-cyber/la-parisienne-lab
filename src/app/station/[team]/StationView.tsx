@@ -52,6 +52,8 @@ type Assignment = {
   sort_order: number;
   import_id: string;
   is_extra?: boolean;
+  produced_by_name?: string | null;
+  produced_at?: string | null;
   produced_ahead?: boolean;
   cancelled?: boolean;
   transferred?: boolean;
@@ -114,7 +116,7 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 };
 
 export default function StationView({
-  team, teamSlug, assignments: initial, tomorrowAssignments = [], viewDate, today, tomorrow, isHistoryView, userRole,
+  team, teamSlug, assignments: initial, tomorrowAssignments = [], viewDate, today, tomorrow, isHistoryView, userRole, userId = null, userName = null,
 }: {
   team: Team;
   teamSlug: string;
@@ -125,6 +127,8 @@ export default function StationView({
   tomorrow?: string;
   isHistoryView: boolean;
   userRole?: string | null;
+  userId?: string | null;
+  userName?: string | null;
 }) {
   const { lang, setLang } = useI18n();
   const router = useRouter();
@@ -326,7 +330,10 @@ export default function StationView({
     setUpdating(a.id);
     const supabase = createClient();
     const update: any = { status: next, updated_at: new Date().toISOString() };
-    if (next === 'done') { update.qty_produced = a.qty_to_produce; update.produced_ahead = isAhead; }
+    if (next === 'done') {
+      update.qty_produced = a.qty_to_produce; update.produced_ahead = isAhead;
+      update.produced_by = userId; update.produced_by_name = userName; update.produced_at = new Date().toISOString();
+    }
     if (a.status === 'blocked') update.blocked_reason = null;
     await supabase.from('lab_assignments').update(update).eq('id', a.id);
     setAssignments(prev => prev.map(x => x.id === a.id ? { ...x, ...update } : x));
@@ -365,12 +372,13 @@ export default function StationView({
     if (!qtyModal) return;
     const supabase = createClient();
     const isDone = qtyInput >= qtyModal.qty_to_produce;
-    const update = {
+    const update: any = {
       status: (isDone ? 'done' : 'partial') as AssignmentStatus,
       qty_produced: qtyInput,
       updated_at: new Date().toISOString(),
       produced_ahead: isDone ? isAhead : false,
     };
+    if (isDone) { update.produced_by = userId; update.produced_by_name = userName; update.produced_at = new Date().toISOString(); }
     await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
     setAssignments(prev => prev.map(x => x.id === qtyModal.id ? { ...x, ...update } : x));
     setQtyModal(null);
@@ -397,6 +405,9 @@ export default function StationView({
       status: 'done' as AssignmentStatus,
       sort_order: 9999,
       is_extra: true,
+      produced_by: userId,
+      produced_by_name: userName,
+      produced_at: new Date().toISOString(),
       breakdown: [] as BreakdownItem[],
     };
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
@@ -2025,6 +2036,12 @@ function TermineCard({
               x{a.qty_to_produce}
             </span>
           </div>
+          {!isSkip && a.produced_by_name && (
+            <div className="text-[10px] text-ink-light mt-1">
+              {lang === 'vi' ? 'Bởi' : 'Fait par'}{' '}
+              <span className="font-semibold" style={{ color: '#1A4731' }}>{a.produced_by_name}</span>
+            </div>
+          )}
         </div>
         {/* Revert button for skip */}
         {isSkip && (

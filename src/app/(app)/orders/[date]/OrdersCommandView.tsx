@@ -1,9 +1,10 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
-import { ChevronDown, ChevronRight, Clock, Package, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Package, CheckCircle2, AlertCircle, ArrowLeft, Send } from 'lucide-react';
 
 // The assistants' cockpit: one row per client order (sales order or replenishment request),
 // with the Odoo status, delivery time, and per-line production progress.
@@ -11,9 +12,20 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
   date: string; imports: any[]; assignments: any[]; orderLines: any[]; userRole: string | null;
 }) {
   const { lang } = useI18n();
+  const router = useRouter();
+  const canManage = ['admin', 'lab_manager', 'assistant'].includes(userRole ?? '');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sourceFilter, setSourceFilter] = useState<'all' | 'sales_order' | 'replenishment'>('all');
   const [shopFilter, setShopFilter] = useState('');
+  const [busyRef, setBusyRef] = useState<string | null>(null);
+
+  async function togglePublish(ref: string, publish: boolean) {
+    setBusyRef(ref);
+    const { publishOrderAction, unpublishOrderAction } = await import('./actions');
+    await (publish ? publishOrderAction(ref, date) : unpublishOrderAction(ref, date));
+    setBusyRef(null);
+    router.refresh();
+  }
 
   // Odoo status per order ref (stored in control_report by the Odoo sync)
   const odooStates: Record<string, string> = useMemo(() => {
@@ -37,7 +49,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
   }, [assignments]);
 
   type OrderRow = {
-    ref: string; source: string; shops: string[]; time: string | null;
+    ref: string; source: string; shops: string[]; time: string | null; published: boolean;
     lines: { sku: string; name: string; variant: string; qty: number; team: string; status: AssignmentStatus | null; note?: string | null }[];
   };
 
@@ -47,9 +59,10 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
       if (!ol.order_ref || !ol.qty) continue;
       let row = byRef.get(ol.order_ref);
       if (!row) {
-        row = { ref: ol.order_ref, source: ol.source_type, shops: [], time: null, lines: [] };
+        row = { ref: ol.order_ref, source: ol.source_type, shops: [], time: null, published: false, lines: [] };
         byRef.set(ol.order_ref, row);
       }
+      if (ol.published) row.published = true;
       if (ol.shop_name && !row.shops.includes(ol.shop_name)) row.shops.push(ol.shop_name);
       if (ol.delivery_time && (!row.time || ol.delivery_time < row.time)) row.time = ol.delivery_time;
       const asg = asgByKey[`${ol.import_id}||${ol.team}||${ol.variant_label}||${ol.product_name_vi}`] ?? null;
@@ -161,21 +174,38 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
             const isOpen = expanded.has(o.ref);
             return (
               <div key={o.ref}>
-                <button onClick={() => toggle(o.ref)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-cream/50 transition-colors text-left">
-                  {isOpen ? <ChevronDown size={15} className="text-ink-light shrink-0" /> : <ChevronRight size={15} className="text-ink-light shrink-0" />}
-                  <span className="font-mono text-xs font-bold text-navy shrink-0">{o.ref}</span>
-                  <span className="text-xs text-ink-light truncate flex-1">
-                    {o.shops.join(', ')}
-                    {o.time && <span className="ml-2 inline-flex items-center gap-1"><Clock size={11} />{o.time}</span>}
-                  </span>
-                  {odooBadge(o.ref)}
-                  <span className={`text-xs shrink-0 ${pct === 100 ? 'text-green-600 font-semibold' : 'text-ink-light'}`}>
-                    {ready}/{o.lines.length} {lang === 'vi' ? 'dòng' : 'lines'}
-                  </span>
-                  <div className="w-16 h-1.5 rounded-full bg-border-soft overflow-hidden shrink-0">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#16A34A' : '#B45309' }} />
-                  </div>
-                </button>
+                <div className="flex items-center">
+                  <button onClick={() => toggle(o.ref)} className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 hover:bg-cream/50 transition-colors text-left">
+                    {isOpen ? <ChevronDown size={15} className="text-ink-light shrink-0" /> : <ChevronRight size={15} className="text-ink-light shrink-0" />}
+                    <span className="font-mono text-xs font-bold text-navy shrink-0">{o.ref}</span>
+                    <span className="text-xs text-ink-light truncate flex-1">
+                      {o.shops.join(', ')}
+                      {o.time && <span className="ml-2 inline-flex items-center gap-1"><Clock size={11} />{o.time}</span>}
+                    </span>
+                    {odooBadge(o.ref)}
+                    <span className={`text-xs shrink-0 ${pct === 100 ? 'text-green-600 font-semibold' : 'text-ink-light'}`}>
+                      {ready}/{o.lines.length} {lang === 'vi' ? 'dòng' : 'lines'}
+                    </span>
+                    <div className="w-16 h-1.5 rounded-full bg-border-soft overflow-hidden shrink-0">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? '#16A34A' : '#B45309' }} />
+                    </div>
+                  </button>
+                  {canManage && (
+                    <div className="pr-3 pl-2 shrink-0">
+                      {o.published ? (
+                        <button onClick={() => togglePublish(o.ref, false)} disabled={busyRef === o.ref}
+                          className="text-[11px] font-semibold px-3 py-1.5 rounded-full border border-border-soft text-ink-light hover:text-navy disabled:opacity-50">
+                          {busyRef === o.ref ? '…' : (lang === 'vi' ? 'Bỏ phát hành' : 'Dépublier')}
+                        </button>
+                      ) : (
+                        <button onClick={() => togglePublish(o.ref, true)} disabled={busyRef === o.ref}
+                          className="text-[11px] font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                          <Send size={12} />{busyRef === o.ref ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publier')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {isOpen && (
                   <div className="bg-cream/40 px-4 pb-3 pt-1">
