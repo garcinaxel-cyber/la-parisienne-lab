@@ -43,7 +43,7 @@ export default async function BirthdayCakesPage() {
   const lineIds = (lines ?? []).map(l => l.id);
   const { data: details } = lineIds.length
     ? await supabase.from('lab_birthday_details')
-        .select('order_line_id, message, ready_time, delivered_by').in('order_line_id', lineIds)
+        .select('order_line_id, message, ready_time, delivered_by, delivery_address').in('order_line_id', lineIds)
     : { data: [] as any[] };
   const byLine: Record<string, any> = {};
   for (const d of details ?? []) byLine[d.order_line_id] = d;
@@ -59,6 +59,7 @@ export default async function BirthdayCakesPage() {
     message: byLine[l.id]?.message ?? '',
     ready_time: byLine[l.id]?.ready_time ?? '',
     delivered_by: byLine[l.id]?.delivered_by ?? '',
+    delivery_address: byLine[l.id]?.delivery_address ?? '',
   }));
 
   return <BirthdayCakesView cakes={cakes} />;

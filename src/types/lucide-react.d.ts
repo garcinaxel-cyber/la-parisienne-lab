@@ -59,4 +59,5 @@ declare module 'lucide-react' {
   export const Truck: LucideIcon;
   export const Cake: LucideIcon;
   export const Download: LucideIcon;
+  export const MapPin: LucideIcon;
 }

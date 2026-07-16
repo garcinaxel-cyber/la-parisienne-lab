@@ -1,12 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
-import { Store, Clock, Truck, Save, CheckCircle2, FileText } from 'lucide-react';
+import { Store, Clock, Truck, Save, CheckCircle2, FileText, MapPin } from 'lucide-react';
 
 type Cake = {
   id: string; order_ref: string; name: string; shop: string | null;
   delivery_date: string; delivery_time: string | null; qty: number;
-  message: string; ready_time: string; delivered_by: string;
+  message: string; ready_time: string; delivered_by: string; delivery_address: string;
 };
 
 const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
@@ -14,30 +14,30 @@ const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
 export default function BirthdayCakesView({ cakes }: { cakes: Cake[] }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
-  const [edits, setEdits] = useState<Record<string, { message: string; ready_time: string; delivered_by: string }>>(() => {
-    const s: Record<string, { message: string; ready_time: string; delivered_by: string }> = {};
-    for (const c of cakes) s[c.id] = { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by };
+  const [edits, setEdits] = useState<Record<string, { message: string; ready_time: string; delivered_by: string; delivery_address: string }>>(() => {
+    const s: Record<string, { message: string; ready_time: string; delivered_by: string; delivery_address: string }> = {};
+    for (const c of cakes) s[c.id] = { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by, delivery_address: c.delivery_address };
     return s;
   });
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
 
-  const upd = (id: string, patch: Partial<{ message: string; ready_time: string; delivered_by: string }>) => {
+  const upd = (id: string, patch: Partial<{ message: string; ready_time: string; delivered_by: string; delivery_address: string }>) => {
     setEdits(p => ({ ...p, [id]: { ...p[id], ...patch } }));
     setSaved(p => { const n = new Set(p); n.delete(id); return n; });
   };
   const dirty = (c: Cake) => {
     const e = edits[c.id];
-    return e.message !== c.message || e.ready_time !== c.ready_time || e.delivered_by !== c.delivered_by;
+    return e.message !== c.message || e.ready_time !== c.ready_time || e.delivered_by !== c.delivered_by || e.delivery_address !== c.delivery_address;
   };
 
   async function save(c: Cake) {
     setSaving(c.id);
     const { saveBirthdayDetailAction } = await import('./actions');
     const e = edits[c.id];
-    const res = await saveBirthdayDetailAction(c.id, { message: e.message || null, readyTime: e.ready_time || null, deliveredBy: e.delivered_by || null });
+    const res = await saveBirthdayDetailAction(c.id, { message: e.message || null, readyTime: e.ready_time || null, deliveredBy: e.delivered_by || null, deliveryAddress: e.delivery_address || null });
     setSaving(null);
-    if (res.ok) { c.message = e.message; c.ready_time = e.ready_time; c.delivered_by = e.delivered_by; setSaved(p => new Set(p).add(c.id)); }
+    if (res.ok) { c.message = e.message; c.ready_time = e.ready_time; c.delivered_by = e.delivered_by; c.delivery_address = e.delivery_address; setSaved(p => new Set(p).add(c.id)); }
   }
 
   // Group by delivery date
@@ -59,7 +59,7 @@ export default function BirthdayCakesView({ cakes }: { cakes: Cake[] }) {
           🎂 {vi ? 'Bánh sinh nhật' : 'Birthday cakes'}
         </h1>
         <p className="text-ink-light text-sm mt-0.5">
-          {vi ? 'Đọc từ đơn Odoo · thêm lời chúc, giờ cần xong và ai giao.' : 'Read from Odoo orders · add the message, ready time and who delivers.'}
+          {vi ? 'Đọc từ đơn Odoo · thêm lời chúc, giờ cần xong, giao đến và địa chỉ.' : 'Read from Odoo orders · add the message, ready time, destination and address.'}
         </p>
       </div>
 
@@ -103,12 +103,17 @@ export default function BirthdayCakesView({ cakes }: { cakes: Cake[] }) {
                       placeholder={vi ? 'Chữ trên bánh…' : 'Text on the cake…'}
                       className="rounded-lg px-2 py-1.5 text-sm w-full" style={{ border: '1px solid', borderColor: '#93C5FD' }} />
 
-                    <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><Truck size={13} className="text-blue-600" /> {vi ? 'Ai giao' : 'Delivered by'}</label>
+                    <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><Truck size={13} className="text-blue-600" /> {vi ? 'Giao đến' : 'Livrer à'}</label>
                     <select value={e.delivered_by} onChange={ev => upd(c.id, { delivered_by: ev.target.value })}
                       className="rounded-lg px-2 py-1.5 text-sm w-48" style={{ border: '1px solid #D1D5DB', backgroundColor: 'white' }}>
-                      <option value="">{vi ? '— Chọn —' : '— Select —'}</option>
+                      <option value="">{vi ? '— Chọn —' : '— Choisir —'}</option>
                       {DELIVERERS.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
+
+                    <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><MapPin size={13} className="text-blue-600" /> {vi ? 'Địa chỉ giao' : 'Adresse de livraison'}</label>
+                    <input type="text" value={e.delivery_address} onChange={ev => upd(c.id, { delivery_address: ev.target.value })}
+                      placeholder={vi ? 'Địa chỉ giao đến khách…' : 'Adresse de livraison client…'}
+                      className="rounded-lg px-2 py-1.5 text-sm w-full" style={{ border: '1px solid #D1D5DB' }} />
                   </div>
 
                   <div className="mt-3 flex items-center justify-end gap-2">
