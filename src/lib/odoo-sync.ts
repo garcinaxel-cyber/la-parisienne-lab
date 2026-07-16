@@ -4,6 +4,7 @@ import { odooExecute, odooDateTimeToLocal, labTodayUtcThreshold } from '@/lib/od
 export interface OdooSyncResult {
   lines: any[];
   changes: { order_ref: string; cancelled: boolean; items: { sku: string; name: string; old_qty: number; new_qty: number }[] }[];
+  deletedRefs: string[]; // refs that no longer exist in Odoo at all (hard-deleted, not just cancelled)
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -115,14 +116,21 @@ for (const l of replLines) {
 // imported scope) — check their actual state explicitly
 const missingRefs = Array.from(alreadyImported).filter(r => !refsSeenInOdoo.has(r)) as string[];
 const cancelledRefs: string[] = [];
+let deletedRefs: string[] = [];
 if (missingRefs.length > 0) {
   const soMissing: any[] = await odooExecute('sale.order', 'search_read',
     [[['name', 'in', missingRefs]]], { fields: ['name', 'state'], limit: 200 });
   const rrMissing: any[] = await odooExecute('stock.replenishment.request', 'search_read',
     [[['name', 'in', missingRefs]]], { fields: ['name', 'state'], limit: 200 });
+  const foundMissing = new Set<string>([...soMissing, ...rrMissing].map((o: any) => o.name));
   for (const o of [...soMissing, ...rrMissing]) {
     if (['cancel', 'cancelled', 'rejected'].includes(o.state)) cancelledRefs.push(o.name);
   }
+  // A ref that NO Odoo model returns when queried by name was HARD-DELETED (a ref merely out
+  // of the sync window — e.g. delivery date moved — would still return a row). Treat a deletion
+  // exactly like a cancellation so the order drops out of production.
+  deletedRefs = missingRefs.filter(r => !foundMissing.has(r));
+  for (const r of deletedRefs) if (!cancelledRefs.includes(r)) cancelledRefs.push(r);
 }
 // Build the change list: lab vs Odoo, per (order_ref, sku)
 const labQtyByRefSku: Record<string, { qty: number; name: string }> = {};
@@ -233,6 +241,7 @@ for (const r of repls) orderStates[r.name] = r.state;       // draft | submitted
   return {
     lines,
     changes,
+    deletedRefs,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,
