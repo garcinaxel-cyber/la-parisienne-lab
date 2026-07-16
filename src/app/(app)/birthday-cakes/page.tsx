@@ -48,8 +48,9 @@ export default async function BirthdayCakesPage() {
   const byLine: Record<string, any> = {};
   for (const d of details ?? []) byLine[d.order_line_id] = d;
 
-  const cakes = (lines ?? []).map(l => ({
+  const odooCakes = (lines ?? []).map(l => ({
     id: l.id,
+    source: 'odoo' as const, manualId: null as string | null, needsOdoo: false,
     order_ref: l.order_ref,
     name: l.product_name_vi,
     shop: l.shop_name,
@@ -62,5 +63,46 @@ export default async function BirthdayCakesPage() {
     delivery_address: byLine[l.id]?.delivery_address ?? '',
   }));
 
-  return <BirthdayCakesView cakes={cakes} />;
+  // Manual cakes created in the app (not yet matched to an Odoo order)
+  const { data: manual } = await supabase.from('lab_manual_cakes')
+    .select('id, product_name_vi, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, customer_name')
+    .is('matched_order_ref', null)
+    .gte('delivery_date', today)
+    .order('delivery_date');
+  const manualCakes = (manual ?? []).map(m => ({
+    id: m.id,
+    source: 'manual' as const, manualId: m.id as string | null, needsOdoo: !!m.needs_odoo,
+    order_ref: m.customer_name ? m.customer_name : 'Manuel',
+    name: m.product_name_vi,
+    shop: m.delivered_by ?? null,
+    delivery_date: m.delivery_date,
+    delivery_time: null as string | null,
+    qty: m.qty,
+    message: m.message ?? '',
+    ready_time: m.ready_time ?? '',
+    delivered_by: m.delivered_by ?? '',
+    delivery_address: m.delivery_address ?? '',
+  }));
+
+  const cakes = [...odooCakes, ...manualCakes];
+
+  // Products available for a new manual cake (Birthday cake fiches + their default variant)
+  const { data: bcFichesFull } = bcFicheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, name_vi, name_en, teams, image_url').in('id', bcFicheIds)
+    : { data: [] as any[] };
+  const { data: bcVars } = bcFicheIds.length
+    ? await supabase.from('lab_fiche_variants').select('fiche_id, id, sku, image_url, is_default, sort_order').in('fiche_id', bcFicheIds).order('is_default', { ascending: false }).order('sort_order')
+    : { data: [] as any[] };
+  const dvByFiche: Record<string, any> = {};
+  for (const v of bcVars ?? []) if (!dvByFiche[v.fiche_id]) dvByFiche[v.fiche_id] = v;
+  const productChoices = (bcFichesFull ?? []).map((f: any) => {
+    const dv = dvByFiche[f.id] ?? null;
+    return {
+      ficheId: f.id, variantId: dv?.id ?? null, sku: dv?.sku ?? null,
+      nameVi: f.name_vi, nameEn: f.name_en ?? '', imageUrl: dv?.image_url ?? f.image_url ?? null,
+      team: (f.teams ?? [])[0] ?? '',
+    };
+  }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
+
+  return <BirthdayCakesView cakes={cakes} productChoices={productChoices} today={today} />;
 }
