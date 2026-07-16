@@ -122,6 +122,65 @@ export async function markManualCakeEnteredAction(id: string, entered: boolean):
   return { ok: true };
 }
 
+// Phase 2 — link a manual cake to the Odoo order that now carries it (human-confirmed).
+// The manual production card is KEPT (produced qty preserved); the Odoo order's duplicate
+// contribution is removed from its production card (subtract this order's lines), and the
+// manual cake's info is copied onto the Odoo order line so nothing is lost.
+export async function confirmMatchAction(manualCakeId: string, orderRef: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+
+  const { data: mc } = await supabase.from('lab_manual_cakes')
+    .select('id, product_sku, delivery_date, message, ready_time, delivered_by, delivery_address').eq('id', manualCakeId).maybeSingle();
+  if (!mc) return { error: 'Cake not found' };
+
+  // The Odoo order lines that this manual cake covers (same order + SKU + date)
+  const { data: oLines } = await supabase.from('lab_order_lines')
+    .select('id, import_id, team, variant_label, product_name_vi, qty')
+    .eq('order_ref', orderRef).eq('product_sku', mc.product_sku).eq('delivery_date', mc.delivery_date);
+  if (!oLines?.length) return { error: 'Odoo order line not found' };
+
+  // Copy the manual cake's complementary info onto the Odoo order line(s)
+  for (const l of oLines) {
+    await supabase.from('lab_birthday_details').upsert({
+      order_line_id: l.id, message: mc.message, ready_time: mc.ready_time,
+      delivered_by: mc.delivered_by, delivery_address: mc.delivery_address,
+      updated_by: session.user.id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'order_line_id' });
+  }
+
+  // Remove THIS order's contribution from the Odoo production card(s) so nothing is produced
+  // twice. Only this order_ref is subtracted — other orders on the same card are untouched.
+  const importIds = Array.from(new Set(oLines.map((l: any) => l.import_id)));
+  const keys = new Set(oLines.map((l: any) => `${l.import_id}||${l.team}||${l.variant_label}||${l.product_name_vi}`));
+  const { data: cards } = importIds.length
+    ? await supabase.from('lab_assignments').select('id, import_id, team, variant_label, product_name_vi, qty_produced, breakdown').in('import_id', importIds)
+    : { data: [] as any[] };
+  for (const c of cards ?? []) {
+    if (!keys.has(`${c.import_id}||${c.team}||${c.variant_label}||${c.product_name_vi}`)) continue;
+    const bd = (Array.isArray(c.breakdown) ? c.breakdown : []).filter((b: any) => b.order_ref !== orderRef);
+    const remaining = bd.reduce((s: number, b: any) => s + (b.qty ?? 0), 0);
+    if (remaining <= 0) {
+      await supabase.from('lab_assignments').delete().eq('id', c.id);
+    } else {
+      await supabase.from('lab_assignments').update({
+        breakdown: bd, total_qty: remaining, qty_to_produce: remaining,
+        qty_produced: Math.min(c.qty_produced ?? 0, remaining),
+      }).eq('id', c.id);
+    }
+  }
+
+  await supabase.from('lab_manual_cakes')
+    .update({ matched_order_ref: orderRef, matched_at: new Date().toISOString(), needs_odoo: false })
+    .eq('id', manualCakeId);
+
+  revalidatePath('/birthday-cakes');
+  return { ok: true };
+}
+
 // Delete a manual cake (and its production card)
 export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();

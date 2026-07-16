@@ -6,6 +6,7 @@ import { Store, Clock, Truck, Save, CheckCircle2, FileText, MapPin, Plus, X, Tra
 
 type Cake = {
   id: string; source: 'odoo' | 'manual'; manualId: string | null; needsOdoo: boolean;
+  suggestedRef?: string | null; suggestedShop?: string | null;
   order_ref: string; name: string; shop: string | null;
   delivery_date: string; delivery_time: string | null; qty: number;
   message: string; ready_time: string; delivered_by: string; delivery_address: string;
@@ -61,6 +62,13 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     setBusy(c.id);
     const { deleteManualCakeAction } = await import('./actions');
     await deleteManualCakeAction(c.manualId);
+    setBusy(null); router.refresh();
+  }
+  async function confirmMatch(c: Cake) {
+    if (!c.manualId || !c.suggestedRef) return;
+    setBusy(c.id);
+    const { confirmMatchAction } = await import('./actions');
+    await confirmMatchAction(c.manualId, c.suggestedRef);
     setBusy(null); router.refresh();
   }
 
@@ -173,6 +181,19 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                       </span>
                     )}
                   </div>
+
+                  {manual && c.needsOdoo && c.suggestedRef && (
+                    <div className="mt-3 rounded-xl px-3 py-2.5 flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD' }}>
+                      <FileText size={15} style={{ color: '#1E40AF' }} className="shrink-0" />
+                      <span className="text-xs flex-1" style={{ color: '#1E40AF' }}>
+                        {vi ? 'Đã tìm thấy trong đơn Odoo' : 'Found in Odoo order'} <span className="font-mono font-bold">{c.suggestedRef}</span>{c.suggestedShop ? ` · ${c.suggestedShop}` : ''} — {vi ? 'liên kết?' : 'link?'}
+                      </span>
+                      <button onClick={() => confirmMatch(c)} disabled={busy === c.id}
+                        className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#1E40AF' }}>
+                        <CheckCircle2 size={13} /> {busy === c.id ? '…' : (vi ? 'Liên kết' : 'Link')}
+                      </button>
+                    </div>
+                  )}
 
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[130px_1fr] gap-2 items-center">
                     <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><Clock size={13} className="text-blue-600" /> {vi ? 'Cần xong lúc' : 'Ready by'}</label>
