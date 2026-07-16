@@ -108,7 +108,8 @@ export default async function BirthdayCakesPage() {
     if (!f) return [];
     const label = v.label && v.label !== 'Standard' ? v.label : '';
     const orderName = v.sku ? nameBySku[v.sku] : null;
-    const nameVi = orderName || (label ? `${f.name_vi || ''} · ${label}`.trim() : (f.name_vi || v.sku || ''));
+    const nameVi = orderName
+      || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : (v.sku || (label ? `· ${label}` : '')));
     return [{
       ficheId: f.id, variantId: v.id, sku: v.sku ?? null,
       nameVi,
