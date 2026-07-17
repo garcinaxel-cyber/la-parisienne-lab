@@ -38,28 +38,46 @@ export async function GET(req: Request) {
 
   // 2. Odoo: product by SKU → id, then BoMs (latest per product), then lines. Batched.
   const prods = allSkus.length ? await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['default_code', 'in', allSkus]]], { fields: ['id', 'default_code'], limit: 5000 }), 30000, 'prods') : [];
+    [[['default_code', 'in', allSkus]]], { fields: ['id', 'default_code', 'product_tmpl_id'], limit: 5000 }), 30000, 'prods') : [];
   const prodIdBySku: Record<string, number> = {};
-  const skuByProdId: Record<number, string> = {};
-  for (const p of prods) if (p.default_code) { prodIdBySku[p.default_code] = p.id; skuByProdId[p.id] = p.default_code; }
-  const prodIds = Object.values(prodIdBySku);
-
-  const boms = prodIds.length ? await tmo(odooExecute<any[]>('mrp.bom', 'search_read',
-    [[['product_id', 'in', prodIds]]], { fields: ['id', 'product_id'], limit: 10000 }), 30000, 'boms') : [];
-  const bomIdByProd: Record<number, number> = {};
-  const bomCountByProd: Record<number, number> = {};
-  for (const b of boms.sort((a, z) => a.id - z.id)) {
-    const pid = Array.isArray(b.product_id) ? b.product_id[0] : b.product_id;
-    bomIdByProd[pid] = b.id; bomCountByProd[pid] = (bomCountByProd[pid] ?? 0) + 1;
+  const tmplByProd: Record<number, number> = {};
+  for (const p of prods) if (p.default_code) {
+    prodIdBySku[p.default_code] = p.id;
+    tmplByProd[p.id] = Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id;
   }
-  const bomIds = Array.from(new Set(Object.values(bomIdByProd)));
+  const prodIds = Object.values(prodIdBySku);
+  const tmplIds = Array.from(new Set(Object.values(tmplByProd).filter(Boolean)));
+
+  // BoMs can be attached at the VARIANT level (product_id set) or the TEMPLATE level
+  // (product_id false, product_tmpl_id set — the common case for single products). Match both.
+  const boms = (prodIds.length || tmplIds.length) ? await tmo(odooExecute<any[]>('mrp.bom', 'search_read',
+    [['|', ['product_id', 'in', prodIds], ['product_tmpl_id', 'in', tmplIds]]],
+    { fields: ['id', 'product_id', 'product_tmpl_id'], limit: 20000 }), 30000, 'boms') : [];
+  const variantBomByProd: Record<number, number> = {};
+  const templateBomByTmpl: Record<number, number> = {};
+  const cntByProd: Record<number, number> = {};
+  const cntByTmpl: Record<number, number> = {};
+  for (const b of boms.sort((a, z) => a.id - z.id)) {
+    const pid = Array.isArray(b.product_id) ? b.product_id[0] : (b.product_id || null);
+    const tid = Array.isArray(b.product_tmpl_id) ? b.product_tmpl_id[0] : (b.product_tmpl_id || null);
+    if (pid) { variantBomByProd[pid] = b.id; cntByProd[pid] = (cntByProd[pid] ?? 0) + 1; }
+    else if (tid) { templateBomByTmpl[tid] = b.id; cntByTmpl[tid] = (cntByTmpl[tid] ?? 0) + 1; }
+  }
+  const bomForSku = (sku: string): number | undefined => {
+    const pid = prodIdBySku[sku]; if (!pid) return undefined;
+    return variantBomByProd[pid] ?? templateBomByTmpl[tmplByProd[pid]];
+  };
+  const multiBomSku = (sku: string): boolean => {
+    const pid = prodIdBySku[sku]; if (!pid) return false;
+    const c = variantBomByProd[pid] ? cntByProd[pid] : cntByTmpl[tmplByProd[pid]];
+    return (c ?? 0) > 1;
+  };
+
+  const bomIds = Array.from(new Set([...Object.values(variantBomByProd), ...Object.values(templateBomByTmpl)]));
   const lines = bomIds.length ? await tmo(odooExecute<any[]>('mrp.bom.line', 'search_read',
     [[['bom_id', 'in', bomIds]]], { fields: ['bom_id', 'product_id', 'product_qty'], limit: 20000 }), 30000, 'lines') : [];
   const linesByBom: Record<number, any[]> = {};
   for (const l of lines) { const bid = Array.isArray(l.bom_id) ? l.bom_id[0] : l.bom_id; (linesByBom[bid] ??= []).push(l); }
-
-  const bomForSku = (sku: string) => { const pid = prodIdBySku[sku]; return pid ? bomIdByProd[pid] : undefined; };
-  const multiBomSku = (sku: string) => { const pid = prodIdBySku[sku]; return pid ? (bomCountByProd[pid] ?? 0) > 1 : false; };
 
   // 3. Classify each recipe-less fiche
   const willFill: any[] = [];
