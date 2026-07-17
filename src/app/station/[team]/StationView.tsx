@@ -10,6 +10,7 @@ import {
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 
 function SearchIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
   return (
@@ -132,6 +133,15 @@ export default function StationView({
 }) {
   const { lang, setLang } = useI18n();
   const router = useRouter();
+  // Live updates: the existing channel below patches assignment status/qty in place (smooth).
+  // This refreshes the page for changes that need fresh server data — new cards (INSERT/DELETE),
+  // a newly published order (lab_imports), per-order publish + birthday message/ready-time.
+  useRealtimeRefresh(`station-refresh-${team}`, [
+    { table: 'lab_imports' },
+    { table: 'lab_order_lines' },
+    { table: 'lab_birthday_details' },
+    { table: 'lab_assignments', events: ['INSERT', 'DELETE'] },
+  ]);
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
   const [showInStock, setShowInStock] = useState(false);

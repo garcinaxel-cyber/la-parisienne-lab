@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import { ClipboardList, Users } from 'lucide-react';
 import OrderReviewView from './OrderReviewView';
 import OrdersCommandView from './OrdersCommandView';
@@ -23,6 +24,12 @@ export default function OrdersTabs(props: {
   const { lang } = useI18n();
   const [view, setView] = useState<'orders' | 'teams'>('orders');
   const canManage = ['admin', 'lab_manager', 'assistant'].includes(props.userRole ?? '');
+  // Live updates: refresh when an order/card for any day changes (new import, publish, status).
+  useRealtimeRefresh(`orders-${props.date}`, [
+    { table: 'lab_imports' },
+    { table: 'lab_order_lines' },
+    { table: 'lab_assignments' },
+  ]);
 
   return (
     <div className="space-y-4">
