@@ -95,36 +95,70 @@ export async function GET(req: Request) {
   const { data: existing } = await supabase.from('lab_fiche_variants').select('sku').in('sku', allSkus);
   const existingSkus = new Set((existing ?? []).map((e: any) => e.sku));
 
-  const created: any = { fiches: [], variants: 0, ingredients: 0, skipped_existing_skus: [] };
+  const created: any = { fiches: [], variants: 0, ingredientSteps: 0, variantQuantities: 0, skipped_existing_skus: [] };
+  const toG = (kg: number) => Math.round((kg ?? 0) * 10000) / 10; // kg -> grams (1 decimal)
+
   for (const key of Object.keys(plan)) {
     const f = plan[key];
     const toAdd = f.variants.filter(v => !existingSkus.has(v.sku));
     if (!toAdd.length) { created.skipped_existing_skus.push(...f.variants.map(v => v.sku)); continue; }
 
     const { data: fiche, error: fErr } = await supabase.from('lab_fiche_meta').insert({
-      name_vi: f.name, name_en: f.name, category: 'Birthday cake',
-      teams: ['baby_mama'], is_active: true,
+      name_vi: f.name, name_en: f.name, category: 'Birthday cake', teams: ['baby_mama'], is_active: true,
     }).select('id').single();
     if (fErr || !fiche) return NextResponse.json({ error: 'fiche insert: ' + fErr?.message, created }, { status: 500 });
-    created.fiches.push({ name: f.name, id: fiche.id, variants: toAdd.length });
+    const ficheId = fiche.id;
+    created.fiches.push({ name: f.name, id: ficheId, variants: toAdd.length });
 
+    // Variants (sizes) → capture size → variant id
+    const variantIdBySize: Record<string, string> = {};
     for (let i = 0; i < toAdd.length; i++) {
       const v = toAdd[i];
       const { data: variant, error: vErr } = await supabase.from('lab_fiche_variants').insert({
-        fiche_id: fiche.id, label: v.size, sku: v.sku, weight_g: v.weight ? Math.round(v.weight * 1000) : null,
+        fiche_id: ficheId, label: v.size, sku: v.sku, weight_g: v.weight ? Math.round(v.weight * 1000) : null,
         is_default: i === 0, sort_order: i,
       }).select('id').single();
       if (vErr || !variant) return NextResponse.json({ error: 'variant insert: ' + vErr?.message, created }, { status: 500 });
+      variantIdBySize[v.size] = variant.id;
       created.variants++;
-      if (v.ingredients.length) {
-        const rows = v.ingredients.map((ing, idx) => ({
-          fiche_id: fiche.id, variant_id: variant.id,
-          ingredient_name: ing.name, quantity: ing.qty, unit: ing.unit, sort_order: idx,
-        }));
-        const { error: iErr } = await supabase.from('lab_fiche_ingredients').insert(rows);
-        if (iErr) return NextResponse.json({ error: 'ingredients insert: ' + iErr.message, created }, { status: 500 });
-        created.ingredients += rows.length;
+    }
+
+    // Ingredients = lab_fiche_steps (type 'ingredient') with per-size grams in lab_fiche_variant_quantities.
+    // Union the ingredient names across sizes; each size keeps its own quantity.
+    const ingMap = new Map<string, Record<string, number>>();
+    const order: string[] = [];
+    for (const v of toAdd) {
+      for (const ing of v.ingredients) {
+        if (!ingMap.has(ing.name)) { ingMap.set(ing.name, {}); order.push(ing.name); }
+        ingMap.get(ing.name)![v.size] = toG(ing.qty);
       }
+    }
+    const defSize = toAdd[0].size;
+    const stepRows = order.map((name, idx) => ({
+      fiche_id: ficheId, step_type: 'ingredient', step_number: idx + 1,
+      description_vi: name, description_en: name,
+      quantity_grams: ingMap.get(name)![defSize] ?? null, percentage: null,
+      duration_minutes: null, temperature_celsius: null,
+    }));
+    let stepIds: string[] = [];
+    if (stepRows.length) {
+      const { data: insSteps, error: sErr } = await supabase.from('lab_fiche_steps').insert(stepRows).select('id');
+      if (sErr) return NextResponse.json({ error: 'steps insert: ' + sErr.message, created }, { status: 500 });
+      stepIds = (insSteps ?? []).map((s: any) => s.id);
+      created.ingredientSteps += stepRows.length;
+    }
+    const vqRows: any[] = [];
+    order.forEach((name, idx) => {
+      const stepId = stepIds[idx]; if (!stepId) return;
+      for (const [size, grams] of Object.entries(ingMap.get(name)!)) {
+        const variantId = variantIdBySize[size];
+        if (variantId) vqRows.push({ step_id: stepId, variant_id: variantId, quantity_grams: grams });
+      }
+    });
+    if (vqRows.length) {
+      const { error: vqErr } = await supabase.from('lab_fiche_variant_quantities').insert(vqRows);
+      if (vqErr) return NextResponse.json({ error: 'vq insert: ' + vqErr.message, created }, { status: 500 });
+      created.variantQuantities += vqRows.length;
     }
   }
   return NextResponse.json({ committed: true, summary, created });
