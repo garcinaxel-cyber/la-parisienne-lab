@@ -45,14 +45,17 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     setEdits(p => ({ ...p, [id]: { ...p[id], ...patch } }));
     setSaved(p => { const n = new Set(p); n.delete(id); return n; });
   };
+  // A freshly created cake isn't in `edits` until the seeding effect runs (post-render) — always
+  // fall back to the cake's own values so render-time reads never crash.
+  const editFor = (c: Cake): Edit => edits[c.id] ?? { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by, delivery_address: c.delivery_address };
   const dirty = (c: Cake) => {
-    const e = edits[c.id];
+    const e = editFor(c);
     return e.message !== c.message || e.ready_time !== c.ready_time || e.delivered_by !== c.delivered_by || e.delivery_address !== c.delivery_address;
   };
 
   async function save(c: Cake) {
     setSaving(c.id);
-    const e = edits[c.id];
+    const e = editFor(c);
     const a = await import('./actions');
     const res = c.source === 'manual' && c.manualId
       ? await a.updateManualCakeAction(c.manualId, { message: e.message || null, readyTime: e.ready_time || null, deliveredBy: e.delivered_by || null, deliveryAddress: e.delivery_address || null })
@@ -63,6 +66,12 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
 
   async function markEntered(c: Cake) {
     if (!c.manualId) return;
+    // Guard against accidental clicks: this only removes the "to enter" flag, it does NOT link
+    // the cake to an Odoo order. Confirm the assistant really created the order in Odoo.
+    const ok = window.confirm(vi
+      ? 'Bạn đã THỰC SỰ tạo đơn hàng này trên Odoo chưa?\n\nNút này chỉ bỏ nhãn "cần nhập Odoo" — nó KHÔNG liên kết với đơn Odoo. Chỉ bấm nếu bạn đã tạo đơn trên Odoo.'
+      : 'Have you ACTUALLY created this order in Odoo?\n\nThis only removes the "to enter in Odoo" flag — it does NOT link the cake to an Odoo order. Only confirm if you created the order in Odoo.');
+    if (!ok) return;
     setBusy(c.id);
     const { markManualCakeEnteredAction } = await import('./actions');
     await markManualCakeEnteredAction(c.manualId, true);
@@ -187,7 +196,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
             {byDate.get(date)!.map(c => {
               // Fallback prevents a crash on the first render after a new cake appears (before the
               // seeding effect runs).
-              const e = edits[c.id] ?? { message: c.message, ready_time: c.ready_time, delivered_by: c.delivered_by, delivery_address: c.delivery_address };
+              const e = editFor(c);
               const col = shopColor(c.shop);
               const manual = c.source === 'manual';
               return (
@@ -269,7 +278,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                     {manual && c.needsOdoo && (
                       <button onClick={() => markEntered(c)} disabled={busy === c.id}
                         className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#C9A84C', color: '#92600A' }}>
-                        <CheckCircle2 size={14} /> {busy === c.id ? '…' : (vi ? 'Đã nhập Odoo' : 'Entered in Odoo')}
+                        <CheckCircle2 size={14} /> {busy === c.id ? '…' : (vi ? 'Đánh dấu đã nhập Odoo' : 'Mark as entered in Odoo')}
                       </button>
                     )}
                     {saved.has(c.id) && <span className="text-xs text-green-600 inline-flex items-center gap-1"><CheckCircle2 size={14} /> {vi ? 'Đã lưu' : 'Saved'}</span>}
