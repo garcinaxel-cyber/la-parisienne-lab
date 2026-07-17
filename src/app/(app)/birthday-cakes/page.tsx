@@ -13,9 +13,11 @@ export default async function BirthdayCakesPage() {
 
   const today = new Date().toISOString().split('T')[0];
 
-  // 1. Which fiches are birthday cakes (by product category on the recipe card)
+  // 1. Which fiches are birthday cakes (by product category on the recipe card).
+  // Only ACTIVE ones — a "deleted" fiche is archived (is_active=false) and must not appear in the
+  // manual-cake product picker.
   const { data: bcFiches } = await supabase
-    .from('lab_fiche_meta').select('id').eq('category', 'Birthday cake');
+    .from('lab_fiche_meta').select('id').eq('category', 'Birthday cake').eq('is_active', true);
   const bcFicheIds = (bcFiches ?? []).map(f => f.id);
   // …and their SKUs — so a line still matches even if its fiche_id wasn't set at import
   // (product got its recipe card AFTER the order was imported → line.fiche_id stays null).
