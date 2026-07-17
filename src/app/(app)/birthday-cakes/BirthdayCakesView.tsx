@@ -64,19 +64,6 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     if (res.ok) { c.message = e.message; c.ready_time = e.ready_time; c.delivered_by = e.delivered_by; c.delivery_address = e.delivery_address; setSaved(p => new Set(p).add(c.id)); }
   }
 
-  async function markEntered(c: Cake) {
-    if (!c.manualId) return;
-    // Guard against accidental clicks: this only removes the "to enter" flag, it does NOT link
-    // the cake to an Odoo order. Confirm the assistant really created the order in Odoo.
-    const ok = window.confirm(vi
-      ? 'Bạn đã THỰC SỰ tạo đơn hàng này trên Odoo chưa?\n\nNút này chỉ bỏ nhãn "cần nhập Odoo" — nó KHÔNG liên kết với đơn Odoo. Chỉ bấm nếu bạn đã tạo đơn trên Odoo.'
-      : 'Have you ACTUALLY created this order in Odoo?\n\nThis only removes the "to enter in Odoo" flag — it does NOT link the cake to an Odoo order. Only confirm if you created the order in Odoo.');
-    if (!ok) return;
-    setBusy(c.id);
-    const { markManualCakeEnteredAction } = await import('./actions');
-    await markManualCakeEnteredAction(c.manualId, true);
-    setBusy(null); router.refresh();
-  }
   async function removeCake(c: Cake) {
     if (!c.manualId) return;
     setBusy(c.id);
@@ -275,12 +262,9 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                         <FileText size={14} /> {vi ? 'Liên kết đơn Odoo' : 'Link Odoo order'}
                       </button>
                     )}
-                    {manual && c.needsOdoo && (
-                      <button onClick={() => markEntered(c)} disabled={busy === c.id}
-                        className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#C9A84C', color: '#92600A' }}>
-                        <CheckCircle2 size={14} /> {busy === c.id ? '…' : (vi ? 'Đánh dấu đã nhập Odoo' : 'Mark as entered in Odoo')}
-                      </button>
-                    )}
+                    {/* "Mark as entered in Odoo" button removed — it only cleared the flag without
+                        linking and caused accidental mis-clicks. Cakes clear via the auto-match /
+                        "Link Odoo order" flow instead. */}
                     {saved.has(c.id) && <span className="text-xs text-green-600 inline-flex items-center gap-1"><CheckCircle2 size={14} /> {vi ? 'Đã lưu' : 'Saved'}</span>}
                     <button onClick={() => save(c)} disabled={saving === c.id || !dirty(c)}
                       className="px-4 py-2 rounded-xl font-bold text-white text-sm disabled:opacity-40 inline-flex items-center gap-1.5"
