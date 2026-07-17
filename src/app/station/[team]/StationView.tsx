@@ -442,36 +442,69 @@ export default function StationView({
     setSelectedCategory('');
   }
 
-  // Open the "send to stock" bon: preselect every finished, not-yet-transferred product
+  // Chefs send stock BY PRODUCT, not per order card. Several production cards for the same
+  // product (one per order lot) are merged into a single line whose quantity is the total
+  // produced. On submit the chosen total is split back across the underlying cards.
+  type StockGroup = {
+    key: string; name_vi: string; name_en: string; sku: string | null; variant_label: string;
+    image_url: string | null; produced: number;
+    parts: { id: string; produced: number; deliveryDate: string | null }[];
+  };
+  function groupSendable(list: typeof assignments): StockGroup[] {
+    const m = new Map<string, StockGroup>();
+    for (const a of list) {
+      const key = `${a.sku ?? ''}||${a.variant_label ?? 'Standard'}||${a.product_name_vi}`;
+      const prod = a.qty_produced || a.total_qty || 0;
+      const g = m.get(key) ?? {
+        key, name_vi: a.product_name_vi, name_en: a.product_name_en ?? '', sku: a.sku ?? null,
+        variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null, produced: 0, parts: [],
+      };
+      g.produced += prod;
+      g.parts.push({ id: a.id, produced: prod, deliveryDate: a.lab_imports?.delivery_date ?? null });
+      m.set(key, g);
+    }
+    return Array.from(m.values());
+  }
+
+  // Open the "send to stock" bon: preselect every finished, not-yet-transferred product (grouped)
   function openStockModal() {
     const sel: Record<string, { on: boolean; qty: string }> = {};
-    for (const a of assignments) {
-      if (a.status === 'done' && !a.cancelled && !a.transferred) {
-        sel[a.id] = { on: true, qty: String(a.qty_produced || a.qty_to_produce || a.total_qty || 0) };
-      }
-    }
+    const sendable = assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred);
+    for (const g of groupSendable(sendable)) sel[g.key] = { on: true, qty: String(g.produced) };
     setStockSel(sel);
     setStockModal(true);
   }
 
   async function submitStockTransfer() {
-    const chosen = assignments.filter(a => stockSel[a.id]?.on && Number(stockSel[a.id].qty) > 0);
-    if (!chosen.length) return;
+    const sendable = assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred);
+    const groups = groupSendable(sendable);
+    // Split each group's chosen total across its cards (fill each card up to what it produced)
+    const entries: any[] = [];
+    const touchedIds = new Set<string>();
+    for (const g of groups) {
+      const s = stockSel[g.key];
+      if (!s?.on) continue;
+      let remaining = Math.min(Number(s.qty) || 0, g.produced);
+      if (remaining <= 0) continue;
+      for (const p of g.parts) {
+        if (remaining <= 0) break;
+        const take = Math.min(p.produced, remaining);
+        if (take <= 0) continue;
+        entries.push({
+          assignmentId: p.id, productNameVi: g.name_vi, productNameEn: g.name_en,
+          sku: g.sku, variantLabel: g.variant_label, imageUrl: g.image_url,
+          deliveryDate: p.deliveryDate, qtySent: take,
+        });
+        touchedIds.add(p.id);
+        remaining -= take;
+      }
+    }
+    if (!entries.length) return;
     setSendingStock(true);
     const { submitStockTransferAction } = await import('./stock-actions');
-    const res = await submitStockTransferAction(team, chosen.map(a => ({
-      assignmentId: a.id,
-      productNameVi: a.product_name_vi,
-      productNameEn: a.product_name_en ?? '',
-      sku: a.sku ?? null,
-      variantLabel: a.variant_label ?? 'Standard',
-      imageUrl: a.image_url ?? null,
-      deliveryDate: a.lab_imports?.delivery_date ?? null,
-      qtySent: Number(stockSel[a.id].qty),
-    })));
+    const res = await submitStockTransferAction(team, entries);
     if (res.ok) {
-      const ids = new Set(chosen.map(a => a.id));
-      setAssignments(prev => prev.map(x => ids.has(x.id) ? { ...x, transferred: true } : x));
+      setAssignments(prev => prev.map(x => touchedIds.has(x.id) ? { ...x, transferred: true } : x));
       setStockModal(false);
     }
     setSendingStock(false);
@@ -1302,7 +1335,8 @@ export default function StationView({
       {/* Send-to-stock transfer note (bon de transfert) */}
       {stockModal && (() => {
         const sendable = termine.filter(a => !a.transferred);
-        const chosen = sendable.filter(a => stockSel[a.id]?.on && Number(stockSel[a.id]?.qty) > 0);
+        const groups = groupSendable(sendable);
+        const chosen = groups.filter(g => stockSel[g.key]?.on && Number(stockSel[g.key]?.qty) > 0);
         return (
           <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
             onClick={() => !sendingStock && setStockModal(false)}>
@@ -1320,24 +1354,30 @@ export default function StationView({
                 {lang === 'vi' ? 'Chọn sản phẩm và số lượng gửi vào kho.' : 'Pick the products and quantity sent to stock.'}
               </div>
               <div className="overflow-y-auto flex-1 px-3 py-2 space-y-1.5">
-                {sendable.map(a => {
-                  const sel = stockSel[a.id] ?? { on: false, qty: '0' };
+                {groups.map(g => {
+                  const sel = stockSel[g.key] ?? { on: false, qty: '0' };
                   return (
-                    <div key={a.id} className="flex items-center gap-3 p-2.5 rounded-xl"
+                    <div key={g.key} className="flex items-center gap-3 p-2.5 rounded-xl"
                       style={{ backgroundColor: sel.on ? '#EFF6FF' : '#F9FAFB', border: '1px solid', borderColor: sel.on ? '#BFDBFE' : '#E5E7EB' }}>
-                      <button onClick={() => setStockSel(p => ({ ...p, [a.id]: { ...sel, on: !sel.on } }))}
+                      <button onClick={() => setStockSel(p => ({ ...p, [g.key]: { ...sel, on: !sel.on } }))}
                         className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center"
                         style={{ backgroundColor: sel.on ? '#1D4ED8' : 'white', border: '1px solid', borderColor: sel.on ? '#1D4ED8' : '#D1D5DB' }}>
                         {sel.on && <CheckCircle2 size={16} className="text-white" />}
                       </button>
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>
-                          {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+                          {lang === 'vi' ? g.name_vi : (g.name_en || g.name_vi)}
+                          {g.variant_label && g.variant_label !== 'Standard' && (
+                            <span className="text-[11px] font-normal text-ink-light"> · {g.variant_label}</span>
+                          )}
                         </div>
-                        <div className="text-[11px] text-ink-light">{lang === 'vi' ? 'Đã làm' : 'Produced'}: {a.qty_produced || a.total_qty}</div>
+                        <div className="text-[11px] text-ink-light">
+                          {lang === 'vi' ? 'Đã làm' : 'Produced'}: {g.produced}
+                          {g.parts.length > 1 && <span> · {g.parts.length} {lang === 'vi' ? 'đơn' : 'orders'}</span>}
+                        </div>
                       </div>
                       <input type="number" value={sel.qty} disabled={!sel.on}
-                        onChange={e => setStockSel(p => ({ ...p, [a.id]: { ...sel, qty: e.target.value } }))}
+                        onChange={e => setStockSel(p => ({ ...p, [g.key]: { ...sel, qty: e.target.value } }))}
                         className="w-16 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
                         style={{ border: '1px solid #D1D5DB', opacity: sel.on ? 1 : 0.5 }} />
                     </div>

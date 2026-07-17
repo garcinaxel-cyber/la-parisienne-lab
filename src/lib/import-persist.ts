@@ -152,7 +152,13 @@ export async function persistImportsFromLines(
       for (const a of insertedAsgs ?? []) asgIdByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.id;
     }
 
-    // Raw order lines (one per breakdown entry) for traceability + per-order views
+    // Raw order lines (one per breakdown entry) for traceability + per-order views.
+    // A line's `published` MUST mirror its import's status: an import created directly as
+    // 'published' (manual "import & publish now") releases all its orders immediately — the
+    // per-order publish flow only applies to imports that start as drafts. Without this the
+    // lines defaulted to false and stayed "not published" forever (hidden from the chefs).
+    const linePublished = opts.status === 'published';
+    const nowIso = new Date().toISOString();
     const olRows = dateLines.flatMap(line => line.breakdown.map((b: any) => ({
       import_id: importRow.id,
       source_type: opts.sourceTypeByRef?.[b.order_ref] ?? 'sales_order',
@@ -165,6 +171,8 @@ export async function persistImportsFromLines(
       fiche_id: vBySku[line.product_sku]?.fiche_id ?? null,
       variant_id: vBySku[line.product_sku]?.id ?? null,
       assignment_id: asgIdByKey[`${line.team}||${line.variant_label}||${line.product_name_vi}`] ?? null,
+      published: linePublished,
+      published_at: linePublished ? nowIso : null,
     })));
     if (olRows.length) await supabase.from('lab_order_lines').insert(olRows);
     createdImports++;

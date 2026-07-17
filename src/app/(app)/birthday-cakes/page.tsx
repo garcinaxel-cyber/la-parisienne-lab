@@ -50,22 +50,38 @@ export default async function BirthdayCakesPage() {
   const byLine: Record<string, any> = {};
   for (const d of details ?? []) byLine[d.order_line_id] = d;
 
-  const odooCakes = (lines ?? []).map(l => ({
-    id: l.id,
-    source: 'odoo' as const, manualId: null as string | null, needsOdoo: false,
-    suggestedRef: null as string | null, suggestedShop: null as string | null,
-    sku: (l.product_sku ?? null) as string | null,
-    order_ref: l.order_ref,
-    name: l.product_name_vi,
-    shop: l.shop_name,
-    delivery_date: l.delivery_date,
-    delivery_time: l.delivery_time,
-    qty: l.qty,
-    message: byLine[l.id]?.message ?? '',
-    ready_time: byLine[l.id]?.ready_time ?? '',
-    delivered_by: byLine[l.id]?.delivered_by ?? '',
-    delivery_address: byLine[l.id]?.delivery_address ?? '',
-  }));
+  // Fallback source: a manual cake that was LINKED to an Odoo order keeps its own info
+  // (message / address / ready time). If the copy onto the order line's details is missing
+  // or empty (e.g. linked before copy-on-link existed), read it back from the manual cake so
+  // the manager never "loses" what they typed. Keyed by matched_order_ref + sku.
+  const { data: matchedManual } = await supabase.from('lab_manual_cakes')
+    .select('matched_order_ref, product_sku, message, ready_time, delivered_by, delivery_address')
+    .not('matched_order_ref', 'is', null).gte('delivery_date', today);
+  const manualByRefSku: Record<string, any> = {};
+  for (const m of matchedManual ?? []) manualByRefSku[`${m.matched_order_ref}||${m.product_sku ?? ''}`] = m;
+  const pick = (a: string | null | undefined, b: string | null | undefined) =>
+    (a && a.trim() !== '') ? a : (b ?? '');
+
+  const odooCakes = (lines ?? []).map(l => {
+    const d = byLine[l.id];
+    const mc = manualByRefSku[`${l.order_ref}||${l.product_sku ?? ''}`];
+    return {
+      id: l.id,
+      source: 'odoo' as const, manualId: null as string | null, needsOdoo: false,
+      suggestedRef: null as string | null, suggestedShop: null as string | null,
+      sku: (l.product_sku ?? null) as string | null,
+      order_ref: l.order_ref,
+      name: l.product_name_vi,
+      shop: l.shop_name,
+      delivery_date: l.delivery_date,
+      delivery_time: l.delivery_time,
+      qty: l.qty,
+      message: pick(d?.message, mc?.message),
+      ready_time: pick(d?.ready_time, mc?.ready_time),
+      delivered_by: pick(d?.delivered_by, mc?.delivered_by),
+      delivery_address: pick(d?.delivery_address, mc?.delivery_address),
+    };
+  });
 
   // Manual cakes created in the app (not yet matched to an Odoo order)
   const { data: manual } = await supabase.from('lab_manual_cakes')
