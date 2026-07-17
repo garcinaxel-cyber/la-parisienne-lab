@@ -62,12 +62,14 @@ export async function GET(req: Request) {
   // (product_id false, product_tmpl_id set — the common case for single products). Match both.
   const boms = (prodIds.length || tmplIds.length) ? await tmo(odooExecute<any[]>('mrp.bom', 'search_read',
     [['|', ['product_id', 'in', prodIds], ['product_tmpl_id', 'in', tmplIds]]],
-    { fields: ['id', 'product_id', 'product_tmpl_id'], limit: 20000 }), 30000, 'boms') : [];
+    { fields: ['id', 'product_id', 'product_tmpl_id', 'product_qty'], limit: 20000 }), 30000, 'boms') : [];
   const variantBomByProd: Record<number, number> = {};
   const templateBomByTmpl: Record<number, number> = {};
   const cntByProd: Record<number, number> = {};
   const cntByTmpl: Record<number, number> = {};
+  const bomQtyById: Record<number, number> = {}; // how many units the BoM PRODUCES (batch size)
   for (const b of boms.sort((a, z) => a.id - z.id)) {
+    bomQtyById[b.id] = (b.product_qty && b.product_qty > 0) ? b.product_qty : 1;
     const pid = Array.isArray(b.product_id) ? b.product_id[0] : (b.product_id || null);
     const tid = Array.isArray(b.product_tmpl_id) ? b.product_tmpl_id[0] : (b.product_tmpl_id || null);
     if (pid) { variantBomByProd[pid] = b.id; cntByProd[pid] = (cntByProd[pid] ?? 0) + 1; }
@@ -107,12 +109,13 @@ export async function GET(req: Request) {
     const oddUnits = new Set<string>();
     for (const v of withBom) {
       const bomId = bomForSku(v.sku)!;
+      const batch = bomQtyById[bomId] || 1; // BoM produces `batch` units → per-unit = qty / batch
       for (const l of linesByBom[bomId] ?? []) {
         const nm = cleanName(Array.isArray(l.product_id) ? l.product_id[1] : String(l.product_id));
         const uom = Array.isArray(l.product_uom_id) ? l.product_uom_id[1] : '';
         const uL = (uom || '').toLowerCase().trim();
         if (!['g', 'gr', 'kg', 'l', 'ml'].includes(uL) && !uL.includes('gram') && !uL.includes('kilog') && !uL.includes('lít') && !uL.includes('liter')) oddUnits.add(uom || '?');
-        const g = toGrams(l.product_qty, uom);
+        const g = Math.round((toGrams(l.product_qty, uom) / batch) * 10) / 10;
         if (!ingMap.has(nm)) { ingMap.set(nm, {}); order.push(nm); }
         ingMap.get(nm)![v.id] = g; // key by variant id
         totalByVar[v.id] = (totalByVar[v.id] ?? 0) + g;
