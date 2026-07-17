@@ -13,7 +13,17 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
 }
 const cleanName = (n: string) => n.replace(/^\[[^\]]*\]\s*/, '').trim();
-const toG = (kg: number) => Math.round((kg ?? 0) * 10000) / 10;
+// Odoo BoM lines carry their OWN unit of measure (g, kg, l, ml, Units…). Convert to grams by that
+// unit — assuming everything was kg (and ×1000) turned an 8 g macaron line into 8000 g.
+const toGrams = (qty: number, uom: string): number => {
+  const u = (uom || '').toLowerCase().trim();
+  const q = qty ?? 0;
+  if (u === 'kg' || u.includes('kilogram')) return Math.round(q * 1000 * 10) / 10;
+  if (u === 'g' || u === 'gr' || u.includes('gram')) return Math.round(q * 10) / 10;
+  if (u === 'l' || u.includes('lít') || u.includes('liter') || u.includes('litre')) return Math.round(q * 1000 * 10) / 10;
+  if (u === 'ml') return Math.round(q * 10) / 10;
+  return Math.round(q * 10) / 10; // Units / unknown → keep raw
+};
 
 export async function GET(req: Request) {
   const supabase = createClient();
@@ -75,7 +85,7 @@ export async function GET(req: Request) {
 
   const bomIds = Array.from(new Set([...Object.values(variantBomByProd), ...Object.values(templateBomByTmpl)]));
   const lines = bomIds.length ? await tmo(odooExecute<any[]>('mrp.bom.line', 'search_read',
-    [[['bom_id', 'in', bomIds]]], { fields: ['bom_id', 'product_id', 'product_qty'], limit: 20000 }), 30000, 'lines') : [];
+    [[['bom_id', 'in', bomIds]]], { fields: ['bom_id', 'product_id', 'product_qty', 'product_uom_id'], limit: 20000 }), 30000, 'lines') : [];
   const linesByBom: Record<number, any[]> = {};
   for (const l of lines) { const bid = Array.isArray(l.bom_id) ? l.bom_id[0] : l.bom_id; (linesByBom[bid] ??= []).push(l); }
 
@@ -91,19 +101,27 @@ export async function GET(req: Request) {
     if (!withBom.length) { doubtful.push({ fiche: name, id: f.id, reason: 'no Odoo BoM for its SKUs', skus: vs.map((v: any) => v.sku) }); continue; }
     const multi = vs.filter((v: any) => multiBomSku(v.sku)).map((v: any) => v.sku);
     const missing = vs.filter((v: any) => !bomForSku(v.sku)).map((v: any) => v.sku);
-    // Build the recipe
+    // Build the recipe — convert each line BY ITS OWN unit → grams; track per-variant total + odd units
     const ingMap = new Map<string, Record<string, number>>(); const order: string[] = [];
+    const totalByVar: Record<string, number> = {};
+    const oddUnits = new Set<string>();
     for (const v of withBom) {
       const bomId = bomForSku(v.sku)!;
       for (const l of linesByBom[bomId] ?? []) {
         const nm = cleanName(Array.isArray(l.product_id) ? l.product_id[1] : String(l.product_id));
+        const uom = Array.isArray(l.product_uom_id) ? l.product_uom_id[1] : '';
+        const uL = (uom || '').toLowerCase().trim();
+        if (!['g', 'gr', 'kg', 'l', 'ml'].includes(uL) && !uL.includes('gram') && !uL.includes('kilog') && !uL.includes('lít') && !uL.includes('liter')) oddUnits.add(uom || '?');
+        const g = toGrams(l.product_qty, uom);
         if (!ingMap.has(nm)) { ingMap.set(nm, {}); order.push(nm); }
-        ingMap.get(nm)![v.id] = toG(l.product_qty); // key by variant id
+        ingMap.get(nm)![v.id] = g; // key by variant id
+        totalByVar[v.id] = (totalByVar[v.id] ?? 0) + g;
       }
     }
-    const entry: any = { fiche: name, id: f.id, variants_filled: withBom.length, ingredients: order.length };
+    const entry: any = { fiche: name, id: f.id, variants_filled: withBom.length, ingredients: order.length, total_g: Math.round(totalByVar[withBom[0].id] ?? 0) };
     if (multi.length) entry.note = `multiple BoMs on: ${multi.join(',')} (took latest)`;
     if (missing.length) entry.partial = `no BoM for: ${missing.join(',')}`;
+    if (oddUnits.size) entry.check_units = Array.from(oddUnits).join(',');
     willFill.push(entry);
     if (commit) {
       const defVarId = withBom[0].id;
@@ -118,6 +136,11 @@ export async function GET(req: Request) {
       const vqRows: any[] = [];
       order.forEach((nm, idx) => { const sid = stepIds[idx]; if (!sid) return; for (const [vid, g] of Object.entries(ingMap.get(nm)!)) vqRows.push({ step_id: sid, variant_id: vid, quantity_grams: g }); });
       if (vqRows.length) await supabase.from('lab_fiche_variant_quantities').insert(vqRows);
+      // Fill each variant's total finished weight (sum of its ingredients) on the recipe card
+      for (const v of withBom) {
+        const tot = Math.round((totalByVar[v.id] ?? 0) * 10) / 10;
+        if (tot > 0) await supabase.from('lab_fiche_variants').update({ weight_g: tot }).eq('id', v.id);
+      }
     }
   }
 
