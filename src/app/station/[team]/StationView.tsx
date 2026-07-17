@@ -140,7 +140,7 @@ export default function StationView({
     { table: 'lab_imports' },
     { table: 'lab_order_lines' },
     { table: 'lab_birthday_details' },
-    { table: 'lab_assignments', events: ['INSERT', 'DELETE'] },
+    { table: 'lab_assignments' },
   ]);
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
