@@ -172,6 +172,10 @@ export default function StationView({
   const [stockSel, setStockSel] = useState<Record<string, { on: boolean; qty: string }>>({});
   const [sendingStock, setSendingStock] = useState(false);
 
+  // Delete an extra production card (wrong product picked) — blocked once transferred
+  const [deleteModal, setDeleteModal] = useState<Assignment | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
   const [extraSearch, setExtraSearch] = useState('');
@@ -381,6 +385,16 @@ export default function StationView({
   async function savePartial() {
     if (!qtyModal) return;
     const supabase = createClient();
+    // Extra card: the quantity IS the target — editing keeps it done and moves
+    // all three quantities together (min 1; to remove the card, delete it instead).
+    if (qtyModal.is_extra) {
+      const q = Math.max(1, qtyInput);
+      const update: any = { total_qty: q, qty_to_produce: q, qty_produced: q, updated_at: new Date().toISOString() };
+      await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
+      setAssignments(prev => prev.map(x => x.id === qtyModal.id ? { ...x, ...update } : x));
+      setQtyModal(null);
+      return;
+    }
     const isDone = qtyInput >= qtyModal.qty_to_produce;
     const update: any = {
       status: (isDone ? 'done' : 'partial') as AssignmentStatus,
@@ -429,6 +443,22 @@ export default function StationView({
     }
     closeExtraModal();
     setSavingExtra(false);
+  }
+
+  async function deleteExtra() {
+    if (!deleteModal) return;
+    setDeleting(true);
+    const supabase = createClient();
+    // is_extra + transferred guards repeated client-side; RLS (v21) enforces them server-side
+    const { error } = await supabase.from('lab_assignments')
+      .delete().eq('id', deleteModal.id).eq('is_extra', true).eq('transferred', false);
+    if (!error) {
+      const gone = deleteModal.id;
+      setTodayAssignments(prev => prev.filter(x => x.id !== gone));
+      setTomorrowAsg(prev => prev.filter(x => x.id !== gone));
+      setDeleteModal(null);
+    }
+    setDeleting(false);
   }
 
   function closeExtraModal() {
@@ -1051,7 +1081,10 @@ export default function StationView({
                   <div className="flex-1 border-t" style={{ borderColor: '#E0D49A' }} />
                 </div>
                 {items.map(a => (
-                  <TermineCard key={a.id} a={a} lang={lang} meta={meta} onAdvance={advanceStatus} updating={updating} />
+                  <TermineCard key={a.id} a={a} lang={lang} meta={meta} onAdvance={advanceStatus} updating={updating}
+                    readOnly={isEmployee || isHistoryView}
+                    onEdit={x => { setQtyInput(x.qty_produced); setQtyModal(x); }}
+                    onDelete={x => setDeleteModal(x)} />
                 ))}
               </div>
             );
@@ -1655,6 +1688,41 @@ export default function StationView({
         </div>
       )}
 
+      {/* Delete extra confirmation */}
+      {deleteModal && (
+        <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={() => !deleting && setDeleteModal(null)}>
+          <div className="modal-sheet bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="font-bold text-base" style={{ color: '#DC2626' }}>
+                {lang === 'vi' ? 'Xóa sản xuất thêm?' : 'Delete extra production?'}
+              </h3>
+              <p className="text-sm text-ink-light mt-1">
+                {deleteModal.product_name_vi}
+                {deleteModal.variant_label && deleteModal.variant_label !== 'Standard' ? ` · ${deleteModal.variant_label}` : ''}
+                {' '}× {deleteModal.qty_produced}
+              </p>
+              <p className="text-xs text-ink-light mt-2">
+                {lang === 'vi'
+                  ? 'Thẻ này sẽ bị xóa vĩnh viễn. Nếu chọn nhầm sản phẩm, hãy xóa rồi tạo lại.'
+                  : 'This card will be permanently removed. If the wrong product was picked, delete then re-create it.'}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteModal(null)} disabled={deleting}
+                className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-ink-light">
+                {lang === 'vi' ? 'Hủy' : 'Cancel'}
+              </button>
+              <button onClick={deleteExtra} disabled={deleting}
+                className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-50"
+                style={{ backgroundColor: '#DC2626' }}>
+                {deleting ? '…' : (lang === 'vi' ? 'Xóa' : 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Qty modal */}
       {qtyModal && (
         <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -1662,9 +1730,11 @@ export default function StationView({
             <div>
               <h3 className="font-bold text-base" style={{ color: '#1A4731' }}>{qtyModal.product_name_vi}</h3>
               <p className="text-sm text-ink-light mt-0.5">
-                {lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong>
+                {qtyModal.is_extra
+                  ? (lang === 'vi' ? 'Sửa số lượng sản xuất thêm' : 'Edit extra production quantity')
+                  : <>{lang === 'vi' ? 'Cần làm' : 'Target'}: <strong>{qtyModal.qty_to_produce}</strong></>}
               </p>
-              {qtyInput > qtyModal.qty_to_produce && (
+              {!qtyModal.is_extra && qtyInput > qtyModal.qty_to_produce && (
                 <p className="text-xs font-semibold mt-1" style={{ color: '#D97706' }}>
                   {lang === 'vi' ? '⚠️ Vượt mục tiêu — ghi nhận sản xuất thêm' : '⚠️ Over target — extra production noted'}
                 </p>
@@ -1682,8 +1752,8 @@ export default function StationView({
                 onChange={e => setQtyInput(Math.max(0, parseInt(e.target.value, 10) || 0))}
                 className="text-5xl font-black text-center rounded-xl border-2 outline-none w-24 py-2"
                 style={{
-                  color: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
-                  borderColor: qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
+                  color: !qtyModal.is_extra && qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
+                  borderColor: !qtyModal.is_extra && qtyInput > qtyModal.qty_to_produce ? '#D97706' : '#1A4731',
                   WebkitAppearance: 'none', MozAppearance: 'textfield',
                 }}
               />
@@ -2023,15 +2093,20 @@ function ProductionCard({
 // ─── TERMINÉ CARD ────────────────────────────────────────────────────────────
 
 function TermineCard({
-  a, lang, meta, onAdvance, updating,
+  a, lang, meta, onAdvance, updating, readOnly, onEdit, onDelete,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
   meta: typeof TEAM_LABELS[Team];
   onAdvance: (a: Assignment) => void;
   updating: string | null;
+  readOnly?: boolean;
+  onEdit?: (a: Assignment) => void;
+  onDelete?: (a: Assignment) => void;
 }) {
   const isSkip = a.status === 'skip';
+  // Editable until sent to stock — after that the card is frozen (bon already issued)
+  const editable = !isSkip && !a.transferred && !a.cancelled && !readOnly;
   const ahead = !!a.produced_ahead && !isSkip; // done in advance of the delivery day
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
@@ -2100,6 +2175,25 @@ function TermineCard({
             style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', opacity: updating === a.id ? 0.6 : 1 }}>
             {lang === 'vi' ? 'Cần làm' : 'Produce'}
           </button>
+        )}
+        {/* Edit (+ delete for extra) while not yet sent to stock */}
+        {editable && (
+          <div className="flex flex-col gap-1.5 shrink-0">
+            {onEdit && (
+              <button onClick={() => onEdit(a)} disabled={updating === a.id}
+                className="px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all inline-flex items-center gap-1.5"
+                style={{ backgroundColor: '#FEF3C7', color: '#92600A', opacity: updating === a.id ? 0.6 : 1 }}>
+                <PenLine size={12} />{lang === 'vi' ? 'Sửa' : 'Edit'}
+              </button>
+            )}
+            {a.is_extra && onDelete && (
+              <button onClick={() => onDelete(a)} disabled={updating === a.id}
+                className="px-3 py-2 rounded-xl text-xs font-bold active:scale-95 transition-all inline-flex items-center gap-1.5"
+                style={{ backgroundColor: '#FEE2E2', color: '#DC2626', opacity: updating === a.id ? 0.6 : 1 }}>
+                <X size={12} />{lang === 'vi' ? 'Xóa' : 'Delete'}
+              </button>
+            )}
+          </div>
         )}
       </div>
       {/* Breakdown for done items */}
