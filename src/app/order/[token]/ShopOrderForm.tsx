@@ -74,8 +74,11 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
       {viText} <span className="font-medium normal-case" style={{ color: '#C9A84C' }}>· {enText}</span>
     </div>
   );
-  const inputCls = 'w-full rounded-xl px-3 py-2.5 text-sm bg-white';
-  const inputStyle = { border: '1px solid #E0D49A', color: '#1A4731' };
+  // 16px inputs — anything smaller makes iOS Safari auto-zoom on focus and the page
+  // stays zoomed ("badly optimised" feel). minWidth 0 stops native date/time widgets
+  // from blowing out their flex column on iOS.
+  const inputCls = 'w-full rounded-xl px-3 py-2.5 bg-white';
+  const inputStyle = { border: '1px solid #E0D49A', color: '#1A4731', fontSize: 16, minWidth: 0, WebkitAppearance: 'none' as const, appearance: 'none' as const };
 
   if (done) {
     return (
@@ -162,7 +165,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
         </div>
 
         <div className="flex gap-3">
-          <div className="w-36 shrink-0">
+          <div className="w-32 shrink-0">
             {label('Số lượng', 'qty')}
             <div className="flex items-center justify-between rounded-xl bg-white px-2 py-1.5" style={{ border: '1px solid #E0D49A' }}>
               <button onClick={() => { const v = Math.max(1, qty - 1); setQty(v); setQtyInput(String(v)); }}
@@ -175,20 +178,21 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white active:scale-95" style={{ backgroundColor: '#1A4731' }} aria-label="Thêm"><Plus size={15} /></button>
             </div>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             {label('Ngày giao', 'date')}
-            <input type="date" min={today} value={date} onChange={e => setDate(e.target.value)} className={inputCls} style={inputStyle} />
+            <input type="date" min={today} value={date} onChange={e => setDate(e.target.value)} className={inputCls} style={{ ...inputStyle, height: 46 }} />
           </div>
         </div>
 
         <div className="flex gap-3">
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             {label('Giờ cần xong', 'ready by')}
-            <input type="time" value={readyTime} onChange={e => setReadyTime(e.target.value)} className={inputCls} style={inputStyle} />
+            <input type="time" value={readyTime} onChange={e => setReadyTime(e.target.value)} className={inputCls} style={{ ...inputStyle, height: 46 }} />
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             {label('Giao đến', 'deliver to')}
-            <select value={deliveredBy} onChange={e => setDeliveredBy(e.target.value)} className={inputCls} style={inputStyle}>
+            <select value={deliveredBy} onChange={e => setDeliveredBy(e.target.value)} className={inputCls}
+              style={{ border: '1px solid #E0D49A', color: '#1A4731', fontSize: 16, minWidth: 0, height: 46, backgroundColor: 'white' }}>
               <option value="">— Chọn —</option>
               {DELIVERERS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>

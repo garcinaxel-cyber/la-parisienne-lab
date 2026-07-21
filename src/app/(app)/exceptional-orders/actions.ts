@@ -12,7 +12,8 @@ export async function regenerateShopLinkAction(): Promise<{ ok?: boolean; token?
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
 
-  const token = randomUUID().replace(/-/g, '');
+  // Short, unguessable, URL-friendly (14 hex chars ≈ 56 bits — plenty for an internal form)
+  const token = randomUUID().replace(/-/g, '').slice(0, 14);
   const { data: row } = await supabase.from('lab_shop_link').select('id').limit(1).maybeSingle();
   if (row?.id) {
     const { error } = await supabase.from('lab_shop_link')

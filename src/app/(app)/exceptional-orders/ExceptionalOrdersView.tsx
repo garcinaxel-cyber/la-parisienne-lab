@@ -160,7 +160,7 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const [regenerating, setRegenerating] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const shopUrl = shopLinkToken && typeof window !== 'undefined'
-    ? `${window.location.origin}/commande/${shopLinkToken}` : null;
+    ? `${window.location.origin}/order/${shopLinkToken}` : null;
   async function copyLink() {
     if (!shopUrl) return;
     try { await navigator.clipboard.writeText(shopUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}

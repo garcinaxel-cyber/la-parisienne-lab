@@ -3,6 +3,8 @@ import ShopOrderForm from './ShopOrderForm';
 
 export const revalidate = 0;
 export const metadata = { title: 'Đặt hàng gấp — La Parisienne Lab', robots: { index: false, follow: false } };
+// Explicit viewport — the form must render at device width on the shops' phones
+export const viewport = { width: 'device-width', initialScale: 1 };
 
 // Public shop order page — no login. The token in the URL is the access key.
 export default async function ShopOrderPage({ params }: { params: { token: string } }) {
