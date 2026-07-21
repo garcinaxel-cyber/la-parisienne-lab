@@ -12,7 +12,7 @@ type OrderKpis = {
   modRate: number; perDayAvg: number; added: number; removed: number; qtyChanged: number;
 };
 
-export default function AnalyticsView({ range, days, kpis, teams, topProducts, reasons, daily, orderKpis, modsPerDay, mostModified }: {
+export default function AnalyticsView({ range, days, kpis, teams, topProducts, reasons, daily, orderKpis, modsPerDay, mostModified, aggregated = false }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
   reasons: { reason: string; count: number }[];
@@ -20,6 +20,7 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
   orderKpis: OrderKpis;
   modsPerDay: { date: string; count: number }[];
   mostModified: { ref: string; count: number }[];
+  aggregated?: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
@@ -42,7 +43,9 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
   const prodCards = [
     { label: vi ? 'Đã sản xuất' : 'Units produced', value: kpis.unitsProduced.toLocaleString(), icon: Package, color: 'text-navy' },
     { label: vi ? 'Tỷ lệ hoàn thành' : 'Completion rate', value: `${kpis.completion}%`, icon: CheckCircle2, color: 'text-green-600' },
-    { label: vi ? 'Đơn đã phát hành' : 'Published imports', value: kpis.orders, icon: ClipboardList, color: 'text-navy' },
+    aggregated
+      ? { label: vi ? 'Ngày sản xuất' : 'Production days', value: kpis.orders, icon: ClipboardList, color: 'text-navy' }
+      : { label: vi ? 'Đơn đã phát hành' : 'Published imports', value: kpis.orders, icon: ClipboardList, color: 'text-navy' },
     { label: vi ? 'Sản phẩm bị chặn' : 'Blocked products', value: kpis.blocked, icon: AlertCircle, color: kpis.blocked > 0 ? 'text-amber-600' : 'text-ink-light' },
   ];
 
@@ -64,8 +67,15 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
             {range === 'today' ? (vi ? 'Hôm nay' : 'Today') : (vi ? `${days} ngày qua` : `Last ${days} days`)}
           </p>
         </div>
-        <div className="flex gap-1.5">
-          {[['today', vi ? 'Hôm nay' : 'Today'], ['7', '7' + (vi ? ' ngày' : 'd')], ['30', '30' + (vi ? ' ngày' : 'd')], ['90', '90' + (vi ? ' ngày' : 'd')]].map(([r, label]) => (
+        <div className="flex gap-1.5 flex-wrap">
+          {[
+            ['today', vi ? 'Hôm nay' : 'Today'],
+            ['7', '7' + (vi ? ' ngày' : 'd')],
+            ['30', '30' + (vi ? ' ngày' : 'd')],
+            ['60', '60' + (vi ? ' ngày' : 'd')],
+            ['180', vi ? '6 tháng' : '6 mo'],
+            ['365', vi ? '1 năm' : '1 yr'],
+          ].map(([r, label]) => (
             <button key={r} onClick={() => setRange(r)}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                 current === r ? 'bg-navy text-white' : 'bg-white border border-border-soft text-ink-light hover:text-navy'
@@ -73,6 +83,14 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
           ))}
         </div>
       </div>
+
+      {aggregated && (
+        <p className="text-xs rounded-xl px-3 py-2" style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE' }}>
+          {vi
+            ? 'Khoảng dài: số liệu sản xuất từ bảng tổng hợp hằng ngày. Phân tích đơn Odoo (sửa đổi, đơn nhận) chỉ có chi tiết 60 ngày gần nhất.'
+            : 'Long range: production figures come from the daily aggregates. Odoo order analysis (modifications, received) only has the last 60 days of detail.'}
+        </p>
+      )}
 
       {/* ══════════ SECTION 1 — ORDER ANALYSIS ══════════ */}
       <section className="space-y-3">
