@@ -12,7 +12,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   if (profile?.role !== 'admin') redirect('/dashboard');
 
   const range = searchParams.range ?? '30';
-  const days = range === 'today' ? 1 : range === '7' ? 7 : range === '90' ? 90 : 30;
+  const days = range === 'today' ? 1 : range === '7' ? 7 : range === '60' ? 60 : range === '90' ? 90
+    : range === '180' ? 180 : range === '365' ? 365 : 30;
+  // Raw detail is retained 60 days (lab_v24). Longer ranges read lab_daily_stats,
+  // the per-day aggregates kept forever.
+  const aggregated = days > 60;
   const today = new Date();
   const from = new Date(today);
   from.setDate(from.getDate() - days + 1);
@@ -149,6 +153,49 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     completion: v.total ? Math.round(v.done / v.total * 100) : 0,
   })).sort((a, b) => a.date.localeCompare(b.date));
 
-  return <AnalyticsView range={range} days={days} kpis={kpis} teams={teams} topProducts={topProducts}
-    reasons={reasons} daily={daily} orderKpis={orderKpis} modsPerDay={modsPerDay} mostModified={mostModified} />;
+  // ── Aggregate ranges (6 months / 1 year): production stats from lab_daily_stats ──
+  let kpisOut = kpis, teamsOut = teams, topOut = topProducts, reasonsOut = reasons, dailyOut = daily;
+  if (aggregated) {
+    const { data: stats } = await supabase.from('lab_daily_stats')
+      .select('day, team, sku, product_name, qty_ordered, qty_produced, qty_extra, cards_total, cards_done, cards_blocked')
+      .gte('day', fromStr).lte('day', toStr).limit(50000);
+    let sUnitsProduced = 0, sUnitsPlanned = 0, sCardsTotal = 0, sCardsDone = 0, sBlocked = 0;
+    const sTeam: Record<string, { total: number; done: number; units: number }> = {};
+    const sProduct: Record<string, number> = {};
+    const sDay: Record<string, { units: number; total: number; done: number }> = {};
+    for (const r of stats ?? []) {
+      sUnitsProduced += r.qty_produced ?? 0;
+      sUnitsPlanned += r.qty_ordered ?? 0;
+      sCardsTotal += r.cards_total ?? 0;
+      sCardsDone += r.cards_done ?? 0;
+      sBlocked += r.cards_blocked ?? 0;
+      (sTeam[r.team] ??= { total: 0, done: 0, units: 0 });
+      sTeam[r.team].total += r.cards_total ?? 0; sTeam[r.team].done += r.cards_done ?? 0; sTeam[r.team].units += r.qty_ordered ?? 0;
+      const pname = r.product_name || r.sku || '—';
+      sProduct[pname] = (sProduct[pname] ?? 0) + (r.qty_ordered ?? 0);
+      (sDay[r.day] ??= { units: 0, total: 0, done: 0 });
+      sDay[r.day].units += r.qty_ordered ?? 0; sDay[r.day].total += r.cards_total ?? 0; sDay[r.day].done += r.cards_done ?? 0;
+    }
+    kpisOut = {
+      unitsProduced: sUnitsProduced,
+      unitsPlanned: sUnitsPlanned,
+      completion: sCardsTotal ? Math.round(sCardsDone / sCardsTotal * 100) : 0,
+      orders: Object.keys(sDay).length, // production DAYS (imports detail is purged past 60d)
+      blocked: sBlocked,
+    };
+    teamsOut = Object.entries(sTeam).map(([team, v]) => ({
+      team, completion: v.total ? Math.round(v.done / v.total * 100) : 0, units: v.units,
+    })).sort((a, b) => b.units - a.units);
+    topOut = Object.entries(sProduct).map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty).slice(0, 8);
+    reasonsOut = []; // blocked reasons live in the raw detail only
+    dailyOut = Object.entries(sDay).map(([date, v]) => ({
+      date, units: v.units, total: v.total, done: v.done,
+      completion: v.total ? Math.round(v.done / v.total * 100) : 0,
+    })).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
+    reasons={reasonsOut} daily={dailyOut} orderKpis={orderKpis} modsPerDay={modsPerDay} mostModified={mostModified}
+    aggregated={aggregated} />;
 }

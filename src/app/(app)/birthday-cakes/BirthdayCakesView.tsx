@@ -132,10 +132,18 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
     router.refresh();
   }
 
-  // Group by delivery date
+  // Two windows over the same list: upcoming (default, editable) and the last
+  // 7 days (read-only — look up a delivered cake without risking edits)
+  const [period, setPeriod] = useState<'upcoming' | 'past'>('upcoming');
+  const isPastView = period === 'past';
+  const upcomingCount = cakes.filter(c => c.delivery_date >= today).length;
+  const pastCount = cakes.length - upcomingCount;
+  const visible = cakes.filter(c => isPastView ? c.delivery_date < today : c.delivery_date >= today);
+
+  // Group by delivery date (upcoming: soonest first; past: most recent first)
   const byDate = new Map<string, Cake[]>();
-  for (const c of cakes) (byDate.get(c.delivery_date) ?? byDate.set(c.delivery_date, []).get(c.delivery_date)!).push(c);
-  const dates = Array.from(byDate.keys()).sort();
+  for (const c of visible) (byDate.get(c.delivery_date) ?? byDate.set(c.delivery_date, []).get(c.delivery_date)!).push(c);
+  const dates = Array.from(byDate.keys()).sort((a, b) => isPastView ? b.localeCompare(a) : a.localeCompare(b));
 
   const shopColor = (shop: string | null) => {
     const s = (shop ?? '').toLowerCase();
@@ -169,9 +177,29 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
         </div>
       )}
 
-      {cakes.length === 0 ? (
+      {/* Period chips — upcoming (work view) vs last 7 days (read-only lookup) */}
+      <div className="flex gap-2">
+        {([
+          ['upcoming', vi ? 'Sắp tới' : 'Upcoming', upcomingCount],
+          ['past', vi ? '7 ngày qua' : 'Last 7 days', pastCount],
+        ] as const).map(([key, label, count]) => (
+          <button key={key} onClick={() => setPeriod(key)}
+            className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
+            style={period === key
+              ? { backgroundColor: '#1A4731', color: 'white' }
+              : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+            {label} · {count}
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
         <div className="card p-10 text-center">
-          <p className="font-semibold text-navy">{vi ? 'Chưa có bánh sinh nhật sắp tới' : 'No upcoming birthday cakes'}</p>
+          <p className="font-semibold text-navy">
+            {isPastView
+              ? (vi ? 'Không có bánh trong 7 ngày qua' : 'No cakes in the last 7 days')
+              : (vi ? 'Chưa có bánh sinh nhật sắp tới' : 'No upcoming birthday cakes')}
+          </p>
           <p className="text-sm text-ink-light mt-1">{vi ? 'Bánh thuộc danh mục « Birthday cake » sẽ hiện ở đây.' : 'Cakes in the “Birthday cake” category will appear here.'}</p>
         </div>
       ) : (
@@ -188,11 +216,15 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
               const col = shopColor(c.shop);
               const manual = c.source === 'manual';
               return (
-                <div key={c.id} className="card p-4" style={manual ? { border: '1.5px solid #C4B5FD' } : undefined}>
+                <div key={c.id} className="card p-4" style={{
+                  ...(manual ? { border: '1.5px solid #C4B5FD' } : {}),
+                  ...(isPastView ? { opacity: 0.8 } : {}),
+                }}>
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
                       <div className="font-semibold text-navy flex items-center gap-2 flex-wrap">
                         ×{c.qty} · {c.name}
+                        {isPastView && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#E5E7EB', color: '#374151' }}>{vi ? 'Đã giao' : 'Delivered'}</span>}
                         {manual && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>{vi ? 'Thủ công' : 'Manual'}</span>}
                         {manual && c.needsOdoo && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>{vi ? 'Cần nhập Odoo' : 'To enter in Odoo'}</span>}
                       </div>
@@ -210,7 +242,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                     )}
                   </div>
 
-                  {manual && c.needsOdoo && c.suggestedRef && (
+                  {!isPastView && manual && c.needsOdoo && c.suggestedRef && (
                     <div className="mt-3 rounded-xl px-3 py-2.5 flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#EFF6FF', border: '1px solid #93C5FD' }}>
                       <FileText size={15} style={{ color: '#1E40AF' }} className="shrink-0" />
                       <span className="text-xs flex-1" style={{ color: '#1E40AF' }}>
@@ -229,28 +261,28 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
 
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-[130px_1fr] gap-2 items-center">
                     <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><Clock size={13} className="text-blue-600" /> {vi ? 'Cần xong lúc' : 'Ready by'}</label>
-                    <input type="time" value={e.ready_time} onChange={ev => upd(c.id, { ready_time: ev.target.value })}
+                    <input type="time" value={e.ready_time} disabled={isPastView} onChange={ev => upd(c.id, { ready_time: ev.target.value })}
                       className="rounded-lg px-2 py-1.5 text-sm w-32" style={{ border: '1px solid #D1D5DB' }} />
 
                     <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><span className="text-blue-600">✎</span> {vi ? 'Lời chúc' : 'Message'}</label>
-                    <input type="text" value={e.message} onChange={ev => upd(c.id, { message: ev.target.value })}
+                    <input type="text" value={e.message} disabled={isPastView} onChange={ev => upd(c.id, { message: ev.target.value })}
                       placeholder={vi ? 'Chữ trên bánh…' : 'Text on the cake…'}
                       className="rounded-lg px-2 py-1.5 text-sm w-full" style={{ border: '1px solid', borderColor: '#93C5FD' }} />
 
                     <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><Truck size={13} className="text-blue-600" /> {vi ? 'Giao đến' : 'Deliver to'}</label>
-                    <select value={e.delivered_by} onChange={ev => upd(c.id, { delivered_by: ev.target.value })}
+                    <select value={e.delivered_by} disabled={isPastView} onChange={ev => upd(c.id, { delivered_by: ev.target.value })}
                       className="rounded-lg px-2 py-1.5 text-sm w-48" style={{ border: '1px solid #D1D5DB', backgroundColor: 'white' }}>
                       <option value="">{vi ? '— Chọn —' : '— Select —'}</option>
                       {DELIVERERS.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
 
                     <label className="text-xs font-semibold text-ink-light flex items-center gap-1.5"><MapPin size={13} className="text-blue-600" /> {vi ? 'Địa chỉ giao' : 'Delivery address'}</label>
-                    <input type="text" value={e.delivery_address} onChange={ev => upd(c.id, { delivery_address: ev.target.value })}
+                    <input type="text" value={e.delivery_address} disabled={isPastView} onChange={ev => upd(c.id, { delivery_address: ev.target.value })}
                       placeholder={vi ? 'Địa chỉ giao đến khách…' : 'Customer delivery address…'}
                       className="rounded-lg px-2 py-1.5 text-sm w-full" style={{ border: '1px solid #D1D5DB' }} />
                   </div>
 
-                  <div className="mt-3 flex items-center justify-end gap-2 flex-wrap">
+                  <div className="mt-3 flex items-center justify-end gap-2 flex-wrap" style={isPastView ? { display: 'none' } : undefined}>
                     {manual && (
                       <button onClick={() => removeCake(c)} disabled={busy === c.id}
                         className="px-2.5 py-2 rounded-xl text-sm text-red-600 border border-red-200 inline-flex items-center gap-1 disabled:opacity-40">

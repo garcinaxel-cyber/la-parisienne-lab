@@ -12,6 +12,9 @@ export default async function BirthdayCakesPage() {
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
 
   const today = new Date().toISOString().split('T')[0];
+  // History window: the tab also shows the last 7 days (read-only), so assistants can
+  // look up a delivered cake (message, phone, shop) without leaving the page.
+  const since7 = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
 
   // 1. Which fiches are birthday cakes (by product category on the recipe card).
   // Only ACTIVE ones — a "deleted" fiche is archived (is_active=false) and must not appear in the
@@ -30,10 +33,10 @@ export default async function BirthdayCakesPage() {
   const lineCols = 'id, order_ref, product_name_vi, shop_name, delivery_date, delivery_time, qty, product_sku, source_type';
   const [byFicheRes, bySkuRes] = await Promise.all([
     bcFicheIds.length
-      ? supabase.from('lab_order_lines').select(lineCols).in('fiche_id', bcFicheIds).gte('delivery_date', today)
+      ? supabase.from('lab_order_lines').select(lineCols).in('fiche_id', bcFicheIds).gte('delivery_date', since7)
       : Promise.resolve({ data: [] as any[] }),
     bcSkus.length
-      ? supabase.from('lab_order_lines').select(lineCols).in('product_sku', bcSkus).gte('delivery_date', today)
+      ? supabase.from('lab_order_lines').select(lineCols).in('product_sku', bcSkus).gte('delivery_date', since7)
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const byId = new Map<string, any>();
@@ -56,7 +59,7 @@ export default async function BirthdayCakesPage() {
   // the manager never "loses" what they typed. Keyed by matched_order_ref + sku.
   const { data: matchedManual } = await supabase.from('lab_manual_cakes')
     .select('matched_order_ref, product_sku, message, ready_time, delivered_by, delivery_address')
-    .not('matched_order_ref', 'is', null).gte('delivery_date', today);
+    .not('matched_order_ref', 'is', null).gte('delivery_date', since7);
   const manualByRefSku: Record<string, any> = {};
   for (const m of matchedManual ?? []) manualByRefSku[`${m.matched_order_ref}||${m.product_sku ?? ''}`] = m;
   const pick = (a: string | null | undefined, b: string | null | undefined) =>
@@ -87,13 +90,13 @@ export default async function BirthdayCakesPage() {
   const { data: manual } = await supabase.from('lab_manual_cakes')
     .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, rejected_order_refs')
     .is('matched_order_ref', null)
-    .gte('delivery_date', today)
+    .gte('delivery_date', since7)
     .order('delivery_date');
   // Phase 2 detection: a manual cake matches an Odoo order when a real order line exists with
   // the same SKU + delivery date. Computed live (human confirms before it's linked).
   const mcSkus = Array.from(new Set((manual ?? []).map((m: any) => m.product_sku).filter(Boolean)));
   const { data: matchLines } = mcSkus.length
-    ? await supabase.from('lab_order_lines').select('product_sku, delivery_date, order_ref, shop_name').in('product_sku', mcSkus).gte('delivery_date', today)
+    ? await supabase.from('lab_order_lines').select('product_sku, delivery_date, order_ref, shop_name').in('product_sku', mcSkus).gte('delivery_date', since7)
     : { data: [] as any[] };
   const matchBySkuDate: Record<string, { ref: string; shop: string | null }[]> = {};
   for (const l of matchLines ?? []) {
