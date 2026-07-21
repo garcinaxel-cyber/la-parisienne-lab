@@ -97,7 +97,8 @@ export default async function OrderDatePage({ params }: { params: { date: string
   // its production card (the manual one). It must NOT be flagged as "missing" — otherwise the
   // assistant would recreate the exact duplicate the manual-cake flow is designed to avoid.
   const { data: manualCakesForDate } = await supabase.from('lab_manual_cakes')
-    .select('product_sku, matched_order_ref').eq('delivery_date', date);
+    .select('id, product_sku, matched_order_ref, product_name_vi, qty, needs_odoo, rejected_order_refs, shop_name, created_by_name')
+    .eq('delivery_date', date);
   const manualPendingSkus = new Set((manualCakesForDate ?? []).filter((m: any) => !m.matched_order_ref).map((m: any) => m.product_sku).filter(Boolean));
   const producedManually = Array.from(new Set((manualCakesForDate ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
   const producedManuallySet = new Set(producedManually);
@@ -125,6 +126,36 @@ export default async function OrderDatePage({ params }: { params: { date: string
 
   // producedManually (Odoo orders whose cake is made via a linked manual cake) is computed above.
 
+  // Phase 3 — duplicate detection AT publication time: manual orders of this day still
+  // to be entered in Odoo, with a suggested match among THIS day's order lines
+  // (same SKU, previously rejected refs excluded). Confirmed here = same effect as
+  // confirming from the exceptional-orders page (production never doubled).
+  const openManual = (manualCakesForDate ?? []).filter((m: any) => m.needs_odoo && !m.matched_order_ref);
+  const manualMatches = openManual.flatMap((m: any) => {
+    if (!m.product_sku) return [];
+    const rejected = new Set<string>(m.rejected_order_refs ?? []);
+    const seen = new Set<string>();
+    const cands: { ref: string; shop: string | null }[] = [];
+    for (const l of orderLinesResult.data ?? []) {
+      if (l.product_sku !== m.product_sku || !l.order_ref) continue;
+      if (rejected.has(l.order_ref) || seen.has(l.order_ref)) continue;
+      seen.add(l.order_ref);
+      cands.push({ ref: l.order_ref, shop: l.shop_name ?? null });
+    }
+    if (!cands.length) return [];
+    return [{
+      manualId: m.id as string,
+      name: (m.product_name_vi ?? m.product_sku) as string,
+      qty: m.qty as number,
+      sku: m.product_sku as string,
+      source: (m.shop_name ?? m.created_by_name ?? '') as string,
+      fromShop: !!m.shop_name,
+      suggestedRef: cands[0].ref,
+      suggestedShop: cands[0].shop,
+    }];
+  });
+  const openManualNoMatch = openManual.length - manualMatches.length;
+
   return (
     <OrdersTabs
       date={date}
@@ -135,6 +166,8 @@ export default async function OrderDatePage({ params }: { params: { date: string
       missingCardsCount={missingCardsCount}
       missingCards={missingCards}
       producedManually={producedManually}
+      manualMatches={manualMatches}
+      openManualNoMatch={openManualNoMatch}
       userRole={profile?.role ?? null}
     />
   );
