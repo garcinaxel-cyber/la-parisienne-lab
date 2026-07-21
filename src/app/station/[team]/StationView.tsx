@@ -175,6 +175,7 @@ export default function StationView({
   // Delete an extra production card (wrong product picked) — blocked once transferred
   const [deleteModal, setDeleteModal] = useState<Assignment | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(false);
 
   // Extra production modal
   const [extraModal, setExtraModal] = useState(false);
@@ -448,15 +449,21 @@ export default function StationView({
   async function deleteExtra() {
     if (!deleteModal) return;
     setDeleting(true);
+    setDeleteError(false);
     const supabase = createClient();
-    // is_extra + transferred guards repeated client-side; RLS (v21) enforces them server-side
-    const { error } = await supabase.from('lab_assignments')
-      .delete().eq('id', deleteModal.id).eq('is_extra', true).eq('transferred', false);
-    if (!error) {
+    // is_extra + transferred guards repeated client-side; RLS (v21) enforces them server-side.
+    // .select() confirms a row was actually removed — RLS silently deletes 0 rows otherwise,
+    // and we must NOT hide the card locally while it still exists in the DB.
+    const { data, error } = await supabase.from('lab_assignments')
+      .delete().eq('id', deleteModal.id).eq('is_extra', true).eq('transferred', false)
+      .select('id');
+    if (!error && (data?.length ?? 0) > 0) {
       const gone = deleteModal.id;
       setTodayAssignments(prev => prev.filter(x => x.id !== gone));
       setTomorrowAsg(prev => prev.filter(x => x.id !== gone));
       setDeleteModal(null);
+    } else {
+      setDeleteError(true);
     }
     setDeleting(false);
   }
@@ -1691,7 +1698,7 @@ export default function StationView({
       {/* Delete extra confirmation */}
       {deleteModal && (
         <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-          onClick={() => !deleting && setDeleteModal(null)}>
+          onClick={() => { if (!deleting) { setDeleteModal(null); setDeleteError(false); } }}>
           <div className="modal-sheet bg-white w-full max-w-sm rounded-t-2xl p-6 space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div>
               <h3 className="font-bold text-base" style={{ color: '#DC2626' }}>
@@ -1708,8 +1715,13 @@ export default function StationView({
                   : 'This card will be permanently removed. If the wrong product was picked, delete then re-create it.'}
               </p>
             </div>
+            {deleteError && (
+              <p className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
+                {lang === 'vi' ? 'Không thể xóa — vui lòng thử lại hoặc báo quản lý.' : 'Could not delete — try again or tell a manager.'}
+              </p>
+            )}
             <div className="flex gap-3">
-              <button onClick={() => setDeleteModal(null)} disabled={deleting}
+              <button onClick={() => { setDeleteModal(null); setDeleteError(false); }} disabled={deleting}
                 className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-ink-light">
                 {lang === 'vi' ? 'Hủy' : 'Cancel'}
               </button>
