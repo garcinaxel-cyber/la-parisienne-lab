@@ -131,5 +131,9 @@ export default async function ExceptionalOrdersPage() {
     sku: (l.product_sku ?? null) as string | null, qty: l.qty as number,
   }));
 
-  return <ExceptionalOrdersView orders={list} candidates={candidates} productChoices={productChoices} today={today} />;
+  // Universal shop order link (manager RLS)
+  const { data: linkRow } = await supabase.from('lab_shop_link').select('token, active').limit(1).maybeSingle();
+
+  return <ExceptionalOrdersView orders={list} candidates={candidates} productChoices={productChoices} today={today}
+    shopLinkToken={linkRow?.active ? linkRow.token : null} />;
 }

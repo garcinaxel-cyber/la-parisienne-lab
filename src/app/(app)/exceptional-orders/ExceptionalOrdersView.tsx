@@ -26,8 +26,8 @@ type ProductChoice = {
 const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
-export default function ExceptionalOrdersView({ orders, candidates, productChoices, today }: {
-  orders: Order[]; candidates: Candidate[]; productChoices: ProductChoice[]; today: string;
+export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null }: {
+  orders: Order[]; candidates: Candidate[]; productChoices: ProductChoice[]; today: string; shopLinkToken?: string | null;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -154,6 +154,24 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const inputStyle = { border: '1px solid #D1D5DB' };
   const labelCls = 'text-xs font-semibold text-ink-light block';
 
+  // ── Shop link modal ──
+  const [showLink, setShowLink] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  const shopUrl = shopLinkToken && typeof window !== 'undefined'
+    ? `${window.location.origin}/commande/${shopLinkToken}` : null;
+  async function copyLink() {
+    if (!shopUrl) return;
+    try { await navigator.clipboard.writeText(shopUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+  }
+  async function regenerate() {
+    setRegenerating(true);
+    const { regenerateShopLinkAction } = await import('./actions');
+    await regenerateShopLinkAction();
+    setRegenerating(false); setConfirmRegen(false); router.refresh();
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -167,10 +185,16 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
               : 'Urgent orders created before Odoo entry — any product, from shops or assistants.'}
           </p>
         </div>
-        <button onClick={() => setShowNew(true)}
-          className="px-4 py-2 rounded-xl font-bold text-white text-sm inline-flex items-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
-          <Plus size={15} /> {vi ? 'Đơn mới' : 'New order'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowLink(true)}
+            className="px-3 py-2 rounded-xl font-semibold text-sm inline-flex items-center gap-1.5 border" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
+            <Link2 size={15} /> {vi ? 'Link shop' : 'Shop link'}
+          </button>
+          <button onClick={() => setShowNew(true)}
+            className="px-4 py-2 rounded-xl font-bold text-white text-sm inline-flex items-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
+            <Plus size={15} /> {vi ? 'Đơn mới' : 'New order'}
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -496,6 +520,61 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
           </div>
         );
       })()}
+
+      {showLink && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => !regenerating && setShowLink(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-navy text-lg">{vi ? 'Link đặt hàng cho shop' : 'Shop order link'}</h2>
+              <button onClick={() => setShowLink(false)} className="p-1 text-ink-light"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-ink-light">
+              {vi
+                ? 'MỘT link chung cho tất cả shop — gửi qua Zalo, shop lưu vào màn hình chính. Không cần tài khoản.'
+                : 'ONE link shared by all shops — send it on Zalo, they bookmark it. No account needed.'}
+            </p>
+            {shopUrl ? (
+              <>
+                <div className="rounded-xl px-3 py-2.5 text-xs font-mono break-all" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB', color: '#1A4731' }}>
+                  {shopUrl}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={copyLink}
+                    className="flex-1 py-2.5 rounded-xl font-bold text-white text-sm inline-flex items-center justify-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
+                    {copied ? <><CheckCircle2 size={14} /> {vi ? 'Đã copy!' : 'Copied!'}</> : (vi ? 'Copy link' : 'Copy link')}
+                  </button>
+                  <button onClick={() => setConfirmRegen(true)} disabled={regenerating}
+                    className="px-3 py-2.5 rounded-xl font-semibold text-sm border disabled:opacity-40" style={{ borderColor: '#FCA5A5', color: '#DC2626' }}>
+                    {vi ? 'Tạo link mới' : 'Regenerate'}
+                  </button>
+                </div>
+                {confirmRegen && (
+                  <div className="rounded-xl px-3 py-2.5 space-y-2" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5' }}>
+                    <p className="text-xs font-semibold" style={{ color: '#DC2626' }}>
+                      {vi ? 'Link cũ sẽ ngừng hoạt động ngay. Phải gửi link mới cho các shop. Tiếp tục?' : 'The old link dies instantly — you must send the new one to every shop. Continue?'}
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setConfirmRegen(false)} disabled={regenerating} className="flex-1 py-2 rounded-lg text-xs font-semibold border border-gray-200 text-gray-500">{vi ? 'Hủy' : 'Cancel'}</button>
+                      <button onClick={regenerate} disabled={regenerating} className="flex-1 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50" style={{ backgroundColor: '#DC2626' }}>
+                        {regenerating ? '…' : (vi ? 'Tạo link mới' : 'Regenerate now')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-ink-light">{vi ? 'Chưa có link (chạy migration lab_v23) hoặc link bị tắt.' : 'No link yet (run migration lab_v23) or it was deactivated.'}</p>
+                <button onClick={regenerate} disabled={regenerating}
+                  className="w-full py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+                  {regenerating ? '…' : (vi ? 'Tạo link' : 'Create link')}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {deleteFor && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
