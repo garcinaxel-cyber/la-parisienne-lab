@@ -61,4 +61,9 @@ declare module 'lucide-react' {
   export const Download: LucideIcon;
   export const MapPin: LucideIcon;
   export const Search: LucideIcon;
+  export const Zap: LucideIcon;
+  export const Phone: LucideIcon;
+  export const User: LucideIcon;
+  export const StickyNote: LucideIcon;
+  export const Link2: LucideIcon;
 }

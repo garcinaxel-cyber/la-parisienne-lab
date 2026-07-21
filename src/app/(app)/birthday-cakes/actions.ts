@@ -26,6 +26,7 @@ export async function saveBirthdayDetailAction(
   if (error) return { error: error.message };
 
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
@@ -39,7 +40,7 @@ export async function createManualCakeAction(input: {
   nameVi: string; nameEn: string; imageUrl: string | null; team: string;
   qty: number; deliveryDate: string; readyTime: string | null;
   deliveredBy: string | null; deliveryAddress: string | null; message: string | null;
-  customerName: string | null; customerPhone: string | null;
+  customerName: string | null; customerPhone: string | null; notes?: string | null;
 }): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
@@ -81,31 +82,42 @@ export async function createManualCakeAction(input: {
     team: input.team, qty: input.qty, delivery_date: input.deliveryDate,
     ready_time: input.readyTime, delivered_by: input.deliveredBy, delivery_address: input.deliveryAddress,
     message: input.message, customer_name: input.customerName, customer_phone: input.customerPhone,
+    notes: input.notes ?? null,
     needs_odoo: true, assignment_id: asg.id, import_id: importId,
     created_by: session.user.id, created_by_name: profile?.full_name ?? null,
   });
   if (mcErr) { await supabase.from('lab_assignments').delete().eq('id', asg.id); return { error: mcErr.message }; }
 
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
 // Edit the complementary fields of a manual cake (mirrors saveBirthdayDetailAction)
 export async function updateManualCakeAction(
   id: string,
-  fields: { message?: string | null; readyTime?: string | null; deliveredBy?: string | null; deliveryAddress?: string | null },
+  fields: {
+    message?: string | null; readyTime?: string | null; deliveredBy?: string | null; deliveryAddress?: string | null;
+    notes?: string | null; customerName?: string | null; customerPhone?: string | null;
+  },
 ): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
-  const { error } = await supabase.from('lab_manual_cakes').update({
+  const update: any = {
     message: fields.message ?? null, ready_time: fields.readyTime ?? null,
     delivered_by: fields.deliveredBy ?? null, delivery_address: fields.deliveryAddress ?? null,
-  }).eq('id', id);
+  };
+  // Only touch the newer columns when provided — callers that don't know them leave them intact
+  if (fields.notes !== undefined) update.notes = fields.notes;
+  if (fields.customerName !== undefined) update.customer_name = fields.customerName;
+  if (fields.customerPhone !== undefined) update.customer_phone = fields.customerPhone;
+  const { error } = await supabase.from('lab_manual_cakes').update(update).eq('id', id);
   if (error) return { error: error.message };
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
@@ -119,6 +131,7 @@ export async function markManualCakeEnteredAction(id: string, entered: boolean):
   const { error } = await supabase.from('lab_manual_cakes').update({ needs_odoo: !entered }).eq('id', id);
   if (error) return { error: error.message };
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
@@ -182,6 +195,7 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string,
     .eq('id', manualCakeId);
 
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
@@ -237,6 +251,7 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
   if (rows.length) await supabase.from('lab_assignments').insert(rows);
 
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
 
@@ -252,5 +267,6 @@ export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean
   const { error } = await supabase.from('lab_manual_cakes').delete().eq('id', id);
   if (error) return { error: error.message };
   revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
   return { ok: true };
 }
