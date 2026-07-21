@@ -103,7 +103,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<ProductChoice | null>(null);
-  const [form, setForm] = useState({ qty: '1', date: today, readyTime: '', deliveredBy: '', deliveryAddress: '', message: '' });
+  const [form, setForm] = useState({ qty: '1', date: today, readyTime: '', deliveredBy: '', deliveryAddress: '', message: '', customerName: '', customerPhone: '', notes: '' });
 
   const filtered = query.trim().length === 0
     ? productChoices.slice(0, 8)
@@ -111,7 +111,7 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
 
   function resetModal() {
     setShowNew(false); setCreating(false); setCreateErr(null); setQuery(''); setChosen(null);
-    setForm({ qty: '1', date: today, readyTime: '', deliveredBy: '', deliveryAddress: '', message: '' });
+    setForm({ qty: '1', date: today, readyTime: '', deliveredBy: '', deliveryAddress: '', message: '', customerName: '', customerPhone: '', notes: '' });
   }
 
   async function createCake() {
@@ -123,7 +123,8 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
       nameVi: chosen.nameVi, nameEn: chosen.nameEn, imageUrl: chosen.imageUrl, team: chosen.team,
       qty: Math.max(1, parseInt(form.qty, 10) || 1), deliveryDate: form.date,
       readyTime: form.readyTime || null, deliveredBy: form.deliveredBy || null, deliveryAddress: form.deliveryAddress || null,
-      message: form.message || null, customerName: null, customerPhone: null,
+      message: form.message || null, customerName: form.customerName.trim() || null, customerPhone: form.customerPhone.trim() || null,
+      notes: form.notes.trim() || null,
     });
     setCreating(false);
     if (res.error) { setCreateErr(res.error); return; }
@@ -361,6 +362,20 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
             <div>
               <label className="text-xs font-semibold text-ink-light block">{vi ? 'Lời chúc' : 'Message'}</label>
               <input type="text" value={form.message} onChange={ev => setForm(f => ({ ...f, message: ev.target.value }))} placeholder={vi ? 'Chữ trên bánh…' : 'Text on the cake…'} className="w-full rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #93C5FD' }} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-semibold text-ink-light block">{vi ? 'Tên khách' : 'Customer name'}</label>
+                <input type="text" value={form.customerName} onChange={ev => setForm(f => ({ ...f, customerName: ev.target.value }))} placeholder={vi ? 'Tên khách hàng…' : 'Customer…'} className="w-full rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-ink-light block">{vi ? 'SĐT khách' : 'Customer phone'}</label>
+                <input type="tel" value={form.customerPhone} onChange={ev => setForm(f => ({ ...f, customerPhone: ev.target.value }))} placeholder="090…" className="w-full rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-ink-light block">{vi ? 'Ghi chú' : 'Free note'}</label>
+              <textarea value={form.notes} onChange={ev => setForm(f => ({ ...f, notes: ev.target.value }))} rows={2} placeholder={vi ? 'Ghi chú thêm…' : 'Anything useful…'} className="w-full rounded-lg px-2 py-1.5 text-sm resize-none" style={{ border: '1px solid #D1D5DB' }} />
             </div>
             </>)}
 
