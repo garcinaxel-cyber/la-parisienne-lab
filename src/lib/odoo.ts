@@ -6,6 +6,10 @@ const ODOO_URL = () => process.env.ODOO_URL ?? '';
 const ODOO_DB = () => process.env.ODOO_DB ?? '';
 const ODOO_LOGIN = () => process.env.ODOO_LOGIN ?? '';
 const ODOO_KEY = () => process.env.ODOO_API_KEY ?? '';
+// Dedicated WRITE account (least-privilege: only what needs to write, e.g. mrp.production).
+// Same Odoo URL/DB, separate login + key so the read-only key stays read-only.
+const ODOO_WRITE_LOGIN = () => process.env.ODOO_WRITE_LOGIN ?? '';
+const ODOO_WRITE_KEY = () => process.env.ODOO_WRITE_API_KEY ?? '';
 
 /** Lab operates in Vietnam — Odoo stores datetimes in UTC, we convert for display/grouping */
 export const LAB_TZ = 'Asia/Ho_Chi_Minh';
@@ -45,6 +49,28 @@ export async function odooExecute<T = any>(
 ): Promise<T> {
   const uid = await authenticate();
   return rpc('object', 'execute_kw', [ODOO_DB(), uid, ODOO_KEY(), model, method, args, kwargs]);
+}
+
+// ── Dedicated WRITE client (separate account/key) ──────────────────────────────
+export function odooWriteConfigured(): boolean {
+  return !!(ODOO_URL() && ODOO_DB() && ODOO_WRITE_LOGIN() && ODOO_WRITE_KEY());
+}
+let cachedWriteUid: number | null = null;
+async function authenticateWrite(): Promise<number> {
+  if (cachedWriteUid) return cachedWriteUid;
+  const uid = await rpc('common', 'authenticate', [ODOO_DB(), ODOO_WRITE_LOGIN(), ODOO_WRITE_KEY(), {}]);
+  if (!uid) throw new Error('Odoo WRITE auth failed — check ODOO_WRITE_LOGIN / ODOO_WRITE_API_KEY');
+  cachedWriteUid = uid as number;
+  return cachedWriteUid;
+}
+export async function odooExecuteWrite<T = any>(
+  model: string,
+  method: string,
+  args: unknown[],
+  kwargs: Record<string, unknown> = {},
+): Promise<T> {
+  const uid = await authenticateWrite();
+  return rpc('object', 'execute_kw', [ODOO_DB(), uid, ODOO_WRITE_KEY(), model, method, args, kwargs]);
 }
 
 /** Convert an Odoo UTC datetime string ("2026-07-07 01:00:00") to lab-local date + time */
