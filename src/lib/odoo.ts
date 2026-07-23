@@ -89,6 +89,23 @@ export function odooDateTimeToLocal(utc: string | false | null): { date: string;
   return { date, time: time === '00:00' ? null : time };
 }
 
+/** Lab-local calendar date ('YYYY-MM-DD') of a UTC timestamp (e.g. produced_at). */
+export function labDateOf(isoUtc: string | null | undefined): string | null {
+  if (!isoUtc) return null;
+  const d = new Date(isoUtc);
+  if (isNaN(d.getTime())) return null;
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const p = Object.fromEntries(fmt.formatToParts(d).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** UTC [start,end) covering one lab-local day (VN = UTC+7, no DST). */
+export function labDayUtcRange(date: string): { start: string; end: string } {
+  const [y, m, d] = date.split('-').map(Number);
+  const startMs = Date.UTC(y, m - 1, d, 0, 0, 0) - 7 * 3600 * 1000; // lab midnight in UTC
+  return { start: new Date(startMs).toISOString(), end: new Date(startMs + 24 * 3600 * 1000).toISOString() };
+}
+
 /** UTC datetime string for "today 00:00 in lab timezone" — used as Odoo query threshold */
 export function labTodayUtcThreshold(): string {
   const now = new Date();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { createClient } from '@/lib/supabase-server';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
+import { fetchDoneForProdDate, aggregateBySku } from '@/lib/production-days';
 
 // End-of-day production export → Odoo "Quantity To Produce" template.
 // Scope = everything in the chefs' "Done" tabs for the selected day:
@@ -20,20 +21,12 @@ export async function GET(req: NextRequest) {
   const today = new Date().toISOString().split('T')[0];
   const date = (req.nextUrl.searchParams.get('date') || today).slice(0, 10);
 
-  // 1) Done cards for the day (published imports only). Includes extra production.
-  const { data: asg, error: asgErr } = await supabase
-    .from('lab_assignments')
-    .select('variant_id, product_name_vi, total_qty, qty_produced, status, cancelled, is_extra, lab_imports!inner(delivery_date,status)')
-    .eq('lab_imports.status', 'published')
-    .eq('lab_imports.delivery_date', date)
-    .eq('status', 'done')
-    .limit(2000);
-  if (asgErr) return NextResponse.json({ error: asgErr.message }, { status: 500 });
-
-  const done = (asg ?? []).filter((a: any) => !a.cancelled);
+  // 1) Cards PRODUCED on the day (published, all teams, incl. extra + produced-ahead).
+  //    Grouped by physical production day (produced_at), not delivery day.
+  const done = await fetchDoneForProdDate(supabase, date);
 
   // 2) Resolve variant_id → SKU
-  const variantIds = Array.from(new Set(done.map((a: any) => a.variant_id).filter(Boolean))) as string[];
+  const variantIds = Array.from(new Set(done.map(a => a.variant_id).filter(Boolean))) as string[];
   const { data: variants } = variantIds.length
     ? await supabase.from('lab_fiche_variants').select('id, sku').in('id', variantIds)
     : { data: [] as any[] };
@@ -41,15 +34,7 @@ export async function GET(req: NextRequest) {
   for (const v of variants ?? []) if (v.sku) skuByVariant[v.id] = v.sku;
 
   // 3) Aggregate produced quantity per SKU (fallback name for cards with no SKU)
-  const agg = new Map<string, { sku: string | null; appName: string; qty: number }>();
-  for (const a of done) {
-    const sku = a.variant_id ? skuByVariant[a.variant_id] ?? null : null;
-    const key = sku ?? `__noSku__${a.product_name_vi}`;
-    const qty = (a.qty_produced && a.qty_produced > 0) ? a.qty_produced : (a.total_qty ?? 0);
-    const cur = agg.get(key);
-    if (cur) cur.qty += qty;
-    else agg.set(key, { sku, appName: a.product_name_vi ?? '', qty });
-  }
+  const agg = aggregateBySku(done, skuByVariant);
 
   // 4) Real Odoo product NAME, matched by SKU (default_code). Read-only.
   // Odoo's import matches the product on its plain name, WITHOUT the [SKU] prefix,
