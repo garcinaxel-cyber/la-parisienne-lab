@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Clock, Ban, ChevronLeft, Send, MoreVertical, ChevronDown, Store, Package, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
@@ -33,6 +33,7 @@ export default function OrderReviewView({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [exceptionModal, setExceptionModal] = useState<{ id: string; productName: string } | null>(null);
   const [exceptionReason, setExceptionReason] = useState('');
+  const [stockBusy, setStockBusy] = useState<string | null>(null);
   const [expandedBreakdown, setExpandedBreakdown] = useState<Set<string>>(new Set());
 
   function getBreakdown(a: any): { shop_name: string; qty: number }[] {
@@ -94,6 +95,22 @@ export default function OrderReviewView({
     setDeleting(null);
     setConfirmDelete(null);
     router.refresh();
+  }
+
+  // Assistant marks a product "in stock" → it goes to the chefs' in-stock section (status skip),
+  // so nothing is produced for it. Reuses the existing skip + exception_reason mechanism (no new
+  // column). Toggle: a second click reverts it to "to produce" (pending). Chefs see it live.
+  const IN_STOCK_REASON = lang === 'vi' ? 'Đã có trong kho' : 'Already in stock';
+  async function toggleInStock(a: any) {
+    setStockBusy(a.id);
+    const supabase = createClient();
+    const goInStock = a.status !== 'skip';
+    const update = goInStock
+      ? { status: 'skip', exception_reason: IN_STOCK_REASON, exception_at: new Date().toISOString() }
+      : { status: 'pending', exception_reason: null, exception_at: null };
+    await supabase.from('lab_assignments').update(update).eq('id', a.id);
+    setLocalAssignments(prev => prev.map(x => x.id === a.id ? { ...x, ...update } : x));
+    setStockBusy(null);
   }
 
   async function setException(assignmentId: string, reason: string) {
@@ -288,18 +305,43 @@ export default function OrderReviewView({
                           {lang === 'vi' ? st.labelVi : st.labelEn}
                         </span>
                       </div>
-                      <div className="md:col-span-2 text-xs text-ink-light truncate">
-                        {a.exception_reason
-                          ? <span className="italic">{a.exception_reason}</span>
-                          : canManage && !isSkip && (
-                            <button
-                              onClick={() => setExceptionModal({ id: a.id, productName: a.product_name_vi })}
-                              className="text-ink-light hover:text-navy transition-colors"
-                              title={lang === 'vi' ? 'Đánh dấu ngoại lệ' : 'Mark exception'}
-                            >
-                              <MoreVertical size={15} />
-                            </button>
-                          )}
+                      <div className="md:col-span-2 flex items-center gap-1.5 text-xs text-ink-light min-w-0">
+                        {canManage ? (
+                          isSkip ? (
+                            <>
+                              <span className="italic truncate">{a.exception_reason || (lang === 'vi' ? 'Có sẵn' : 'In stock')}</span>
+                              <button
+                                onClick={() => toggleInStock(a)}
+                                disabled={stockBusy === a.id}
+                                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border border-border-soft text-ink-light hover:text-navy disabled:opacity-50"
+                                title={lang === 'vi' ? 'Cần sản xuất lại' : 'Back to production'}
+                              >
+                                <RotateCcw size={12} />{stockBusy === a.id ? '…' : (lang === 'vi' ? 'SX lại' : 'Produce')}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => toggleInStock(a)}
+                                disabled={stockBusy === a.id}
+                                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full font-semibold disabled:opacity-50"
+                                style={{ backgroundColor: '#F3E8FF', color: '#6D28D9' }}
+                                title={lang === 'vi' ? 'Đã có trong kho — không cần sản xuất' : 'Already in stock — no need to produce'}
+                              >
+                                <Package size={12} />{stockBusy === a.id ? '…' : (lang === 'vi' ? 'Có sẵn' : 'In stock')}
+                              </button>
+                              <button
+                                onClick={() => setExceptionModal({ id: a.id, productName: a.product_name_vi })}
+                                className="shrink-0 text-ink-light hover:text-navy transition-colors"
+                                title={lang === 'vi' ? 'Lý do khác' : 'Other exception'}
+                              >
+                                <MoreVertical size={15} />
+                              </button>
+                            </>
+                          )
+                        ) : (
+                          a.exception_reason && <span className="italic truncate">{a.exception_reason}</span>
+                        )}
                       </div>
                     </div>
                     {isExpanded && breakdown.length > 0 && (
