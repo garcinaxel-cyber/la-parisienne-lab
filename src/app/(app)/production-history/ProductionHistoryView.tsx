@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { Download, FileSpreadsheet, ChevronDown, ChevronRight, Package, X, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
@@ -22,6 +22,17 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
   const [odooDry, setOdooDry] = useState<any>(null);
   const [odooBusy, setOdooBusy] = useState(false);
   const [odooResult, setOdooResult] = useState<any>(null);
+  const [pendingToday, setPendingToday] = useState<number | null>(null);
+
+  // Reminder: how much of TODAY's production is not yet transferred to Odoo? (dry-run, read-only)
+  useEffect(() => {
+    let cancel = false;
+    fetch(`/api/lab/production-to-odoo?date=${today}`)
+      .then(r => r.json())
+      .then(j => { if (!cancel) setPendingToday(j?.summary?.to_create ?? 0); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [today]);
 
   async function toggleDetail(date: string) {
     if (open === date) { setOpen(null); return; }
@@ -49,6 +60,10 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
     try {
       const r = await fetch(`/api/lab/production-to-odoo?date=${odoo.date}&commit=1`);
       setOdooResult(await r.json());
+      if (odoo.date === today) {
+        fetch(`/api/lab/production-to-odoo?date=${today}`).then(r => r.json())
+          .then(j => setPendingToday(j?.summary?.to_create ?? 0)).catch(() => {});
+      }
     } finally { setOdooBusy(false); }
   }
 
@@ -65,6 +80,22 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
             : 'Production par jour de fabrication (extra & fait en avance inclus). Clique une journée pour le détail. Exporte l’Excel ou crée les ordres de fabrication (brouillon) dans Odoo.'}
         </p>
       </div>
+
+      {/* Reminder — only shows when today has production not yet sent to Odoo */}
+      {pendingToday !== null && pendingToday > 0 && (
+        <div className="rounded-xl border flex items-center gap-3 px-4 py-3" style={{ borderColor: '#FCD34D', backgroundColor: '#FFFBEB' }}>
+          <AlertCircle size={18} className="shrink-0" style={{ color: '#B45309' }} />
+          <span className="text-sm flex-1 min-w-0" style={{ color: '#92600A' }}>
+            {vi
+              ? `${pendingToday} sản phẩm hôm nay chưa chuyển sang Odoo`
+              : `${pendingToday} produit${pendingToday > 1 ? 's' : ''} produit${pendingToday > 1 ? 's' : ''} aujourd’hui pas encore transféré${pendingToday > 1 ? 's' : ''} dans Odoo`}
+          </span>
+          <button onClick={() => openOdoo(today)}
+            className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-1.5 shrink-0">
+            <Package size={14} />{vi ? 'Chuyển ngay' : 'Transférer'}
+          </button>
+        </div>
+      )}
 
       {days.length === 0 ? (
         <div className="card p-6 text-center text-ink-light text-sm">
