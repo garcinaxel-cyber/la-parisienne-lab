@@ -92,7 +92,7 @@ async function createLineAndCard(
   // Context (import, shop, dates) from an existing line of the same order
   const { data: ctxRows } = await supabase
     .from('lab_order_lines')
-    .select('import_id, shop_name, delivery_date, delivery_time, source_type')
+    .select('import_id, shop_name, delivery_date, delivery_time, source_type, published')
     .eq('order_ref', orderRef)
     .gte('delivery_date', today)
     .limit(1);
@@ -113,13 +113,15 @@ async function createLineAndCard(
 
   const name = item.name ?? item.sku;
 
-  // Insert the order line
+  // Insert the order line — inherit the order's publish state so a product added to an
+  // already-published order is published too (else it shows as a phantom "not published").
   await supabase.from('lab_order_lines').insert({
     import_id: ctx.import_id, source_type: ctx.source_type, order_ref: orderRef,
     shop_name: ctx.shop_name, product_sku: item.sku, product_name_vi: name,
     team, variant_label: variantLabel, qty: item.new_qty,
     delivery_date: ctx.delivery_date, delivery_time: ctx.delivery_time,
     fiche_id: ficheId, variant_id: variantId,
+    published: (ctx as any).published ?? false,
   });
 
   // Production card only if a team resolved (no fiche → shows in publish-bar unmatched)
