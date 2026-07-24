@@ -4,14 +4,17 @@ import { odooConfigured } from '@/lib/odoo';
 import { runOdooSync } from '@/lib/odoo-sync';
 import { consolidateLines } from '@/lib/excel-parser';
 import { persistImportsFromLines } from '@/lib/import-persist';
+import { applyOdooChanges } from '@/lib/odoo-apply';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 // Hourly auto-sync (called by pg_cron / external scheduler with ?secret=CRON_SECRET).
-// PRUDENT mode: new orders are imported as DRAFTS — an assistant reviews and publishes.
-// Modifications/cancellations are never auto-applied; they surface in the app for review.
-// Uses the SAME persistence path as the manual publish flow (persistImportsFromLines).
+// AUTO mode: the app mirrors Odoo for today's and upcoming orders without a manual publish step.
+//  - New orders are imported as PUBLISHED → the chefs see them immediately.
+//  - Modifications & cancellations are auto-applied (applyOdooChanges) — qty adjusted, cancelled
+//    orders struck through, produced quantities never erased. So production always reflects Odoo.
+// Uses the SAME persistence path as the manual flow (persistImportsFromLines).
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') ?? req.headers.get('authorization')?.replace('Bearer ', '');
@@ -28,15 +31,21 @@ export async function GET(req: Request) {
     const result = await runOdooSync(supabase as any);
     const lines = result.lines;
 
-    // Persist detected modifications/cancellations for later human review.
+    // AUTO-APPLY modifications & cancellations so the app always reflects Odoo (today + future).
+    // applyOdooChanges adjusts quantities, creates newly-added products, and strikes through
+    // cancelled orders — produced quantities are always preserved. We log them as 'applied'
+    // for traceability (and clear any stale pending rows from the old review flow).
+    let changesApplied = 0;
     if (result.changes.length) {
       const dateByRef: Record<string, string> = {};
       for (const l of lines) if (l.order_ref && l.delivery_date) dateByRef[l.order_ref] = l.delivery_date;
       const refs = result.changes.map(c => c.order_ref);
       await supabase.from('lab_odoo_changes').delete().in('order_ref', refs).eq('status', 'pending');
+      const applyRes = await applyOdooChanges(supabase as any, result.changes);
+      changesApplied = applyRes.applied.length;
       await supabase.from('lab_odoo_changes').insert(result.changes.map(c => ({
         order_ref: c.order_ref, cancelled: c.cancelled, items: c.items,
-        delivery_date: dateByRef[c.order_ref] ?? null, status: 'pending',
+        delivery_date: dateByRef[c.order_ref] ?? null, status: 'applied',
       })));
     }
 
@@ -80,6 +89,7 @@ export async function GET(req: Request) {
       return NextResponse.json({
         created_imports: 0, new_lines: 0,
         changes_detected: result.changes.length,
+        changes_applied: changesApplied,
         deleted_refs: result.deletedRefs.length, cleaned_drafts: cleanedDrafts,
         checked: { sales: result.stats.sales_orders, replenishments: result.stats.replenishments },
       });
@@ -96,7 +106,7 @@ export async function GET(req: Request) {
     for (const l of lines) if (l.order_ref) sourceTypeByRef[l.order_ref] = l.source_type;
 
     const { createdImports, error } = await persistImportsFromLines(supabase, consolidated, {
-      status: 'draft',
+      status: 'published', // AUTO mode: new Odoo orders are visible to the chefs immediately
       orderStates: result.stats.order_states,
       sourceTypeByRef,
       auto: true,
@@ -107,6 +117,7 @@ export async function GET(req: Request) {
       created_imports: createdImports,
       new_lines: lines.length,
       changes_detected: result.changes.length,
+      changes_applied: changesApplied,
       deleted_refs: result.deletedRefs.length, cleaned_drafts: cleanedDrafts,
     });
   } catch (e: any) {
