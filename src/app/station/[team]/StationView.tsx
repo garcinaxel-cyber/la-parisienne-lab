@@ -60,6 +60,7 @@ type Assignment = {
   transferred?: boolean;
   bc_message?: string | null;
   bc_ready_time?: string | null;
+  draft_odoo?: boolean;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -1006,6 +1007,13 @@ export default function StationView({
                               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
                                 style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
                                 {lang === 'vi' ? a.category_name_vi : (a.category_name_en || a.category_name_vi)}
+                              </span>
+                            )}
+                            {a.draft_odoo && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                                style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}
+                                title={lang === 'vi' ? 'Đơn Odoo còn ở trạng thái nháp' : 'Commande encore en brouillon sur Odoo'}>
+                                <AlertCircle size={10} />{lang === 'vi' ? 'Nháp Odoo' : 'Brouillon Odoo'}
                               </span>
                             )}
                             {a.cancelled ? (
@@ -1985,7 +1993,7 @@ function ProductionCard({
           )}
 
           {/* Birthday cake: ready-by deadline (red) + message on the cake */}
-          {(a.bc_ready_time || a.bc_message) && (
+          {(a.bc_ready_time || a.bc_message || a.category_name_vi === 'Birthday cake') && (
             <div className="mt-1.5 flex flex-col gap-1 items-start">
               {a.bc_ready_time && (
                 <span className="text-[11px] font-bold rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
@@ -1993,10 +2001,16 @@ function ProductionCard({
                   <Clock size={12} /> {lang === 'vi' ? 'Cần xong' : 'Ready by'} {a.bc_ready_time.slice(0, 5)}
                 </span>
               )}
-              {a.bc_message && (
+              {a.bc_message ? (
                 <span className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
                   style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
                   🎂 <span style={{ fontWeight: 500 }}>{a.bc_message}</span>
+                </span>
+              ) : a.category_name_vi === 'Birthday cake' && (
+                <span className="text-xs font-bold rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}
+                  title={lang === 'vi' ? 'Chưa có lời chúc — hỏi trợ lý' : 'Message pas encore renseigné — voir avec l’assistante'}>
+                  <AlertCircle size={12} /> {lang === 'vi' ? 'Thiếu lời chúc' : 'Message manquant'}
                 </span>
               )}
             </div>

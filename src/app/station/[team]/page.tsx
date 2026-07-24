@@ -85,6 +85,17 @@ export default async function StationPage({ params }: { params: { team: string }
     for (const v of variantRows ?? []) variantById[v.id] = { sku: v.sku ?? null, weight_g: v.weight_g ?? null, image_url: v.image_url ?? null };
 
     const importIds = Array.from(new Set((assignments ?? []).map((a: any) => a.import_id).filter(Boolean))) as string[];
+
+    // Odoo state per order ref (draft/sent/sale) — to warn chefs that an order is still a
+    // draft/quotation in Odoo (it may still change or be cancelled).
+    const { data: impCR } = importIds.length > 0
+      ? await supabase.from('lab_imports').select('id, control_report').in('id', importIds)
+      : { data: [] as any[] };
+    const orderStates: Record<string, string> = {};
+    for (const imp of impCR ?? []) { const s = (imp as any).control_report?.order_states; if (s) Object.assign(orderStates, s); }
+    const isDraftOdoo = (refs: (string | undefined)[]) =>
+      refs.some(r => { const st = r ? orderStates[r] : undefined; return !!st && st !== 'sale' && st !== 'approved'; });
+
     const { data: orderLineDeliveries } = importIds.length > 0
       ? await supabase.from('lab_order_lines').select('order_ref, delivery_time').in('import_id', importIds)
           .not('delivery_time', 'is', null).not('order_ref', 'is', null)
@@ -141,6 +152,7 @@ export default async function StationPage({ params }: { params: { team: string }
         category_name_en: fiche?.category ?? null,
         bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
         bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
+        draft_odoo: isDraftOdoo(((breakdownMap[a.id] ?? []) as any[]).map((b: any) => b.order_ref)),
         breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
           ...b,
           delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,
