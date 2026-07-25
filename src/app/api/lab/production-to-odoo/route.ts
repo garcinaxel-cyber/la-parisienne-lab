@@ -69,11 +69,16 @@ export async function GET(req: Request) {
   }
   const bomFor = (p: any) => bomByProd[p.id] ?? bomByTmpl[tmplByProd[p.id]] ?? null;
 
-  // 3) Anti-duplicate: products already turned into a NON-cancelled MO for this day (origin tag).
-  // Cancelled MOs are ignored so a product can be recreated after cancelling its draft in Odoo.
+  // 3) Existing MOs for this day (origin tag), excluding cancelled ones (so a product can be
+  // recreated after cancelling its draft). Keyed by product → { id, qty, state, name }. A DRAFT MO
+  // whose qty is now out of date is UPDATED (export mid-day, then more is produced → resync).
   const existing = await tmo(odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '!=', 'cancel']]], { fields: ['product_id', 'name'] }), 20000, 'existing');
-  const alreadyProdIds = new Set(existing.map((m: any) => (Array.isArray(m.product_id) ? m.product_id[0] : m.product_id)));
+    [[['origin', '=', origin], ['state', '!=', 'cancel']]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name'] }), 20000, 'existing');
+  const existingByProd: Record<number, { id: number; qty: number; state: string; name: string }> = {};
+  for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {
+    const pid = Array.isArray(m.product_id) ? m.product_id[0] : m.product_id;
+    if (pid) existingByProd[pid] = { id: m.id, qty: m.product_qty, state: m.state, name: m.name };
+  }
 
   // 3b) The MO date must reflect the PRODUCTION day (not the export/creation day). Discover the
   // start-date field (Odoo 17+ = date_start; older = date_planned_start) so we only set one that
@@ -86,14 +91,21 @@ export async function GET(req: Request) {
   } catch { moDateField = null; }
   const moDate = `${date} 02:00:00`;
 
-  // 4) Build the plan
+  // 4) Build the plan: create new, update out-of-date DRAFT MOs, skip up-to-date / confirmed.
   const toCreate: any[] = [];
+  const toUpdate: any[] = [];
   const skipped: any[] = [];
   const noProduct: any[] = [];
   for (const r of rows) {
     const p = r.sku ? prodBySku[r.sku] : null;
     if (!p) { noProduct.push({ sku: r.sku, name: r.appName, qty: r.qty }); continue; }
-    if (alreadyProdIds.has(p.id)) { skipped.push({ sku: r.sku, product: p.name, qty: r.qty, reason: 'already created for this day' }); continue; }
+    const ex = existingByProd[p.id];
+    if (ex) {
+      if (ex.state !== 'draft') { skipped.push({ sku: r.sku, product: p.name, qty: r.qty, mo: ex.name, reason: 'already confirmed in Odoo — not modified' }); continue; }
+      if (ex.qty === r.qty) { skipped.push({ sku: r.sku, product: p.name, qty: r.qty, mo: ex.name, reason: 'up to date' }); continue; }
+      toUpdate.push({ id: ex.id, mo: ex.name, sku: r.sku, product: p.name, from: ex.qty, to: r.qty });
+      continue;
+    }
     toCreate.push({
       sku: r.sku, product: p.name, qty: r.qty,
       values: {
@@ -106,13 +118,14 @@ export async function GET(req: Request) {
     });
   }
 
-  const summary = { date, origin, produced_products: rows.length, to_create: toCreate.length, already_created: skipped.length, no_odoo_product: noProduct.length };
+  const summary = { date, origin, produced_products: rows.length, to_create: toCreate.length, to_update: toUpdate.length, unchanged: skipped.length, no_odoo_product: noProduct.length };
   if (!commit) {
-    return NextResponse.json({ dryRun: true, summary, toCreate: toCreate.map(({ values, ...r }) => r), skipped, noProduct });
+    return NextResponse.json({ dryRun: true, summary, toCreate: toCreate.map(({ values, ...r }) => r), toUpdate, skipped, noProduct });
   }
 
-  // 5) Create draft MOs one by one (so one failure doesn't block the rest)
+  // 5) Create new MOs + update out-of-date drafts, one by one (one failure doesn't block the rest)
   const created: any[] = [];
+  const updated: any[] = [];
   const errors: any[] = [];
   for (const item of toCreate) {
     try {
@@ -123,5 +136,13 @@ export async function GET(req: Request) {
       errors.push({ sku: item.sku, product: item.product, error: String(e?.message ?? e) });
     }
   }
-  return NextResponse.json({ committed: true, summary: { ...summary, created: created.length, errors: errors.length }, created, skipped, noProduct, errors });
+  for (const item of toUpdate) {
+    try {
+      await tmo(odooExecuteWrite<boolean>('mrp.production', 'write', [[item.id], { product_qty: item.to }]), 25000, 'update');
+      updated.push({ sku: item.sku, product: item.product, mo: item.mo, from: item.from, to: item.to });
+    } catch (e: any) {
+      errors.push({ sku: item.sku, product: item.product, error: `update ${item.mo}: ${String(e?.message ?? e)}` });
+    }
+  }
+  return NextResponse.json({ committed: true, summary: { ...summary, created: created.length, updated: updated.length, errors: errors.length }, created, updated, skipped, noProduct, errors });
 }

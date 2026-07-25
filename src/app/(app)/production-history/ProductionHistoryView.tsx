@@ -29,7 +29,7 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
     let cancel = false;
     fetch(`/api/lab/production-to-odoo?date=${today}`)
       .then(r => r.json())
-      .then(j => { if (!cancel) setPendingToday(j?.summary?.to_create ?? 0); })
+      .then(j => { if (!cancel) setPendingToday((j?.summary?.to_create ?? 0) + (j?.summary?.to_update ?? 0)); })
       .catch(() => {});
     return () => { cancel = true; };
   }, [today]);
@@ -62,7 +62,7 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
       setOdooResult(await r.json());
       if (odoo.date === today) {
         fetch(`/api/lab/production-to-odoo?date=${today}`).then(r => r.json())
-          .then(j => setPendingToday(j?.summary?.to_create ?? 0)).catch(() => {});
+          .then(j => setPendingToday((j?.summary?.to_create ?? 0) + (j?.summary?.to_update ?? 0))).catch(() => {});
       }
     } finally { setOdooBusy(false); }
   }
@@ -203,9 +203,20 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
                     <>
                       <div className="text-sm text-navy">
                         <span className="font-bold">{s.to_create}</span> {vi ? 'sẽ được tạo' : 'à créer'}
-                        {s.already_created > 0 && <> · <span className="font-semibold">{s.already_created}</span> {vi ? 'đã tạo' : 'déjà créés'}</>}
+                        {s.to_update > 0 && <> · <span className="font-semibold" style={{ color: '#1D4ED8' }}>{s.to_update}</span> {vi ? 'cập nhật' : 'à mettre à jour'}</>}
+                        {s.unchanged > 0 && <> · <span className="text-ink-light">{s.unchanged}</span> {vi ? 'không đổi' : 'inchangés'}</>}
                         {s.no_odoo_product > 0 && <> · <span className="text-amber-600 font-semibold">{s.no_odoo_product}</span> {vi ? 'không có SP Odoo' : 'sans produit Odoo'}</>}
                       </div>
+                      {(odooDry.toUpdate ?? []).length > 0 && (
+                        <div className="rounded-lg text-xs max-h-40 overflow-y-auto" style={{ border: '1px solid #BFDBFE' }}>
+                          {odooDry.toUpdate.map((r: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between px-3 py-1.5 bg-white" style={{ borderTop: i > 0 ? '1px solid #EFF6FF' : undefined }}>
+                              <span className="truncate text-navy">{r.product}</span>
+                              <span className="font-bold shrink-0 ml-2" style={{ color: '#1D4ED8' }}>{r.from} → {r.to}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {(odooDry.toCreate ?? []).length > 0 && (
                         <div className="rounded-lg text-xs max-h-52 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
                           {odooDry.toCreate.map((r: any, i: number) => (
@@ -224,9 +235,11 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
                       )}
                       <div className="flex justify-end gap-2 pt-1">
                         <button onClick={() => setOdoo(null)} className="btn-secondary text-sm">{vi ? 'Hủy' : 'Annuler'}</button>
-                        <button onClick={confirmOdoo} disabled={odooBusy || s.to_create === 0}
+                        <button onClick={confirmOdoo} disabled={odooBusy || (s.to_create === 0 && s.to_update === 0)}
                           className="btn-primary text-sm inline-flex items-center gap-1.5 disabled:opacity-50">
-                          <Package size={14} />{odooBusy ? '…' : (vi ? `Tạo ${s.to_create} lệnh` : `Créer ${s.to_create} OF`)}
+                          <Package size={14} />{odooBusy ? '…' : (vi
+                            ? `Tạo ${s.to_create}${s.to_update ? ` · cập nhật ${s.to_update}` : ''}`
+                            : `Créer ${s.to_create}${s.to_update ? ` · MàJ ${s.to_update}` : ''}`)}
                         </button>
                       </div>
                     </>
@@ -244,8 +257,9 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
                     <div className="text-sm text-red-600 flex items-start gap-2"><AlertCircle size={15} className="mt-0.5 shrink-0" />{odooResult.error}</div>
                   ) : (
                     <>
-                      <div className="text-sm flex items-center gap-2" style={{ color: '#16A34A' }}>
+                      <div className="text-sm flex items-center gap-2 flex-wrap" style={{ color: '#16A34A' }}>
                         <CheckCircle2 size={16} /><span className="font-bold">{s.created}</span> {vi ? 'lệnh đã tạo (nháp)' : 'OF créés (brouillon)'}
+                        {s.updated > 0 && <span style={{ color: '#1D4ED8' }}>· <span className="font-bold">{s.updated}</span> {vi ? 'đã cập nhật' : 'mis à jour'}</span>}
                         {s.errors > 0 && <span className="text-red-600 ml-1">· {s.errors} {vi ? 'lỗi' : 'erreurs'}</span>}
                       </div>
                       {(odooResult.created ?? []).length > 0 && (
