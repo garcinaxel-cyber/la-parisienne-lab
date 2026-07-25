@@ -1,5 +1,7 @@
 'use server';
 import { createClient } from '@/lib/supabase-server';
+import { labDateOf, odooWriteConfigured } from '@/lib/odoo';
+import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 
 export interface TransferLineInput {
   assignmentId: string;
@@ -54,6 +56,16 @@ export async function submitStockTransferAction(
 
   await supabase.from('lab_assignments')
     .update({ transferred: true }).in('id', clean.map(l => l.assignmentId));
+
+  // Real-time: reflect what was just sent to stock in Odoo (create/update the day's draft MOs).
+  // BEST-EFFORT — the chef's transfer must never fail because of Odoo, so any error is swallowed.
+  try {
+    if (odooWriteConfigured()) {
+      const skus = Array.from(new Set(clean.map(l => l.sku).filter(Boolean))) as string[];
+      const day = labDateOf(new Date().toISOString());
+      if (skus.length && day) await syncStockToOdoo(supabase, day, { commit: true, skus });
+    }
+  } catch { /* never block the chef on Odoo */ }
 
   return { ok: true, transferId: transfer.id };
 }
