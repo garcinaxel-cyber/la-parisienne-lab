@@ -69,9 +69,10 @@ export async function GET(req: Request) {
   }
   const bomFor = (p: any) => bomByProd[p.id] ?? bomByTmpl[tmplByProd[p.id]] ?? null;
 
-  // 3) Anti-duplicate: products already turned into an MO for this day (origin tag)
+  // 3) Anti-duplicate: products already turned into a NON-cancelled MO for this day (origin tag).
+  // Cancelled MOs are ignored so a product can be recreated after cancelling its draft in Odoo.
   const existing = await tmo(odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin]]], { fields: ['product_id', 'name'] }), 20000, 'existing');
+    [[['origin', '=', origin], ['state', '!=', 'cancel']]], { fields: ['product_id', 'name'] }), 20000, 'existing');
   const alreadyProdIds = new Set(existing.map((m: any) => (Array.isArray(m.product_id) ? m.product_id[0] : m.product_id)));
 
   // 4) Build the plan

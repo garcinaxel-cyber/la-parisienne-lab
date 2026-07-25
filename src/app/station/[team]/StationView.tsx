@@ -1009,13 +1009,6 @@ export default function StationView({
                                 {lang === 'vi' ? a.category_name_vi : (a.category_name_en || a.category_name_vi)}
                               </span>
                             )}
-                            {a.draft_odoo && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
-                                style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}
-                                title={lang === 'vi' ? 'Đơn Odoo còn ở trạng thái nháp' : 'Commande encore en brouillon sur Odoo'}>
-                                <AlertCircle size={10} />{lang === 'vi' ? 'Nháp Odoo' : 'Brouillon Odoo'}
-                              </span>
-                            )}
                             {a.cancelled ? (
                               <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
                                 style={{ backgroundColor: '#E5E7EB', color: '#6B7280' }}>
@@ -1963,6 +1956,13 @@ function ProductionCard({
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                 style={{ backgroundColor: '#FEF3C7', color: '#D97706' }}>
                 {lang === 'vi' ? '+ Ngoài đơn' : '+ Extra'}
+              </span>
+            )}
+            {a.draft_odoo && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}
+                title={lang === 'vi' ? 'Đơn Odoo còn ở trạng thái nháp — có thể thay đổi' : 'Commande encore en brouillon sur Odoo — peut changer'}>
+                <AlertCircle size={10} />{lang === 'vi' ? 'Nháp Odoo' : 'Brouillon Odoo'}
               </span>
             )}
           </div>
