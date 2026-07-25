@@ -75,6 +75,17 @@ export async function GET(req: Request) {
     [[['origin', '=', origin], ['state', '!=', 'cancel']]], { fields: ['product_id', 'name'] }), 20000, 'existing');
   const alreadyProdIds = new Set(existing.map((m: any) => (Array.isArray(m.product_id) ? m.product_id[0] : m.product_id)));
 
+  // 3b) The MO date must reflect the PRODUCTION day (not the export/creation day). Discover the
+  // start-date field (Odoo 17+ = date_start; older = date_planned_start) so we only set one that
+  // exists, then use the lab day at ~09:00 VN (02:00 UTC) — safely inside that calendar day.
+  let moDateField: string | null = null;
+  try {
+    const fg = await tmo(odooExecute<any>('mrp.production', 'fields_get',
+      [['date_start', 'date_planned_start']], { attributes: ['type'] }), 15000, 'fg');
+    moDateField = fg?.date_start ? 'date_start' : (fg?.date_planned_start ? 'date_planned_start' : null);
+  } catch { moDateField = null; }
+  const moDate = `${date} 02:00:00`;
+
   // 4) Build the plan
   const toCreate: any[] = [];
   const skipped: any[] = [];
@@ -90,6 +101,7 @@ export async function GET(req: Request) {
         product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id,
         origin,
         ...(bomFor(p) ? { bom_id: bomFor(p) } : {}),
+        ...(moDateField ? { [moDateField]: moDate } : {}),
       },
     });
   }
