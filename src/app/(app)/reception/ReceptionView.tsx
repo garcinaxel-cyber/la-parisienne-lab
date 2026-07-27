@@ -1,8 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight } from 'lucide-react';
+import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, CalendarDays } from 'lucide-react';
+
+type RecapRow = { team: string; name: string; sku: string | null; variant: string | null; sent: number; received: number; pending: number };
+type Recap = { date: string; totalSent: number; totalReceived: number; totalPending: number; notesCount: number; rows: RecapRow[] };
 
 type Line = {
   id: string; product_name_vi: string; product_name_en: string | null;
@@ -44,6 +47,34 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
+
+  // ── Recap consolidé, par jour d'ENVOI (date du bon de transfert) — produit x équipe ──
+  const today = new Date().toISOString().split('T')[0];
+  const [recapDate, setRecapDate] = useState(today);
+  const [recap, setRecap] = useState<Recap | null>(null);
+  const [recapLoading, setRecapLoading] = useState(false);
+  const [showRecap, setShowRecap] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    setRecapLoading(true);
+    fetch(`/api/lab/reception-recap?date=${recapDate}`)
+      .then(r => r.json())
+      .then(j => { if (!cancel) setRecap(j); })
+      .catch(() => { if (!cancel) setRecap(null); })
+      .finally(() => { if (!cancel) setRecapLoading(false); });
+    return () => { cancel = true; };
+  }, [recapDate]);
+
+  function shiftDay(delta: number) {
+    const d = new Date(recapDate + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    setRecapDate(d.toISOString().split('T')[0]);
+  }
+
+  const recapDateLabel = new Date(recapDate + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
 
   // Validate a single line
   async function receiveLine(bon: Bon, l: Line) {
@@ -92,6 +123,94 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
             style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
             <Clock size={13} /> {visible.length} {vi ? 'phiếu chờ' : (visible.length > 1 ? 'notes waiting' : 'note waiting')}
           </span>
+        )}
+      </div>
+
+      {/* ── Récap consolidé par jour d'envoi × produit × équipe ── */}
+      <div className="card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 flex-wrap gap-2" style={{ backgroundColor: '#F9FAFB' }}>
+          <button onClick={() => setShowRecap(v => !v)} className="flex items-center gap-2 text-sm font-bold text-navy">
+            <ChevronRight size={16} className={`transition-transform ${showRecap ? 'rotate-90' : ''}`} />
+            <CalendarDays size={16} />
+            {vi ? 'Tổng hợp theo ngày gửi' : "Récap par jour d'envoi"}
+          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => shiftDay(-1)} className="p-1.5 rounded-lg hover:bg-cream" style={{ border: '1px solid #E5E7EB' }}>
+              <ChevronLeft size={14} />
+            </button>
+            <span className="text-sm font-semibold text-navy capitalize min-w-[160px] text-center">
+              {recapDateLabel}{recapDate === today && <span className="text-ink-light font-normal"> · {vi ? 'hôm nay' : "aujourd'hui"}</span>}
+            </span>
+            <button onClick={() => shiftDay(1)} disabled={recapDate >= today} className="p-1.5 rounded-lg hover:bg-cream disabled:opacity-30" style={{ border: '1px solid #E5E7EB' }}>
+              <ChevronRight size={14} />
+            </button>
+            {recapDate !== today && (
+              <button onClick={() => setRecapDate(today)} className="p-1.5 rounded-lg hover:bg-cream" style={{ border: '1px solid #E5E7EB' }} title={vi ? 'Hôm nay' : "Aujourd'hui"}>
+                <ChevronsRight size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+        {showRecap && (
+          <div>
+            {recapLoading ? (
+              <div className="px-4 py-6 text-center text-sm text-ink-light">{vi ? 'Đang tải…' : 'Chargement…'}</div>
+            ) : !recap || recap.rows.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-ink-light">
+                {vi ? 'Không có phiếu chuyển ngày này' : "Aucun bon de transfert envoyé ce jour"}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/40">
+                  <div className="col-span-2">{vi ? 'Đội' : 'Équipe'}</div>
+                  <div className="col-span-5">{vi ? 'Sản phẩm' : 'Produit'}</div>
+                  <div className="col-span-2 text-center">{vi ? 'Gửi' : 'Envoyé'}</div>
+                  <div className="col-span-3 text-center">{vi ? 'Trạng thái' : 'Statut'}</div>
+                </div>
+                <div className="divide-y divide-border-soft">
+                  {recap.rows.map((r, i) => {
+                    const meta = TEAM_LABELS[r.team as Team];
+                    const missing = r.pending > 0;
+                    return (
+                      <div key={i} className="grid grid-cols-12 items-center gap-2 px-4 py-2 text-sm"
+                        style={{ backgroundColor: missing ? '#FEF2F2' : undefined }}>
+                        <div className="col-span-2 text-xs font-semibold" style={{ color: meta?.color ?? '#374151' }}>
+                          {meta ? (vi ? meta.vi : meta.en) : r.team}
+                        </div>
+                        <div className="col-span-5 truncate text-navy">
+                          {r.name}{r.variant && r.variant !== 'Standard' && <span className="text-ink-light text-xs"> · {r.variant}</span>}
+                        </div>
+                        <div className="col-span-2 text-center font-bold text-navy">×{r.sent}</div>
+                        <div className="col-span-3 text-center">
+                          {missing ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: '#DC2626' }}>
+                              <AlertTriangle size={12} /> {vi ? `Thiếu xác nhận · ${r.pending}` : `À confirmer · ${r.pending}`}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: '#16A34A' }}>
+                              <CheckCircle2 size={12} /> {vi ? 'Đã nhận' : 'Reçu'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="px-4 py-2.5 text-xs text-ink-light flex items-center gap-3 flex-wrap" style={{ backgroundColor: '#F9FAFB' }}>
+                  <span>{recap.notesCount} {vi ? 'phiếu' : (recap.notesCount > 1 ? 'bons' : 'bon')}</span>
+                  <span>·</span>
+                  <span>{vi ? 'Gửi' : 'Envoyé'} {recap.totalSent}</span>
+                  <span>·</span>
+                  <span>{vi ? 'Đã nhận' : 'Reçu'} {recap.totalReceived}</span>
+                  {recap.totalPending > 0 && (
+                    <span className="font-bold" style={{ color: '#DC2626' }}>
+                      · {vi ? 'Còn thiếu' : 'Manquant'} {recap.totalPending}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -213,6 +332,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
             <div className="mt-3 space-y-3">
               {history.map(h => {
                 const meta = TEAM_LABELS[h.team as Team];
+                const sentAt = h.created_at ? new Date(h.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
                 const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
                 const diffs = h.lines.filter(l => l.qty_received != null && l.qty_received !== l.qty_sent).length;
                 return (
@@ -220,7 +340,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
                     <div className="flex items-center justify-between px-4 py-2.5" style={{ backgroundColor: '#F0FDF4' }}>
                       <div className="text-sm font-semibold text-navy">
                         {vi ? 'Phiếu' : 'Note'} #{h.id.slice(0, 6).toUpperCase()}
-                        <span className="text-ink-light font-normal"> · {h.created_by_name ?? '—'} · {meta ? (vi ? meta.vi : meta.en) : h.team}</span>
+                        <span className="text-ink-light font-normal"> · {vi ? 'Gửi bởi' : 'Envoyé par'} {h.created_by_name ?? '—'} {vi ? 'lúc' : 'à'} {sentAt} · {meta ? (vi ? meta.vi : meta.en) : h.team}</span>
                       </div>
                       <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 inline-flex items-center gap-1" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
                         <CheckCircle2 size={12} /> {vi ? 'đã nhận' : 'received'}
