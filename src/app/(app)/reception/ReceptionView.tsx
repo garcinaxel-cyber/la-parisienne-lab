@@ -226,7 +226,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
       ) : (
         visible.map(bon => {
           const meta = TEAM_LABELS[bon.team as Team];
-          const time = new Date(bon.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const time = new Date(bon.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
           const remaining = bon.lines.filter(l => !received.has(l.id));
           const discrepancies = bon.lines.filter(l => Number(state[l.id]?.qty) !== l.qty_sent).length;
           const blockedAll = remaining.some(l => Number(state[l.id]?.qty) !== l.qty_sent && !state[l.id]?.reason);
@@ -335,8 +335,8 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
             <div className="mt-3 space-y-3">
               {history.map(h => {
                 const meta = TEAM_LABELS[h.team as Team];
-                const sentAt = h.created_at ? new Date(h.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
-                const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+                const sentAt = h.created_at ? new Date(h.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
+                const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
                 const diffs = h.lines.filter(l => l.qty_received != null && l.qty_received !== l.qty_sent).length;
                 return (
                   <div key={h.id} className="card overflow-hidden" style={{ opacity: 0.95 }}>
