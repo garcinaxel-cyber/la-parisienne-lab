@@ -730,6 +730,48 @@ export default function StationView({
         </div>
       </header>
 
+      {/* Reminder: anything produced (today OR ahead-of-tomorrow) that still needs to go to
+          stock. Combines BOTH lists regardless of which Today/Tomorrow sub-tab is active — an
+          ahead-produced item sitting in "Tomorrow" was made today and needs sending today too,
+          not just whenever the chef happens to check that tab. */}
+      {!isEmployee && !isHistoryView && (() => {
+        const remaining = (a: Assignment) => {
+          const prod = a.qty_produced || a.total_qty || 0;
+          return Math.max(0, prod - (a.qty_sent_total || 0));
+        };
+        const unsentToday = todayAssignments.filter(a => !a.cancelled && a.status === 'done' && remaining(a) > 0);
+        const unsentTomorrow = tomorrowAsg.filter(a => !a.cancelled && a.status === 'done' && remaining(a) > 0);
+        const qtyToday = unsentToday.reduce((s, a) => s + remaining(a), 0);
+        const qtyTomorrow = unsentTomorrow.reduce((s, a) => s + remaining(a), 0);
+        const totalQty = qtyToday + qtyTomorrow;
+        const totalCards = unsentToday.length + unsentTomorrow.length;
+        if (totalQty <= 0) return null;
+        return (
+          <div className="max-w-3xl mx-auto px-4 pt-3">
+            <button
+              onClick={() => { setActiveTab('termine'); setProdDay(qtyToday > 0 ? 'today' : 'tomorrow'); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors"
+              style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D' }}>
+              <Package size={18} className="shrink-0" style={{ color: '#B45309' }} />
+              <span className="text-sm flex-1 min-w-0" style={{ color: '#92600A' }}>
+                <span className="font-bold">{totalQty}</span>{' '}
+                {lang === 'vi'
+                  ? `sản phẩm (${totalCards} thẻ) đã làm xong, cần chuyển vào kho`
+                  : `produit${totalQty > 1 ? 's' : ''} (${totalCards} carte${totalCards > 1 ? 's' : ''}) prêt${totalQty > 1 ? 's' : ''} à envoyer au stock`}
+                {qtyTomorrow > 0 && (
+                  <span className="block text-xs mt-0.5 opacity-90">
+                    {lang === 'vi'
+                      ? `Trong đó ${qtyTomorrow} làm trước cho ngày mai — vẫn cần chuyển kho hôm nay`
+                      : `Dont ${qtyTomorrow} fait en avance pour demain — à envoyer au stock dès aujourd'hui`}
+                  </span>
+                )}
+              </span>
+              <ChevronRight size={16} className="shrink-0" style={{ color: '#B45309' }} />
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Shared Today / Tomorrow day selector — applies to Production, Orders AND Done tabs
           so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
       {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine') && (
@@ -2188,6 +2230,22 @@ function ProductionCard({
 
 // ─── TERMINÉ CARD ────────────────────────────────────────────────────────────
 
+// Lab-local calendar day ('YYYY-MM-DD') of a UTC timestamp — used to tell whether an "ahead"
+// (produced_ahead) card was actually made today or yesterday, since the time alone (HH:MM) looks
+// identical either way and that ambiguity was the whole source of confusion around this badge.
+function labDayKey(iso: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+function producedDayLabel(iso: string, lang: 'vi' | 'en'): string {
+  const day = labDayKey(iso);
+  const today = labDayKey(new Date().toISOString());
+  if (day === today) return lang === 'vi' ? 'hôm nay' : "aujourd'hui";
+  const yesterday = labDayKey(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+  if (day === yesterday) return lang === 'vi' ? 'hôm qua' : 'hier';
+  const [, m, d] = day.split('-');
+  return `${d}/${m}`;
+}
+
 function TermineCard({
   a, lang, meta, onAdvance, updating, readOnly, onEdit, onDelete,
 }: {
@@ -2263,9 +2321,13 @@ function TermineCard({
               <span className="font-semibold" style={{ color: '#1A4731' }}>{a.produced_by_name}</span>
               {a.produced_at && (
                 <>
+                  {/* Date shown for "ahead" cards only — that's the case where the same HH:MM
+                      could mean yesterday (Today tab) or today (Tomorrow tab); regular cards are
+                      always "today" so the date would just be noise. */}
+                  {ahead && <> {producedDayLabel(a.produced_at, lang)}</>}
                   {' '}{lang === 'vi' ? 'lúc' : 'à'}{' '}
                   <span className="font-semibold" style={{ color: '#1A4731' }}>
-                    {new Date(a.produced_at).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(a.produced_at).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}
                   </span>
                 </>
               )}
