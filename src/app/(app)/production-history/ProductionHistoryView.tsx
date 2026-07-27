@@ -6,10 +6,13 @@ import { Download, FileSpreadsheet, ChevronDown, ChevronRight, Package, X, Check
 
 interface Day { date: string; pieces: number; cards: number; extras: number }
 type Item = { product: string; variant: string | null; team: string | null; sku: string | null; qty: number; is_extra: boolean; produced_ahead: boolean; delivery_date: string | null };
+type BacklogDay = { date: string; pieces: number; cards: number; teams: string[] };
+type Backlog = { totalQty: number; totalCards: number; days: BacklogDay[] };
 
-export default function ProductionHistoryView({ days, today }: { days: Day[]; today: string }) {
+export default function ProductionHistoryView({ days, today, backlog }: { days: Day[]; today: string; backlog?: Backlog }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
+  const [showBacklog, setShowBacklog] = useState(false);
   const fmt = (d: string) =>
     new Date(d + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -80,6 +83,36 @@ export default function ProductionHistoryView({ days, today }: { days: Day[]; to
             : 'Production par jour de fabrication (extra & fait en avance inclus). Clique une journée pour le détail. Exporte l’Excel ou crée les ordres de fabrication (brouillon) dans Odoo.'}
         </p>
       </div>
+
+      {/* Backlog — production marked "done" (delivery day already due, not made-ahead) that was
+          NEVER sent to stock at all. Unlike the Odoo reminder below (which only checks today),
+          this can surface stale, days-old un-sent production from any day. */}
+      {backlog && backlog.totalCards > 0 && (
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }}>
+          <button onClick={() => setShowBacklog(v => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
+            <AlertCircle size={18} className="shrink-0" style={{ color: '#DC2626' }} />
+            <span className="text-sm flex-1 min-w-0" style={{ color: '#991B1B' }}>
+              <span className="font-bold">{backlog.totalQty}</span> {vi ? 'sản phẩm' : 'pièces'} ({backlog.totalCards} {vi ? 'thẻ' : 'cartes'}) {vi
+                ? 'chưa từng được chuyển vào kho'
+                : "produites mais jamais envoyées au stock"}
+            </span>
+            <ChevronDown size={16} className={`shrink-0 transition-transform ${showBacklog ? '' : '-rotate-90'}`} style={{ color: '#DC2626' }} />
+          </button>
+          {showBacklog && (
+            <div className="px-4 pb-3 space-y-1.5">
+              {backlog.days.map(d => (
+                <div key={d.date} className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-white" style={{ border: '1px solid #FECACA' }}>
+                  <span className="font-semibold text-navy capitalize">{fmt(d.date)}</span>
+                  <span style={{ color: '#991B1B' }}>
+                    <span className="font-bold">{d.pieces}</span> {vi ? 'sản phẩm' : 'pièces'} · {d.cards} {vi ? 'thẻ' : 'cartes'}
+                    {d.teams.length > 0 && <span className="text-ink-light"> · {d.teams.join(', ')}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Reminder — only shows when today has production not yet sent to Odoo */}
       {pendingToday !== null && pendingToday > 0 && (
