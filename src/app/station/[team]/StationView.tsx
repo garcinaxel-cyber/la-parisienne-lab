@@ -58,6 +58,7 @@ type Assignment = {
   produced_ahead?: boolean;
   cancelled?: boolean;
   transferred?: boolean;
+  qty_sent_total?: number;
   bc_message?: string | null;
   bc_ready_time?: string | null;
   draft_odoo?: boolean;
@@ -147,6 +148,7 @@ export default function StationView({
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
   const [showInStock, setShowInStock] = useState(false);
   const [showRecap, setShowRecap] = useState(true);
+  const [showDoneRecap, setShowDoneRecap] = useState(true);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -485,30 +487,36 @@ export default function StationView({
   // produced. On submit the chosen total is split back across the underlying cards.
   type StockGroup = {
     key: string; name_vi: string; name_en: string; sku: string | null; variant_label: string;
-    image_url: string | null; produced: number;
-    parts: { id: string; produced: number; deliveryDate: string | null }[];
+    image_url: string | null; produced: number; remaining: number;
+    parts: { id: string; remaining: number; deliveryDate: string | null }[];
   };
+  // "remaining" = what's left to send for a card, i.e. qty_produced minus whatever was already
+  // sent in previous (possibly partial) transfers — NOT just qty_produced. A card only counts as
+  // fully transferred once nothing remains; a partial send must leave the rest sendable later.
   function groupSendable(list: typeof assignments): StockGroup[] {
     const m = new Map<string, StockGroup>();
     for (const a of list) {
       const key = `${a.sku ?? ''}||${a.variant_label ?? 'Standard'}||${a.product_name_vi}`;
       const prod = a.qty_produced || a.total_qty || 0;
+      const rem = Math.max(0, prod - (a.qty_sent_total || 0));
+      if (rem <= 0) continue;
       const g = m.get(key) ?? {
         key, name_vi: a.product_name_vi, name_en: a.product_name_en ?? '', sku: a.sku ?? null,
-        variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null, produced: 0, parts: [],
+        variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null, produced: 0, remaining: 0, parts: [],
       };
       g.produced += prod;
-      g.parts.push({ id: a.id, produced: prod, deliveryDate: a.lab_imports?.delivery_date ?? null });
+      g.remaining += rem;
+      g.parts.push({ id: a.id, remaining: rem, deliveryDate: a.lab_imports?.delivery_date ?? null });
       m.set(key, g);
     }
     return Array.from(m.values());
   }
 
-  // Open the "send to stock" bon: preselect every finished, not-yet-transferred product (grouped)
+  // Open the "send to stock" bon: preselect every finished product with something left to send
   function openStockModal() {
     const sel: Record<string, { on: boolean; qty: string }> = {};
     const sendable = assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred);
-    for (const g of groupSendable(sendable)) sel[g.key] = { on: true, qty: String(g.produced) };
+    for (const g of groupSendable(sendable)) sel[g.key] = { on: true, qty: String(g.remaining) };
     setStockSel(sel);
     setStockModal(true);
   }
@@ -516,17 +524,17 @@ export default function StationView({
   async function submitStockTransfer() {
     const sendable = assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred);
     const groups = groupSendable(sendable);
-    // Split each group's chosen total across its cards (fill each card up to what it produced)
+    // Split each group's chosen total across its cards (fill each card up to what it has LEFT to send)
     const entries: any[] = [];
     const touchedIds = new Set<string>();
     for (const g of groups) {
       const s = stockSel[g.key];
       if (!s?.on) continue;
-      let remaining = Math.min(Number(s.qty) || 0, g.produced);
+      let remaining = Math.min(Number(s.qty) || 0, g.remaining);
       if (remaining <= 0) continue;
       for (const p of g.parts) {
         if (remaining <= 0) break;
-        const take = Math.min(p.produced, remaining);
+        const take = Math.min(p.remaining, remaining);
         if (take <= 0) continue;
         entries.push({
           assignmentId: p.id, productNameVi: g.name_vi, productNameEn: g.name_en,
@@ -542,7 +550,17 @@ export default function StationView({
     const { submitStockTransferAction } = await import('./stock-actions');
     const res = await submitStockTransferAction(team, entries);
     if (res.ok) {
-      setAssignments(prev => prev.map(x => touchedIds.has(x.id) ? { ...x, transferred: true } : x));
+      // Mirror the server logic locally: a card is fully "transferred" only once its cumulative
+      // sent total reaches what it produced. A partial send bumps qty_sent_total but leaves the
+      // card sendable (remaining > 0) so the leftover is never stranded.
+      const sentThisSubmit = new Map(entries.map(e => [e.assignmentId as string, e.qtySent as number]));
+      setAssignments(prev => prev.map(x => {
+        const justSent = sentThisSubmit.get(x.id);
+        if (justSent == null) return x;
+        const newTotal = (x.qty_sent_total || 0) + justSent;
+        const prod = x.qty_produced || x.total_qty || 0;
+        return { ...x, qty_sent_total: newTotal, transferred: newTotal >= prod };
+      }));
       setStockModal(false);
     }
     setSendingStock(false);
@@ -1078,6 +1096,55 @@ export default function StationView({
               </p>
             </div>
           ) : (() => {
+            // Consolidated recap: total ACTUALLY produced per SKU (qty_produced), across
+            // every done card of the day (order + extra together) — same shape as the
+            // Production tab's recap, so the two tables are directly comparable at a glance.
+            const doneProduced = termine.filter(a => a.status !== 'skip');
+            const OTHER = lang === 'vi' ? 'Khác' : 'Other';
+            const dm = new Map<string, { name: string; sku: string | null; cat: string; qty: number }>();
+            for (const a of doneProduced) {
+              const key = a.sku || a.product_name_vi;
+              const cat = (lang === 'vi' ? a.category_name_vi : a.category_name_en) || a.category_name_vi || OTHER;
+              const name = lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi);
+              const e = dm.get(key) ?? { name, sku: a.sku ?? null, cat, qty: 0 };
+              e.qty += a.qty_produced ?? 0;
+              dm.set(key, e);
+            }
+            const doneItems = Array.from(dm.values());
+            const doneTotalUnits = doneItems.reduce((s, r) => s + r.qty, 0);
+            const doneCats = Array.from(new Set(doneItems.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
+            return (
+              <>
+                {doneItems.length > 0 && (
+                  <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
+                    <button onClick={() => setShowDoneRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#2D6A4F' }}>
+                      <span className="text-sm font-bold">✅ {lang === 'vi' ? 'Tổng đã làm' : 'Total produit'}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs font-bold" style={{ color: '#F0D98A' }}>{doneItems.length} · {doneTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <ChevronRight size={16} className={`transition-transform ${showDoneRecap ? 'rotate-90' : ''}`} />
+                      </span>
+                    </button>
+                    {showDoneRecap && (
+                      <div className="grid grid-cols-2 bg-white">
+                        {doneCats.flatMap(cat => [
+                          <div key={`dc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>{cat}</div>,
+                          ...doneItems.filter(r => r.cat === cat).map((r, i) => (
+                            <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
+                              style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
+                              <span className="flex-1 truncate" style={{ color: '#1A4731' }}>{r.name}{r.sku && <span className="ml-1 text-[9px] font-mono text-ink-light">{r.sku}</span>}</span>
+                              <span className="font-black shrink-0" style={{ color: '#2D6A4F' }}>×{r.qty}</span>
+                            </div>
+                          )),
+                        ])}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+          {termine.length > 0 && (() => {
             const fromOrder = termine.filter(a => !a.is_extra);
             const extra = termine.filter(a => a.is_extra);
             const Section = ({ title, count, items, color, bg }: { title: string; count: number; items: Assignment[]; color: string; bg: string }) => (
@@ -1414,6 +1481,9 @@ export default function StationView({
                         </div>
                         <div className="text-[11px] text-ink-light">
                           {lang === 'vi' ? 'Đã làm' : 'Produced'}: {g.produced}
+                          {g.remaining !== g.produced && (
+                            <span className="font-semibold" style={{ color: '#1D4ED8' }}> · {lang === 'vi' ? 'còn lại' : 'left to send'}: {g.remaining}</span>
+                          )}
                           {g.parts.length > 1 && <span> · {g.parts.length} {lang === 'vi' ? 'đơn' : 'orders'}</span>}
                         </div>
                       </div>
@@ -2191,6 +2261,14 @@ function TermineCard({
             <div className="text-[10px] text-ink-light mt-1">
               {lang === 'vi' ? 'Bởi' : 'Fait par'}{' '}
               <span className="font-semibold" style={{ color: '#1A4731' }}>{a.produced_by_name}</span>
+              {a.produced_at && (
+                <>
+                  {' '}{lang === 'vi' ? 'lúc' : 'à'}{' '}
+                  <span className="font-semibold" style={{ color: '#1A4731' }}>
+                    {new Date(a.produced_at).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>

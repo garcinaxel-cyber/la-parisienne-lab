@@ -54,8 +54,21 @@ export async function submitStockTransferAction(
     return { error: lErr.message };
   }
 
-  await supabase.from('lab_assignments')
-    .update({ transferred: true }).in('id', clean.map(l => l.assignmentId));
+  // Only flag a card "transferred" once EVERYTHING it produced has actually been sent —
+  // a partial send (chef sends less than what's on the card) must leave the remainder
+  // sendable later, otherwise it is stranded forever (never reaches stock/Odoo). qty_sent_total
+  // tracks the cumulative amount sent across possibly several transfers for the same card.
+  const assignmentIds = Array.from(new Set(clean.map(l => l.assignmentId)));
+  const sentThisTransfer: Record<string, number> = {};
+  for (const l of clean) sentThisTransfer[l.assignmentId] = (sentThisTransfer[l.assignmentId] ?? 0) + Math.round(l.qtySent);
+  const { data: cards } = await supabase
+    .from('lab_assignments').select('id, qty_produced, total_qty, qty_sent_total').in('id', assignmentIds);
+  for (const c of cards ?? []) {
+    const newTotal = (c.qty_sent_total ?? 0) + (sentThisTransfer[c.id] ?? 0);
+    const target = c.qty_produced || c.total_qty || 0;
+    await supabase.from('lab_assignments')
+      .update({ qty_sent_total: newTotal, transferred: newTotal >= target }).eq('id', c.id);
+  }
 
   // Real-time: reflect what was just sent to stock in Odoo (create/update the day's draft MOs).
   // BEST-EFFORT — the chef's transfer must never fail because of Odoo, so any error is swallowed.
