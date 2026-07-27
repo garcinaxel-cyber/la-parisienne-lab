@@ -66,4 +66,6 @@ declare module 'lucide-react' {
   export const User: LucideIcon;
   export const StickyNote: LucideIcon;
   export const Link2: LucideIcon;
+  export const ChevronsRight: LucideIcon;
+  export const CalendarDays: LucideIcon;
 }
