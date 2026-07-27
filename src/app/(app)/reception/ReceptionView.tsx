@@ -72,8 +72,11 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
     setRecapDate(d.toISOString().split('T')[0]);
   }
 
-  const recapDateLabel = new Date(recapDate + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
-    weekday: 'long', day: 'numeric', month: 'long',
+  // Explicit UTC parse + explicit timeZone: keeps this deterministic between server render (SSR,
+  // likely UTC) and the browser (lab-local) — a bare toLocaleDateString() without timeZone can
+  // format differently on each side and break hydration.
+  const recapDateLabel = new Date(recapDate + 'T12:00:00Z').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Ho_Chi_Minh',
   });
 
   // Validate a single line
