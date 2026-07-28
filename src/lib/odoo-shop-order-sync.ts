@@ -132,9 +132,13 @@ export async function createOdooOrderForBatch(
       if (!map.warehouseCode) return { ok: false, error: `No Odoo warehouse mapped for "${batch.shopName}"` };
       const wh = await resolveWarehouseId(map.warehouseCode);
       if (!wh) return { ok: false, error: `Odoo warehouse "${map.warehouseCode}" not found` };
+      // Every replenishment ships FROM the lab's own warehouse — required field discovered
+      // the hard way (07-28 test: "mandatory field... Source Warehouse" without it).
+      const sourceWh = await resolveWarehouseId('LAB');
+      if (!sourceWh) return { ok: false, error: `Odoo source warehouse "LAB" not found` };
 
       const reqId = await tmo(odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
-        warehouse_id: wh.id,
+        warehouse_id: wh.id, source_warehouse_id: sourceWh.id,
         delivery_date: labLocalToOdooUtc(batch.deliveryDate, batch.readyTime),
       }]), 25000, 'create replenishment');
 

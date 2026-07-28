@@ -45,11 +45,13 @@ export async function GET(req: Request) {
     const [order] = await odooExecuteWrite<any[]>('sale.order', 'read', [[orderId]], { fields: ['name', 'state'] });
     out.quotation = { id: orderId, name: order?.name, state: order?.state };
 
-    // ── Replenishment: warehouse LP ──
+    // ── Replenishment: warehouse LP, sourced from warehouse LAB ──
     const whs = await odooExecute<any[]>('stock.warehouse', 'search_read', [[['code', '=', 'LP']]], { fields: ['id', 'name'], limit: 1 });
     if (!whs[0]) return NextResponse.json({ error: 'warehouse LP not found', out }, { status: 404 });
+    const sourceWhs = await odooExecute<any[]>('stock.warehouse', 'search_read', [[['code', '=', 'LAB']]], { fields: ['id', 'name'], limit: 1 });
+    if (!sourceWhs[0]) return NextResponse.json({ error: 'source warehouse LAB not found', out }, { status: 404 });
     const reqId = await odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
-      warehouse_id: whs[0].id, delivery_date: '2026-08-01 02:00:00',
+      warehouse_id: whs[0].id, source_warehouse_id: sourceWhs[0].id, delivery_date: '2026-08-01 02:00:00',
     }]);
     await odooExecuteWrite('stock.replenishment.request.line', 'create', [{
       request_id: reqId, product_id: p.id, quantity_requested: 1,
