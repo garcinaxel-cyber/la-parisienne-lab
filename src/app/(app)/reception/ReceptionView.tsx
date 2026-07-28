@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, ChevronLeft, ChevronsRight, CalendarDays } from 'lucide-react';
+import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, CalendarDays } from 'lucide-react';
 
 type RecapRow = { team: string; name: string; sku: string | null; variant: string | null; sent: number; received: number; pending: number };
 type Recap = { date: string; totalSent: number; totalReceived: number; totalPending: number; notesCount: number; rows: RecapRow[] };
@@ -48,9 +48,9 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
 
-  // ── Recap consolidé, par jour d'ENVOI (date du bon de transfert) — produit x équipe ──
+  // ── Recap consolidé du jour d'ENVOI (date du bon de transfert), toujours "aujourd'hui" —
+  // les autres jours se consultent dans l'historique plus bas (trié par jour), pas de navigation ici ──
   const today = new Date().toISOString().split('T')[0];
-  const [recapDate, setRecapDate] = useState(today);
   const [recap, setRecap] = useState<Recap | null>(null);
   const [recapLoading, setRecapLoading] = useState(false);
   const [showRecap, setShowRecap] = useState(true);
@@ -58,26 +58,32 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
   useEffect(() => {
     let cancel = false;
     setRecapLoading(true);
-    fetch(`/api/lab/reception-recap?date=${recapDate}`)
+    fetch(`/api/lab/reception-recap?date=${today}`)
       .then(r => r.json())
       .then(j => { if (!cancel) setRecap(j); })
       .catch(() => { if (!cancel) setRecap(null); })
       .finally(() => { if (!cancel) setRecapLoading(false); });
     return () => { cancel = true; };
-  }, [recapDate]);
-
-  function shiftDay(delta: number) {
-    const d = new Date(recapDate + 'T00:00:00');
-    d.setDate(d.getDate() + delta);
-    setRecapDate(d.toISOString().split('T')[0]);
-  }
+  }, [today]);
 
   // Explicit UTC parse + explicit timeZone: keeps this deterministic between server render (SSR,
   // likely UTC) and the browser (lab-local) — a bare toLocaleDateString() without timeZone can
   // format differently on each side and break hydration.
-  const recapDateLabel = new Date(recapDate + 'T12:00:00Z').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
+  const recapDateLabel = new Date(today + 'T12:00:00Z').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Ho_Chi_Minh',
   });
+
+  // Lab-local calendar day of a UTC timestamp (used to group history by day of send).
+  function labDay(iso: string): string {
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+    return fmt.format(new Date(iso));
+  }
+  function dayHeaderLabel(dateStr: string): string {
+    const label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    return dateStr === today ? `${label} · ${vi ? 'hôm nay' : "aujourd'hui"}` : label;
+  }
 
   // Validate a single line
   async function receiveLine(bon: Bon, l: Line) {
@@ -137,22 +143,9 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
             <CalendarDays size={16} />
             {vi ? 'Tổng hợp theo ngày gửi' : "Récap par jour d'envoi"}
           </button>
-          <div className="flex items-center gap-2">
-            <button onClick={() => shiftDay(-1)} className="p-1.5 rounded-lg hover:bg-cream" style={{ border: '1px solid #E5E7EB' }}>
-              <ChevronLeft size={14} />
-            </button>
-            <span className="text-sm font-semibold text-navy capitalize min-w-[160px] text-center">
-              {recapDateLabel}{recapDate === today && <span className="text-ink-light font-normal"> · {vi ? 'hôm nay' : "aujourd'hui"}</span>}
-            </span>
-            <button onClick={() => shiftDay(1)} disabled={recapDate >= today} className="p-1.5 rounded-lg hover:bg-cream disabled:opacity-30" style={{ border: '1px solid #E5E7EB' }}>
-              <ChevronRight size={14} />
-            </button>
-            {recapDate !== today && (
-              <button onClick={() => setRecapDate(today)} className="p-1.5 rounded-lg hover:bg-cream" style={{ border: '1px solid #E5E7EB' }} title={vi ? 'Hôm nay' : "Aujourd'hui"}>
-                <ChevronsRight size={14} />
-              </button>
-            )}
-          </div>
+          <span className="text-sm font-semibold text-navy capitalize">
+            {recapDateLabel} · {vi ? 'hôm nay' : "aujourd'hui"}
+          </span>
         </div>
         {showRecap && (
           <div>
@@ -331,48 +324,67 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
             <ChevronRight size={16} className={`transition-transform ${showHistory ? 'rotate-90' : ''}`} />
             {vi ? 'Lịch sử đã nhận' : 'Received history'} · {history.length}
           </button>
-          {showHistory && (
-            <div className="mt-3 space-y-3">
-              {history.map(h => {
-                const meta = TEAM_LABELS[h.team as Team];
-                const sentAt = h.created_at ? new Date(h.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
-                const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
-                const diffs = h.lines.filter(l => l.qty_received != null && l.qty_received !== l.qty_sent).length;
-                return (
-                  <div key={h.id} className="card overflow-hidden" style={{ opacity: 0.95 }}>
-                    <div className="flex items-center justify-between px-4 py-2.5" style={{ backgroundColor: '#F0FDF4' }}>
-                      <div className="text-sm font-semibold text-navy">
-                        {vi ? 'Phiếu' : 'Note'} #{h.id.slice(0, 6).toUpperCase()}
-                        <span className="text-ink-light font-normal"> · {vi ? 'Gửi bởi' : 'Envoyé par'} {h.created_by_name ?? '—'} {vi ? 'lúc' : 'à'} {sentAt} · {meta ? (vi ? meta.vi : meta.en) : h.team}</span>
-                      </div>
-                      <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 inline-flex items-center gap-1" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
-                        <CheckCircle2 size={12} /> {vi ? 'đã nhận' : 'received'}
-                      </span>
+          {showHistory && (() => {
+            // Group by lab-local day of SEND (created_at) — consistent with the recap above,
+            // and replaces the old day-by-day arrow navigation: every day is just listed here.
+            const byDay = new Map<string, HistBon[]>();
+            for (const h of history) {
+              const key = h.created_at ? labDay(h.created_at) : '—';
+              (byDay.get(key) ?? byDay.set(key, []).get(key)!).push(h);
+            }
+            const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
+            return (
+              <div className="mt-3 space-y-5">
+                {days.map(day => (
+                  <div key={day}>
+                    <div className="text-xs font-bold uppercase tracking-wide text-ink-light mb-2 capitalize">
+                      {day === '—' ? '—' : dayHeaderLabel(day)}
                     </div>
-                    <div className="divide-y divide-border-soft">
-                      {h.lines.map(l => {
-                        const diff = (l.qty_received ?? 0) - l.qty_sent;
+                    <div className="space-y-3">
+                      {byDay.get(day)!.map(h => {
+                        const meta = TEAM_LABELS[h.team as Team];
+                        const sentAt = h.created_at ? new Date(h.created_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
+                        const recAt = h.received_at ? new Date(h.received_at).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : '—';
+                        const diffs = h.lines.filter(l => l.qty_received != null && l.qty_received !== l.qty_sent).length;
                         return (
-                          <div key={l.id} className="px-4 py-2 grid grid-cols-12 items-center gap-2 text-sm">
-                            <span className="col-span-6 text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</span>
-                            <span className="col-span-2 text-center text-ink-light">×{l.qty_sent}</span>
-                            <span className="col-span-4 text-center font-semibold">
-                              →&nbsp;×{l.qty_received ?? '—'}
-                              {diff !== 0 && <span className="ml-1 text-xs font-bold" style={{ color: '#DC2626' }}>({diff > 0 ? '+' : ''}{diff} · {reasonLabel(l.discrepancy_reason)})</span>}
-                            </span>
+                          <div key={h.id} className="card overflow-hidden" style={{ opacity: 0.95 }}>
+                            <div className="flex items-center justify-between px-4 py-2.5" style={{ backgroundColor: '#F0FDF4' }}>
+                              <div className="text-sm font-semibold text-navy">
+                                {vi ? 'Phiếu' : 'Note'} #{h.id.slice(0, 6).toUpperCase()}
+                                <span className="text-ink-light font-normal"> · {vi ? 'Gửi bởi' : 'Envoyé par'} {h.created_by_name ?? '—'} {vi ? 'lúc' : 'à'} {sentAt} · {meta ? (vi ? meta.vi : meta.en) : h.team}</span>
+                              </div>
+                              <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 inline-flex items-center gap-1" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
+                                <CheckCircle2 size={12} /> {vi ? 'đã nhận' : 'received'}
+                              </span>
+                            </div>
+                            <div className="divide-y divide-border-soft">
+                              {h.lines.map(l => {
+                                const diff = (l.qty_received ?? 0) - l.qty_sent;
+                                return (
+                                  <div key={l.id} className="px-4 py-2 grid grid-cols-12 items-center gap-2 text-sm">
+                                    <span className="col-span-6 text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</span>
+                                    <span className="col-span-2 text-center text-ink-light">×{l.qty_sent}</span>
+                                    <span className="col-span-4 text-center font-semibold">
+                                      →&nbsp;×{l.qty_received ?? '—'}
+                                      {diff !== 0 && <span className="ml-1 text-xs font-bold" style={{ color: '#DC2626' }}>({diff > 0 ? '+' : ''}{diff} · {reasonLabel(l.discrepancy_reason)})</span>}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="px-4 py-2 text-xs text-ink-light" style={{ backgroundColor: '#F9FAFB' }}>
+                              {vi ? 'Nhận bởi' : 'Received by'} {h.received_by_name ?? '—'} · {recAt}
+                              {diffs > 0 && <span className="ml-2" style={{ color: '#DC2626' }}>· {diffs} {vi ? 'chênh lệch' : 'discrepancy'}</span>}
+                            </div>
                           </div>
                         );
                       })}
                     </div>
-                    <div className="px-4 py-2 text-xs text-ink-light" style={{ backgroundColor: '#F9FAFB' }}>
-                      {vi ? 'Nhận bởi' : 'Received by'} {h.received_by_name ?? '—'} · {recAt}
-                      {diffs > 0 && <span className="ml-2" style={{ color: '#DC2626' }}>· {diffs} {vi ? 'chênh lệch' : 'discrepancy'}</span>}
-                    </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
