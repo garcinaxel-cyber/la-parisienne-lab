@@ -10,6 +10,25 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   if (!odooWriteConfigured()) return NextResponse.json({ error: 'not configured' }, { status: 503 });
   const url = new URL(req.url);
+
+  // ?cleanup=repl:857 or ?cleanup=so:3046 — delete a specific test record by model:id,
+  // since the Odoo UI's "My Quotations" filter hides records created by the API user and
+  // there's no easy UI path to stock.replenishment.request records.
+  const cleanup = url.searchParams.get('cleanup');
+  if (cleanup) {
+    const [kind, idStr] = cleanup.split(':');
+    const id = Number(idStr);
+    if (!id) return NextResponse.json({ error: 'bad cleanup param' }, { status: 400 });
+    const model = kind === 'repl' ? 'stock.replenishment.request' : kind === 'so' ? 'sale.order' : null;
+    if (!model) return NextResponse.json({ error: 'unknown kind' }, { status: 400 });
+    try {
+      await odooExecuteWrite(model, 'unlink', [[id]]);
+      return NextResponse.json({ ok: true, deleted: `${model}#${id}` });
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+    }
+  }
+
   const sku = url.searchParams.get('sku');
   if (!sku) return NextResponse.json({ error: 'missing ?sku=' }, { status: 400 });
 
