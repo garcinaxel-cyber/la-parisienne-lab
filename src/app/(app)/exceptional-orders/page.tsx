@@ -134,14 +134,6 @@ export default async function ExceptionalOrdersPage() {
   // Universal shop order link (manager RLS)
   const { data: linkRow } = await supabase.from('lab_shop_link').select('token, active').limit(1).maybeSingle();
 
-  // Urgent orders whose auto Odoo document creation failed — surfaced as a warning banner
-  // so nothing silently falls through the cracks (see /api/odoo/urgent-order-sync).
-  const { data: syncErrors } = await supabase.from('lab_odoo_sync_queue')
-    .select('id, shop_name, error, created_at').eq('status', 'error').order('created_at', { ascending: false });
-  const odooSyncErrors = (syncErrors ?? []).map(e => ({
-    id: e.id, shopName: e.shop_name, error: e.error ?? '—', createdAt: e.created_at,
-  }));
-
   return <ExceptionalOrdersView orders={list} candidates={candidates} productChoices={productChoices} today={today}
-    shopLinkToken={linkRow?.active ? linkRow.token : null} odooSyncErrors={odooSyncErrors} />;
+    shopLinkToken={linkRow?.active ? linkRow.token : null} />;
 }

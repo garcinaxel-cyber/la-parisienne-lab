@@ -5,7 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import {
   Zap, Plus, X, Search, Store, Phone, User, StickyNote, Truck, MapPin, Clock,
-  FileText, CheckCircle2, Trash2, PenLine, Link2,
+  FileText, CheckCircle2, Trash2, PenLine, Link2, Send, Square, CheckSquare,
 } from 'lucide-react';
 
 type Order = {
@@ -27,11 +27,8 @@ type ProductChoice = {
 const DELIVERERS = ['Lab', 'Moon Flower', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
-type OdooSyncError = { id: string; shopName: string; error: string; createdAt: string };
-
-export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null, odooSyncErrors = [] }: {
+export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null }: {
   orders: Order[]; candidates: Candidate[]; productChoices: ProductChoice[]; today: string; shopLinkToken?: string | null;
-  odooSyncErrors?: OdooSyncError[];
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -40,6 +37,19 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
 
   const [filter, setFilter] = useState<'all' | 'todo' | 'matched'>('all');
   const [busy, setBusy] = useState<string | null>(null);
+
+  // ── Manual multi-select -> "Create Odoo order" (semi-automatic, no queue/cron) ──
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creatingOdoo, setCreatingOdoo] = useState(false);
+  const [odooResult, setOdooResult] = useState<{ ok?: boolean; orderRef?: string; error?: string } | null>(null);
+  function toggleSelect(id: string) {
+    setOdooResult(null);
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   const todoCount = orders.filter(o => o.needsOdoo).length;
   const matchedCount = orders.filter(o => !!o.matchedRef).length;
@@ -82,6 +92,24 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
     const { deleteManualCakeAction } = await import('../birthday-cakes/actions');
     await deleteManualCakeAction(o.id);
     setBusy(null); setDeleteFor(null); router.refresh();
+  }
+
+  const selectedOrders = orders.filter(o => selected.has(o.id));
+  const selectedShops = Array.from(new Set(selectedOrders.map(o => o.source)));
+  const selectionValid = selectedOrders.length > 0 && selectedShops.length === 1;
+
+  async function createOdooBatch() {
+    if (!selectionValid) return;
+    setCreatingOdoo(true);
+    setOdooResult(null);
+    const { createOdooOrderAction } = await import('./actions');
+    const res = await createOdooOrderAction(Array.from(selected));
+    setCreatingOdoo(false);
+    setOdooResult(res);
+    if (res.ok) {
+      setSelected(new Set());
+      router.refresh();
+    }
   }
 
   // ── Manual link modal ──
@@ -201,25 +229,6 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
         </div>
       </div>
 
-      {odooSyncErrors.length > 0 && (
-        <div className="rounded-xl px-3.5 py-3 flex items-start gap-2.5" style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5' }}>
-          <FileText size={16} style={{ color: '#DC2626' }} className="shrink-0 mt-0.5" />
-          <div className="text-xs" style={{ color: '#991B1B' }}>
-            <span className="font-bold">
-              {odooSyncErrors.length} {vi
-                ? `đơn gấp chưa tạo được trong Odoo`
-                : `urgent order(s) not created in Odoo`}
-            </span>
-            <span> — {vi ? 'nhập tay trong Odoo, hoặc dùng nút "Đơn mới" ở trên.' : 'enter manually in Odoo, or use "New order" above.'}</span>
-            <ul className="mt-1.5 space-y-0.5">
-              {odooSyncErrors.slice(0, 5).map(e => (
-                <li key={e.id}>· {e.shopName} — <span className="italic">{e.error}</span></li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
-
       <div className="flex gap-2 flex-wrap">
         {([
           ['all', vi ? 'Tất cả' : 'All', orders.length],
@@ -254,8 +263,13 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
             {byDate.get(date)!.map(o => {
               const pb = prodBadge(o);
               return (
-                <div key={o.id} className="card p-4">
+                <div key={o.id} className="card p-4" style={selected.has(o.id) ? { borderColor: '#2D6A4F', boxShadow: '0 0 0 1.5px #2D6A4F' } : undefined}>
                   <div className="flex items-start gap-3 flex-wrap">
+                    {o.fromShop && o.needsOdoo && (
+                      <button onClick={() => toggleSelect(o.id)} className="shrink-0 mt-1 text-gray-300" style={selected.has(o.id) ? { color: '#2D6A4F' } : undefined} aria-label="select">
+                        {selected.has(o.id) ? <CheckSquare size={20} /> : <Square size={20} />}
+                      </button>
+                    )}
                     {o.imageUrl
                       ? <img src={o.imageUrl} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
                       : <div className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
@@ -332,6 +346,35 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
             })}
           </div>
         ))
+      )}
+
+      {selected.size > 0 && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 40, display: 'flex', justifyContent: 'center', padding: 16, pointerEvents: 'none' }}>
+          <div className="bg-white rounded-2xl shadow-lg p-3 flex items-center gap-3 flex-wrap max-w-lg w-full"
+            style={{ border: '1px solid #E0D49A', pointerEvents: 'auto' }}>
+            <div className="flex-1 min-w-0 text-sm">
+              <div className="font-bold text-navy">
+                {selected.size} {vi ? 'đơn đã chọn' : 'order(s) selected'}
+                {selectedShops.length === 1 && <span className="font-normal text-ink-light"> · {selectedShops[0]}</span>}
+              </div>
+              {selectedShops.length > 1 && (
+                <div className="text-xs" style={{ color: '#DC2626' }}>
+                  {vi ? 'Chỉ chọn đơn của cùng 1 shop để tạo chung.' : 'Select orders from one shop only to group them.'}
+                </div>
+              )}
+              {odooResult?.error && <div className="text-xs mt-0.5" style={{ color: '#DC2626' }}>{odooResult.error}</div>}
+              {odooResult?.ok && <div className="text-xs mt-0.5" style={{ color: '#065F46' }}>{vi ? 'Đã tạo' : 'Created'} {odooResult.orderRef}</div>}
+            </div>
+            <button onClick={() => { setSelected(new Set()); setOdooResult(null); }} disabled={creatingOdoo}
+              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
+              {vi ? 'Hủy' : 'Cancel'}
+            </button>
+            <button onClick={createOdooBatch} disabled={!selectionValid || creatingOdoo}
+              className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+              <Send size={14} /> {creatingOdoo ? (vi ? 'Đang tạo…' : 'Creating…') : (vi ? 'Tạo đơn Odoo' : 'Create Odoo order')}
+            </button>
+          </div>
+        </div>
       )}
 
       {showNew && (

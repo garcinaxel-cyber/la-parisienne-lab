@@ -68,4 +68,6 @@ declare module 'lucide-react' {
   export const Link2: LucideIcon;
   export const ChevronsRight: LucideIcon;
   export const CalendarDays: LucideIcon;
+  export const Square: LucideIcon;
+  export const CheckSquare: LucideIcon;
 }

@@ -8,7 +8,7 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
 // Shop -> Odoo document mapping. Quotation (sale.order) for Moon Flower / Lab / (future) B2B;
 // Replenishment (stock.replenishment.request) for the 4 La Paris shops (their own warehouse).
 // B2B is intentionally absent for now — the urgent-order form only offers these 6 shops until
-// Axel gives the B2B list (see memory odoo-shop-order-sync-plan).
+// Axel gives the B2B list.
 export const SHOP_ODOO_MAP: Record<string, { docType: 'quotation' | 'replenishment'; partnerName?: string; warehouseCode?: string }> = {
   'Moon Flower': { docType: 'quotation', partnerName: 'MOON FLOWER' },
   'Lab': { docType: 'quotation', partnerName: 'LAB' },
@@ -69,22 +69,43 @@ async function resolveSoLineUomField(): Promise<string | null> {
   return soLineUomField;
 }
 
-// Create ONE draft Odoo document (quotation or replenishment) covering every line of one
-// order_batch_id (= one shop submission via /order/[token]). NEVER confirms it — stays in
-// draft/quotation state for a human to validate in Odoo whenever. Mirrors odoo-mo-sync's
-// tmo()-wrapped write pattern. The production card was already created (existing flow,
-// unchanged) before this runs, so the chef's visibility never depends on this succeeding.
-export async function createOdooOrderForBatch(
+// Create ONE draft Odoo document (quotation or replenishment) covering an admin-picked set of
+// lab_manual_cakes rows. NEVER confirms it — stays in draft state for a human to validate in
+// Odoo whenever. This is a deliberately SEMI-automatic, synchronous action (no queue, no cron):
+// an admin selects one or more exceptional orders on /exceptional-orders — all from the same
+// shop, since one Odoo document maps to one partner/warehouse — and clicks "Create Odoo order".
+// Grouping several same-day orders for one client (e.g. 5 Moon Flower birthday cakes in one
+// day) into a single quotation is exactly the point; the previous fully-automatic queue+cron
+// version created duplicate documents on retries and was scrapped (see git history).
+export async function createOdooOrderForSelection(
   supabase: SupabaseClient,
-  batch: { orderBatchId: string; shopName: string; docType: 'quotation' | 'replenishment'; deliveryDate: string; readyTime: string | null },
+  manualCakeIds: string[],
 ): Promise<CreateOrderResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
+  if (!manualCakeIds.length) return { ok: false, error: 'No order selected' };
 
   const { data: rows } = await supabase.from('lab_manual_cakes')
-    .select('product_sku, product_name_vi, qty')
-    .eq('order_batch_id', batch.orderBatchId);
+    .select('id, product_sku, product_name_vi, qty, shop_name, delivery_date, ready_time, matched_order_ref')
+    .in('id', manualCakeIds);
+
+  const already = (rows ?? []).find(r => r.matched_order_ref);
+  if (already) return { ok: false, error: `An order in this selection is already linked to ${already.matched_order_ref}` };
+
   const lines = (rows ?? []).filter(r => r.product_sku && (r.qty ?? 0) > 0);
-  if (!lines.length) return { ok: false, error: 'No line found for this order' };
+  if (!lines.length) return { ok: false, error: 'No valid line in this selection' };
+
+  const shopNames = Array.from(new Set(lines.map(l => l.shop_name).filter(Boolean)));
+  if (shopNames.length === 0) return { ok: false, error: 'Selected order(s) have no shop attached' };
+  if (shopNames.length > 1) return { ok: false, error: `Selection mixes several shops: ${shopNames.join(', ')}` };
+  const shopName = shopNames[0] as string;
+
+  const map = SHOP_ODOO_MAP[shopName];
+  if (!map) return { ok: false, error: `No Odoo mapping for shop "${shopName}"` };
+
+  // Grouping is meant for same-day orders; if dates differ, use the earliest as the
+  // document's commitment/delivery date rather than blocking the admin's choice.
+  const deliveryDate = lines.map(l => l.delivery_date as string).sort()[0];
+  const readyTime = lines.find(l => l.ready_time)?.ready_time as string | null | undefined ?? null;
 
   const skus = Array.from(new Set(lines.map(l => l.product_sku as string)));
   let products: Record<string, { id: number; uom_id: number }>;
@@ -96,19 +117,18 @@ export async function createOdooOrderForBatch(
   const missing = skus.filter(s => !products[s]);
   if (missing.length) return { ok: false, error: `Product(s) not found in Odoo: ${missing.join(', ')}` };
 
-  const map = SHOP_ODOO_MAP[batch.shopName];
-  if (!map) return { ok: false, error: `No Odoo mapping for shop "${batch.shopName}"` };
-
   try {
-    if (batch.docType === 'quotation') {
-      if (!map.partnerName) return { ok: false, error: `No Odoo partner mapped for "${batch.shopName}"` };
+    let orderRef: string | undefined;
+
+    if (map.docType === 'quotation') {
+      if (!map.partnerName) return { ok: false, error: `No Odoo partner mapped for "${shopName}"` };
       const partnerId = await resolvePartnerId(map.partnerName);
       if (!partnerId) return { ok: false, error: `Odoo partner "${map.partnerName}" not found` };
 
       const uomField = await resolveSoLineUomField();
       const orderId = await tmo(odooExecuteWrite<number>('sale.order', 'create', [{
         partner_id: partnerId,
-        commitment_date: labLocalToOdooUtc(batch.deliveryDate, batch.readyTime),
+        commitment_date: labLocalToOdooUtc(deliveryDate, readyTime),
       }]), 25000, 'create sale.order');
 
       try {
@@ -121,25 +141,23 @@ export async function createOdooOrderForBatch(
           }]), 20000, 'create sale.order.line');
         }
       } catch (lineErr: any) {
-        // Don't leave a header-only draft behind — clean up so a retry starts fresh.
         try { await odooExecuteWrite('sale.order', 'unlink', [[orderId]]); } catch { /* best-effort */ }
         throw lineErr;
       }
 
       const [order] = await tmo(odooExecuteWrite<any[]>('sale.order', 'read', [[orderId]], { fields: ['name'] }), 15000, 'read sale.order');
-      return { ok: true, order_ref: order?.name };
+      orderRef = order?.name;
     } else {
-      if (!map.warehouseCode) return { ok: false, error: `No Odoo warehouse mapped for "${batch.shopName}"` };
+      if (!map.warehouseCode) return { ok: false, error: `No Odoo warehouse mapped for "${shopName}"` };
       const wh = await resolveWarehouseId(map.warehouseCode);
       if (!wh) return { ok: false, error: `Odoo warehouse "${map.warehouseCode}" not found` };
-      // Every replenishment ships FROM the lab's own warehouse — required field discovered
-      // the hard way (07-28 test: "mandatory field... Source Warehouse" without it).
+      // Every replenishment ships FROM the lab's own warehouse.
       const sourceWh = await resolveWarehouseId('LAB');
       if (!sourceWh) return { ok: false, error: `Odoo source warehouse "LAB" not found` };
 
       const reqId = await tmo(odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
         warehouse_id: wh.id, source_warehouse_id: sourceWh.id,
-        delivery_date: labLocalToOdooUtc(batch.deliveryDate, batch.readyTime),
+        delivery_date: labLocalToOdooUtc(deliveryDate, readyTime),
       }]), 25000, 'create replenishment');
 
       try {
@@ -155,8 +173,19 @@ export async function createOdooOrderForBatch(
       }
 
       const [req] = await tmo(odooExecuteWrite<any[]>('stock.replenishment.request', 'read', [[reqId]], { fields: ['name'] }), 15000, 'read replenishment');
-      return { ok: true, order_ref: req?.name };
+      orderRef = req?.name;
     }
+
+    if (!orderRef) return { ok: false, error: 'Odoo document created but could not read its reference' };
+
+    // Link every selected manual-cake row to the newly created document so the UI reflects
+    // it immediately (same field the existing auto-match mechanism uses).
+    const { error: linkErr } = await supabase.from('lab_manual_cakes')
+      .update({ matched_order_ref: orderRef })
+      .in('id', lines.map(l => l.id as string));
+    if (linkErr) return { ok: true, order_ref: orderRef, error: `Order ${orderRef} created but failed to link locally: ${linkErr.message}` };
+
+    return { ok: true, order_ref: orderRef };
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e) };
   }

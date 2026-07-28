@@ -213,18 +213,11 @@ export async function submitShopOrderAction(token: string, input: {
     createdAsg.push(asg.id);
   }
 
-  // ── Queue the Odoo document creation (async, best-effort) ──
-  // The chef already sees the card above regardless of what happens here. A dedicated
-  // cron drains this queue one order at a time and creates the matching draft sale.order
-  // (Moon Flower / Lab) or stock.replenishment.request (the 4 La Paris shops). If the
-  // shop isn't mapped (shouldn't happen — SHOPS is derived from the same map) the order
-  // just falls back to the existing manual /exceptional-orders flow, nothing is lost.
-  const docType = SHOP_ODOO_MAP[input.shop]?.docType;
-  if (docType) {
-    await supabase.from('lab_odoo_sync_queue').insert({
-      order_batch_id: orderBatchId, shop_name: input.shop, doc_type: docType, status: 'pending',
-    });
-  }
+  // The Odoo document is NOT created automatically anymore (the auto-queue caused
+  // duplicate creations — see git history for lab_odoo_sync_queue). The chef's production
+  // card above is unaffected either way. An admin now creates the matching Odoo document
+  // manually from /exceptional-orders, optionally grouping several exceptional orders
+  // (e.g. multiple same-day Moon Flower cakes) into a single quotation/replenishment.
 
   return { ok: true };
 }
