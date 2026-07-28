@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react';
 import { Search, Plus, Minus, X, CheckCircle2, Send } from 'lucide-react';
 import { searchShopProductsAction, submitShopOrderAction, type ShopProduct } from './actions';
 
-const SHOPS = ['La Parisienne', 'Moon Flower', 'Paris'];
-const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
+// Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts (server-only file,
+// not imported here to avoid pulling Odoo client code into the client bundle).
+const SHOPS = ['Moon Flower', 'Lab', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
+const DELIVERERS = SHOPS;
 
 type CartItem = { key: string; product: ShopProduct; qty: number; qtyInput: string; message: string };
 
@@ -122,10 +124,10 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
       <div className="max-w-md mx-auto px-4 py-5 space-y-5 pb-16">
         <div>
           {label('Shop của bạn', 'your shop')}
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {SHOPS.map(s => (
               <button key={s} onClick={() => setShop(s)}
-                className="flex-1 py-2.5 rounded-xl text-[13px] font-bold transition-all active:scale-[0.97]"
+                className="py-2.5 px-2 rounded-xl text-[12.5px] font-bold leading-tight transition-all active:scale-[0.97]"
                 style={shop === s
                   ? { backgroundColor: '#1A4731', color: 'white' }
                   : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>

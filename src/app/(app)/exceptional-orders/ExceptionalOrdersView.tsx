@@ -23,11 +23,15 @@ type ProductChoice = {
   imageUrl: string | null; team: string; category: string | null; isCake: boolean;
 };
 
-const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
+// Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts
+const DELIVERERS = ['Lab', 'Moon Flower', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
-export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null }: {
+type OdooSyncError = { id: string; shopName: string; error: string; createdAt: string };
+
+export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null, odooSyncErrors = [] }: {
   orders: Order[]; candidates: Candidate[]; productChoices: ProductChoice[]; today: string; shopLinkToken?: string | null;
+  odooSyncErrors?: OdooSyncError[];
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -196,6 +200,25 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
           </button>
         </div>
       </div>
+
+      {odooSyncErrors.length > 0 && (
+        <div className="rounded-xl px-3.5 py-3 flex items-start gap-2.5" style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5' }}>
+          <FileText size={16} style={{ color: '#DC2626' }} className="shrink-0 mt-0.5" />
+          <div className="text-xs" style={{ color: '#991B1B' }}>
+            <span className="font-bold">
+              {odooSyncErrors.length} {vi
+                ? `đơn gấp chưa tạo được trong Odoo`
+                : `urgent order(s) not created in Odoo`}
+            </span>
+            <span> — {vi ? 'nhập tay trong Odoo, hoặc dùng nút "Đơn mới" ở trên.' : 'enter manually in Odoo, or use "New order" above.'}</span>
+            <ul className="mt-1.5 space-y-0.5">
+              {odooSyncErrors.slice(0, 5).map(e => (
+                <li key={e.id}>· {e.shopName} — <span className="italic">{e.error}</span></li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2 flex-wrap">
         {([

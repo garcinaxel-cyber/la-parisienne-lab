@@ -1,14 +1,20 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
 
 // Public shop order form — server actions.
 // No session here: the token in the URL is the access key, checked on EVERY call.
 // All DB work uses the service-role key server-side, so the core tables need no anon
 // policies. Product data is always re-resolved server-side from the fiche — the client
 // only sends ids, never names/SKUs to trust.
-
-const SHOPS = ['La Parisienne', 'Moon Flower', 'Paris'];
-const DELIVERERS = ['Lab', 'La Parisienne', 'Moon Flower', 'Paris'];
+//
+// This is the URGENT ORDER interface — for orders arriving outside the normal Odoo-first
+// flow (any hour, day or night). Normal shop orders are entered in Odoo and flow down to
+// the app via the existing hourly sync; this link exists specifically for when that isn't
+// possible in the moment. B2B clients are not yet selectable here — added once Axel gives
+// the list (see memory).
+const SHOPS = Object.keys(SHOP_ODOO_MAP); // Moon Flower, Lab, La Paris Tây Hồ/Long Biên/Bà Triệu/Timecity
+const DELIVERERS = SHOPS; // "Lab livre directement" or one of the shops delivers itself
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 const MANUAL_MARK = '__manual_cakes__';
 
@@ -162,6 +168,11 @@ export async function submitShopOrderAction(token: string, input: {
     importId = imp.id;
   }
 
+  // ── One batch id shared by every line of THIS submission — lets the Odoo sync queue
+  //    group them into a single document (one order = one sale.order/replenishment, not
+  //    one per product line) ──
+  const orderBatchId = crypto.randomUUID();
+
   // ── Insert every line; roll back this submission's rows on any failure ──
   const createdAsg: string[] = [];
   for (const r of resolved) {
@@ -189,6 +200,7 @@ export async function submitShopOrderAction(token: string, input: {
       notes: clean(input.notes, 500),
       shop_name: input.shop, created_by_name: `${input.shop} (shop)`,
       needs_odoo: true, assignment_id: asg.id, import_id: importId,
+      order_batch_id: orderBatchId,
     });
     if (mcErr) {
       await supabase.from('lab_assignments').delete().eq('id', asg.id);
@@ -199,6 +211,19 @@ export async function submitShopOrderAction(token: string, input: {
       return { error: 'Could not save the order' };
     }
     createdAsg.push(asg.id);
+  }
+
+  // ── Queue the Odoo document creation (async, best-effort) ──
+  // The chef already sees the card above regardless of what happens here. A dedicated
+  // cron drains this queue one order at a time and creates the matching draft sale.order
+  // (Moon Flower / Lab) or stock.replenishment.request (the 4 La Paris shops). If the
+  // shop isn't mapped (shouldn't happen — SHOPS is derived from the same map) the order
+  // just falls back to the existing manual /exceptional-orders flow, nothing is lost.
+  const docType = SHOP_ODOO_MAP[input.shop]?.docType;
+  if (docType) {
+    await supabase.from('lab_odoo_sync_queue').insert({
+      order_batch_id: orderBatchId, shop_name: input.shop, doc_type: docType, status: 'pending',
+    });
   }
 
   return { ok: true };

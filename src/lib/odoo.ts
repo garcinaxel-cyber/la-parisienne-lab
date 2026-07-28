@@ -106,6 +106,18 @@ export function labDayUtcRange(date: string): { start: string; end: string } {
   return { start: new Date(startMs).toISOString(), end: new Date(startMs + 24 * 3600 * 1000).toISOString() };
 }
 
+/** Lab-local date ('YYYY-MM-DD') + optional 'HH:MM' time -> Odoo UTC datetime string.
+ *  Inverse of odooDateTimeToLocal. VN = UTC+7, no DST, so this is a fixed 7h subtraction.
+ *  No time given -> defaults to 09:00 lab-local (a safe daytime placeholder for a draft doc). */
+export function labLocalToOdooUtc(date: string, time?: string | null): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const [hh, mm] = (time && /^\d{2}:\d{2}$/.test(time) ? time : '09:00').split(':').map(Number);
+  const utcMs = Date.UTC(y, m - 1, d, hh, mm, 0) - 7 * 3600 * 1000;
+  const dt = new Date(utcMs);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())} ${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:00`;
+}
+
 /** UTC datetime string for "today 00:00 in lab timezone" — used as Odoo query threshold */
 export function labTodayUtcThreshold(): string {
   const now = new Date();
