@@ -27,9 +27,9 @@ export async function GET(req: Request) {
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-  const { data: pending } = await supabase
+  const { data: pending, error: pendingErr, count: pendingCount, status: pendingStatus, statusText: pendingStatusText } = await supabase
     .from('lab_odoo_sync_queue')
-    .select('id, order_batch_id, shop_name, doc_type')
+    .select('id, order_batch_id, shop_name, doc_type', { count: 'exact' })
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(20);
@@ -68,5 +68,16 @@ export async function GET(req: Request) {
     results.push({ id: row.id, ok: res.ok, order_ref: res.order_ref, error: res.error });
   }
 
-  return NextResponse.json({ processed: results.length, results });
+  return NextResponse.json({
+    processed: results.length, results,
+    _debug: {
+      pendingErr: pendingErr ? JSON.stringify(pendingErr) : null,
+      pendingCount, pendingLen: pending?.length ?? 0,
+      pendingStatus, pendingStatusText,
+      hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      vercelRegion: process.env.VERCEL_REGION ?? null,
+      now: new Date().toISOString(),
+    },
+  });
 }
