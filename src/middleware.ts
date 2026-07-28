@@ -11,8 +11,9 @@ const PUBLIC_PATHS = ['/login', '/auth/set-password'];
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
-  // The cron endpoint has no session — it authenticates with its own CRON_SECRET
+  // The cron endpoints have no session — they authenticate with their own CRON_SECRET
   if (pathname.startsWith('/api/odoo/cron')) return NextResponse.next();
+  if (pathname.startsWith('/api/odoo/urgent-order-sync')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
