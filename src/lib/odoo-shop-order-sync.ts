@@ -58,6 +58,17 @@ async function resolveProducts(skus: string[]): Promise<Record<string, { id: num
   return out;
 }
 
+// The UoM field on sale.order.line is 'product_uom_id' on some Odoo versions and
+// 'product_uom' on others (confirmed the hard way — 07-28 test run against this instance
+// failed on 'product_uom_id' not existing). Discovered once, cached for the process lifetime.
+let soLineUomField: string | null | undefined; // undefined = not yet resolved
+async function resolveSoLineUomField(): Promise<string | null> {
+  if (soLineUomField !== undefined) return soLineUomField;
+  const fields = await tmo(odooExecute<any>('sale.order.line', 'fields_get', [[]], { attributes: ['type'] }), 15000, 'sol fields');
+  soLineUomField = ['product_uom_id', 'product_uom'].find(f => fields[f]) ?? null;
+  return soLineUomField;
+}
+
 // Create ONE draft Odoo document (quotation or replenishment) covering every line of one
 // order_batch_id (= one shop submission via /order/[token]). NEVER confirms it — stays in
 // draft/quotation state for a human to validate in Odoo whenever. Mirrors odoo-mo-sync's
@@ -94,17 +105,25 @@ export async function createOdooOrderForBatch(
       const partnerId = await resolvePartnerId(map.partnerName);
       if (!partnerId) return { ok: false, error: `Odoo partner "${map.partnerName}" not found` };
 
+      const uomField = await resolveSoLineUomField();
       const orderId = await tmo(odooExecuteWrite<number>('sale.order', 'create', [{
         partner_id: partnerId,
         commitment_date: labLocalToOdooUtc(batch.deliveryDate, batch.readyTime),
       }]), 25000, 'create sale.order');
 
-      for (const l of lines) {
-        const p = products[l.product_sku as string];
-        await tmo(odooExecuteWrite('sale.order.line', 'create', [{
-          order_id: orderId, product_id: p.id, product_uom_qty: l.qty,
-          product_uom_id: p.uom_id, name: l.product_name_vi,
-        }]), 20000, 'create sale.order.line');
+      try {
+        for (const l of lines) {
+          const p = products[l.product_sku as string];
+          await tmo(odooExecuteWrite('sale.order.line', 'create', [{
+            order_id: orderId, product_id: p.id, product_uom_qty: l.qty,
+            ...(uomField ? { [uomField]: p.uom_id } : {}),
+            name: l.product_name_vi,
+          }]), 20000, 'create sale.order.line');
+        }
+      } catch (lineErr: any) {
+        // Don't leave a header-only draft behind — clean up so a retry starts fresh.
+        try { await odooExecuteWrite('sale.order', 'unlink', [[orderId]]); } catch { /* best-effort */ }
+        throw lineErr;
       }
 
       const [order] = await tmo(odooExecuteWrite<any[]>('sale.order', 'read', [[orderId]], { fields: ['name'] }), 15000, 'read sale.order');
@@ -119,11 +138,16 @@ export async function createOdooOrderForBatch(
         delivery_date: labLocalToOdooUtc(batch.deliveryDate, batch.readyTime),
       }]), 25000, 'create replenishment');
 
-      for (const l of lines) {
-        const p = products[l.product_sku as string];
-        await tmo(odooExecuteWrite('stock.replenishment.request.line', 'create', [{
-          request_id: reqId, product_id: p.id, quantity_requested: l.qty,
-        }]), 20000, 'create replenishment line');
+      try {
+        for (const l of lines) {
+          const p = products[l.product_sku as string];
+          await tmo(odooExecuteWrite('stock.replenishment.request.line', 'create', [{
+            request_id: reqId, product_id: p.id, quantity_requested: l.qty,
+          }]), 20000, 'create replenishment line');
+        }
+      } catch (lineErr: any) {
+        try { await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]); } catch { /* best-effort */ }
+        throw lineErr;
       }
 
       const [req] = await tmo(odooExecuteWrite<any[]>('stock.replenishment.request', 'read', [[reqId]], { fields: ['name'] }), 15000, 'read replenishment');

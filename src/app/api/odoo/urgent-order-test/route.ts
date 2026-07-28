@@ -27,12 +27,20 @@ export async function GET(req: Request) {
     const partners = await odooExecute<any[]>('res.partner', 'search_read', [[['name', 'ilike', 'LAB']]], { fields: ['id', 'name'], limit: 20 });
     const labPartner = partners.find((p: any) => String(p.name ?? '').trim().toLowerCase() === 'lab');
     if (!labPartner) return NextResponse.json({ error: 'partner LAB not found', candidates: partners }, { status: 404 });
+    // Discover the real UoM field name on sale.order.line for this Odoo version instead
+    // of guessing (bit us once already: 'product_uom_id' doesn't exist here).
+    const solFields = await odooExecute<any>('sale.order.line', 'fields_get', [[]], { attributes: ['type'] });
+    const uomField = ['product_uom_id', 'product_uom'].find(f => solFields[f]) ?? null;
+    out.uomFieldUsed = uomField;
+
     const orderId = await odooExecuteWrite<number>('sale.order', 'create', [{
       partner_id: labPartner.id, commitment_date: '2026-08-01 02:00:00',
     }]);
+    out.quotationIdCreated = orderId; // recorded even if the line create below fails, for cleanup
     await odooExecuteWrite('sale.order.line', 'create', [{
       order_id: orderId, product_id: p.id, product_uom_qty: 1,
-      product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id, name: p.name,
+      ...(uomField ? { [uomField]: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id } : {}),
+      name: p.name,
     }]);
     const [order] = await odooExecuteWrite<any[]>('sale.order', 'read', [[orderId]], { fields: ['name', 'state'] });
     out.quotation = { id: orderId, name: order?.name, state: order?.state };
