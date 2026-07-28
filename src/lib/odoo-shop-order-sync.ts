@@ -25,11 +25,16 @@ export interface CreateOrderResult {
 }
 
 const partnerIdCache = new Map<string, number | null>();
+// Exact '=' search came back empty even for a partner visibly named "LAB" in the UI
+// (verified 07-28, id 347) — safer to match case/whitespace-insensitively via ilike then
+// filter in JS, rather than trust Odoo's exact-match semantics on this field.
 async function resolvePartnerId(name: string): Promise<number | null> {
   if (partnerIdCache.has(name)) return partnerIdCache.get(name)!;
   const rows = await tmo(odooExecute<any[]>('res.partner', 'search_read',
-    [[['name', '=', name]]], { fields: ['id'], limit: 1 }), 15000, 'partner');
-  const id = rows[0]?.id ?? null;
+    [[['name', 'ilike', name]]], { fields: ['id', 'name'], limit: 20 }), 15000, 'partner');
+  const target = name.trim().toLowerCase();
+  const match = rows.find((r: any) => String(r.name ?? '').trim().toLowerCase() === target);
+  const id = match?.id ?? null;
   partnerIdCache.set(name, id);
   return id;
 }

@@ -22,10 +22,13 @@ export async function GET(req: Request) {
     out.product = { id: p.id, name: p.name };
 
     // ── Quotation: partner LAB ──
-    const partners = await odooExecute<any[]>('res.partner', 'search_read', [[['name', '=', 'LAB']]], { fields: ['id'], limit: 1 });
-    if (!partners[0]) return NextResponse.json({ error: 'partner LAB not found' }, { status: 404 });
+    // Exact '=' match on name came back empty even though the UI shows "LAB" (checked
+    // 07-28) — ilike + JS filter confirmed res.partner id 347 is the real record.
+    const partners = await odooExecute<any[]>('res.partner', 'search_read', [[['name', 'ilike', 'LAB']]], { fields: ['id', 'name'], limit: 20 });
+    const labPartner = partners.find((p: any) => String(p.name ?? '').trim().toLowerCase() === 'lab');
+    if (!labPartner) return NextResponse.json({ error: 'partner LAB not found', candidates: partners }, { status: 404 });
     const orderId = await odooExecuteWrite<number>('sale.order', 'create', [{
-      partner_id: partners[0].id, commitment_date: '2026-08-01 02:00:00',
+      partner_id: labPartner.id, commitment_date: '2026-08-01 02:00:00',
     }]);
     await odooExecuteWrite('sale.order.line', 'create', [{
       order_id: orderId, product_id: p.id, product_uom_qty: 1,
