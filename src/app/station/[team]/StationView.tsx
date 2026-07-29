@@ -322,79 +322,92 @@ export default function StationView({
     setLoadingDates(true);
     const supabase = createClient();
     const isUpcoming = activeTab === 'upcoming';
-    supabase
-      .from('lab_imports')
-      .select('id, delivery_date')
-      .eq('status', 'published')
-      [isUpcoming ? 'gt' : 'lt']('delivery_date', today)
-      .order('delivery_date', { ascending: isUpcoming })
-      // The auto-sync re-imports throughout the day, so one calendar date can span many
-      // lab_imports rows (10+ isn't unusual). Capping this query by ROW count would cut the
-      // list off after 1-2 days instead of the ~30 distinct days we actually want — so we
-      // fetch a generous batch of rows here, then dedupe/cap by DATE below.
-      .limit(600)
-      .then(async ({ data: allImports, error: importsErr }) => {
-        // A stale/expired session surfaces here as a PostgREST error (not just empty data) —
-        // without this check it silently renders as an empty "No history yet" with no way to
-        // recover, when the actual fix is just to sign back in.
-        if (importsErr) {
-          console.error('lab_imports fetch failed', importsErr);
-          if (/jwt/i.test(importsErr.message ?? '') || importsErr.code === 'PGRST301' || importsErr.code === 'PGRST303') {
-            router.push('/login');
+
+    // A dead local session (access token expired *and* refresh token revoked — e.g. the
+    // browser sat open for weeks) doesn't error out below: supabase-js quietly drops back to
+    // an anonymous request, and RLS returns an empty-but-error-free result set. That's
+    // indistinguishable from genuinely-empty history/upcoming, so check auth up front instead.
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      supabase
+        .from('lab_imports')
+        .select('id, delivery_date')
+        .eq('status', 'published')
+        [isUpcoming ? 'gt' : 'lt']('delivery_date', today)
+        .order('delivery_date', { ascending: isUpcoming })
+        // The auto-sync re-imports throughout the day, so one calendar date can span many
+        // lab_imports rows (10+ isn't unusual). Capping this query by ROW count would cut the
+        // list off after 1-2 days instead of the ~30 distinct days we actually want — so we
+        // fetch a generous batch of rows here, then dedupe/cap by DATE below.
+        .limit(600)
+        .then(async ({ data: allImports, error: importsErr }) => {
+          // A stale/expired session surfaces here as a PostgREST error (not just empty data) —
+          // without this check it silently renders as an empty "No history yet" with no way to
+          // recover, when the actual fix is just to sign back in.
+          if (importsErr) {
+            console.error('lab_imports fetch failed', importsErr);
+            if (/jwt/i.test(importsErr.message ?? '') || importsErr.code === 'PGRST301' || importsErr.code === 'PGRST303') {
+              router.push('/login');
+              return;
+            }
+          }
+          if (!allImports?.length) {
+            if (isUpcoming) setUpcomingData([]);
+            else setHistoryData([]);
+            setLoadingDates(false);
             return;
           }
-        }
-        if (!allImports?.length) {
-          if (isUpcoming) setUpcomingData([]);
-          else setHistoryData([]);
+          // allImports is already ordered by delivery_date, so this keeps the nearest/most
+          // recent 30 distinct days in order.
+          const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
+          const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
+          const importIds = imports.map((i: any) => i.id);
+          const { data: asgns, error: asgnsErr } = await supabase
+            .from('lab_assignments')
+            .select('import_id, qty_to_produce, status, sku, variant_label, transferred, cancelled')
+            .in('import_id', importIds)
+            .eq('team', team);
+          if (asgnsErr) {
+            console.error('lab_assignments fetch failed', asgnsErr);
+            if (/jwt/i.test(asgnsErr.message ?? '') || asgnsErr.code === 'PGRST301' || asgnsErr.code === 'PGRST303') {
+              router.push('/login');
+              return;
+            }
+          }
+          const byDate = new Map<string, DateSummary>();
+          for (const imp of imports) {
+            if (!byDate.has(imp.delivery_date))
+              byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [], unsentCount: 0 });
+            byDate.get(imp.delivery_date)!.import_ids.push(imp.id);
+          }
+          // Distinct products still not sent to stock, per date (history tab only — surfaced as a
+          // badge on the collapsed row so a chef notices without opening it).
+          const unsentByDate = new Map<string, Set<string>>();
+          for (const a of asgns ?? []) {
+            const imp = imports.find((i: any) => i.id === a.import_id);
+            if (!imp) continue;
+            const s = byDate.get(imp.delivery_date)!;
+            s.productCount++;
+            s.totalQty += a.qty_to_produce ?? 0;
+            if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
+            if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
+              const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
+              set.add(`${a.sku ?? ''}||${a.variant_label ?? 'Standard'}`);
+              unsentByDate.set(imp.delivery_date, set);
+            }
+          }
+          unsentByDate.forEach((set, date) => { byDate.get(date)!.unsentCount = set.size; });
+          const result = Array.from(byDate.values()).filter(d => d.productCount > 0);
+          if (isUpcoming) setUpcomingData(result);
+          else setHistoryData(result);
           setLoadingDates(false);
-          return;
-        }
-        // allImports is already ordered by delivery_date, so this keeps the nearest/most
-        // recent 30 distinct days in order.
-        const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
-        const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
-        const importIds = imports.map((i: any) => i.id);
-        const { data: asgns, error: asgnsErr } = await supabase
-          .from('lab_assignments')
-          .select('import_id, qty_to_produce, status, sku, variant_label, transferred, cancelled')
-          .in('import_id', importIds)
-          .eq('team', team);
-        if (asgnsErr) {
-          console.error('lab_assignments fetch failed', asgnsErr);
-          if (/jwt/i.test(asgnsErr.message ?? '') || asgnsErr.code === 'PGRST301' || asgnsErr.code === 'PGRST303') {
-            router.push('/login');
-            return;
-          }
-        }
-        const byDate = new Map<string, DateSummary>();
-        for (const imp of imports) {
-          if (!byDate.has(imp.delivery_date))
-            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [], unsentCount: 0 });
-          byDate.get(imp.delivery_date)!.import_ids.push(imp.id);
-        }
-        // Distinct products still not sent to stock, per date (history tab only — surfaced as a
-        // badge on the collapsed row so a chef notices without opening it).
-        const unsentByDate = new Map<string, Set<string>>();
-        for (const a of asgns ?? []) {
-          const imp = imports.find((i: any) => i.id === a.import_id);
-          if (!imp) continue;
-          const s = byDate.get(imp.delivery_date)!;
-          s.productCount++;
-          s.totalQty += a.qty_to_produce ?? 0;
-          if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
-          if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
-            const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
-            set.add(`${a.sku ?? ''}||${a.variant_label ?? 'Standard'}`);
-            unsentByDate.set(imp.delivery_date, set);
-          }
-        }
-        unsentByDate.forEach((set, date) => { byDate.get(date)!.unsentCount = set.size; });
-        const result = Array.from(byDate.values()).filter(d => d.productCount > 0);
-        if (isUpcoming) setUpcomingData(result);
-        else setHistoryData(result);
-        setLoadingDates(false);
-      });
+        });
+    })();
   }, [activeTab, team, today]);
 
   async function loadHistoryDetails(delivery_date: string, import_ids: string[]) {
