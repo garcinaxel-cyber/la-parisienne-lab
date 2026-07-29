@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw,
+  ChevronRight, PenLine, RefreshCw, Truck,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -103,6 +103,7 @@ type DateSummary = {
   totalQty: number;
   doneQty: number;
   import_ids: string[];
+  unsentCount: number; // distinct products still not sent to stock (history tab only)
 };
 
 type OrderDetail = {
@@ -110,6 +111,43 @@ type OrderDetail = {
   shop_name: string;
   items: { product_name_vi: string; variant_label: string; qty: number }[];
 };
+
+// One raw (done, non-cancelled) production card for the history tab's expanded view.
+type HistoryProdRow = {
+  id: string; product_name_vi: string; product_name_en: string; sku: string | null;
+  variant_label: string; image_url: string | null;
+  qty_produced: number; total_qty: number; qty_sent_total: number; is_extra: boolean;
+  delivery_date: string;
+};
+type HistoryProdGroup = {
+  key: string; name: string; name_en: string; sku: string | null; variant: string;
+  image_url: string | null; qty: number; is_extra: boolean;
+  remaining: number; parts: { id: string; qty: number; deliveryDate: string }[];
+};
+
+// Split a day's raw production cards into "sent" (fully sent to stock — shown as a compact
+// aggregated list) and "unsent" (still has something to send — shown as individual, selectable
+// cards). Mirrors the same qty_produced - qty_sent_total logic as groupSendable() (today's
+// stock modal) but works off the lightweight rows fetched for history days.
+function groupHistoryProd(rows: HistoryProdRow[]): { sent: HistoryProdGroup[]; unsent: HistoryProdGroup[] } {
+  const m = new Map<string, HistoryProdGroup>();
+  for (const r of rows) {
+    const key = `${r.sku ?? ''}||${r.variant_label}||${r.product_name_vi}||${r.is_extra ? 1 : 0}`;
+    const produced = r.qty_produced || r.total_qty || 0;
+    const remaining = Math.max(0, produced - r.qty_sent_total);
+    const g = m.get(key) ?? {
+      key, name: r.product_name_vi, name_en: r.product_name_en, sku: r.sku,
+      variant: r.variant_label, image_url: r.image_url, qty: 0, is_extra: r.is_extra,
+      remaining: 0, parts: [],
+    };
+    g.qty += produced;
+    if (remaining > 0) { g.remaining += remaining; g.parts.push({ id: r.id, qty: remaining, deliveryDate: r.delivery_date }); }
+    m.set(key, g);
+  }
+  const all = Array.from(m.values());
+  const byName = (x: HistoryProdGroup, y: HistoryProdGroup) => (x.is_extra ? 1 : 0) - (y.is_extra ? 1 : 0) || x.name.localeCompare(y.name);
+  return { sent: all.filter(g => g.remaining === 0).sort(byName), unsent: all.filter(g => g.remaining > 0).sort(byName) };
+}
 
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
@@ -166,9 +204,15 @@ export default function StationView({
   const [loadingDates, setLoadingDates] = useState(false);
   const [expandedHistoryDate, setExpandedHistoryDate] = useState<string | null>(null);
   const [historyDetails, setHistoryDetails] = useState<Record<string, OrderDetail[]>>({});
-  const [historyProduction, setHistoryProduction] = useState<Record<string, { name: string; variant: string; qty: number; is_extra: boolean }[]>>({});
-  const [historySub, setHistorySub] = useState<'orders' | 'production'>('orders');
+  // Raw (non-cancelled, done) production cards per day — kept raw rather than pre-aggregated
+  // so the history view can split "sent to stock" (compact list) from "not sent" (individual
+  // cards, selectable) once expanded. See groupHistoryProd() below.
+  const [historyProduction, setHistoryProduction] = useState<Record<string, HistoryProdRow[]>>({});
   const [loadingDetails, setLoadingDetails] = useState(false);
+  // Which "not sent" product groups are selected for the history day's send-to-stock action.
+  // Missing entry for a date = everything defaults to selected (see groupHistoryProd usage).
+  const [historySel, setHistorySel] = useState<Record<string, Set<string>>>({});
+  const [sendingHistoryStock, setSendingHistoryStock] = useState<string | null>(null);
 
   // Stock transfer (send finished products to stock)
   const [stockModal, setStockModal] = useState(false);
@@ -295,15 +339,18 @@ export default function StationView({
         const importIds = imports.map((i: any) => i.id);
         const { data: asgns } = await supabase
           .from('lab_assignments')
-          .select('import_id, qty_to_produce, status')
+          .select('import_id, qty_to_produce, status, sku, variant_label, transferred, cancelled')
           .in('import_id', importIds)
           .eq('team', team);
         const byDate = new Map<string, DateSummary>();
         for (const imp of imports) {
           if (!byDate.has(imp.delivery_date))
-            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [] });
+            byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [], unsentCount: 0 });
           byDate.get(imp.delivery_date)!.import_ids.push(imp.id);
         }
+        // Distinct products still not sent to stock, per date (history tab only — surfaced as a
+        // badge on the collapsed row so a chef notices without opening it).
+        const unsentByDate = new Map<string, Set<string>>();
         for (const a of asgns ?? []) {
           const imp = imports.find((i: any) => i.id === a.import_id);
           if (!imp) continue;
@@ -311,7 +358,13 @@ export default function StationView({
           s.productCount++;
           s.totalQty += a.qty_to_produce ?? 0;
           if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
+          if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
+            const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
+            set.add(`${a.sku ?? ''}||${a.variant_label ?? 'Standard'}`);
+            unsentByDate.set(imp.delivery_date, set);
+          }
         }
+        unsentByDate.forEach((set, date) => { byDate.get(date)!.unsentCount = set.size; });
         const result = Array.from(byDate.values()).filter(d => d.productCount > 0);
         if (isUpcoming) setUpcomingData(result);
         else setHistoryData(result);
@@ -329,7 +382,7 @@ export default function StationView({
         .select('order_ref, shop_name, product_name_vi, variant_label, qty')
         .in('import_id', import_ids).eq('team', team).order('order_ref'),
       supabase.from('lab_assignments')
-        .select('product_name_vi, variant_label, qty_produced, is_extra, status, cancelled')
+        .select('id, product_name_vi, product_name_en, sku, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled')
         .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
     ]);
     const byRef = new Map<string, OrderDetail>();
@@ -343,17 +396,13 @@ export default function StationView({
       });
     }
     setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
-    // Production: aggregate produced quantity per product+variant (extras flagged)
-    const byProd = new Map<string, { name: string; variant: string; qty: number; is_extra: boolean }>();
-    for (const a of prod ?? []) {
-      if (a.cancelled) continue;
-      const key = `${a.product_name_vi}||${a.variant_label}||${a.is_extra ? 1 : 0}`;
-      const cur = byProd.get(key) ?? { name: a.product_name_vi, variant: a.variant_label, qty: 0, is_extra: !!a.is_extra };
-      cur.qty += a.qty_produced ?? 0;
-      byProd.set(key, cur);
-    }
-    setHistoryProduction(prev => ({ ...prev, [delivery_date]: Array.from(byProd.values())
-      .sort((x, y) => (x.is_extra ? 1 : 0) - (y.is_extra ? 1 : 0) || x.name.localeCompare(y.name)) }));
+    const rows: HistoryProdRow[] = (prod ?? []).filter(a => !a.cancelled).map(a => ({
+      id: a.id, product_name_vi: a.product_name_vi, product_name_en: a.product_name_en ?? '',
+      sku: a.sku ?? null, variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
+      qty_produced: a.qty_produced ?? 0, total_qty: a.total_qty ?? 0, qty_sent_total: a.qty_sent_total ?? 0,
+      is_extra: !!a.is_extra, delivery_date,
+    }));
+    setHistoryProduction(prev => ({ ...prev, [delivery_date]: rows }));
     setLoadingDetails(false);
   }
 
@@ -582,6 +631,42 @@ export default function StationView({
       setStockModal(false);
     }
     setSendingStock(false);
+  }
+
+  // Same "send to stock" action as above, applied to a past day in the history tab instead of
+  // today's live assignments. Always sends the FULL remaining quantity of every selected group
+  // (no partial-qty editing here — keeps the history UI to a checkbox, not a form).
+  function toggleHistorySel(date: string, key: string, allKeys: string[]) {
+    setHistorySel(prev => {
+      const current = prev[date] ?? new Set(allKeys);
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return { ...prev, [date]: next };
+    });
+  }
+
+  async function sendHistoryStock(date: string, unsent: HistoryProdGroup[]) {
+    const sel = historySel[date] ?? new Set(unsent.map(g => g.key));
+    const chosen = unsent.filter(g => sel.has(g.key));
+    const entries = chosen.flatMap(g => g.parts.map(p => ({
+      assignmentId: p.id, productNameVi: g.name, productNameEn: g.name_en,
+      sku: g.sku, variantLabel: g.variant, imageUrl: g.image_url,
+      deliveryDate: p.deliveryDate, qtySent: p.qty,
+    })));
+    if (!entries.length) return;
+    setSendingHistoryStock(date);
+    const { submitStockTransferAction } = await import('./stock-actions');
+    const res = await submitStockTransferAction(team, entries);
+    if (res.ok) {
+      const sentIds = new Set(entries.map(e => e.assignmentId));
+      const updatedRows = (historyProduction[date] ?? []).map(r =>
+        sentIds.has(r.id) ? { ...r, qty_sent_total: r.qty_produced || r.total_qty } : r);
+      setHistoryProduction(prev => ({ ...prev, [date]: updatedRows }));
+      setHistorySel(prev => ({ ...prev, [date]: new Set() }));
+      const stillUnsent = groupHistoryProd(updatedRows).unsent.length;
+      setHistoryData(prev => prev.map(d => d.delivery_date === date ? { ...d, unsentCount: stillUnsent } : d));
+    }
+    setSendingHistoryStock(null);
   }
 
   // Cancelled = Odoo qty dropped to 0 after import. Kept visible (struck through) but
@@ -1392,6 +1477,9 @@ export default function StationView({
             });
             const isExpanded = expandedHistoryDate === d.delivery_date;
             const details = historyDetails[d.delivery_date];
+            const prodRows = historyProduction[d.delivery_date];
+            const { sent, unsent } = prodRows ? groupHistoryProd(prodRows) : { sent: [], unsent: [] };
+            const sel = historySel[d.delivery_date] ?? new Set(unsent.map(g => g.key));
             return (
               <div key={d.delivery_date}
                 className="rounded-2xl bg-white overflow-hidden"
@@ -1411,6 +1499,13 @@ export default function StationView({
                     <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
                       {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'}
                     </div>
+                    {d.unsentCount > 0 && (
+                      <div className="inline-flex items-center gap-1 mt-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                        style={{ backgroundColor: '#FCEBEB', color: '#791F1F' }}>
+                        <AlertCircle size={10} />
+                        {d.unsentCount} {lang === 'vi' ? 'sản phẩm chưa gửi kho' : 'not sent to stock'}
+                      </div>
+                    )}
                   </div>
                   <ChevronRight size={16}
                     className="transition-transform duration-200 shrink-0"
@@ -1418,73 +1513,68 @@ export default function StationView({
                 </button>
                 {isExpanded && (
                   <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
-                    {/* Sub-tabs: orders (what was to produce) vs production (what was made) */}
-                    <div className="flex gap-2 pt-3">
-                      {([['orders', lang === 'vi' ? 'Đơn hàng' : 'Commandes'], ['production', lang === 'vi' ? 'Đã sản xuất' : 'Production']] as const).map(([key, label]) => (
-                        <button key={key} onClick={() => setHistorySub(key)}
-                          className="px-3 py-1.5 rounded-full text-xs font-semibold transition-colors"
-                          style={historySub === key
-                            ? { backgroundColor: '#1A4731', color: 'white' }
-                            : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
                     {loadingDetails && !details && (
                       <div className="space-y-2 pt-2">
                         <div className="skeleton h-12 w-full" />
                         <div className="skeleton h-12 w-full" />
                       </div>
                     )}
-                    {/* PRODUCTION view — what the team actually produced (Done cards, extra included) */}
-                    {historySub === 'production' && details && (
-                      (historyProduction[d.delivery_date] ?? []).length === 0 ? (
-                        <p className="text-center text-xs py-3 text-gray-400">
-                          {lang === 'vi' ? 'Không có sản xuất' : 'Aucune production'}
-                        </p>
-                      ) : (
-                        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F0F9F4', border: '1px solid #C6E6D3' }}>
-                          <div className="space-y-0.5">
-                            {(historyProduction[d.delivery_date] ?? []).map((p, i) => (
-                              <div key={i} className="flex items-center justify-between text-xs">
-                                <span style={{ color: '#374151' }}>
-                                  {p.name}
-                                  {p.variant && p.variant !== 'Standard' ? <span className="ml-1 text-gray-400">· {p.variant}</span> : null}
-                                  {p.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
-                                </span>
-                                <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{p.qty}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    )}
-                    {/* ORDERS view — the client orders that were to produce */}
-                    {historySub === 'orders' && details && details.length === 0 && (
+                    {/* Production only (no order/commande view here — see the Upcoming tab for that) */}
+                    {details && sent.length === 0 && unsent.length === 0 && (
                       <p className="text-center text-xs py-3 text-gray-400">
-                        {lang === 'vi' ? 'Không có chi tiết đơn hàng' : 'No order details'}
+                        {lang === 'vi' ? 'Không có sản xuất' : 'Aucune production'}
                       </p>
                     )}
-                    {historySub === 'orders' && (details ?? []).map(order => (
-                      <div key={order.order_ref} className="rounded-xl p-3 mt-2"
-                        style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-xs font-bold" style={{ color: '#92600A' }}>{order.order_ref}</span>
-                          <span className="text-xs font-medium" style={{ color: '#1A4731' }}>{order.shop_name}</span>
-                        </div>
+                    {/* Sent to stock — compact aggregated list, no individual cards */}
+                    {sent.length > 0 && (
+                      <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F0F9F4', border: '1px solid #C6E6D3' }}>
                         <div className="space-y-0.5">
-                          {order.items.map((item, i) => (
-                            <div key={i} className="flex items-center justify-between text-xs">
+                          {sent.map(g => (
+                            <div key={g.key} className="flex items-center justify-between text-xs">
                               <span style={{ color: '#374151' }}>
-                                {item.product_name_vi}
-                                {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
+                                {g.name}
+                                {g.variant && g.variant !== 'Standard' ? <span className="ml-1 text-gray-400">· {g.variant}</span> : null}
+                                {g.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
                               </span>
-                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{g.qty}</span>
                             </div>
                           ))}
                         </div>
                       </div>
-                    ))}
+                    )}
+                    {/* Not sent yet — individual, selectable cards + a send-to-stock action */}
+                    {unsent.length > 0 && (
+                      <>
+                        <div className="text-[11px] font-bold uppercase tracking-wide mt-3 mb-1" style={{ color: '#791F1F' }}>
+                          {lang === 'vi' ? 'Chưa gửi kho' : 'Not sent to stock'}
+                        </div>
+                        {unsent.map(g => (
+                          <label key={g.key} className="rounded-xl p-3 mb-2 flex items-center gap-2.5 cursor-pointer"
+                            style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
+                            <input type="checkbox" checked={sel.has(g.key)}
+                              onChange={() => toggleHistorySel(d.delivery_date, g.key, unsent.map(u => u.key))}
+                              className="w-4 h-4 shrink-0" style={{ accentColor: '#1A4731' }} />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-bold truncate" style={{ color: '#1A4731' }}>
+                                {g.name}{g.variant && g.variant !== 'Standard' ? ` · ${g.variant}` : ''}
+                              </div>
+                              <div className="text-[11px]" style={{ color: '#92600A' }}>
+                                {lang === 'vi' ? `Đã làm ×${g.qty} · còn ×${g.remaining} chưa gửi` : `Made ×${g.qty} · ×${g.remaining} left to send`}
+                              </div>
+                            </div>
+                          </label>
+                        ))}
+                        <button onClick={() => sendHistoryStock(d.delivery_date, unsent)}
+                          disabled={sendingHistoryStock === d.delivery_date || sel.size === 0}
+                          className="w-full mt-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          style={{ backgroundColor: '#1A4731', color: '#FFF4CC' }}>
+                          <Truck size={14} />
+                          {sendingHistoryStock === d.delivery_date
+                            ? '…'
+                            : `${lang === 'vi' ? 'Gửi vào kho' : 'Send to stock'} (${sel.size})`}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
