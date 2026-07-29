@@ -328,14 +328,22 @@ export default function StationView({
       .eq('status', 'published')
       [isUpcoming ? 'gt' : 'lt']('delivery_date', today)
       .order('delivery_date', { ascending: isUpcoming })
-      .limit(20)
-      .then(async ({ data: imports }) => {
-        if (!imports?.length) {
+      // The auto-sync re-imports throughout the day, so one calendar date can span many
+      // lab_imports rows (10+ isn't unusual). Capping this query by ROW count would cut the
+      // list off after 1-2 days instead of the ~30 distinct days we actually want — so we
+      // fetch a generous batch of rows here, then dedupe/cap by DATE below.
+      .limit(600)
+      .then(async ({ data: allImports }) => {
+        if (!allImports?.length) {
           if (isUpcoming) setUpcomingData([]);
           else setHistoryData([]);
           setLoadingDates(false);
           return;
         }
+        // allImports is already ordered by delivery_date, so this keeps the nearest/most
+        // recent 30 distinct days in order.
+        const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
+        const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
         const importIds = imports.map((i: any) => i.id);
         const { data: asgns } = await supabase
           .from('lab_assignments')
