@@ -369,7 +369,7 @@ export default function StationView({
           const importIds = imports.map((i: any) => i.id);
           const { data: asgns, error: asgnsErr } = await supabase
             .from('lab_assignments')
-            .select('import_id, qty_to_produce, status, sku, variant_label, transferred, cancelled')
+            .select('import_id, qty_to_produce, status, product_name_vi, variant_label, transferred, cancelled')
             .in('import_id', importIds)
             .eq('team', team);
           if (asgnsErr) {
@@ -397,7 +397,7 @@ export default function StationView({
             if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
             if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
               const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
-              set.add(`${a.sku ?? ''}||${a.variant_label ?? 'Standard'}`);
+              set.add(`${a.product_name_vi ?? ''}||${a.variant_label ?? 'Standard'}`);
               unsentByDate.set(imp.delivery_date, set);
             }
           }
@@ -420,7 +420,7 @@ export default function StationView({
         .select('order_ref, shop_name, product_name_vi, variant_label, qty')
         .in('import_id', import_ids).eq('team', team).order('order_ref'),
       supabase.from('lab_assignments')
-        .select('id, product_name_vi, product_name_en, sku, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled')
+        .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled')
         .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
     ]);
     const byRef = new Map<string, OrderDetail>();
@@ -436,7 +436,9 @@ export default function StationView({
     setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
     const rows: HistoryProdRow[] = (prod ?? []).filter(a => !a.cancelled).map(a => ({
       id: a.id, product_name_vi: a.product_name_vi, product_name_en: a.product_name_en ?? '',
-      sku: a.sku ?? null, variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
+      // lab_assignments has no sku column (it lives on lab_fiche_variants) — left null here
+      // rather than adding a join just for a label that already shows the product name.
+      sku: null, variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
       qty_produced: a.qty_produced ?? 0, total_qty: a.total_qty ?? 0, qty_sent_total: a.qty_sent_total ?? 0,
       is_extra: !!a.is_extra, delivery_date,
     }));
