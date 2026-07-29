@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine,
+  ChevronRight, PenLine, RefreshCw,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -192,6 +192,24 @@ export default function StationView({
   const [searchLoading, setSearchLoading] = useState(false);
   const [extraCategories, setExtraCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('');
+
+  // On-demand Odoo sync (header button) — same "auto" behaviour as the 15-min cron, just
+  // triggered by a chef who doesn't want to wait. syncState drives the icon (spin while
+  // syncing, brief check/alert after) and syncCooldown blocks re-clicks for ~45s so the button
+  // can't be hammered.
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
+  const [syncCooldown, setSyncCooldown] = useState(false);
+  async function handleSyncOdoo() {
+    if (syncState === 'syncing' || syncCooldown) return;
+    setSyncState('syncing');
+    const { syncOdooAction } = await import('./actions');
+    const res = await syncOdooAction();
+    setSyncState(res.error ? 'error' : 'ok');
+    setSyncCooldown(true);
+    setTimeout(() => setSyncCooldown(false), 45000);
+    setTimeout(() => setSyncState('idle'), 2500);
+    if (res.ok && (res.createdImports || res.changesApplied)) router.refresh();
+  }
 
   const meta = TEAM_LABELS[team];
 
@@ -687,6 +705,16 @@ export default function StationView({
                   }>{l.toUpperCase()}</button>
               ))}
             </div>
+            <button onClick={handleSyncOdoo} disabled={syncState === 'syncing' || syncCooldown}
+              title={lang === 'vi' ? 'Đồng bộ Odoo ngay' : 'Sync Odoo now'}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95 disabled:opacity-40"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: syncState === 'ok' ? '#7CD98C' : syncState === 'error' ? '#F0A0A0' : 'rgba(255,255,255,0.8)' }}>
+              {syncState === 'ok'
+                ? <CheckCircle2 size={14} />
+                : syncState === 'error'
+                  ? <AlertCircle size={14} />
+                  : <RefreshCw size={14} className={syncState === 'syncing' ? 'animate-spin' : ''} />}
+            </button>
             <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
               className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>

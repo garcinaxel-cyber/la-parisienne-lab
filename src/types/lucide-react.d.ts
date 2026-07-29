@@ -70,4 +70,5 @@ declare module 'lucide-react' {
   export const CalendarDays: LucideIcon;
   export const Square: LucideIcon;
   export const CheckSquare: LucideIcon;
+  export const RefreshCw: LucideIcon;
 }
