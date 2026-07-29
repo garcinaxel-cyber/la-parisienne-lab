@@ -333,7 +333,17 @@ export default function StationView({
       // list off after 1-2 days instead of the ~30 distinct days we actually want — so we
       // fetch a generous batch of rows here, then dedupe/cap by DATE below.
       .limit(600)
-      .then(async ({ data: allImports }) => {
+      .then(async ({ data: allImports, error: importsErr }) => {
+        // A stale/expired session surfaces here as a PostgREST error (not just empty data) —
+        // without this check it silently renders as an empty "No history yet" with no way to
+        // recover, when the actual fix is just to sign back in.
+        if (importsErr) {
+          console.error('lab_imports fetch failed', importsErr);
+          if (/jwt/i.test(importsErr.message ?? '') || importsErr.code === 'PGRST301' || importsErr.code === 'PGRST303') {
+            router.push('/login');
+            return;
+          }
+        }
         if (!allImports?.length) {
           if (isUpcoming) setUpcomingData([]);
           else setHistoryData([]);
@@ -345,11 +355,18 @@ export default function StationView({
         const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
         const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
         const importIds = imports.map((i: any) => i.id);
-        const { data: asgns } = await supabase
+        const { data: asgns, error: asgnsErr } = await supabase
           .from('lab_assignments')
           .select('import_id, qty_to_produce, status, sku, variant_label, transferred, cancelled')
           .in('import_id', importIds)
           .eq('team', team);
+        if (asgnsErr) {
+          console.error('lab_assignments fetch failed', asgnsErr);
+          if (/jwt/i.test(asgnsErr.message ?? '') || asgnsErr.code === 'PGRST301' || asgnsErr.code === 'PGRST303') {
+            router.push('/login');
+            return;
+          }
+        }
         const byDate = new Map<string, DateSummary>();
         for (const imp of imports) {
           if (!byDate.has(imp.delivery_date))
