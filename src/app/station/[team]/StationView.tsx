@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -95,7 +95,7 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics';
 
 type DateSummary = {
   delivery_date: string;
@@ -104,6 +104,15 @@ type DateSummary = {
   doneQty: number;
   import_ids: string[];
   unsentCount: number; // distinct products still not sent to stock (history tab only)
+};
+
+type ProductStat = { name: string; avg: number; trendPct: number };
+type AnalyticsData = {
+  completion: number;
+  blocked: number;
+  margin: number; // qty_extra / qty_ordered, %
+  topProducts: ProductStat[];
+  daily: { date: string; units: number }[];
 };
 
 type OrderDetail = {
@@ -213,6 +222,11 @@ export default function StationView({
   // Missing entry for a date = everything defaults to selected (see groupHistoryProd usage).
   const [historySel, setHistorySel] = useState<Record<string, Set<string>>>({});
   const [sendingHistoryStock, setSendingHistoryStock] = useState<string | null>(null);
+
+  // Analytics tab — team-scoped read of lab_daily_stats, cached per range (7 / 30 days)
+  const [analyticsRange, setAnalyticsRange] = useState<7 | 30>(30);
+  const [analyticsData, setAnalyticsData] = useState<Partial<Record<7 | 30, AnalyticsData>>>({});
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   // Stock transfer (send finished products to stock)
   const [stockModal, setStockModal] = useState(false);
@@ -409,6 +423,24 @@ export default function StationView({
         });
     })();
   }, [activeTab, team, today]);
+
+  // Lazy-load analytics — via a server action (see getTeamAnalyticsAction in ./actions), NOT
+  // a direct client query: lab_daily_stats' RLS only grants SELECT to admin/lab_manager/
+  // assistant (it backs the admin analytics page), so a chef's own browser session can't read
+  // it. The action checks the chef is logged in, then reads through the service-role client and
+  // returns only the pre-aggregated, team-scoped numbers below — same pattern as the Odoo sync
+  // button. Cached per range so switching 7j/30j back and forth doesn't re-fetch.
+  useEffect(() => {
+    if (activeTab !== 'analytics') return;
+    if (analyticsData[analyticsRange]) return;
+    setLoadingAnalytics(true);
+    (async () => {
+      const { getTeamAnalyticsAction } = await import('./actions');
+      const res = await getTeamAnalyticsAction(team, analyticsRange);
+      if (res.data) setAnalyticsData(prev => ({ ...prev, [analyticsRange]: res.data! }));
+      setLoadingAnalytics(false);
+    })();
+  }, [activeTab, analyticsRange, team]);
 
   async function loadHistoryDetails(delivery_date: string, import_ids: string[]) {
     if (historyDetails[delivery_date] !== undefined) return;
@@ -776,6 +808,13 @@ export default function StationView({
       labelEn: 'History',
       count: historyData.length,
       icon: <Clock size={14} />,
+    },
+    {
+      id: 'analytics',
+      labelVi: 'Phân tích',
+      labelEn: 'Analytics',
+      count: 0,
+      icon: <TrendingUp size={14} />,
     },
   ];
 
@@ -1622,6 +1661,108 @@ export default function StationView({
           })}
         </div>
       )}
+
+      {activeTab === 'analytics' && (() => {
+        const stats = analyticsData[analyticsRange];
+        return (
+          <div className="max-w-3xl mx-auto px-4 py-5 space-y-4 pb-16">
+            <div className="flex justify-end gap-1.5">
+              {([7, 30] as const).map(r => (
+                <button key={r} onClick={() => setAnalyticsRange(r)}
+                  className="px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95"
+                  style={analyticsRange === r
+                    ? { backgroundColor: '#1A4731', color: '#FFF4CC' }
+                    : { backgroundColor: '#FFFFFF', color: '#1A4731', border: '1px solid #E0D49A' }
+                  }>
+                  {r}{lang === 'vi' ? ' ngày' : 'd'}
+                </button>
+              ))}
+            </div>
+
+            {loadingAnalytics && !stats && (
+              <div className="space-y-3">
+                <SkeletonRow /><SkeletonRow />
+              </div>
+            )}
+
+            {!loadingAnalytics && stats && (
+              <>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
+                    <div className="text-lg font-bold" style={{ color: '#2D6A4F' }}>{stats.completion}%</div>
+                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
+                      {lang === 'vi' ? 'Hoàn thành' : 'Completion'}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
+                    <div className="text-lg font-bold" style={{ color: stats.blocked > 0 ? '#92600A' : '#1A4731' }}>{stats.blocked}</div>
+                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
+                      {lang === 'vi' ? `Bị chặn (${analyticsRange}n)` : `Blocked (${analyticsRange}d)`}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
+                    <div className="text-lg font-bold" style={{ color: '#1A4731' }}>{stats.margin > 0 ? '+' : ''}{stats.margin}%</div>
+                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
+                      {lang === 'vi' ? 'Chênh lệch' : 'Margin'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
+                  <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Số lượng đặt trung bình / ngày' : 'Average quantity ordered / day'}
+                  </div>
+                  {stats.topProducts.length === 0 ? (
+                    <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {stats.topProducts.map(p => {
+                        const trendSymbol = p.trendPct > 5 ? '▲' : p.trendPct < -5 ? '▼' : '–';
+                        const trendColor = p.trendPct > 5 ? '#791F1F' : p.trendPct < -5 ? '#2D6A4F' : '#6B6455';
+                        return (
+                          <div key={p.name} className="flex justify-between items-center text-[13px]">
+                            <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
+                            <span className="flex items-center gap-1.5 shrink-0">
+                              <span className="font-bold" style={{ color: '#1A4731' }}>{p.avg}</span>
+                              <span className="text-[11px]" style={{ color: trendColor }}>
+                                {trendSymbol} {Math.abs(p.trendPct)}%
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
+                  <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Sản lượng theo ngày' : 'Volume produced per day'}
+                  </div>
+                  {stats.daily.length === 0 ? (
+                    <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
+                  ) : (
+                    <div className="flex items-end gap-1" style={{ height: 90 }}>
+                      {(() => {
+                        const max = Math.max(1, ...stats.daily.map(d => d.units));
+                        return stats.daily.map(d => (
+                          <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+                            <span className="text-[9px] font-bold mb-0.5" style={{ color: '#1A4731' }}>{d.units}</span>
+                            <div className="w-full rounded-t" style={{ height: `${Math.max(6, d.units / max * 100)}%`, backgroundColor: '#1A4731' }} />
+                            <span className="text-[8px] mt-1 truncate w-full text-center" style={{ color: '#6B6455' }}>
+                              {new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'numeric' })}
+                            </span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
