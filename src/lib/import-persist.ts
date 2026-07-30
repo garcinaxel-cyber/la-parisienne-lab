@@ -73,11 +73,17 @@ export async function persistImportsFromLines(
   const allDates = Array.from(byDate.keys()).sort();
   let createdImports = 0;
 
-  // Birthday cakes: a line already covered by an unmatched manual cake (same SKU + delivery date)
-  // must NOT get its own production card — the manual cake IS the single card. The Odoo order line
-  // is still imported (for the record); the assistant confirms the match in the Birthday tab.
+  // Birthday cakes: a line already covered by a manual cake (same SKU + delivery date) must
+  // NOT get its own production card — the manual cake IS the single card, forever, whether or
+  // not its Odoo document has been created yet. The Odoo order line is still imported (for the
+  // record), it just doesn't spawn a second lab_assignments row.
+  // BUG FIX 2026-07-30: this used to filter .is('matched_order_ref', null), so the guard
+  // disappeared the moment an admin created the Odoo doc from /exceptional-orders (matched_order_ref
+  // gets set right then) — if the daily sync ran after that but the manual cake was still
+  // "needs_odoo", the real Odoo order came back in and created a duplicate card (client shows as
+  // the Odoo partner, e.g. "LAB", with no birthday message). Matched cakes must stay excluded too.
   const { data: pendingCakes } = await supabase
-    .from('lab_manual_cakes').select('product_sku, delivery_date').is('matched_order_ref', null).eq('needs_odoo', true);
+    .from('lab_manual_cakes').select('product_sku, delivery_date').eq('needs_odoo', true);
   const pendingCakeSet = new Set((pendingCakes ?? []).map((m: any) => `${m.product_sku}||${m.delivery_date}`));
 
   for (const date of allDates) {
@@ -128,7 +134,7 @@ export async function persistImportsFromLines(
     if (impErr || !importRow) return { createdImports, earliestDate: allDates[0] ?? null, error: impErr?.message };
 
     // Production cards — only lines whose SKU resolves to a team, and NOT already covered by a
-    // pending manual cake (same SKU + date) — see pendingCakeSet above.
+    // manual cake (same SKU + date, matched or not) — see pendingCakeSet above.
     const assignable = dateLines.filter(l => TEAMS.includes(l.team) && !pendingCakeSet.has(`${l.product_sku}||${date}`));
     const asgIdByKey: Record<string, string> = {}; // card key (team|variant|name) → assignment id, to stamp order lines
     if (assignable.length) {
