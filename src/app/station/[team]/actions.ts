@@ -63,11 +63,12 @@ export async function syncOdooAction(): Promise<{ ok?: boolean; createdImports?:
 // service-role client for the actual read — this only ever returns pre-aggregated, team-scoped
 // numbers, never raw table access, so it doesn't widen what a chef can see.
 export type ProductStat = { name: string; avg: number; trendPct: number };
+export type CategoryGroup = { category: string; products: ProductStat[] };
 export type TeamAnalytics = {
   completion: number;
   blocked: number;
   margin: number; // qty_extra / qty_ordered, %
-  topProducts: ProductStat[];
+  categories: CategoryGroup[];
   daily: { date: string; units: number }[];
 };
 
@@ -92,6 +93,24 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
   if (error) return { error: error.message };
   const rows = (data ?? []) as any[];
 
+  // Category lookup: sku -> lab_fiche_variants.fiche_id -> lab_fiche_meta.category (same join
+  // pattern used elsewhere for team resolution). Chefs asked for the list grouped by category
+  // instead of one long flat list.
+  const skus = Array.from(new Set(rows.map(r => r.sku).filter(Boolean)));
+  const { data: variantRows } = skus.length
+    ? await service.from('lab_fiche_variants').select('sku, fiche_id').in('sku', skus)
+    : { data: [] as any[] };
+  const ficheBySku: Record<string, string> = {};
+  for (const v of variantRows ?? []) if (v.sku && v.fiche_id) ficheBySku[v.sku] = v.fiche_id;
+  const ficheIds = Array.from(new Set(Object.values(ficheBySku)));
+  const { data: ficheRows } = ficheIds.length
+    ? await service.from('lab_fiche_meta').select('id, category').in('id', ficheIds)
+    : { data: [] as any[] };
+  const categoryByFiche: Record<string, string> = {};
+  for (const f of ficheRows ?? []) if (f.category) categoryByFiche[f.id] = f.category;
+  const UNCATEGORIZED = 'Other';
+  const categoryForSku = (sku: string) => categoryByFiche[ficheBySku[sku]] || UNCATEGORIZED;
+
   let cardsTotal = 0, cardsDone = 0, cardsBlocked = 0, qtyOrderedSum = 0, qtyExtraSum = 0;
   const perDay: Record<string, number> = {};
   // Trend = avg ordered/day in the second half of the range vs the first half, per product.
@@ -99,7 +118,7 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
   const mid = Math.floor(allDays.length / 2);
   const firstHalf = new Set(allDays.slice(0, mid));
   const secondHalf = new Set(allDays.slice(mid));
-  const perProduct: Record<string, { total: number; first: number; second: number }> = {};
+  const perProduct: Record<string, { name: string; category: string; total: number; first: number; second: number }> = {};
 
   for (const r of rows) {
     cardsTotal += r.cards_total ?? 0;
@@ -108,26 +127,42 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
     qtyOrderedSum += r.qty_ordered ?? 0;
     qtyExtraSum += r.qty_extra ?? 0;
     perDay[r.day] = (perDay[r.day] ?? 0) + (r.qty_produced ?? 0);
-    const name = r.product_name || r.sku || '—';
-    (perProduct[name] ??= { total: 0, first: 0, second: 0 });
-    perProduct[name].total += r.qty_ordered ?? 0;
-    if (firstHalf.has(r.day)) perProduct[name].first += r.qty_ordered ?? 0;
-    else if (secondHalf.has(r.day)) perProduct[name].second += r.qty_ordered ?? 0;
+    const key = r.sku || r.product_name || '—';
+    (perProduct[key] ??= {
+      name: r.product_name || r.sku || '—',
+      category: r.sku ? categoryForSku(r.sku) : UNCATEGORIZED,
+      total: 0, first: 0, second: 0,
+    });
+    perProduct[key].total += r.qty_ordered ?? 0;
+    if (firstHalf.has(r.day)) perProduct[key].first += r.qty_ordered ?? 0;
+    else if (secondHalf.has(r.day)) perProduct[key].second += r.qty_ordered ?? 0;
   }
 
   // Every product the team touched in range, not just a top-N — a raw-qty ranking alone would
   // bury lower-piece-count items (a cake counted 1-2/order) under high-piece-count ones (macarons
-  // sold by the dozen), even though they take just as much of the team's time.
-  const topProducts: ProductStat[] = Object.entries(perProduct)
-    .filter(([, v]) => v.total > 0)
-    .map(([name, v]) => {
+  // sold by the dozen), even though they take just as much of the team's time. Grouped by
+  // category (biggest category first, by total volume), products sorted by avg within each.
+  const flatProducts = Object.values(perProduct)
+    .filter(v => v.total > 0)
+    .map(v => {
       const firstAvg = firstHalf.size ? v.first / firstHalf.size : 0;
       const secondAvg = secondHalf.size ? v.second / secondHalf.size : 0;
       const trendPct = firstAvg > 0 ? Math.round((secondAvg - firstAvg) / firstAvg * 100)
         : secondAvg > 0 ? 100 : 0;
-      return { name, avg: Math.round((v.total / days) * 10) / 10, trendPct };
-    })
-    .sort((a, b) => b.avg - a.avg);
+      return { name: v.name, category: v.category, avg: Math.round((v.total / days) * 10) / 10, trendPct, total: v.total };
+    });
+
+  const categoryTotals: Record<string, number> = {};
+  for (const p of flatProducts) categoryTotals[p.category] = (categoryTotals[p.category] ?? 0) + p.total;
+  const categories: CategoryGroup[] = Object.entries(categoryTotals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([category]) => ({
+      category,
+      products: flatProducts
+        .filter(p => p.category === category)
+        .sort((a, b) => b.avg - a.avg)
+        .map(({ name, avg, trendPct }) => ({ name, avg, trendPct })),
+    }));
 
   const daily = allDays.slice(-14).map(d => ({ date: d, units: perDay[d] ?? 0 }));
 
@@ -136,7 +171,7 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
       completion: cardsTotal ? Math.round(cardsDone / cardsTotal * 100) : 0,
       blocked: cardsBlocked,
       margin: qtyOrderedSum ? Math.round(qtyExtraSum / qtyOrderedSum * 100) : 0,
-      topProducts, daily,
+      categories, daily,
     },
   };
 }

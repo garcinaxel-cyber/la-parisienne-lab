@@ -107,11 +107,12 @@ type DateSummary = {
 };
 
 type ProductStat = { name: string; avg: number; trendPct: number };
+type CategoryGroup = { category: string; products: ProductStat[] };
 type AnalyticsData = {
   completion: number;
   blocked: number;
   margin: number; // qty_extra / qty_ordered, %
-  topProducts: ProductStat[];
+  categories: CategoryGroup[];
   daily: { date: string; units: number }[];
 };
 
@@ -1715,29 +1716,42 @@ export default function StationView({
                     </div>
                     <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
                       {lang === 'vi'
-                        ? `Tất cả sản phẩm · % so với nửa đầu giai đoạn ${analyticsRange} ngày`
-                        : `All products · % vs the first half of the ${analyticsRange}-day range`}
+                        ? `Theo loại sản phẩm · so với nửa đầu giai đoạn ${analyticsRange} ngày`
+                        : `Grouped by category · vs the first half of the ${analyticsRange}-day range`}
                     </div>
                   </div>
-                  {stats.topProducts.length === 0 ? (
+                  {stats.categories.length === 0 ? (
                     <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
                   ) : (
-                    <div className="space-y-2 overflow-y-auto" style={{ maxHeight: 260 }}>
-                      {stats.topProducts.map(p => {
-                        const trendSymbol = p.trendPct > 5 ? '▲' : p.trendPct < -5 ? '▼' : '–';
-                        const trendColor = p.trendPct > 5 ? '#791F1F' : p.trendPct < -5 ? '#2D6A4F' : '#6B6455';
-                        return (
-                          <div key={p.name} className="flex justify-between items-center text-[13px]">
-                            <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
-                            <span className="flex items-center gap-1.5 shrink-0">
-                              <span className="font-bold" style={{ color: '#1A4731' }}>{p.avg}</span>
-                              <span className="text-[11px]" style={{ color: trendColor }}>
-                                {trendSymbol} {Math.abs(p.trendPct)}%
-                              </span>
-                            </span>
+                    <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 320 }}>
+                      {stats.categories.map(cat => (
+                        <div key={cat.category}>
+                          <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
+                            {cat.category === 'Other' ? (lang === 'vi' ? 'Khác' : 'Other') : cat.category}
                           </div>
-                        );
-                      })}
+                          <div className="space-y-2">
+                            {cat.products.map(p => {
+                              // Chefs read direction, not math — a word + arrow, never the raw %.
+                              const trendLabel = p.trendPct > 10 ? (lang === 'vi' ? 'Tăng' : 'Up')
+                                : p.trendPct < -10 ? (lang === 'vi' ? 'Giảm' : 'Down')
+                                : (lang === 'vi' ? 'Ổn định' : 'Stable');
+                              const trendSymbol = p.trendPct > 10 ? '▲' : p.trendPct < -10 ? '▼' : '–';
+                              const trendColor = p.trendPct > 10 ? '#92600A' : p.trendPct < -10 ? '#2D6A4F' : '#6B6455';
+                              return (
+                                <div key={p.name} className="flex justify-between items-center text-[13px]">
+                                  <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className="font-bold" style={{ color: '#1A4731' }}>{p.avg}</span>
+                                    <span className="text-[11px]" style={{ color: trendColor }}>
+                                      {trendSymbol} {trendLabel}
+                                    </span>
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
