@@ -1709,13 +1709,20 @@ export default function StationView({
                 </div>
 
                 <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
-                  <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
-                    {lang === 'vi' ? 'Số lượng đặt trung bình / ngày' : 'Average quantity ordered / day'}
+                  <div className="mb-3">
+                    <div className="font-bold text-xs" style={{ color: '#1A4731' }}>
+                      {lang === 'vi' ? 'Số lượng đặt trung bình / ngày' : 'Average quantity ordered / day'}
+                    </div>
+                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
+                      {lang === 'vi'
+                        ? `Tất cả sản phẩm · % so với nửa đầu giai đoạn ${analyticsRange} ngày`
+                        : `All products · % vs the first half of the ${analyticsRange}-day range`}
+                    </div>
                   </div>
                   {stats.topProducts.length === 0 ? (
                     <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 overflow-y-auto" style={{ maxHeight: 260 }}>
                       {stats.topProducts.map(p => {
                         const trendSymbol = p.trendPct > 5 ? '▲' : p.trendPct < -5 ? '▼' : '–';
                         const trendColor = p.trendPct > 5 ? '#791F1F' : p.trendPct < -5 ? '#2D6A4F' : '#6B6455';

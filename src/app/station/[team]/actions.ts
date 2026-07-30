@@ -115,7 +115,11 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
     else if (secondHalf.has(r.day)) perProduct[name].second += r.qty_ordered ?? 0;
   }
 
+  // Every product the team touched in range, not just a top-N — a raw-qty ranking alone would
+  // bury lower-piece-count items (a cake counted 1-2/order) under high-piece-count ones (macarons
+  // sold by the dozen), even though they take just as much of the team's time.
   const topProducts: ProductStat[] = Object.entries(perProduct)
+    .filter(([, v]) => v.total > 0)
     .map(([name, v]) => {
       const firstAvg = firstHalf.size ? v.first / firstHalf.size : 0;
       const secondAvg = secondHalf.size ? v.second / secondHalf.size : 0;
@@ -123,8 +127,7 @@ export async function getTeamAnalyticsAction(team: string, days: 7 | 30): Promis
         : secondAvg > 0 ? 100 : 0;
       return { name, avg: Math.round((v.total / days) * 10) / 10, trendPct };
     })
-    .sort((a, b) => b.avg - a.avg)
-    .slice(0, 5);
+    .sort((a, b) => b.avg - a.avg);
 
   const daily = allDays.slice(-14).map(d => ({ date: d, units: perDay[d] ?? 0 }));
 
