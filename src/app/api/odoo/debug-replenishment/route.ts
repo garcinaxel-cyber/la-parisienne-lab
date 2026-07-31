@@ -34,5 +34,15 @@ export async function GET(req: Request) {
     }
   }
 
+  const setState = url.searchParams.get('setState');
+  if (setState && out.doc?.id) {
+    try {
+      await odooExecuteWrite('stock.replenishment.request', 'write', [[out.doc.id], { state: setState }]);
+      out.writeResult = `write state=${setState} succeeded`;
+    } catch (e: any) {
+      out.writeResult = `write state=${setState} failed: ${String(e?.message ?? e)}`;
+    }
+  }
+
   return NextResponse.json(out);
 }
