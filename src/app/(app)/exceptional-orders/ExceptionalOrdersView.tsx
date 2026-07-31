@@ -1,6 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import QRCode from 'qrcode';
 import { useI18n } from '@/lib/i18n';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import {
@@ -13,7 +14,9 @@ type Order = {
   qty: number; deliveryDate: string; readyTime: string; deliveredBy: string; deliveryAddress: string;
   message: string; notes: string; customerName: string; customerPhone: string;
   source: string; fromShop: boolean;
-  needsOdoo: boolean; matchedRef: string | null;
+  needsOdoo: boolean; matchedRef: string | null; claimPending: boolean;
+  cancelledAt: string | null; cancelledByName: string | null; cancelReason: string | null;
+  designNotes: string | null; designPhotoUrl: string | null;
   suggestedRef: string | null; suggestedShop: string | null;
   prodStatus: string | null; qtyProduced: number;
 };
@@ -92,6 +95,21 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
     const { deleteManualCakeAction } = await import('../birthday-cakes/actions');
     await deleteManualCakeAction(o.id);
     setBusy(null); setDeleteFor(null); router.refresh();
+  }
+
+  // ── Cancel after Odoo (scenario 5/6, 2026-07-31 audit) ──
+  const [cancelFor, setCancelFor] = useState<Order | null>(null);
+  const [cancelReasonInput, setCancelReasonInput] = useState('');
+  const [cancelErr, setCancelErr] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  async function doCancel() {
+    if (!cancelFor) return;
+    setCancelling(true); setCancelErr(null);
+    const { cancelMatchedCakeAction } = await import('../birthday-cakes/actions');
+    const res = await cancelMatchedCakeAction(cancelFor.id, cancelReasonInput.trim() || null);
+    setCancelling(false);
+    if (res.error) { setCancelErr(res.error); return; }
+    setCancelFor(null); setCancelReasonInput(''); router.refresh();
   }
 
   const selectedOrders = orders.filter(o => selected.has(o.id));
@@ -193,6 +211,13 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const [confirmRegen, setConfirmRegen] = useState(false);
   const shopUrl = shopLinkToken && typeof window !== 'undefined'
     ? `${window.location.origin}/order/${shopLinkToken}` : null;
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!shopUrl) { setQrDataUrl(null); return; }
+    let cancelled = false;
+    QRCode.toDataURL(shopUrl, { width: 320, margin: 1 }).then(url => { if (!cancelled) setQrDataUrl(url); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [shopUrl]);
   async function copyLink() {
     if (!shopUrl) return;
     try { await navigator.clipboard.writeText(shopUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
@@ -302,9 +327,23 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
                     <div className="flex flex-col gap-1 items-end shrink-0">
                       {pb && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: pb.bg, color: pb.fg }}>{pb.label}</span>}
                       {o.needsOdoo && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>{vi ? 'Cần nhập Odoo' : 'To enter in Odoo'}</span>}
-                      {o.matchedRef && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1" style={{ backgroundColor: '#D1FAE5', color: '#065F46' }}><CheckCircle2 size={11} /> {o.matchedRef}</span>}
+                      {o.matchedRef && !o.cancelledAt && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1" style={{ backgroundColor: '#D1FAE5', color: '#065F46' }}><CheckCircle2 size={11} /> {o.matchedRef}</span>}
+                      {o.cancelledAt && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1" style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}><X size={11} /> {vi ? 'Đã hủy' : 'Cancelled'}</span>}
+                      {o.claimPending && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#E0E7FF', color: '#3730A3' }}>{vi ? 'Đang tạo đơn Odoo…' : 'Creating Odoo order…'}</span>}
                     </div>
                   </div>
+
+                  {(o.designNotes || o.designPhotoUrl) && (
+                    <div className="mt-2 rounded-xl px-3 py-2 flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #E9D5FF' }}>
+                      {o.designPhotoUrl && <img src={o.designPhotoUrl} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
+                      {o.designNotes && <span className="text-xs" style={{ color: '#6D28D9' }}>🎨 {o.designNotes}</span>}
+                    </div>
+                  )}
+                  {o.cancelledAt && (
+                    <div className="mt-2 text-xs italic" style={{ color: '#9CA3AF' }}>
+                      {vi ? 'Hủy bởi' : 'Cancelled by'} {o.cancelledByName ?? '—'} · {new Date(o.cancelledAt).toLocaleString(vi ? 'vi-VN' : 'en-US')}{o.cancelReason ? ` — ${o.cancelReason}` : ''}
+                    </div>
+                  )}
 
                   {o.needsOdoo && o.suggestedRef && (
                     <div className="mt-3 rounded-xl px-3 py-2.5 flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D' }}>
@@ -328,6 +367,12 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
                       <button onClick={() => setDeleteFor(o)} disabled={busy === o.id}
                         className="px-2.5 py-2 rounded-xl text-sm text-red-600 border border-red-200 inline-flex items-center gap-1 disabled:opacity-40">
                         <Trash2 size={14} />
+                      </button>
+                    )}
+                    {o.matchedRef && !o.cancelledAt && (
+                      <button onClick={() => { setCancelFor(o); setCancelReasonInput(''); setCancelErr(null); }} disabled={busy === o.id}
+                        className="px-2.5 py-2 rounded-xl text-sm text-red-600 border border-red-200 inline-flex items-center gap-1 disabled:opacity-40">
+                        <X size={14} /> {vi ? 'Hủy' : 'Cancel'}
                       </button>
                     )}
                     <button onClick={() => openEdit(o)} disabled={busy === o.id}
@@ -605,6 +650,15 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
                 <div className="rounded-xl px-3 py-2.5 text-xs font-mono break-all" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB', color: '#1A4731' }}>
                   {shopUrl}
                 </div>
+                {qrDataUrl && (
+                  <div className="flex flex-col items-center gap-2 py-1">
+                    <img src={qrDataUrl} alt="QR" className="w-40 h-40 rounded-xl" style={{ border: '1px solid #E5E7EB' }} />
+                    <a href={qrDataUrl} download="la-parisienne-lab-order-qr.png"
+                      className="text-xs font-semibold underline" style={{ color: '#1A4731' }}>
+                      {vi ? 'Tải QR để in cho từng shop' : 'Download QR to print for each shop'}
+                    </a>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button onClick={copyLink}
                     className="flex-1 py-2.5 rounded-xl font-bold text-white text-sm inline-flex items-center justify-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
@@ -655,6 +709,31 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
               <button onClick={() => setDeleteFor(null)} disabled={busy === deleteFor.id} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-200 text-gray-500">{vi ? 'Hủy' : 'Cancel'}</button>
               <button onClick={() => removeOrder(deleteFor)} disabled={busy === deleteFor.id} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-50" style={{ backgroundColor: '#DC2626' }}>
                 {busy === deleteFor.id ? '…' : (vi ? 'Xóa' : 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelFor && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => !cancelling && setCancelFor(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3" onClick={ev => ev.stopPropagation()}>
+            <h2 className="font-bold text-lg" style={{ color: '#DC2626' }}>{vi ? 'Hủy đơn này?' : 'Cancel this order?'}</h2>
+            <p className="text-sm text-ink-light">×{cancelFor.qty} · {cancelFor.name}</p>
+            <p className="text-xs text-ink-light">
+              {vi
+                ? `Sẽ hủy dòng sản phẩm này trên đơn Odoo ${cancelFor.matchedRef} và đánh dấu hủy trên thẻ sản xuất (giữ lại lịch sử, không xóa).`
+                : `This will cancel this product's line on Odoo order ${cancelFor.matchedRef} and mark the production card cancelled (kept for history, not deleted).`}
+            </p>
+            <textarea value={cancelReasonInput} onChange={e => setCancelReasonInput(e.target.value)} rows={2}
+              placeholder={vi ? 'Lý do (không bắt buộc)…' : 'Reason (optional)…'}
+              className="w-full rounded-xl px-3 py-2 text-sm resize-none" style={{ border: '1px solid #E5E7EB' }} />
+            {cancelErr && <p className="text-xs font-semibold" style={{ color: '#DC2626' }}>{cancelErr}</p>}
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setCancelFor(null)} disabled={cancelling} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-200 text-gray-500">{vi ? 'Đóng' : 'Close'}</button>
+              <button onClick={doCancel} disabled={cancelling} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-50" style={{ backgroundColor: '#DC2626' }}>
+                {cancelling ? '…' : (vi ? 'Hủy đơn' : 'Cancel order')}
               </button>
             </div>
           </div>

@@ -88,7 +88,10 @@ export async function searchShopProductsAction(token: string, query: string): Pr
   return { products: filtered };
 }
 
-export type ShopOrderItem = { ficheId: string; variantId: string | null; qty: number; message: string | null };
+export type ShopOrderItem = {
+  ficheId: string; variantId: string | null; qty: number; message: string | null;
+  designNotes: string | null; designPhotoUrl: string | null;
+};
 
 // One submission = a small cart. Shared info (shop, date, customer…) applies to every
 // line; each line becomes its own manual order + production card, so each one later
@@ -97,11 +100,27 @@ export async function submitShopOrderAction(token: string, input: {
   shop: string; deliveryDate: string; readyTime: string | null;
   deliveredBy: string | null; deliveryAddress: string | null;
   customerName: string | null; customerPhone: string | null; notes: string | null;
-  items: ShopOrderItem[];
+  items: ShopOrderItem[]; clientSubmissionKey: string;
 }): Promise<{ ok?: boolean; error?: string }> {
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   if (!(await tokenOk(supabase, token))) return { error: 'Invalid link' };
+
+  // ── Idempotency: double-tap / network-retry protection ──
+  // The client generates one key per "compose" session (kept until a successful submit
+  // resets the form). First insert wins; a conflict means this exact submission already
+  // went through, so we return success without creating a second set of rows.
+  if (!input.clientSubmissionKey || !/^[0-9a-f-]{20,40}$/i.test(input.clientSubmissionKey)) {
+    return { error: 'Missing submission key' };
+  }
+  const { error: dedupeErr } = await supabase.from('lab_shop_submission_dedupe')
+    .insert({ client_submission_key: input.clientSubmissionKey });
+  if (dedupeErr) {
+    // Unique violation = genuine duplicate of an already-processed submit -> idempotent success.
+    // Any other error (table missing, etc.) should NOT silently swallow a real order.
+    if (dedupeErr.code === '23505') return { ok: true };
+    return { error: `Submission check failed: ${dedupeErr.message}` };
+  }
 
   // ── Validate the shared fields ──
   if (!SHOPS.includes(input.shop)) return { error: 'Invalid shop' };
@@ -115,11 +134,25 @@ export async function submitShopOrderAction(token: string, input: {
     return t === '' ? null : t;
   };
 
+  // ── Required fields depending on delivery mode (2026-07-31 audit, scenario 1) ──
+  // Direct lab delivery to the end customer needs contact + address to actually happen;
+  // any cake needs a way to reach the customer too (it's a personalised gift).
+  const custName = clean(input.customerName, 120);
+  const custPhone = clean(input.customerPhone, 40);
+  const addr = clean(input.deliveryAddress, 300);
+  const ready = clean(input.readyTime, 8);
+  if (deliveredBy === 'Lab') {
+    if (!custName || !custPhone) return { error: 'Customer name and phone are required for direct lab delivery' };
+    if (!addr) return { error: 'Delivery address is required for direct lab delivery' };
+    if (!ready) return { error: 'Ready time is required for direct lab delivery' };
+  }
+
   // ── Resolve EVERY line server-side first — fail before anything is written ──
   type Resolved = {
     ficheId: string; variantId: string | null; sku: string | null; team: string;
     nameVi: string; nameEn: string; imageUrl: string | null; variantLabel: string;
-    qty: number; message: string | null;
+    qty: number; message: string | null; isCake: boolean;
+    designNotes: string | null; designPhotoUrl: string | null;
   };
   const resolved: Resolved[] = [];
   for (const item of items) {
@@ -145,11 +178,17 @@ export async function submitShopOrderAction(token: string, input: {
       if (nameRow?.product_name_vi) nameVi = nameRow.product_name_vi;
     }
     if (!nameVi) nameVi = sku ?? 'Sản phẩm';
+    const isCake = fiche.category === 'Birthday cake';
+    // Design photo must be one we generated via uploadDesignPhotoAction (our own storage
+    // bucket) — never trust an arbitrary URL pasted by the client.
+    const photoUrl = item.designPhotoUrl && item.designPhotoUrl.includes('/lab-design-photos/') ? item.designPhotoUrl : null;
     resolved.push({
       ficheId: fiche.id, variantId: variant?.id ?? null, sku, team,
       nameVi, nameEn: fiche.name_en ?? '', imageUrl: variant?.image_url ?? fiche.image_url ?? null,
-      variantLabel: variant?.label ?? 'Standard', qty,
-      message: fiche.category === 'Birthday cake' ? clean(item.message, 200) : null,
+      variantLabel: variant?.label ?? 'Standard', qty, isCake,
+      message: isCake ? clean(item.message, 200) : null,
+      designNotes: isCake ? clean(item.designNotes, 400) : null,
+      designPhotoUrl: isCake ? photoUrl : null,
     });
   }
 
@@ -195,7 +234,7 @@ export async function submitShopOrderAction(token: string, input: {
       team: r.team, qty: r.qty, delivery_date: input.deliveryDate,
       ready_time: clean(input.readyTime, 8), delivered_by: deliveredBy,
       delivery_address: clean(input.deliveryAddress, 300),
-      message: r.message,
+      message: r.message, design_notes: r.designNotes, design_photo_url: r.designPhotoUrl,
       customer_name: clean(input.customerName, 120), customer_phone: clean(input.customerPhone, 40),
       notes: clean(input.notes, 500),
       shop_name: input.shop, created_by_name: `${input.shop} (shop)`,
@@ -220,4 +259,62 @@ export async function submitShopOrderAction(token: string, input: {
   // (e.g. multiple same-day Moon Flower cakes) into a single quotation/replenishment.
 
   return { ok: true };
+}
+
+// Upload a cake design reference photo (scenario 3 of the 2026-07-31 audit). Called as soon
+// as the shop attaches a file, before the final submit — the resulting public URL is then
+// passed as `designPhotoUrl` on the relevant item. Validated server-side (type/size) even
+// though the input is a plain <input type="file"> with no client-side enforcement.
+export async function uploadDesignPhotoAction(token: string, formData: FormData): Promise<{ url?: string; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  if (!(await tokenOk(supabase, token))) return { error: 'Invalid link' };
+
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only images are allowed' };
+  if (file.size > 5 * 1024 * 1024) return { error: 'Image too large — max 5MB' };
+
+  const ext = (file.type.split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';
+  const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
+  const buf = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await supabase.storage.from('lab-design-photos')
+    .upload(path, buf, { contentType: file.type, upsert: false });
+  if (upErr) return { error: upErr.message };
+
+  const { data } = supabase.storage.from('lab-design-photos').getPublicUrl(path);
+  return { url: data.publicUrl };
+}
+
+// Shop order tracking (scenario 5/6 follow-up, 2026-07-31 audit) — self-service status view
+// on the same token-gated link, no account needed. The shop re-picks itself (same selector
+// used to order) and sees its own recent birthday-cake orders with a plain status.
+export type ShopOrderStatus = {
+  id: string; name: string; qty: number; deliveryDate: string;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  matchedRef: string | null; cancelReason: string | null; createdAt: string;
+};
+
+export async function getShopOrdersAction(token: string, shop: string): Promise<{ orders?: ShopOrderStatus[]; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  if (!(await tokenOk(supabase, token))) return { error: 'Invalid link' };
+  if (!SHOPS.includes(shop)) return { error: 'Invalid shop' };
+
+  const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase.from('lab_manual_cakes')
+    .select('id, product_name_vi, qty, delivery_date, matched_order_ref, cancelled_at, cancel_reason, created_at')
+    .eq('shop_name', shop).gte('delivery_date', since)
+    .order('delivery_date', { ascending: false }).order('created_at', { ascending: false }).limit(50);
+  if (error) return { error: error.message };
+
+  const orders: ShopOrderStatus[] = (data ?? []).map((o: any) => {
+    const realRef = o.matched_order_ref && o.matched_order_ref !== '__pending_create__' ? o.matched_order_ref : null;
+    return {
+      id: o.id, name: o.product_name_vi, qty: o.qty, deliveryDate: o.delivery_date,
+      status: o.cancelled_at ? 'cancelled' : realRef ? 'confirmed' : 'pending',
+      matchedRef: realRef, cancelReason: o.cancel_reason ?? null, createdAt: o.created_at,
+    };
+  });
+  return { orders };
 }

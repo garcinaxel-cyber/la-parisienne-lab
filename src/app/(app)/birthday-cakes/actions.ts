@@ -255,18 +255,69 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
   return { ok: true };
 }
 
-// Delete a manual cake (and its production card)
+// Delete a manual cake (and its production card). Only for orders NOT yet linked to
+// Odoo — once matched_order_ref is set, the Odoo side must be cancelled too, so callers
+// must use cancelMatchedCakeAction instead (guarded here even if the UI already hides
+// the delete button for matched orders — never trust the client alone).
 export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
-  const { data: cake } = await supabase.from('lab_manual_cakes').select('assignment_id').eq('id', id).maybeSingle();
+  const { data: cake } = await supabase.from('lab_manual_cakes').select('assignment_id, matched_order_ref').eq('id', id).maybeSingle();
+  if (cake?.matched_order_ref) return { error: 'Already linked to an Odoo order — cancel it instead of deleting' };
   if (cake?.assignment_id) await supabase.from('lab_assignments').delete().eq('id', cake.assignment_id);
   const { error } = await supabase.from('lab_manual_cakes').delete().eq('id', id);
   if (error) return { error: error.message };
   revalidatePath('/birthday-cakes');
   revalidatePath('/exceptional-orders');
   return { ok: true };
+}
+
+// Cancel a manual cake AFTER its Odoo order/replenishment was created (scenario 5/6 of the
+// 2026-07-31 audit). Cancels just this cake's line in Odoo (never the whole document unless
+// it was the last active line), and only THEN propagates locally: the manual cake's own
+// production card (assignment_id) is marked cancelled — kept visible/struck through, produced
+// qty preserved, exactly like the existing sync-driven cancellation in odoo-apply.ts. If the
+// Odoo call fails, nothing local changes — we never want the app to say "cancelled" while
+// Odoo still expects the cake.
+export async function cancelMatchedCakeAction(manualCakeId: string, reason: string | null): Promise<{ ok?: boolean; warning?: string; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+
+  const { data: mc } = await supabase.from('lab_manual_cakes')
+    .select('id, matched_order_ref, cancelled_at, shop_name, product_sku, assignment_id').eq('id', manualCakeId).maybeSingle();
+  if (!mc) return { error: 'Cake not found' };
+  if (mc.cancelled_at) return { ok: true }; // already cancelled — idempotent
+  if (!mc.matched_order_ref) return { error: 'Not linked to Odoo yet — delete it instead' };
+  if (!mc.shop_name || !mc.product_sku) return { error: 'Missing shop or SKU — cannot resolve the Odoo line' };
+
+  const { cancelOdooOrderLine } = await import('@/lib/odoo-shop-order-sync');
+  const res = await cancelOdooOrderLine(mc.shop_name, mc.matched_order_ref, mc.product_sku);
+  if (!res.ok) return { error: res.error ?? 'Odoo cancellation failed' };
+
+  const now = new Date().toISOString();
+  await supabase.from('lab_manual_cakes').update({
+    cancelled_at: now, cancelled_by: session.user.id, cancelled_by_name: profile?.full_name ?? null,
+    cancel_reason: reason, needs_odoo: false,
+  }).eq('id', manualCakeId);
+
+  if (mc.assignment_id) {
+    const { data: asg } = await supabase.from('lab_assignments').select('notes').eq('id', mc.assignment_id).maybeSingle();
+    const stamp = now.slice(5, 16).replace('T', ' ');
+    const note = `⚠ Annulée par ${profile?.full_name ?? 'admin'} (Odoo ${stamp})${reason ? `: ${reason}` : ''}`;
+    await supabase.from('lab_assignments').update({
+      cancelled: true, total_qty: 0, qty_to_produce: 0,
+      notes: asg?.notes ? `${asg.notes}\n${note}` : note,
+      updated_at: now,
+    }).eq('id', mc.assignment_id);
+  }
+
+  revalidatePath('/birthday-cakes');
+  revalidatePath('/exceptional-orders');
+  return { ok: true, warning: res.warning };
 }
