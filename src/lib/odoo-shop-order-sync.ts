@@ -279,24 +279,31 @@ export async function cancelOdooOrderLine(
       const reqId = await findDocIdByName('stock.replenishment.request', orderRef);
       if (!reqId) return { ok: false, error: `Odoo replenishment "${orderRef}" not found` };
 
-      const lines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-        [[['request_id', '=', reqId], ['product_id', '=', product.id]]],
-        { fields: ['id', 'quantity_requested'] }), 15000, 'find line');
-      if (!lines.length) return { ok: false, error: `Line for "${sku}" not found on ${orderRef} — already removed?` };
-      // stock.replenishment.request.line rejects quantity_requested = 0 ("Requested quantity
-      // must be positive" — confirmed against live Odoo 2026-07-31), unlike sale.order.line.
-      // Delete the line outright instead of zeroing it.
-      await tmo(odooExecuteWrite('stock.replenishment.request.line', 'unlink', [[lines[0].id]]), 15000, 'delete line');
+      const allLines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
+        [[['request_id', '=', reqId]]], { fields: ['id', 'product_id'] }), 15000, 'find lines');
+      const targetLine = allLines.find((l: any) => Array.isArray(l.product_id) ? l.product_id[0] === product.id : l.product_id === product.id);
+      if (!targetLine) return { ok: false, error: `Line for "${sku}" not found on ${orderRef} — already removed?` };
 
-      const remaining = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-        [[['request_id', '=', reqId]]], { fields: ['id'] }), 15000, 'remaining lines');
-      if (remaining.length > 0) return { ok: true, docCancelled: false };
+      // stock.replenishment.request.line rejects quantity_requested = 0 ("Requested quantity
+      // must be positive"), and the API's WRITE account isn't in the "Replenishment Request
+      // Manager" group so it can't unlink a single line either (both confirmed against live
+      // Odoo, 2026-07-31). Only the parent stock.replenishment.request itself is unlinkable by
+      // this account. So: if this is the only line, cancel the whole document directly — no
+      // line-level edit needed. If there are other lines (grouped/batched request), we cannot
+      // safely remove just one without either permission, so surface a clear error instead of
+      // silently doing nothing or cancelling lines that shouldn't be cancelled.
+      if (allLines.length > 1) {
+        return {
+          ok: false,
+          error: `This replenishment groups ${allLines.length} products — the Odoo API account can't remove a single line (needs the "Replenishment Request Manager" group). Cancel the whole document manually in Odoo, or ask Axel to grant that permission to the write account.`,
+        };
+      }
 
       try {
         await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]);
         return { ok: true, docCancelled: true };
       } catch (e: any) {
-        return { ok: true, docCancelled: false, warning: `Line removed but the request itself could not be auto-removed in Odoo (${String(e?.message ?? e)}) — remove it manually there.` };
+        return { ok: false, error: `Could not cancel replenishment ${orderRef} in Odoo: ${String(e?.message ?? e)}` };
       }
     }
   } catch (e: any) {
