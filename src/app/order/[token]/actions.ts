@@ -192,13 +192,6 @@ export async function submitShopOrderAction(token: string, input: {
     });
   }
 
-  // ── Required fields depending on delivery mode / product (scenario 1) ──
-  // Any cake needs a way to reach the customer — it's a personalised gift, and someone
-  // has to be reachable if there's a problem with the design or the writing.
-  if (resolved.some(r => r.isCake) && !(custName && custPhone)) {
-    return { error: 'Customer name and phone are required for a birthday cake order' };
-  }
-
   // ── Per-day manual container (same one the assistants' creations use) ──
   let importId: string;
   const { data: existing } = await supabase.from('lab_imports')

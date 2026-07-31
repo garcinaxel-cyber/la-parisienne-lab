@@ -95,9 +95,8 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
   function validate(): string | null {
     if (!shop) return 'Chọn shop của bạn / Choose your shop';
     if (items.length === 0) return 'Chọn ít nhất 1 sản phẩm / Add at least one product';
-    const hasCake = items.some(i => i.product.isCake);
-    if (hasCake && (!customerName.trim() || !customerPhone.trim()))
-      return 'Bánh sinh nhật cần tên + SĐT khách hàng / Birthday cakes need customer name + phone';
+    // Required fields only kick in when the LAB delivers directly to the end customer —
+    // not just because the cart contains a cake (corrected 2026-07-31 per Axel).
     if (deliveredBy === 'Lab') {
       if (!customerName.trim() || !customerPhone.trim())
         return 'Lab giao trực tiếp cần tên + SĐT khách / Direct lab delivery needs customer name + phone';
@@ -131,7 +130,6 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
     setDone(true);
   }
 
-  const hasCake = items.some(i => i.product.isCake);
   const labDelivery = deliveredBy === 'Lab';
   const label = (viText: string, enText: string, required = false) => (
     <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
@@ -347,7 +345,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
         </div>
 
         <div>
-          {label('Khách hàng', 'customer', hasCake || labDelivery)}
+          {label('Khách hàng', 'customer', labDelivery)}
           <div className="flex gap-2">
             <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Tên khách…" className={inputCls} style={{ ...inputStyle, flex: 1 }} />
             <input type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="SĐT · 090…" className={inputCls} style={{ ...inputStyle, flex: 1.2 }} />
