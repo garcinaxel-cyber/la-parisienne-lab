@@ -279,28 +279,41 @@ export async function cancelOdooOrderLine(
       const reqId = await findDocIdByName('stock.replenishment.request', orderRef);
       if (!reqId) return { ok: false, error: `Odoo replenishment "${orderRef}" not found` };
 
+      const reqDocs = await tmo(odooExecute<any[]>('stock.replenishment.request', 'search_read',
+        [[['id', '=', reqId]]], { fields: ['id', 'state'] }), 15000, 'find request');
+      const reqDoc = reqDocs[0];
       const allLines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
         [[['request_id', '=', reqId]]], { fields: ['id', 'product_id'] }), 15000, 'find lines');
       const targetLine = allLines.find((l: any) => Array.isArray(l.product_id) ? l.product_id[0] === product.id : l.product_id === product.id);
       if (!targetLine) return { ok: false, error: `Line for "${sku}" not found on ${orderRef} — already removed?` };
 
-      // stock.replenishment.request.line rejects quantity_requested = 0 ("Requested quantity
-      // must be positive"), and the API's WRITE account isn't in the "Replenishment Request
-      // Manager" group so it can't unlink a single line either (both confirmed against live
-      // Odoo, 2026-07-31). Only the parent stock.replenishment.request itself is unlinkable by
-      // this account. So: if this is the only line, cancel the whole document directly — no
-      // line-level edit needed. If there are other lines (grouped/batched request), we cannot
-      // safely remove just one without either permission, so surface a clear error instead of
-      // silently doing nothing or cancelling lines that shouldn't be cancelled.
+      // stock.replenishment.request.line rejects quantity_requested = 0, and the write API
+      // account isn't in the "Replenishment Request Manager" group so it can't unlink a line
+      // OR the parent document either (both confirmed against live Odoo, 2026-07-31). But the
+      // model has a built-in `state` field with a "rejected" option, and the write account CAN
+      // write that field directly (plain ORM write, not the action_reject method — which is a
+      // no-op from 'draft' because it guards on state=='submitted'; a direct field write skips
+      // that guard). So: reject the whole document via state write. This only cancels ONE
+      // product's worth of stock movement if this is the only line — if there are other lines
+      // (grouped/batched request), rejecting would wrongly cancel those too, so we refuse and
+      // ask for manual handling instead.
       if (allLines.length > 1) {
         return {
           ok: false,
-          error: `This replenishment groups ${allLines.length} products — the Odoo API account can't remove a single line (needs the "Replenishment Request Manager" group). Cancel the whole document manually in Odoo, or ask Axel to grant that permission to the write account.`,
+          error: `This replenishment groups ${allLines.length} products — rejecting the whole document would cancel the others too. Cancel it manually in Odoo, or ask Axel to grant the "Replenishment Request Manager" group to the write account so single lines can be removed instead.`,
+        };
+      }
+      // Once stock has started moving (in_transit/receiving/done), rejecting the document
+      // would desync it from physical reality — refuse and require manual handling there.
+      if (reqDoc && !['draft', 'submitted', 'approved'].includes(reqDoc.state)) {
+        return {
+          ok: false,
+          error: `Replenishment ${orderRef} is already "${reqDoc.state}" in Odoo — stock may already be moving. Cancel it manually there instead of through this action.`,
         };
       }
 
       try {
-        await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]);
+        await odooExecuteWrite('stock.replenishment.request', 'write', [[reqId], { state: 'rejected' }]);
         return { ok: true, docCancelled: true };
       } catch (e: any) {
         return { ok: false, error: `Could not cancel replenishment ${orderRef} in Odoo: ${String(e?.message ?? e)}` };
