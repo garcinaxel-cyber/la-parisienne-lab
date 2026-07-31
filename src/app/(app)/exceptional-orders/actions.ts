@@ -13,8 +13,9 @@ export async function regenerateShopLinkAction(): Promise<{ ok?: boolean; token?
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
 
-  // Short, unguessable, URL-friendly (14 hex chars ≈ 56 bits — plenty for an internal form)
-  const token = randomUUID().replace(/-/g, '').slice(0, 14);
+  // Short, unguessable, URL-friendly (8 hex chars ≈ 32 bits — plenty for an internal form
+  // meant to be scanned via QR rather than typed; shortened from 14 chars on 2026-07-31).
+  const token = randomUUID().replace(/-/g, '').slice(0, 8);
   const { data: row } = await supabase.from('lab_shop_link').select('id').limit(1).maybeSingle();
   if (row?.id) {
     const { error } = await supabase.from('lab_shop_link')

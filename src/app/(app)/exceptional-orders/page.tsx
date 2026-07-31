@@ -20,7 +20,7 @@ export default async function ExceptionalOrdersPage() {
 
   // 1. All manual orders of the last 30 days + upcoming (matched ones kept for history)
   const { data: manual } = await supabase.from('lab_manual_cakes')
-    .select('id, fiche_id, product_name_vi, product_name_en, product_sku, image_url, team, qty, delivery_date, ready_time, delivered_by, delivery_address, message, notes, customer_name, customer_phone, shop_name, needs_odoo, matched_order_ref, matched_at, rejected_order_refs, assignment_id, created_by_name, created_at')
+    .select('id, fiche_id, product_name_vi, product_name_en, product_sku, image_url, team, qty, delivery_date, ready_time, delivered_by, delivery_address, message, design_notes, design_photo_url, notes, customer_name, customer_phone, shop_name, needs_odoo, matched_order_ref, matched_at, cancelled_at, cancelled_by_name, cancel_reason, rejected_order_refs, assignment_id, created_by_name, created_at')
     .gte('delivery_date', since)
     .order('delivery_date', { ascending: false })
     .order('created_at', { ascending: false });
@@ -116,8 +116,18 @@ export default async function ExceptionalOrdersPage() {
       customerPhone: o.customer_phone ?? '',
       source: o.shop_name ? `${o.shop_name}` : (o.created_by_name ?? ''),
       fromShop: !!o.shop_name,
-      needsOdoo: !!o.needs_odoo && !o.matched_order_ref,
-      matchedRef: o.matched_order_ref ?? null,
+      // '__pending_create__' is a transient claim set while an Odoo document is being
+      // created for this row (race guard in createOdooOrderForSelection) — treat it as still
+      // "to enter", never as a real matched ref, so a page refresh mid-creation can't show a
+      // broken badge or let the admin select it again.
+      needsOdoo: !!o.needs_odoo && (!o.matched_order_ref || o.matched_order_ref === '__pending_create__'),
+      matchedRef: (o.matched_order_ref && o.matched_order_ref !== '__pending_create__') ? o.matched_order_ref : null,
+      claimPending: o.matched_order_ref === '__pending_create__',
+      cancelledAt: o.cancelled_at ?? null,
+      cancelledByName: o.cancelled_by_name ?? null,
+      cancelReason: o.cancel_reason ?? null,
+      designNotes: o.design_notes ?? null,
+      designPhotoUrl: o.design_photo_url ?? null,
       suggestedRef: sug?.ref ?? null,
       suggestedShop: sug?.shop ?? null,
       prodStatus: (asg?.cancelled ? 'cancelled' : asg?.transferred ? 'transferred' : asg?.status ?? null) as string | null,

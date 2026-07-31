@@ -129,10 +129,10 @@ export default async function StationPage({ params }: { params: { team: string }
     // Manual (app-created) cakes: their message / ready-time is linked to the card directly.
     const asgIds = (assignments ?? []).map((a: any) => a.id);
     const { data: manualCakes } = asgIds.length > 0
-      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time').in('assignment_id', asgIds)
+      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time, design_notes, design_photo_url').in('assignment_id', asgIds)
       : { data: [] as any[] };
-    const manualByAsg: Record<string, { message: string | null; ready_time: string | null }> = {};
-    for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = { message: m.message, ready_time: m.ready_time };
+    const manualByAsg: Record<string, { message: string | null; ready_time: string | null; design_notes: string | null; design_photo_url: string | null }> = {};
+    for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = { message: m.message, ready_time: m.ready_time, design_notes: m.design_notes, design_photo_url: m.design_photo_url };
 
     // Which client orders of this day are published — chefs only see published portions.
     const { data: pubRows } = importIds.length > 0
@@ -152,6 +152,8 @@ export default async function StationPage({ params }: { params: { team: string }
         category_name_en: fiche?.category ?? null,
         bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
         bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
+        bc_design_notes: manualByAsg[a.id]?.design_notes || null,
+        bc_design_photo_url: manualByAsg[a.id]?.design_photo_url || null,
         draft_odoo: isDraftOdoo(((breakdownMap[a.id] ?? []) as any[]).map((b: any) => b.order_ref)),
         breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
           ...b,

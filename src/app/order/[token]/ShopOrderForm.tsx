@@ -1,19 +1,31 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Search, Plus, Minus, X, CheckCircle2, Send } from 'lucide-react';
-import { searchShopProductsAction, submitShopOrderAction, type ShopProduct } from './actions';
+import { Search, Plus, Minus, X, CheckCircle2, Send, Upload, Loader2 } from 'lucide-react';
+import { searchShopProductsAction, submitShopOrderAction, uploadDesignPhotoAction, getShopOrdersAction, type ShopProduct, type ShopOrderStatus } from './actions';
 
 // Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts (server-only file,
 // not imported here to avoid pulling Odoo client code into the client bundle).
 const SHOPS = ['Moon Flower', 'Lab', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
 const DELIVERERS = SHOPS;
 
-type CartItem = { key: string; product: ShopProduct; qty: number; qtyInput: string; message: string };
+type CartItem = {
+  key: string; product: ShopProduct; qty: number; qtyInput: string; message: string;
+  designNotes: string; designPhotoUrl: string | null; uploadingPhoto: boolean;
+};
 
 // Mobile-first public order form for the shops. VI primary, EN hint — no login.
 // Several products per submission: shared info entered once, one manual order per line.
 export default function ShopOrderForm({ token, today }: { token: string; today: string }) {
+  const [viewTab, setViewTab] = useState<'order' | 'mine'>('order');
   const [shop, setShop] = useState<string>('');
+  const [myOrders, setMyOrders] = useState<ShopOrderStatus[] | null>(null);
+  const [loadingMine, setLoadingMine] = useState(false);
+  useEffect(() => {
+    if (viewTab !== 'mine' || !shop) return;
+    setMyOrders(null);
+    setLoadingMine(true);
+    getShopOrdersAction(token, shop).then(res => { setMyOrders(res.orders ?? []); setLoadingMine(false); });
+  }, [viewTab, shop, token]);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ShopProduct[]>([]);
   const [searching, setSearching] = useState(false);
@@ -29,6 +41,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [sentCount, setSentCount] = useState(0);
+  const [submissionKey, setSubmissionKey] = useState(() => crypto.randomUUID());
 
   // Picking a shop pre-selects it as the delivery destination (most common case)
   useEffect(() => { if (shop && !deliveredBy) setDeliveredBy(shop); }, [shop]);
@@ -52,7 +65,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
     setItems(prev => {
       const found = prev.find(i => i.key === key);
       if (found) return prev.map(i => i.key === key ? { ...i, qty: Math.min(500, i.qty + 1), qtyInput: String(Math.min(500, i.qty + 1)) } : i);
-      return [...prev, { key, product: p, qty: 1, qtyInput: '1', message: '' }];
+      return [...prev, { key, product: p, qty: 1, qtyInput: '1', message: '', designNotes: '', designPhotoUrl: null, uploadingPhoto: false }];
     });
     setQuery(''); setResults([]);
   }
@@ -63,33 +76,67 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
   function resetAll() {
     setQuery(''); setResults([]); setItems([]);
     setDate(today); setReadyTime(''); setAddress(''); setCustomerName(''); setCustomerPhone(''); setNotes('');
-    setErr(null); setDone(false);
+    setErr(null); setDone(false); setSubmissionKey(crypto.randomUUID()); setViewTab('order');
+  }
+
+  async function uploadPhoto(key: string, file: File) {
+    setItems(prev => prev.map(i => i.key === key ? { ...i, uploadingPhoto: true } : i));
+    const fd = new FormData();
+    fd.set('file', file);
+    const res = await uploadDesignPhotoAction(token, fd);
+    setItems(prev => prev.map(i => i.key === key
+      ? { ...i, uploadingPhoto: false, designPhotoUrl: res.url ?? i.designPhotoUrl }
+      : i));
+    if (res.error) setErr(res.error);
+  }
+
+  // Same rules enforced server-side in submitShopOrderAction — checked here first so the
+  // shop gets immediate, specific feedback instead of a generic server error after the fact.
+  function validate(): string | null {
+    if (!shop) return 'Chọn shop của bạn / Choose your shop';
+    if (items.length === 0) return 'Chọn ít nhất 1 sản phẩm / Add at least one product';
+    const hasCake = items.some(i => i.product.isCake);
+    if (hasCake && (!customerName.trim() || !customerPhone.trim()))
+      return 'Bánh sinh nhật cần tên + SĐT khách hàng / Birthday cakes need customer name + phone';
+    if (deliveredBy === 'Lab') {
+      if (!customerName.trim() || !customerPhone.trim())
+        return 'Lab giao trực tiếp cần tên + SĐT khách / Direct lab delivery needs customer name + phone';
+      if (!address.trim()) return 'Lab giao trực tiếp cần địa chỉ / Direct lab delivery needs an address';
+      if (!readyTime) return 'Lab giao trực tiếp cần giờ cần xong / Direct lab delivery needs a ready time';
+    }
+    return null;
   }
 
   async function submit() {
     setErr(null);
-    if (!shop) { setErr('Chọn shop của bạn / Choose your shop'); return; }
-    if (items.length === 0) { setErr('Chọn ít nhất 1 sản phẩm / Add at least one product'); return; }
+    const v = validate();
+    if (v) { setErr(v); return; }
     setSending(true);
     const res = await submitShopOrderAction(token, {
       shop, deliveryDate: date, readyTime: readyTime || null,
       deliveredBy: deliveredBy || null, deliveryAddress: address || null,
       customerName: customerName || null, customerPhone: customerPhone || null,
-      notes: notes || null,
+      notes: notes || null, clientSubmissionKey: submissionKey,
       items: items.map(i => ({
         ficheId: i.product.ficheId, variantId: i.product.variantId,
         qty: i.qty, message: i.product.isCake ? (i.message || null) : null,
+        designNotes: i.product.isCake ? (i.designNotes || null) : null,
+        designPhotoUrl: i.product.isCake ? i.designPhotoUrl : null,
       })),
     });
     setSending(false);
     if (res.error) { setErr(res.error); return; }
     setSentCount(items.length);
+    setSubmissionKey(crypto.randomUUID());
     setDone(true);
   }
 
-  const label = (viText: string, enText: string) => (
+  const hasCake = items.some(i => i.product.isCake);
+  const labDelivery = deliveredBy === 'Lab';
+  const label = (viText: string, enText: string, required = false) => (
     <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
       {viText} <span className="font-medium normal-case" style={{ color: '#C9A84C' }}>· {enText}</span>
+      {required && <span style={{ color: '#DC2626' }}> *</span>}
     </div>
   );
   // 16px inputs — anything smaller makes iOS Safari auto-zoom on focus and the page
@@ -137,6 +184,52 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
           </div>
         </div>
 
+        <div className="flex rounded-xl p-1" style={{ backgroundColor: '#F5EFC8' }}>
+          <button onClick={() => setViewTab('order')}
+            className="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
+            style={viewTab === 'order' ? { backgroundColor: '#1A4731', color: 'white' } : { color: '#92600A' }}>
+            Đặt hàng · Order
+          </button>
+          <button onClick={() => setViewTab('mine')}
+            className="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
+            style={viewTab === 'mine' ? { backgroundColor: '#1A4731', color: 'white' } : { color: '#92600A' }}>
+            Đơn của tôi · My orders
+          </button>
+        </div>
+
+        {viewTab === 'mine' && (
+          <div className="space-y-2">
+            {!shop && <p className="text-sm text-center py-4" style={{ color: '#9CA3AF' }}>Chọn shop ở trên · Pick your shop above</p>}
+            {shop && loadingMine && <p className="text-sm text-center py-4" style={{ color: '#9CA3AF' }}>Đang tải… · loading…</p>}
+            {shop && !loadingMine && myOrders && myOrders.length === 0 && (
+              <p className="text-sm text-center py-4" style={{ color: '#9CA3AF' }}>Chưa có đơn nào (30 ngày qua) · No orders yet (last 30 days)</p>
+            )}
+            {shop && !loadingMine && myOrders && myOrders.map(o => {
+              const badge = o.status === 'cancelled'
+                ? { label: 'Đã hủy · Cancelled', bg: '#FEE2E2', fg: '#DC2626' }
+                : o.status === 'confirmed'
+                ? { label: 'Đã xác nhận · Confirmed', bg: '#D1FAE5', fg: '#065F46' }
+                : { label: 'Đang chờ · Pending', bg: '#FEF3C7', fg: '#92600A' };
+              return (
+                <div key={o.id} className="rounded-xl p-3 bg-white" style={{ border: '1px solid #E0D49A' }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: '#1A4731' }}>×{o.qty} · {o.name}</div>
+                      <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{o.deliveryDate}{o.matchedRef ? ` · ${o.matchedRef}` : ''}</div>
+                      {o.status === 'cancelled' && o.cancelReason && (
+                        <div className="text-xs mt-1 italic" style={{ color: '#9CA3AF' }}>{o.cancelReason}</div>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-full shrink-0" style={{ backgroundColor: badge.bg, color: badge.fg }}>{badge.label}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {viewTab === 'order' && (
+        <>
         <div>
           {label('Sản phẩm', 'products')}
 
@@ -171,6 +264,31 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                         style={{ border: '1px solid #93C5FD', color: '#1A4731', fontSize: 16 }} />
                     )}
                   </div>
+                  {i.product.isCake && (
+                    <div className="mt-2 space-y-1.5">
+                      <textarea value={i.designNotes} onChange={e => setItems(prev => prev.map(x => x.key === i.key ? { ...x, designNotes: e.target.value } : x))}
+                        placeholder="Mô tả thiết kế bánh (hình dáng, màu, trang trí…) · design description" rows={2}
+                        className="w-full rounded-lg px-2.5 py-1.5 resize-none" style={{ border: '1px solid #E9D5FF', color: '#1A4731', fontSize: 16 }} />
+                      <div className="flex items-center gap-2">
+                        <label className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer"
+                          style={{ border: '1px solid #E9D5FF', color: '#6D28D9' }}>
+                          {i.uploadingPhoto ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                          {i.designPhotoUrl ? 'Đổi ảnh · change photo' : 'Ảnh mẫu thiết kế · design photo'}
+                          <input type="file" accept="image/*" className="hidden" disabled={i.uploadingPhoto}
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(i.key, f); e.target.value = ''; }} />
+                        </label>
+                        {i.designPhotoUrl && (
+                          <div className="relative">
+                            <img src={i.designPhotoUrl} alt="" className="w-9 h-9 rounded-lg object-cover" />
+                            <button onClick={() => setItems(prev => prev.map(x => x.key === i.key ? { ...x, designPhotoUrl: null } : x))}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#DC2626' }} aria-label="Xóa ảnh">
+                              <X size={10} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -209,7 +327,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
             <input type="date" min={today} value={date} onChange={e => setDate(e.target.value)} className={inputCls} style={{ ...inputStyle, height: 46 }} />
           </div>
           <div className="flex-1 min-w-0">
-            {label('Giờ cần xong', 'ready by')}
+            {label('Giờ cần xong', 'ready by', labDelivery)}
             <input type="time" value={readyTime} onChange={e => setReadyTime(e.target.value)} className={inputCls} style={{ ...inputStyle, height: 46 }} />
           </div>
         </div>
@@ -224,12 +342,12 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
         </div>
 
         <div>
-          {label('Địa chỉ giao (nếu có)', 'delivery address')}
+          {label(labDelivery ? 'Địa chỉ giao' : 'Địa chỉ giao (nếu có)', 'delivery address', labDelivery)}
           <input value={address} onChange={e => setAddress(e.target.value)} placeholder="Địa chỉ giao đến khách…" className={inputCls} style={inputStyle} />
         </div>
 
         <div>
-          {label('Khách hàng', 'customer')}
+          {label('Khách hàng', 'customer', hasCake || labDelivery)}
           <div className="flex gap-2">
             <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Tên khách…" className={inputCls} style={{ ...inputStyle, flex: 1 }} />
             <input type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="SĐT · 090…" className={inputCls} style={{ ...inputStyle, flex: 1.2 }} />
@@ -254,6 +372,8 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
         <p className="text-[11px] text-center" style={{ color: '#B4B2A9' }}>
           Đơn sẽ vào sản xuất ngay và Lab sẽ nhập vào Odoo sau. · Goes straight to production; the lab enters it in Odoo later.
         </p>
+        </>
+        )}
       </div>
     </div>
   );

@@ -61,6 +61,8 @@ type Assignment = {
   qty_sent_total?: number;
   bc_message?: string | null;
   bc_ready_time?: string | null;
+  bc_design_notes?: string | null;
+  bc_design_photo_url?: string | null;
   draft_odoo?: boolean;
   sku: string | null;
   weight_grams: number | null;
@@ -2444,6 +2446,15 @@ function ProductionCard({
                   title={lang === 'vi' ? 'Chưa có lời chúc — hỏi trợ lý' : 'Message pas encore renseigné — voir avec l’assistante'}>
                   <AlertCircle size={12} /> {lang === 'vi' ? 'Thiếu lời chúc' : 'Message manquant'}
                 </span>
+              )}
+              {(a.bc_design_notes || a.bc_design_photo_url) && (
+                <div className="text-xs font-medium rounded-lg px-2 py-1.5 flex items-start gap-2"
+                  style={{ backgroundColor: '#F5F3FF', color: '#6D28D9' }}>
+                  {a.bc_design_photo_url && (
+                    <img src={a.bc_design_photo_url} alt="" className="w-9 h-9 rounded-md object-cover shrink-0" />
+                  )}
+                  {a.bc_design_notes && <span>🎨 {a.bc_design_notes}</span>}
+                </div>
               )}
             </div>
           )}
