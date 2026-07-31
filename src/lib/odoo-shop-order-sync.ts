@@ -283,17 +283,20 @@ export async function cancelOdooOrderLine(
         [[['request_id', '=', reqId], ['product_id', '=', product.id]]],
         { fields: ['id', 'quantity_requested'] }), 15000, 'find line');
       if (!lines.length) return { ok: false, error: `Line for "${sku}" not found on ${orderRef} — already removed?` };
-      await tmo(odooExecuteWrite('stock.replenishment.request.line', 'write', [[lines[0].id], { quantity_requested: 0 }]), 15000, 'zero line');
+      // stock.replenishment.request.line rejects quantity_requested = 0 ("Requested quantity
+      // must be positive" — confirmed against live Odoo 2026-07-31), unlike sale.order.line.
+      // Delete the line outright instead of zeroing it.
+      await tmo(odooExecuteWrite('stock.replenishment.request.line', 'unlink', [[lines[0].id]]), 15000, 'delete line');
 
       const remaining = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-        [[['request_id', '=', reqId], ['quantity_requested', '>', 0]]], { fields: ['id'] }), 15000, 'remaining lines');
+        [[['request_id', '=', reqId]]], { fields: ['id'] }), 15000, 'remaining lines');
       if (remaining.length > 0) return { ok: true, docCancelled: false };
 
       try {
         await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]);
         return { ok: true, docCancelled: true };
       } catch (e: any) {
-        return { ok: true, docCancelled: false, warning: `All lines zeroed but the request itself could not be auto-removed in Odoo (${String(e?.message ?? e)}) — remove it manually there.` };
+        return { ok: true, docCancelled: false, warning: `Line removed but the request itself could not be auto-removed in Odoo (${String(e?.message ?? e)}) — remove it manually there.` };
       }
     }
   } catch (e: any) {
