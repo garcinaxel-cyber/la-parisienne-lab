@@ -164,6 +164,7 @@ function groupHistoryProd(rows: HistoryProdRow[]): { sent: HistoryProdGroup[]; u
 const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
   pending: 'in_progress',
   in_progress: 'done',
+  partial: 'done',
   skip: 'pending',
   blocked: 'pending',
 };
@@ -2334,14 +2335,15 @@ function ProductionCard({
   const isUpdating = updating === a.id;
   // Breakdown collapsed by default on phones (open on sm+ via CSS)
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const canAdvance = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status);
+  const canAdvance = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
   const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
-  const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status);
+  const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
   const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
     in_progress: lang === 'vi' ? 'Xong' : 'Mark done',
+    partial: lang === 'vi' ? 'Xong' : 'Mark done',
   };
 
   return (
