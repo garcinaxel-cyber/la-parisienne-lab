@@ -236,6 +236,9 @@ export default function StationView({
   const [stockSel, setStockSel] = useState<Record<string, { on: boolean; qty: string }>>({});
   const [sendingStock, setSendingStock] = useState(false);
 
+  // Birthday cake design reference photo — tap the thumbnail to see it full-size
+  const [designPhotoModal, setDesignPhotoModal] = useState<string | null>(null);
+
   // Delete an extra production card (wrong product picked) — blocked once transferred
   const [deleteModal, setDeleteModal] = useState<Assignment | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -834,6 +837,7 @@ export default function StationView({
     onViewFiche: (a: Assignment) => a.fiche_id ? setFicheModal({ ficheId: a.fiche_id, productName: a.product_name_vi }) : null,
     onNoteUpdate: (id: string, note: string) => setAssignments(prev => prev.map(x => x.id === id ? { ...x, notes: note } : x)),
     onBlocked: (a: Assignment) => { setBlockedReason(''); setBlockedCustom(''); setBlockedModal(a); },
+    onOpenDesignPhoto: (url: string) => setDesignPhotoModal(url),
     meta,
     // Real station URL — '/station/me' breaks for admins without a lab team (bounced to dashboard)
     backTo: `/station/${teamSlug}`,
@@ -1880,6 +1884,18 @@ export default function StationView({
           lang={lang} backTo={`/station/${teamSlug}`} onClose={() => setFicheModal(null)} />
       )}
 
+      {/* Design reference photo — full-size view */}
+      {designPhotoModal && (
+        <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setDesignPhotoModal(null)}>
+          <button type="button" onClick={() => setDesignPhotoModal(null)}
+            className="absolute top-4 right-4 p-2 rounded-full text-white" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+            <X size={22} />
+          </button>
+          <img src={designPhotoModal} alt="" className="max-w-full max-h-full rounded-lg object-contain" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
+
       {/* Blocked reason modal */}
       {blockedModal && (
         <div className="modal-overlay fixed inset-0 z-50 flex items-end justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
@@ -2298,7 +2314,7 @@ function NotesEditor({
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
 function ProductionCard({
-  a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, meta, backTo,
+  a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -2310,6 +2326,7 @@ function ProductionCard({
   onViewFiche: (a: Assignment) => void;
   onNoteUpdate: (id: string, note: string) => void;
   onBlocked: (a: Assignment) => void;
+  onOpenDesignPhoto: (url: string) => void;
   meta: typeof TEAM_LABELS[Team];
   backTo: string;
 }) {
@@ -2451,7 +2468,10 @@ function ProductionCard({
                 <div className="text-xs font-medium rounded-lg px-2 py-1.5 flex items-start gap-2"
                   style={{ backgroundColor: '#F5F3FF', color: '#6D28D9' }}>
                   {a.bc_design_photo_url && (
-                    <img src={a.bc_design_photo_url} alt="" className="w-9 h-9 rounded-md object-cover shrink-0" />
+                    <button type="button" onClick={() => onOpenDesignPhoto(a.bc_design_photo_url!)}
+                      className="shrink-0" title={lang === 'vi' ? 'Xem ảnh mẫu' : 'Voir la photo'}>
+                      <img src={a.bc_design_photo_url} alt="" className="w-9 h-9 rounded-md object-cover" />
+                    </button>
                   )}
                   {a.bc_design_notes && <span>🎨 {a.bc_design_notes}</span>}
                 </div>
