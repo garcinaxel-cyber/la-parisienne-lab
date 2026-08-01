@@ -119,9 +119,14 @@ type AnalyticsData = {
 };
 
 type OrderDetail = {
+  id: string; // stable React key — distinct from order_ref, which synthetic manual entries share
   order_ref: string;
   shop_name: string;
-  items: { product_name_vi: string; variant_label: string; qty: number }[];
+  isManual?: boolean; // exceptional/manual cake not yet linked to an Odoo order
+  items: {
+    product_name_vi: string; variant_label: string; qty: number;
+    message?: string | null; designNotes?: string | null; designPhotoUrl?: string | null;
+  }[];
 };
 
 // One raw (done, non-cancelled) production card for the history tab's expanded view.
@@ -454,22 +459,62 @@ export default function StationView({
     setLoadingDetails(true);
     const supabase = createClient();
     // Orders (what was to produce) + real production (what was actually made) in parallel
-    const [{ data: lines }, { data: prod }] = await Promise.all([
+    const [{ data: lines }, { data: prod }, { data: manualCakes }] = await Promise.all([
       supabase.from('lab_order_lines')
-        .select('order_ref, shop_name, product_name_vi, variant_label, qty')
+        .select('id, order_ref, shop_name, product_name_vi, variant_label, qty, product_sku')
         .in('import_id', import_ids).eq('team', team).order('order_ref'),
       supabase.from('lab_assignments')
         .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled')
         .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
+      // Birthday-cake design photo/notes/message — only lives on lab_manual_cakes, never on
+      // lab_order_lines. Matched by team+date so both Odoo-linked AND still-unlinked
+      // exceptional orders show their design here (not just once they hit an Odoo doc).
+      supabase.from('lab_manual_cakes')
+        .select('id, product_sku, product_name_vi, qty, shop_name, message, design_notes, design_photo_url, matched_order_ref, cancelled_at')
+        .eq('team', team).eq('delivery_date', delivery_date),
     ]);
+    const lineIds = (lines ?? []).map((l: any) => l.id);
+    const { data: bcDetails } = lineIds.length
+      ? await supabase.from('lab_birthday_details').select('order_line_id, message').in('order_line_id', lineIds)
+      : { data: [] as any[] };
+    const messageByLineId: Record<string, string | null> = {};
+    for (const d of bcDetails ?? []) messageByLineId[d.order_line_id] = d.message ?? null;
+    const activeManualCakes = (manualCakes ?? []).filter((m: any) => !m.cancelled_at);
+    const manualByRefSku: Record<string, any> = {};
+    for (const m of activeManualCakes) {
+      if (m.matched_order_ref && m.matched_order_ref !== '__pending_create__') {
+        manualByRefSku[`${m.matched_order_ref}||${m.product_sku ?? ''}`] = m;
+      }
+    }
+
     const byRef = new Map<string, OrderDetail>();
     for (const line of lines ?? []) {
       if (!byRef.has(line.order_ref))
-        byRef.set(line.order_ref, { order_ref: line.order_ref, shop_name: line.shop_name, items: [] });
+        byRef.set(line.order_ref, { id: line.order_ref, order_ref: line.order_ref, shop_name: line.shop_name, items: [] });
+      const mc = manualByRefSku[`${line.order_ref}||${line.product_sku ?? ''}`];
       byRef.get(line.order_ref)!.items.push({
         product_name_vi: line.product_name_vi,
         variant_label: line.variant_label,
         qty: line.qty,
+        message: messageByLineId[line.id] ?? mc?.message ?? null,
+        designNotes: mc?.design_notes ?? null,
+        designPhotoUrl: mc?.design_photo_url ?? null,
+      });
+    }
+    // Exceptional orders not yet linked to an Odoo document have no lab_order_lines row at
+    // all, so they'd otherwise be invisible here even though they already count toward the
+    // day's total. Show each as its own card.
+    for (const m of activeManualCakes) {
+      if (m.matched_order_ref && m.matched_order_ref !== '__pending_create__') continue;
+      byRef.set(`__manual__${m.id}`, {
+        id: `__manual__${m.id}`,
+        order_ref: lang === 'vi' ? 'Đơn ngoại lệ' : 'Exceptional order',
+        shop_name: m.shop_name ?? '',
+        isManual: true,
+        items: [{
+          product_name_vi: m.product_name_vi, variant_label: 'Standard', qty: m.qty,
+          message: m.message ?? null, designNotes: m.design_notes ?? null, designPhotoUrl: m.design_photo_url ?? null,
+        }],
       });
     }
     setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
@@ -1508,20 +1553,37 @@ export default function StationView({
                       );
                     })()}
                     {(details ?? []).map(order => (
-                      <div key={order.order_ref} className="rounded-xl p-3 mt-2"
+                      <div key={order.id} className="rounded-xl p-3 mt-2"
                         style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
                         <div className="flex items-center justify-between mb-1.5">
                           <span className="text-xs font-bold" style={{ color: '#92600A' }}>{order.order_ref}</span>
                           <span className="text-xs font-medium" style={{ color: '#1A4731' }}>{order.shop_name}</span>
                         </div>
-                        <div className="space-y-0.5">
+                        <div className="space-y-1.5">
                           {order.items.map((item, i) => (
-                            <div key={i} className="flex items-center justify-between text-xs">
-                              <span style={{ color: '#374151' }}>
-                                {item.product_name_vi}
-                                {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
-                              </span>
-                              <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                            <div key={i}>
+                              <div className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#374151' }}>
+                                  {item.product_name_vi}
+                                  {item.variant_label ? <span className="ml-1 text-gray-400">· {item.variant_label}</span> : null}
+                                </span>
+                                <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{item.qty}</span>
+                              </div>
+                              {item.message && (
+                                <div className="text-[11px] mt-0.5" style={{ color: '#92600A' }}>🎂 {item.message}</div>
+                              )}
+                              {(item.designNotes || item.designPhotoUrl) && (
+                                <div className="text-[11px] font-medium rounded-lg px-2 py-1 mt-1 flex items-start gap-1.5"
+                                  style={{ backgroundColor: '#F5F3FF', color: '#6D28D9' }}>
+                                  {item.designPhotoUrl && (
+                                    <button type="button" onClick={() => setDesignPhotoModal(item.designPhotoUrl!)}
+                                      className="shrink-0" title={lang === 'vi' ? 'Xem ảnh mẫu' : 'Voir la photo'}>
+                                      <img src={item.designPhotoUrl} alt="" className="w-8 h-8 rounded-md object-cover" />
+                                    </button>
+                                  )}
+                                  {item.designNotes && <span>🎨 {item.designNotes}</span>}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
