@@ -13,6 +13,35 @@ export interface AutoSyncResult {
   cleaned_drafts: number;
   checked?: { sales: number; replenishments: number };
   error?: string;
+  skipped_concurrent?: boolean; // another sync (cron or a chef's button) was already running
+}
+
+// Single-row mutex (lab_sync_lock, see lab_v28_sync_lock.sql) so two overlapping calls — the
+// hourly cron firing at the same moment a chef clicks "Sync Odoo", or two chefs clicking at
+// once across the 4 team pages — can't both read Odoo as "not yet imported" for the same new
+// order and each create their own duplicate production card. A plain UPDATE is used instead of
+// a Postgres advisory lock: PostgREST calls can each land on a different pooled connection, so
+// a session-scoped lock acquired on one connection could be "released" on another and do
+// nothing. The 2-minute expiry self-heals if a run crashes before reaching the finally-release.
+const SYNC_LOCK_ID = true;
+const SYNC_LOCK_DURATION_MS = 2 * 60 * 1000;
+
+async function acquireSyncLock(supabase: SupabaseClient): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + SYNC_LOCK_DURATION_MS).toISOString();
+  const { data: freeRows, error: freeErr } = await supabase
+    .from('lab_sync_lock').update({ locked_until: expiresAt }).eq('id', SYNC_LOCK_ID).is('locked_until', null).select('id');
+  if (freeErr) return true; // fail OPEN — a lock-table hiccup must never block sync entirely
+  if (freeRows?.length) return true;
+  // Nobody held a null lock — try stealing an expired one (crashed run) instead.
+  const { data: staleRows, error: staleErr } = await supabase
+    .from('lab_sync_lock').update({ locked_until: expiresAt }).eq('id', SYNC_LOCK_ID).lt('locked_until', nowIso).select('id');
+  if (staleErr) return true;
+  return !!staleRows?.length;
+}
+
+async function releaseSyncLock(supabase: SupabaseClient): Promise<void> {
+  await supabase.from('lab_sync_lock').update({ locked_until: null }).eq('id', SYNC_LOCK_ID);
 }
 
 // SHARED "auto" sync: pulls Odoo, publishes new orders straight away (no manual review step),
@@ -22,6 +51,21 @@ export interface AutoSyncResult {
 // for the next cron pass. Needs a SERVICE-ROLE client (writes across tables no station RLS
 // policy grants access to).
 export async function runAutoOdooSync(supabase: SupabaseClient): Promise<AutoSyncResult> {
+  const gotLock = await acquireSyncLock(supabase);
+  if (!gotLock) {
+    return {
+      created_imports: 0, new_lines: 0, changes_detected: 0, changes_applied: 0,
+      deleted_refs: 0, cleaned_drafts: 0, skipped_concurrent: true,
+    };
+  }
+  try {
+    return await runAutoOdooSyncLocked(supabase);
+  } finally {
+    await releaseSyncLock(supabase);
+  }
+}
+
+async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSyncResult> {
   const result = await runOdooSync(supabase as any);
   const lines = result.lines;
 
