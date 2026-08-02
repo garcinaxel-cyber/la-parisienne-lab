@@ -49,7 +49,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
 
       const { data: asgRows } = await supabase
         .from('lab_assignments')
-        .select('id, total_qty, qty_to_produce, breakdown, notes')
+        .select('id, total_qty, qty_to_produce, qty_produced, status, breakdown, notes')
         .eq('import_id', first.import_id)
         .eq('team', first.team)
         .eq('variant_label', first.variant_label)
@@ -64,16 +64,23 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
           ? `⚠ ${ch.order_ref} annulée dans Odoo (−${oldTotal})`
           : `Odoo ${stamp}: ${ch.order_ref} ${delta > 0 ? '+' : ''}${delta}`;
         const newTotal = Math.max(0, (asg.total_qty ?? 0) + delta);
-        // Whole card down to 0 → mark cancelled (kept visible, struck through, out of progress).
-        // Re-added later (total back above 0) → un-cancel.
-        await supabase.from('lab_assignments').update({
+        const update: any = {
           total_qty: newTotal,
           qty_to_produce: Math.max(0, (asg.qty_to_produce ?? 0) + delta),
+          // Whole card down to 0 → mark cancelled (kept visible, struck through, out of progress).
+          // Re-added later (total back above 0) → un-cancel.
           cancelled: newTotal === 0,
           breakdown,
           notes: asg.notes ? `${asg.notes}\n${note}` : note,
           updated_at: new Date().toISOString(),
-        }).eq('id', asg.id);
+        };
+        // Re-open a card already marked 'done' if the modification now asks for more than what
+        // was actually produced — otherwise the extra quantity silently vanishes into a
+        // finished card the chef never revisits.
+        if (asg.status === 'done' && (asg.qty_produced ?? 0) < newTotal) {
+          update.status = (asg.qty_produced ?? 0) > 0 ? 'partial' : 'pending';
+        }
+        await supabase.from('lab_assignments').update(update).eq('id', asg.id);
       }
       applied.push(`${ch.order_ref}/${item.sku}: ${oldTotal} → ${item.new_qty}`);
     }
@@ -127,18 +134,23 @@ async function createLineAndCard(
   // Production card only if a team resolved (no fiche → shows in publish-bar unmatched)
   if (team && TEAMS.includes(team)) {
     const { data: asgEx } = await supabase
-      .from('lab_assignments').select('id, total_qty, qty_to_produce, breakdown')
+      .from('lab_assignments').select('id, total_qty, qty_to_produce, qty_produced, status, breakdown')
       .eq('import_id', ctx.import_id).eq('team', team).eq('variant_label', variantLabel).eq('product_name_vi', name);
     const asg = asgEx?.[0];
     const bEntry = { shop_name: ctx.shop_name, order_ref: orderRef, qty: item.new_qty, delivery_time: ctx.delivery_time ?? null };
     if (asg) {
       const breakdown = Array.isArray(asg.breakdown) ? [...asg.breakdown, bEntry] : [bEntry];
-      await supabase.from('lab_assignments').update({
-        total_qty: (asg.total_qty ?? 0) + item.new_qty,
+      const newTotal = (asg.total_qty ?? 0) + item.new_qty;
+      const update: any = {
+        total_qty: newTotal,
         qty_to_produce: (asg.qty_to_produce ?? 0) + item.new_qty,
         cancelled: false, // demand came back
         breakdown, updated_at: new Date().toISOString(),
-      }).eq('id', asg.id);
+      };
+      if (asg.status === 'done' && (asg.qty_produced ?? 0) < newTotal) {
+        update.status = (asg.qty_produced ?? 0) > 0 ? 'partial' : 'pending';
+      }
+      await supabase.from('lab_assignments').update(update).eq('id', asg.id);
     } else {
       await supabase.from('lab_assignments').insert({
         import_id: ctx.import_id, team, fiche_id: ficheId, variant_id: variantId,

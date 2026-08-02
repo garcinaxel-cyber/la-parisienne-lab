@@ -135,90 +135,38 @@ export async function persistImportsFromLines(
 
     // Production cards — only lines whose SKU resolves to a team, and NOT already covered by a
     // manual cake (same SKU + date, matched or not) — see pendingCakeSet above.
+    // ONE CARD PER SYNC BATCH — no merging across sync runs. (Merging into a same-day card was
+    // tried 2026-08-01 and reverted 2026-08-03: the cross-import lookup silently failed to
+    // find/update the shared card on most runs — confirmed via production data, e.g. the same
+    // product getting 2-7 separate cards across a single day's cron runs, exactly the
+    // fragmentation the merge was meant to prevent — and the sharing itself, when it DID work,
+    // caused two further bugs: a stale `transferred` flag after reopening a merged 'done' card,
+    // and applyOdooChanges finding the wrong card when an order that had merged into someone
+    // else's card was later modified in Odoo. A plain 1-import-per-card model can't have either
+    // bug by construction. Chefs still see one consolidated total via the Production tab's
+    // "Tổng cần làm" recap (aggregates across cards), and send-to-stock is already grouped by
+    // product via groupSendable() — neither depends on cards being merged in the database.
     const assignable = dateLines.filter(l => TEAMS.includes(l.team) && !pendingCakeSet.has(`${l.product_sku}||${date}`));
     const asgIdByKey: Record<string, string> = {}; // card key (team|variant|name) → assignment id, to stamp order lines
     if (assignable.length) {
-      // Merge into an existing SAME-DAY card for the same team+variant+product instead of
-      // always creating a new one. consolidateLines() already groups everything WITHIN one
-      // call, but repeated syncs on the same day (hourly cron, or the chef's manual "Sync
-      // Odoo" button) each used to spawn a brand-new card per run — one product ordered by
-      // 3 shops across 3 sync cycles showed as 3 separate cards instead of 1 with a 3-line
-      // breakdown. Chefs then had to mark "in stock" / advance each one separately.
-      // Never merge into: an extra card (is_extra), a card already linked to a manual/
-      // birthday cake (needs its own 1:1 message/photo/ready-time), or one already marked
-      // "in stock" (skip) — that status means "covered by existing stock", which shouldn't
-      // silently absorb fresh demand that may need real production.
-      const teamsInScope = Array.from(new Set(assignable.map(l => l.team)));
-      const { data: dateImportRows } = await supabase.from('lab_imports').select('id').eq('delivery_date', date);
-      const dateImportIds = (dateImportRows ?? []).map((r: any) => r.id);
-      let mergeTargetByKey: Record<string, any> = {};
-      if (dateImportIds.length) {
-        const { data: sameDayAsgs } = await supabase
-          .from('lab_assignments')
-          .select('id, team, variant_label, product_name_vi, total_qty, qty_to_produce, qty_produced, status, breakdown')
-          .in('import_id', dateImportIds)
-          .in('team', teamsInScope)
-          .eq('cancelled', false)
-          .eq('is_extra', false)
-          .neq('status', 'skip');
-        const candidateIds = (sameDayAsgs ?? []).map((a: any) => a.id);
-        let manualLinked = new Set<string>();
-        if (candidateIds.length) {
-          const { data: mcRows } = await supabase.from('lab_manual_cakes').select('assignment_id').in('assignment_id', candidateIds);
-          manualLinked = new Set((mcRows ?? []).map((m: any) => m.assignment_id).filter(Boolean));
-        }
-        for (const a of sameDayAsgs ?? []) {
-          if (manualLinked.has(a.id)) continue;
-          mergeTargetByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a;
-        }
-      }
-
-      const toInsert: typeof assignable = [];
-      for (const line of assignable) {
-        const key = `${line.team}||${line.variant_label}||${line.product_name_vi}`;
-        const target = mergeTargetByKey[key];
-        if (!target) { toInsert.push(line); continue; }
-        const newTotal = (target.total_qty ?? 0) + line.total_qty;
-        const newBreakdown = [...(Array.isArray(target.breakdown) ? target.breakdown : []), ...(line.breakdown ?? [])];
-        const update: any = {
-          total_qty: newTotal,
-          qty_to_produce: (target.qty_to_produce ?? 0) + line.total_qty,
-          breakdown: newBreakdown,
-          updated_at: new Date().toISOString(),
+      const { data: insertedAsgs, error: asgErr } = await supabase.from('lab_assignments').insert(assignable.map((line, idx) => {
+        const v = vBySku[line.product_sku] ?? null;
+        const f = v ? fById[v.fiche_id] ?? null : null;
+        return {
+          import_id: importRow.id, team: line.team,
+          fiche_id: v?.fiche_id ?? null, variant_id: v?.id ?? null,
+          product_name_vi: line.product_name_vi, product_name_en: f?.name_en ?? '',
+          image_url: v?.image_url ?? f?.image_url ?? null,
+          variant_label: line.variant_label,
+          total_qty: line.total_qty, qty_to_produce: line.total_qty, qty_produced: 0,
+          status: 'pending', sort_order: idx, breakdown: line.breakdown ?? [],
         };
-        // Re-open a card that was already finished if the new total now exceeds what's produced.
-        if (target.status === 'done' && (target.qty_produced ?? 0) < newTotal) {
-          update.status = (target.qty_produced ?? 0) > 0 ? 'partial' : 'pending';
-        }
-        const { error: updErr } = await supabase.from('lab_assignments').update(update).eq('id', target.id);
-        if (updErr) { toInsert.push(line); continue; } // fall back to a normal new card rather than losing the demand
-        asgIdByKey[key] = target.id;
-        target.total_qty = newTotal;
-        target.qty_to_produce = update.qty_to_produce;
-        target.breakdown = newBreakdown;
-        if (update.status) target.status = update.status;
+      })).select('id, team, variant_label, product_name_vi');
+      if (asgErr) {
+        await supabase.from('lab_imports').delete().eq('id', importRow.id);
+        return { createdImports, earliestDate: allDates[0] ?? null, error: asgErr.message };
       }
-
-      if (toInsert.length) {
-        const { data: insertedAsgs, error: asgErr } = await supabase.from('lab_assignments').insert(toInsert.map((line, idx) => {
-          const v = vBySku[line.product_sku] ?? null;
-          const f = v ? fById[v.fiche_id] ?? null : null;
-          return {
-            import_id: importRow.id, team: line.team,
-            fiche_id: v?.fiche_id ?? null, variant_id: v?.id ?? null,
-            product_name_vi: line.product_name_vi, product_name_en: f?.name_en ?? '',
-            image_url: v?.image_url ?? f?.image_url ?? null,
-            variant_label: line.variant_label,
-            total_qty: line.total_qty, qty_to_produce: line.total_qty, qty_produced: 0,
-            status: 'pending', sort_order: idx, breakdown: line.breakdown ?? [],
-          };
-        })).select('id, team, variant_label, product_name_vi');
-        if (asgErr) {
-          await supabase.from('lab_imports').delete().eq('id', importRow.id);
-          return { createdImports, earliestDate: allDates[0] ?? null, error: asgErr.message };
-        }
-        for (const a of insertedAsgs ?? []) asgIdByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.id;
-      }
+      for (const a of insertedAsgs ?? []) asgIdByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.id;
     }
 
     // Raw order lines (one per breakdown entry) for traceability + per-order views.
