@@ -542,6 +542,13 @@ export default function StationView({
     if (next === 'done') {
       update.qty_produced = a.qty_to_produce; update.produced_ahead = isAhead;
       update.produced_by = userId; update.produced_by_name = userName; update.produced_at = new Date().toISOString();
+      // Re-derive `transferred` from the actual sent-vs-produced invariant instead of leaving
+      // a stale value. A card reopened by the same-day merge (fix/card-fragmentation-and-
+      // sync-lock) keeps whatever `transferred`/`qty_sent_total` it had from BEFORE more demand
+      // was merged in — if that was already true (fully sent at the smaller old total), it must
+      // become false again now that qty_produced just jumped to the new, bigger target, or the
+      // freshly produced remainder becomes permanently invisible to "Send to stock".
+      update.transferred = (a.qty_sent_total ?? 0) >= a.qty_to_produce;
     }
     if (a.status === 'blocked') update.blocked_reason = null;
     await supabase.from('lab_assignments').update(update).eq('id', a.id);
@@ -584,7 +591,12 @@ export default function StationView({
     // all three quantities together (min 1; to remove the card, delete it instead).
     if (qtyModal.is_extra) {
       const q = Math.max(1, qtyInput);
-      const update: any = { total_qty: q, qty_to_produce: q, qty_produced: q, updated_at: new Date().toISOString() };
+      const update: any = {
+        total_qty: q, qty_to_produce: q, qty_produced: q, updated_at: new Date().toISOString(),
+        // Same re-derivation as advanceStatus below — editing an extra card's quantity must
+        // not leave a stale `transferred: true` if the new qty now exceeds what was sent.
+        transferred: (qtyModal.qty_sent_total ?? 0) >= q,
+      };
       await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
       setAssignments(prev => prev.map(x => x.id === qtyModal.id ? { ...x, ...update } : x));
       setQtyModal(null);
@@ -596,6 +608,9 @@ export default function StationView({
       qty_produced: qtyInput,
       updated_at: new Date().toISOString(),
       produced_ahead: isDone ? isAhead : false,
+      // See advanceStatus: keep `transferred` honest whenever qty_produced changes, so a
+      // reopened/edited card never hides a freshly-produced remainder from "Send to stock".
+      transferred: (qtyModal.qty_sent_total ?? 0) >= qtyInput,
     };
     if (isDone) { update.produced_by = userId; update.produced_by_name = userName; update.produced_at = new Date().toISOString(); }
     await supabase.from('lab_assignments').update(update).eq('id', qtyModal.id);
