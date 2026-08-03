@@ -164,9 +164,20 @@ export async function generateMissingCardsAction(
 
   // Existing assignments keyed by import+team+variant+name
   const { data: existing } = await supabase
-    .from('lab_assignments').select('import_id, team, variant_label, product_name_vi').in('import_id', importIds);
+    .from('lab_assignments').select('import_id, team, variant_label, product_name_vi, cancelled, breakdown').in('import_id', importIds);
   const existingKeys = new Set((existing ?? []).map((a: any) =>
     `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`));
+  // ALSO: an order_ref already covered by SOME card for this team+variant+name (any import that
+  // day) must not spawn a second card — this is how demand that merged into an older card (while
+  // cards could still merge across imports) is correctly recognized as already produced instead
+  // of "missing". Without this, generating cards for stale dates recreates real duplicates.
+  const coveredRefs = new Set<string>();
+  for (const a of existing ?? []) {
+    if (a.cancelled) continue;
+    for (const b of Array.isArray(a.breakdown) ? a.breakdown : []) {
+      if (b?.order_ref) coveredRefs.add(`${a.team}||${a.variant_label}||${a.product_name_vi}||${b.order_ref}`);
+    }
+  }
 
   // Skip lines already covered by a manual cake for this date (the manual card IS the card):
   //  - unmatched cake → matched by SKU (any order of that cake that day)
@@ -191,6 +202,7 @@ export async function generateMissingCardsAction(
     const variantLabel = v.label ?? l.variant_label ?? 'Standard';
     const key = `${l.import_id}||${team}||${variantLabel}||${l.product_name_vi}`;
     if (existingKeys.has(key)) continue;    // card already exists
+    if (l.order_ref && coveredRefs.has(`${team}||${variantLabel}||${l.product_name_vi}||${l.order_ref}`)) continue; // already covered by another card
     let g = groups.get(key);
     if (!g) {
       g = { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi,

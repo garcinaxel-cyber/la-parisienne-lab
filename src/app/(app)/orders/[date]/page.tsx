@@ -79,6 +79,19 @@ export default async function OrderDatePage({ params }: { params: { date: string
   const asgKeys = new Set(
     (assignmentsResult.data ?? []).map((a: any) => `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`)
   );
+  // ALSO check coverage by order_ref across ANY card for this team+variant+product+day, not just
+  // one scoped to the order line's own import. A card created by a same-day sync can carry demand
+  // from an order whose OWN import never got a card of its own (this was the case while cards
+  // could merge across imports, 2026-08-01→03 — reverted, but past dates still show it). Without
+  // this check the banner (and the "generate" button below) treats already-produced demand as
+  // missing and would create a real duplicate card if clicked.
+  const coveredRefs = new Set<string>();
+  for (const a of assignments) {
+    if (a.cancelled) continue;
+    for (const b of Array.isArray(a.breakdown) ? a.breakdown : []) {
+      if (b?.order_ref) coveredRefs.add(`${a.team}||${a.variant_label}||${a.product_name_vi}||${b.order_ref}`);
+    }
+  }
   const publishedImportIds = new Set((imports ?? []).filter((i: any) => i.status === 'published').map((i: any) => i.id));
   const variantBySkuForMissing = new Map<string, { label: string; fiche_id: string }>();
   if (orderLineSkus.length > 0) {
@@ -113,6 +126,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
     if (!['baby_mama', 'hung', 'entremet', 'baker'].includes(team)) continue;
     const key = `${l.import_id}||${team}||${v.label}||${l.product_name_vi}`;
     if (asgKeys.has(key)) continue;
+    if (l.order_ref && coveredRefs.has(`${team}||${v.label}||${l.product_name_vi}||${l.order_ref}`)) continue;
     const cur = missingMap.get(key) ?? { name: l.product_name_vi, team, qty: 0 };
     cur.qty += l.qty ?? 0;
     missingMap.set(key, cur);
