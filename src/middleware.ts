@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/auth/set-password', '/api/debug/check-order']; // TEMP — remove with the debug route
+const PUBLIC_PATHS = ['/login', '/auth/set-password'];
 
 // Coarse auth gate ONLY. The real session validation + role routing happens server-side in
 // the (app) layout (getSession → redirect). We deliberately do NOT import @supabase/ssr here:
