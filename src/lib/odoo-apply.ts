@@ -73,11 +73,16 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
       const asg = asgRows?.[0];
       if (asg) {
         // A tracking card already exists (either a normal card, or a previously-created
-        // "excess" card for demand beyond a manual cake). Either way a manual cake's OWN qty
-        // is constant, so the delta applies symmetrically — no coverage re-check needed here.
+        // "excess" card for demand beyond a manual cake). The card's TOTAL moves by the plain
+        // delta either way (a manual cake's own qty is constant, so it cancels out of a delta).
+        // But the breakdown entry for this order_ref is an ABSOLUTE value, not a delta — it must
+        // be set to the excess over manual-cake coverage, same as when the card/entry was first
+        // created, or it would silently drift to the full Odoo qty on the next edit.
+        const coverage = await coverageFor(first.delivery_date);
+        const breakdownQty = Math.max(0, item.new_qty - (coverage.coveredByRefSku.get(`${ch.order_ref}||${item.sku}||${first.delivery_date}`) ?? 0));
         const breakdown = Array.isArray(asg.breakdown) ? [...asg.breakdown] : [];
         const bIdx = breakdown.findIndex((b: any) => b.order_ref === ch.order_ref);
-        if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: item.new_qty };
+        if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: breakdownQty };
         const stamp = new Date().toISOString().slice(5, 16).replace('T', ' ');
         const note = ch.cancelled
           ? `⚠ ${ch.order_ref} annulée dans Odoo (−${oldTotal})`
