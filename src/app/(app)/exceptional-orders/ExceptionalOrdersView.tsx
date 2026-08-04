@@ -136,8 +136,12 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const [addOrderResult, setAddOrderResult] = useState<{ ok?: boolean; orderRef?: string; error?: string } | null>(null);
   // Distinct existing Odoo orders for the selection's shop (candidates already carries every
   // open order line for the relevant dates — dedupe down to one entry per order_ref).
+  // Case-insensitive: lab_order_lines.shop_name comes from Odoo and is often ALL CAPS
+  // ("MOON FLOWER"), while lab_manual_cakes.shop_name is title case ("Moon Flower") — a strict
+  // === here hid genuinely open orders (2026-08-04, S03045 never showed up as a candidate).
+  const normShop = (s: string | null) => (s ?? '').trim().toLowerCase();
   const existingOrderChoices = selectionValid
-    ? Array.from(new Map(candidates.filter(c => c.shop === selectedShops[0]).map(c => [c.orderRef, c])).values())
+    ? Array.from(new Map(candidates.filter(c => normShop(c.shop) === normShop(selectedShops[0])).map(c => [c.orderRef, c])).values())
     : [];
   async function addToExisting(orderRef: string) {
     setAddingToOrder(true);
