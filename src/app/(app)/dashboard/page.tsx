@@ -42,6 +42,13 @@ export default async function DashboardPage() {
     supabase.from('lab_excluded_skus').select('sku'),
   ]);
 
+  // Production-card write failures from the auto-sync (see odoo-apply.ts / odoo-auto-sync.ts) —
+  // a card that silently failed to create/update, surfaced here instead of only via the
+  // per-date "missing card" banner someone has to happen to notice.
+  const { data: syncErrorsRaw } = await supabase
+    .from('lab_odoo_changes').select('order_ref, items, delivery_date')
+    .eq('status', 'error').order('detected_at', { ascending: false }).limit(50);
+
   const { count: pendingTransfers } = await supabase
     .from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending');
 
@@ -54,5 +61,6 @@ export default async function DashboardPage() {
   return <DashboardView stats={stats} imports={imports ?? []}
     assignments={todayData.assignments} orderLines={todayData.orderLines}
     tomorrowAssignments={tomorrowData.assignments} tomorrowOrderLines={tomorrowData.orderLines}
-    pendingChanges={pendingChanges} pendingTransfers={pendingTransfers ?? 0} today={today} tomorrow={tomorrow} />;
+    pendingChanges={pendingChanges} syncErrors={syncErrorsRaw ?? []}
+    pendingTransfers={pendingTransfers ?? 0} today={today} tomorrow={tomorrow} />;
 }

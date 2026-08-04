@@ -85,6 +85,24 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       order_ref: c.order_ref, cancelled: c.cancelled, items: c.items,
       delivery_date: dateByRef[c.order_ref] ?? null, status: 'applied',
     })));
+
+    // A production-card write silently failing is exactly what left the Cheesy Danish /
+    // Teddy Hug D14 lines with no card at all for days (2026-08-04 investigation) — nobody
+    // knew until someone happened to open that date's orders page. Surface any failure here
+    // as its own 'error' row so the dashboard can show it immediately instead of relying on
+    // someone noticing the missing-card banner much later.
+    if (applyRes.errors.length) {
+      const byOrder = new Map<string, { sku: string; name?: string; reason: string }[]>();
+      for (const e of applyRes.errors) {
+        const arr = byOrder.get(e.order_ref) ?? [];
+        arr.push({ sku: e.sku, name: e.name, reason: e.reason });
+        byOrder.set(e.order_ref, arr);
+      }
+      await supabase.from('lab_odoo_changes').insert(Array.from(byOrder.entries()).map(([order_ref, items]) => ({
+        order_ref, cancelled: false, items,
+        delivery_date: dateByRef[order_ref] ?? null, status: 'error',
+      })));
+    }
   }
 
   // Auto-cleanup: DRAFT imports whose order(s) were HARD-DELETED in Odoo are orphans

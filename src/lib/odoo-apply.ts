@@ -26,10 +26,12 @@ export type OdooChange = {
 // duplicates, since birthday-cake products are typically added to an order piecemeal (exactly
 // this code path), not through the once-daily batch sync (import-persist.ts), which already had
 // a (until now incomplete) guard.
+export type OdooApplyError = { order_ref: string; sku: string; name?: string; reason: string };
+
 export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooChange[]) {
   const today = new Date().toISOString().split('T')[0];
   const applied: string[] = [];
-  const errors: string[] = [];
+  const errors: OdooApplyError[] = [];
   const coverageCache = new Map<string, ReturnType<typeof getManualCakeCoverage>>();
   const coverageFor = (date: string) => {
     if (!coverageCache.has(date)) coverageCache.set(date, getManualCakeCoverage(supabase, date));
@@ -49,7 +51,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
       if (!olRows?.length) {
         if (item.new_qty <= 0) continue;
         const created = await createLineAndCard(supabase, ch.order_ref, item, today, coverageFor);
-        if (created.error) errors.push(`${ch.order_ref}/${item.sku}: ${created.error}`);
+        if (created.error) errors.push({ order_ref: ch.order_ref, sku: item.sku, name: item.name, reason: created.error });
         else applied.push(`${ch.order_ref}/${item.sku}: new +${item.new_qty}`);
         continue;
       }
@@ -104,7 +106,8 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         if (asg.status === 'done' && (asg.qty_produced ?? 0) < newTotal) {
           update.status = (asg.qty_produced ?? 0) > 0 ? 'partial' : 'pending';
         }
-        await supabase.from('lab_assignments').update(update).eq('id', asg.id);
+        const { error: updErr } = await supabase.from('lab_assignments').update(update).eq('id', asg.id);
+        if (updErr) errors.push({ order_ref: ch.order_ref, sku: item.sku, name: item.name, reason: `update card ${asg.id}: ${updErr.message}` });
       } else if (delta > 0) {
         // No tracking card exists for this product on this order. Normally that means it's
         // fully covered by a matched manual cake (by design — see manual-cake-coverage.ts). If
@@ -118,11 +121,12 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
           const resolved = await resolveSkuTeam(supabase, item.sku);
           if (resolved.team && TEAMS.includes(resolved.team)) {
             const bEntry = { shop_name: first.shop_name, order_ref: ch.order_ref, qty: cardQty, delivery_time: first.delivery_time ?? null };
-            await upsertProductionCard(supabase, {
+            const upsertErr = await upsertProductionCard(supabase, {
               importId: first.import_id, team: resolved.team, ficheId: resolved.ficheId, variantId: resolved.variantId,
               name: first.product_name_vi, nameEn: resolved.nameEn, image: resolved.image, variantLabel: resolved.variantLabel,
               qty: cardQty, bEntry,
             });
+            if (upsertErr.error) errors.push({ order_ref: ch.order_ref, sku: item.sku, name: item.name, reason: upsertErr.error });
           }
         }
       }
@@ -152,11 +156,12 @@ async function resolveSkuTeam(supabase: SupabaseClient, sku: string) {
 async function upsertProductionCard(supabase: SupabaseClient, args: {
   importId: string; team: string; ficheId: string | null; variantId: string | null;
   name: string; nameEn: string; image: string | null; variantLabel: string; qty: number; bEntry: any;
-}) {
+}): Promise<{ error?: string }> {
   const { importId, team, ficheId, variantId, name, nameEn, image, variantLabel, qty, bEntry } = args;
-  const { data: asgEx } = await supabase
+  const { data: asgEx, error: selErr } = await supabase
     .from('lab_assignments').select('id, total_qty, qty_to_produce, qty_produced, status, breakdown')
     .eq('import_id', importId).eq('team', team).eq('variant_label', variantLabel).eq('product_name_vi', name);
+  if (selErr) return { error: `lookup card: ${selErr.message}` };
   const asg = asgEx?.[0];
   if (asg) {
     const breakdown = Array.isArray(asg.breakdown) ? [...asg.breakdown, bEntry] : [bEntry];
@@ -170,15 +175,18 @@ async function upsertProductionCard(supabase: SupabaseClient, args: {
     if (asg.status === 'done' && (asg.qty_produced ?? 0) < newTotal) {
       update.status = (asg.qty_produced ?? 0) > 0 ? 'partial' : 'pending';
     }
-    await supabase.from('lab_assignments').update(update).eq('id', asg.id);
+    const { error } = await supabase.from('lab_assignments').update(update).eq('id', asg.id);
+    if (error) return { error: `update card ${asg.id}: ${error.message}` };
   } else {
-    await supabase.from('lab_assignments').insert({
+    const { error } = await supabase.from('lab_assignments').insert({
       import_id: importId, team, fiche_id: ficheId, variant_id: variantId,
       product_name_vi: name, product_name_en: nameEn, image_url: image,
       variant_label: variantLabel, total_qty: qty, qty_to_produce: qty, qty_produced: 0,
       status: 'pending', sort_order: 6000, breakdown: [bEntry],
     });
+    if (error) return { error: `create card: ${error.message}` };
   }
+  return {};
 }
 
 // Create a lab_order_lines row for a product newly added to an existing order (always the FULL
@@ -208,7 +216,7 @@ async function createLineAndCard(
   // Insert the order line — inherit the order's publish state so a product added to an
   // already-published order is published too (else it shows as a phantom "not published").
   // Always the FULL qty, regardless of manual-cake coverage (kept for the record).
-  await supabase.from('lab_order_lines').insert({
+  const { error: lineErr } = await supabase.from('lab_order_lines').insert({
     import_id: ctx.import_id, source_type: ctx.source_type, order_ref: orderRef,
     shop_name: ctx.shop_name, product_sku: item.sku, product_name_vi: name,
     team, variant_label: variantLabel, qty: item.new_qty,
@@ -216,6 +224,7 @@ async function createLineAndCard(
     fiche_id: ficheId, variant_id: variantId,
     published: (ctx as any).published ?? false,
   });
+  if (lineErr) return { error: `insert order line: ${lineErr.message}` };
 
   // Production card only if a team resolved (no fiche → shows in publish-bar unmatched), and
   // only for the portion NOT already covered by a matched (or still-pending) manual cake.
@@ -224,9 +233,12 @@ async function createLineAndCard(
     const cardQty = excessQty(coverage, orderRef, item.sku, ctx.delivery_date, item.new_qty);
     if (cardQty > 0) {
       const bEntry = { shop_name: ctx.shop_name, order_ref: orderRef, qty: cardQty, delivery_time: ctx.delivery_time ?? null };
-      await upsertProductionCard(supabase, {
+      const cardErr = await upsertProductionCard(supabase, {
         importId: ctx.import_id, team, ficheId, variantId, name, nameEn, image, variantLabel, qty: cardQty, bEntry,
       });
+      // The order line itself was created fine either way — only the card creation failed.
+      // Surface it as an error so it doesn't silently disappear (2026-08-04 Cheesy Danish case).
+      if (cardErr.error) return { error: cardErr.error };
     }
   }
   return {};

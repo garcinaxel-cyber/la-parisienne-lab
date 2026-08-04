@@ -16,18 +16,45 @@ export async function applyPendingChangesAction(): Promise<{ applied?: number; e
   const { supabase, ok } = await guard();
   if (!ok) return { error: 'Not authorized' };
   const { data: pending } = await supabase
-    .from('lab_odoo_changes').select('id, order_ref, cancelled, items').eq('status', 'pending');
+    .from('lab_odoo_changes').select('id, order_ref, cancelled, items, delivery_date').eq('status', 'pending');
   if (!pending?.length) return { applied: 0 };
 
-  const { applied } = await applyOdooChanges(supabase, pending.map((p: any) => ({
+  const { applied, errors } = await applyOdooChanges(supabase, pending.map((p: any) => ({
     order_ref: p.order_ref, cancelled: p.cancelled, items: p.items,
   })));
   await supabase.from('lab_odoo_changes')
     .update({ status: 'resolved', resolved_at: new Date().toISOString() })
     .in('id', pending.map((p: any) => p.id));
 
+  // Same silent-failure risk as the auto-sync path — surface any card-write failure instead
+  // of letting it vanish once these rows flip to 'resolved'.
+  if (errors.length) {
+    const dateByRef = new Map((pending as any[]).map((p: any) => [p.order_ref, p.delivery_date]));
+    const byOrder = new Map<string, { sku: string; name?: string; reason: string }[]>();
+    for (const e of errors) {
+      const arr = byOrder.get(e.order_ref) ?? [];
+      arr.push({ sku: e.sku, name: e.name, reason: e.reason });
+      byOrder.set(e.order_ref, arr);
+    }
+    await supabase.from('lab_odoo_changes').insert(Array.from(byOrder.entries()).map(([order_ref, items]) => ({
+      order_ref, cancelled: false, items,
+      delivery_date: dateByRef.get(order_ref) ?? null, status: 'error',
+    })));
+  }
+
   revalidatePath('/dashboard');
   return { applied: applied.length };
+}
+
+// Acknowledge sync-error alerts (production card write failures) once handled — e.g. after
+// manually running "Generate missing cards" or fixing the underlying data.
+export async function resolveSyncErrorsAction(): Promise<{ error?: string }> {
+  const { supabase, ok } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  await supabase.from('lab_odoo_changes')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('status', 'error');
+  revalidatePath('/dashboard');
+  return {};
 }
 
 // Dismiss pending changes without applying (e.g. false positive)

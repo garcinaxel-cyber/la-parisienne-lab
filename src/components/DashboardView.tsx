@@ -27,8 +27,8 @@ function CountUp({ value, suffix = '', duration = 700 }: { value: number; suffix
   return <>{display}{suffix}</>;
 }
 
-export default function DashboardView({ stats, imports, assignments, orderLines = [], tomorrowAssignments = [], tomorrowOrderLines = [], pendingChanges = [], pendingTransfers = 0, today, tomorrow }:
-  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; tomorrowAssignments?: any[]; tomorrowOrderLines?: any[]; pendingChanges?: any[]; pendingTransfers?: number; today: string; tomorrow?: string }) {
+export default function DashboardView({ stats, imports, assignments, orderLines = [], tomorrowAssignments = [], tomorrowOrderLines = [], pendingChanges = [], syncErrors = [], pendingTransfers = 0, today, tomorrow }:
+  { stats: Stats | null; imports: any[]; assignments: any[]; orderLines?: any[]; tomorrowAssignments?: any[]; tomorrowOrderLines?: any[]; pendingChanges?: any[]; syncErrors?: any[]; pendingTransfers?: number; today: string; tomorrow?: string }) {
   const { t, lang } = useI18n();
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [changesDone, setChangesDone] = useState(false);
@@ -51,6 +51,14 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
     setExcludingSku(sku);
     const { excludeChangeSkuAction } = await import('@/app/(app)/odoo-changes-actions');
     await excludeChangeSkuAction(sku, name);
+    window.location.reload();
+  }
+
+  const [resolvingSyncErrors, setResolvingSyncErrors] = useState(false);
+  async function resolveSyncErrors() {
+    setResolvingSyncErrors(true);
+    const { resolveSyncErrorsAction } = await import('@/app/(app)/odoo-changes-actions');
+    await resolveSyncErrorsAction();
     window.location.reload();
   }
   const s = stats ?? { imports_today: 0, published_today: 0, total_assignments: 0, done_assignments: 0, blocked: 0 };
@@ -102,6 +110,47 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
         </div>
         <Link href="/import" className="btn-primary">{t('import')}</Link>
       </div>
+
+      {/* Production card write failures (see odoo-apply.ts) — a card silently didn't get
+          created/updated during sync. This is the alert for the 2026-08-04 Cheesy Danish /
+          Teddy Hug D14 class of bug: previously this failed with zero trace anywhere. */}
+      {syncErrors.length > 0 && (
+        <div className="rounded-2xl border-2 overflow-hidden" style={{ borderColor: '#B45309' }}>
+          <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#FFFBEB' }}>
+            <AlertCircle size={20} className="shrink-0" style={{ color: '#B45309' }} />
+            <div className="flex-1">
+              <div className="font-bold text-sm" style={{ color: '#92400E' }}>
+                {lang === 'vi' ? `${syncErrors.length} lỗi đồng bộ — thẻ sản xuất có thể chưa được tạo` : `${syncErrors.length} sync error${syncErrors.length > 1 ? 's' : ''} — a production card may be missing`}
+              </div>
+              <div className="text-xs" style={{ color: '#92400E' }}>
+                {lang === 'vi' ? 'Kiểm tra trang đơn hàng của ngày liên quan, dùng "Generate missing cards" nếu cần' : 'Check that order’s date page and use "Generate missing cards" if needed, then acknowledge'}
+              </div>
+            </div>
+            <button onClick={resolveSyncErrors} disabled={resolvingSyncErrors}
+              className="text-xs font-bold px-4 py-2 rounded-xl text-white shrink-0 disabled:opacity-60"
+              style={{ backgroundColor: '#B45309' }}>
+              {resolvingSyncErrors ? '…' : (lang === 'vi' ? 'Đã xử lý' : 'Acknowledge')}
+            </button>
+          </div>
+          <div className="divide-y bg-white" style={{ borderColor: '#FEF3C7' }}>
+            {syncErrors.slice(0, 8).map((e: any, i: number) => (
+              <div key={`${e.order_ref}-${i}`} className="px-4 py-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-xs font-semibold text-navy">{e.order_ref}</span>
+                  {e.delivery_date && <span className="text-xs text-ink-light">{e.delivery_date}</span>}
+                </div>
+                <div className="mt-0.5 space-y-0.5">
+                  {(e.items ?? []).map((it: any, j: number) => (
+                    <div key={j} className="text-xs text-ink-light">
+                      <span className="font-semibold">{it.name ?? it.sku}</span> — {it.reason}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Odoo modifications detected by the auto-sync — awaiting review */}
       {pendingChanges.length > 0 && !changesDone && (
