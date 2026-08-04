@@ -134,6 +134,28 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const [linkFor, setLinkFor] = useState<Order | null>(null);
   async function doManualLink(c: Candidate) {
     if (!linkFor) return;
+    // Safety gate: this list intentionally shows every Odoo line for the date, not just
+    // matching-SKU ones (the fiche SKU sometimes legitimately differs from Odoo's), but
+    // picking a genuinely different product is exactly the kind of mismatch that already
+    // happened once (a birthday cake accidentally linked to an unrelated product's line,
+    // 2026-08-04). One extra confirmation for a mismatched SKU costs nothing for the normal
+    // case and stops that class of mistake.
+    if (linkFor.sku && c.sku && linkFor.sku !== c.sku) {
+      const msg = vi
+        ? `Sản phẩm khác nhau:
+"${linkFor.name}" (${linkFor.sku})
+vs.
+"${c.name}" (${c.sku})
+
+Vẫn liên kết?`
+        : `Different products:
+"${linkFor.name}" (${linkFor.sku})
+vs.
+"${c.name}" (${c.sku})
+
+Link anyway?`;
+      if (!window.confirm(msg)) return;
+    }
     setBusy(linkFor.id);
     const { confirmMatchAction } = await import('../birthday-cakes/actions');
     await confirmMatchAction(linkFor.id, c.orderRef, c.sku ?? undefined);
@@ -593,7 +615,13 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
       )}
 
       {linkFor && (() => {
-        const cands = candidates.filter(c => c.deliveryDate === linkFor.deliveryDate);
+        // Same-SKU candidates first (the safe, one-click case) — different-product candidates
+        // still shown below (legitimate when Odoo's SKU differs from the fiche's), but require
+        // the confirmation above and are visually marked as a different product.
+        const cands = candidates
+          .filter(c => c.deliveryDate === linkFor.deliveryDate)
+          .slice()
+          .sort((a, b) => Number(b.sku === linkFor!.sku) - Number(a.sku === linkFor!.sku));
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
             onClick={() => setLinkFor(null)}>
@@ -612,7 +640,9 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
                 </p>
               ) : (
                 <div className="rounded-lg" style={{ border: '1px solid #E5E7EB', maxHeight: '55vh', overflowY: 'auto' }}>
-                  {cands.map((c, i) => (
+                  {cands.map((c, i) => {
+                    const sameSku = !!linkFor.sku && !!c.sku && c.sku === linkFor.sku;
+                    return (
                     <button key={`${c.orderRef}-${c.sku}-${i}`} onClick={() => doManualLink(c)} disabled={busy === linkFor.id}
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                       <div className="flex-1 min-w-0">
@@ -620,11 +650,14 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
                         <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold">{c.orderRef}</span>
                           {c.shop && <span>· {c.shop}</span>}
+                          {sameSku
+                            ? <span style={{ color: '#059669' }}>· {vi ? '✓ cùng sản phẩm' : '✓ same product'}</span>
+                            : <span style={{ color: '#B45309' }}>· {vi ? '⚠ khác sản phẩm' : '⚠ different product'}</span>}
                         </div>
                       </div>
                       {c.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{c.sku}</span>}
                     </button>
-                  ))}
+                  );})}
                 </div>
               )}
             </div>

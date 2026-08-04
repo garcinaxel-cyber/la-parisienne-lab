@@ -88,9 +88,31 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
 
   // Manual link: pick an Odoo order to link this manual cake to (fallback when auto-detect misses)
   const [linkFor, setLinkFor] = useState<Cake | null>(null);
-  const odooCandidates = cakes.filter(c => c.source === 'odoo');
+  const odooCandidates = cakes.filter(c => c.source === 'odoo')
+    .slice()
+    .sort((a, b) => Number(b.sku === linkFor?.sku) - Number(a.sku === linkFor?.sku));
   async function doManualLink(target: Cake) {
     if (!linkFor?.manualId || !target.order_ref) return;
+    // Safety gate: same reasoning as the exceptional-orders manual-link modal — this list
+    // deliberately includes every Odoo cake order, not just matching-SKU ones, but a genuinely
+    // different product being picked by mistake is exactly what happened once already
+    // (2026-08-04). Extra confirmation only when the SKU differs.
+    if (linkFor.sku && target.sku && linkFor.sku !== target.sku) {
+      const msg = vi
+        ? `Sản phẩm khác nhau:
+"${linkFor.name}" (${linkFor.sku})
+vs.
+"${target.name}" (${target.sku})
+
+Vẫn liên kết?`
+        : `Different products:
+"${linkFor.name}" (${linkFor.sku})
+vs.
+"${target.name}" (${target.sku})
+
+Link anyway?`;
+      if (!window.confirm(msg)) return;
+    }
     setBusy(linkFor.id);
     const { confirmMatchAction } = await import('./actions');
     await confirmMatchAction(linkFor.manualId, target.order_ref, target.sku ?? undefined);
@@ -435,7 +457,9 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
               <p className="text-sm text-ink-light text-center py-4">{vi ? 'Không có đơn Odoo nào' : 'No Odoo birthday-cake orders yet'}</p>
             ) : (
               <div className="rounded-lg" style={{ border: '1px solid #E5E7EB', maxHeight: '55vh', overflowY: 'auto' }}>
-                {odooCandidates.map((o, i) => (
+                {odooCandidates.map((o, i) => {
+                  const sameSku = !!linkFor.sku && !!o.sku && o.sku === linkFor.sku;
+                  return (
                   <button key={o.id} onClick={() => doManualLink(o)} disabled={busy === linkFor.id}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                     <div className="flex-1 min-w-0">
@@ -444,11 +468,14 @@ export default function BirthdayCakesView({ cakes, productChoices = [], today }:
                         <span className="font-mono font-bold">{o.order_ref}</span>
                         {o.shop && <span>· {o.shop}</span>}
                         <span>· {new Date(o.delivery_date + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short' })}</span>
+                        {sameSku
+                          ? <span style={{ color: '#059669' }}>· {vi ? '✓ cùng sản phẩm' : '✓ same product'}</span>
+                          : <span style={{ color: '#B45309' }}>· {vi ? '⚠ khác sản phẩm' : '⚠ different product'}</span>}
                       </div>
                     </div>
                     {o.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{o.sku}</span>}
                   </button>
-                ))}
+                  );})}
               </div>
             )}
           </div>
