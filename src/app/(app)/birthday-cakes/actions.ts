@@ -153,11 +153,34 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string,
   // The Odoo order line(s) this manual cake covers. Auto-match uses the manual cake's SKU;
   // a human "Link to order" passes the picked Odoo line's SKU (works even if the fiche SKU differs).
   const sku = targetSku || mc.product_sku;
+  const sameProduct = sku === mc.product_sku;
   let q = supabase.from('lab_order_lines')
     .select('id, import_id, team, variant_label, product_name_vi, qty')
     .eq('order_ref', orderRef).eq('delivery_date', mc.delivery_date);
   q = sku ? q.eq('product_sku', sku) : q;
   const { data: oLines } = await q;
+
+  // Provisional link: a human picked a DIFFERENT product's line because the cake's own SKU
+  // isn't on the Odoo order yet (product not added there yet). Only confirm the order exists
+  // for that date and record the match — never copy the birthday message onto that other
+  // product's line, and never subtract from that other product's production card. It isn't
+  // the same item, so nothing about it should change. Once the real SKU line syncs in later,
+  // manual-cake-coverage.ts (keyed on the cake's own SKU, not this placeholder) picks it up
+  // correctly on its own.
+  if (!sameProduct) {
+    const { data: anyLine } = await supabase.from('lab_order_lines')
+      .select('id').eq('order_ref', orderRef).eq('delivery_date', mc.delivery_date).limit(1);
+    if (!anyLine?.length) return { error: 'Odoo order not found for this date' };
+
+    await supabase.from('lab_manual_cakes')
+      .update({ matched_order_ref: orderRef, matched_at: new Date().toISOString(), needs_odoo: false })
+      .eq('id', manualCakeId);
+
+    revalidatePath('/birthday-cakes');
+    revalidatePath('/exceptional-orders');
+    return { ok: true };
+  }
+
   if (!oLines?.length) return { error: 'Odoo order line not found' };
 
   // Copy the manual cake's complementary info onto the Odoo order line(s)
