@@ -114,6 +114,7 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
 
   const selectedOrders = orders.filter(o => selected.has(o.id));
   const selectedShops = Array.from(new Set(selectedOrders.map(o => o.source)));
+  const selectedDates = Array.from(new Set(selectedOrders.map(o => o.deliveryDate)));
   const selectionValid = selectedOrders.length > 0 && selectedShops.length === 1;
 
   async function createOdooBatch() {
@@ -134,14 +135,21 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
   const [pickExistingOrder, setPickExistingOrder] = useState(false);
   const [addingToOrder, setAddingToOrder] = useState(false);
   const [addOrderResult, setAddOrderResult] = useState<{ ok?: boolean; orderRef?: string; error?: string } | null>(null);
-  // Distinct existing Odoo orders for the selection's shop (candidates already carries every
-  // open order line for the relevant dates — dedupe down to one entry per order_ref).
-  // Case-insensitive: lab_order_lines.shop_name comes from Odoo and is often ALL CAPS
+  // Distinct existing Odoo orders for the selection's shop AND delivery date (candidates
+  // already carries every open order line for the relevant dates — dedupe down to one entry
+  // per order_ref). Same-day is a hard requirement (2026-08-05): attaching to a different day's
+  // order silently detaches the cake from the day it's actually meant for, and Odoo's own
+  // commitment/delivery date on that document is never touched by this action.
+  // Case-insensitive shop match: lab_order_lines.shop_name comes from Odoo and is often ALL CAPS
   // ("MOON FLOWER"), while lab_manual_cakes.shop_name is title case ("Moon Flower") — a strict
   // === here hid genuinely open orders (2026-08-04, S03045 never showed up as a candidate).
   const normShop = (s: string | null) => (s ?? '').trim().toLowerCase();
-  const existingOrderChoices = selectionValid
-    ? Array.from(new Map(candidates.filter(c => normShop(c.shop) === normShop(selectedShops[0])).map(c => [c.orderRef, c])).values())
+  const existingOrderChoices = (selectionValid && selectedDates.length === 1)
+    ? Array.from(new Map(
+        candidates
+          .filter(c => normShop(c.shop) === normShop(selectedShops[0]) && c.deliveryDate === selectedDates[0])
+          .map(c => [c.orderRef, c])
+      ).values())
     : [];
   async function addToExisting(orderRef: string) {
     setAddingToOrder(true);
@@ -456,6 +464,11 @@ Link anyway?`;
                   {vi ? 'Chỉ chọn đơn của cùng 1 shop để tạo chung.' : 'Select orders from one shop only to group them.'}
                 </div>
               )}
+              {selectedShops.length === 1 && selectedDates.length > 1 && (
+                <div className="text-xs" style={{ color: '#DC2626' }}>
+                  {vi ? 'Các đơn đã chọn khác ngày giao — không thể thêm vào cùng 1 đơn Odoo.' : 'Selected orders have different delivery dates — can\'t add to a single Odoo order.'}
+                </div>
+              )}
               {odooResult?.error && <div className="text-xs mt-0.5" style={{ color: '#DC2626' }}>{odooResult.error}</div>}
               {odooResult?.ok && <div className="text-xs mt-0.5" style={{ color: '#065F46' }}>{vi ? 'Đã tạo' : 'Created'} {odooResult.orderRef}</div>}
               {addOrderResult?.error && <div className="text-xs mt-0.5" style={{ color: '#DC2626' }}>{addOrderResult.error}</div>}
@@ -465,7 +478,7 @@ Link anyway?`;
               className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
               {vi ? 'Hủy' : 'Cancel'}
             </button>
-            <button onClick={() => { setAddOrderResult(null); setPickExistingOrder(true); }} disabled={!selectionValid || creatingOdoo || addingToOrder}
+            <button onClick={() => { setAddOrderResult(null); setPickExistingOrder(true); }} disabled={!selectionValid || selectedDates.length !== 1 || creatingOdoo || addingToOrder}
               className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#1A4731', color: '#1A4731' }}>
               {vi ? 'Thêm vào đơn có sẵn' : 'Add to existing order'}
             </button>
@@ -488,7 +501,7 @@ Link anyway?`;
             <p className="text-xs text-ink-light">
               {vi ? 'Chọn đơn Odoo đang mở để thêm' : 'Pick the open Odoo order to add'}{' '}
               <span className="font-semibold text-navy">{selected.size} {vi ? 'sản phẩm đã chọn' : 'selected item(s)'}</span>
-              {' '}{vi ? 'vào (cùng shop, khác ngày cũng được).' : 'to (same shop — different delivery date is fine).'}
+              {' '}{vi ? 'vào (cùng shop, cùng ngày giao).' : 'to (same shop, same delivery date).'}
             </p>
             {existingOrderChoices.length === 0 ? (
               <p className="text-sm text-ink-light text-center py-4">

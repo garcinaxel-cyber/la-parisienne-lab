@@ -250,6 +250,22 @@ export async function addManualCakesToExistingOrder(
   if (shopNames.length > 1) return { ok: false, error: `Selection mixes several shops: ${shopNames.join(', ')}` };
   const shopName = shopNames[0] as string;
 
+  // Same-day only (2026-08-05): attaching to a different day's order would silently detach the
+  // cake from the day it's actually meant for — this action never touches the target document's
+  // own Odoo delivery/commitment date, so a mismatched day would just go unnoticed until
+  // delivery. The UI already filters candidates to same-shop+same-day, but that's a display
+  // convenience, not a guard — re-check for real here, since this is the actual write path.
+  const cakeDates = Array.from(new Set(lines.map(l => l.delivery_date).filter(Boolean)));
+  if (cakeDates.length > 1) return { ok: false, error: `Selection mixes several delivery dates: ${cakeDates.join(', ')}` };
+  const cakeDate = cakeDates[0] as string;
+  const { data: targetLines } = await supabase.from('lab_order_lines')
+    .select('delivery_date').eq('order_ref', orderRef).limit(1);
+  const targetDate = targetLines?.[0]?.delivery_date as string | undefined;
+  if (!targetDate) return { ok: false, error: `Odoo order "${orderRef}" not found in lab — re-sync first` };
+  if (targetDate !== cakeDate) {
+    return { ok: false, error: `${orderRef} delivers ${targetDate}, but this selection is for ${cakeDate} — refusing to attach a cake to the wrong day` };
+  }
+
   const map = SHOP_ODOO_MAP[shopName];
   if (!map) return { ok: false, error: `No Odoo mapping for shop "${shopName}"` };
 
