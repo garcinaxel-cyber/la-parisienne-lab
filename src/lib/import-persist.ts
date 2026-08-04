@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConsolidatedLine } from '@/lib/excel-parser';
+import { getManualCakeCoverage } from '@/lib/manual-cake-coverage';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -73,18 +74,16 @@ export async function persistImportsFromLines(
   const allDates = Array.from(byDate.keys()).sort();
   let createdImports = 0;
 
-  // Birthday cakes: a line already covered by a manual cake (same SKU + delivery date) must
-  // NOT get its own production card — the manual cake IS the single card, forever, whether or
-  // not its Odoo document has been created yet. The Odoo order line is still imported (for the
-  // record), it just doesn't spawn a second lab_assignments row.
-  // BUG FIX 2026-07-30: this used to filter .is('matched_order_ref', null), so the guard
-  // disappeared the moment an admin created the Odoo doc from /exceptional-orders (matched_order_ref
-  // gets set right then) — if the daily sync ran after that but the manual cake was still
-  // "needs_odoo", the real Odoo order came back in and created a duplicate card (client shows as
-  // the Odoo partner, e.g. "LAB", with no birthday message). Matched cakes must stay excluded too.
-  const { data: pendingCakes } = await supabase
-    .from('lab_manual_cakes').select('product_sku, delivery_date').eq('needs_odoo', true);
-  const pendingCakeSet = new Set((pendingCakes ?? []).map((m: any) => `${m.product_sku}||${m.delivery_date}`));
+  // Birthday cakes: a line already covered by a manual cake (same SKU + order + delivery date)
+  // must NOT get its own production card — the manual cake IS the card for that demand. See
+  // manual-cake-coverage.ts for the full rationale (unmatched vs matched, quantity-aware).
+  // BUG FIX 2026-07-30 / 2026-08-04: an earlier version of this guard only looked at
+  // needs_odoo=true (unmatched) and excluded whole SKUs, not quantities — so (a) once a cake got
+  // matched, ANY later sync of that order recreated a full duplicate card, and (b) even while
+  // unmatched, a real extra unit added on top of the cake's own qty had nowhere to go. Fixed by
+  // trimming each line's per-order breakdown down to the excess over what manual cakes cover,
+  // instead of an all-or-nothing SKU exclusion. The Odoo order line itself is always imported in
+  // full below (for the record) — only the production-card portion is trimmed.
 
   for (const date of allDates) {
     const dateLines = byDate.get(date)!;
@@ -133,8 +132,8 @@ export async function persistImportsFromLines(
     }).select('id').single();
     if (impErr || !importRow) return { createdImports, earliestDate: allDates[0] ?? null, error: impErr?.message };
 
-    // Production cards — only lines whose SKU resolves to a team, and NOT already covered by a
-    // manual cake (same SKU + date, matched or not) — see pendingCakeSet above.
+    // Production cards — only lines whose SKU resolves to a team, trimmed down to the qty NOT
+    // already covered by a manual cake (per order_ref — see manual-cake-coverage.ts).
     // ONE CARD PER SYNC BATCH — no merging across sync runs. (Merging into a same-day card was
     // tried 2026-08-01 and reverted 2026-08-03: the cross-import lookup silently failed to
     // find/update the shared card on most runs — confirmed via production data, e.g. the same
@@ -146,7 +145,20 @@ export async function persistImportsFromLines(
     // bug by construction. Chefs still see one consolidated total via the Production tab's
     // "Tổng cần làm" recap (aggregates across cards), and send-to-stock is already grouped by
     // product via groupSendable() — neither depends on cards being merged in the database.
-    const assignable = dateLines.filter(l => TEAMS.includes(l.team) && !pendingCakeSet.has(`${l.product_sku}||${date}`));
+    const coverage = await getManualCakeCoverage(supabase, date);
+    const assignable = dateLines
+      .filter(l => TEAMS.includes(l.team) && !coverage.pendingSkuDates.has(`${l.product_sku}||${date}`))
+      .map(l => {
+        let cardQty = 0;
+        const cardBreakdown: any[] = [];
+        for (const b of (l.breakdown ?? [])) {
+          const covered = coverage.coveredByRefSku.get(`${b.order_ref}||${l.product_sku}||${date}`) ?? 0;
+          const remainder = Math.max(0, (b.qty ?? 0) - covered);
+          if (remainder > 0) { cardBreakdown.push({ ...b, qty: remainder }); cardQty += remainder; }
+        }
+        return { ...l, total_qty: cardQty, breakdown: cardBreakdown };
+      })
+      .filter(l => l.total_qty > 0);
     const asgIdByKey: Record<string, string> = {}; // card key (team|variant|name) → assignment id, to stamp order lines
     if (assignable.length) {
       const { data: insertedAsgs, error: asgErr } = await supabase.from('lab_assignments').insert(assignable.map((line, idx) => {

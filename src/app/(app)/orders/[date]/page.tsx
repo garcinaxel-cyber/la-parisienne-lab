@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import OrdersTabs from './OrdersTabs';
+import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 
 export const revalidate = 0; // always fresh — a just-imported/saved order must appear immediately
 
@@ -23,7 +24,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
           .select(`
             id, team, product_name_vi, product_name_en, image_url,
             variant_label, total_qty, qty_to_produce, qty_produced,
-            status, exception_reason, notes, sort_order, import_id
+            status, exception_reason, notes, sort_order, import_id, cancelled
           `)
           .in('import_id', importIds)
           .order('team').order('sort_order')
@@ -74,12 +75,22 @@ export default async function OrderDatePage({ params }: { params: { date: string
   }
   const unmatchedProducts = Array.from(unmatchedMap.values());
 
-  // Missing cards: order lines that HAVE a fiche now but no production card yet
-  // (fiche added after the import was published). Count them for the "generate" button.
-  const asgKeys = new Set(
-    (assignmentsResult.data ?? []).map((a: any) => `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`)
-  );
+  // Missing cards: order lines whose demand (Odoo qty minus whatever a manual cake already
+  // covers, see manual-cake-coverage.ts) isn't fully tracked by an existing card yet — either
+  // because a fiche was added after publish, or because the sync's card only covers the excess
+  // over a matched manual cake and a further increase hasn't been picked up. Matched by
+  // team+variant+name+order_ref (not scoped to one import_id), so a card living under a
+  // different import (e.g. a legacy same-day-merged one) still counts as coverage.
   const publishedImportIds = new Set((imports ?? []).filter((i: any) => i.status === 'published').map((i: any) => i.id));
+  const coveredByBreakdown = new Map<string, number>();
+  for (const a of assignments) {
+    if (a.cancelled) continue;
+    for (const b of Array.isArray(a.breakdown) ? a.breakdown : []) {
+      if (!b?.order_ref) continue;
+      const k = `${a.team}||${a.variant_label}||${a.product_name_vi}||${b.order_ref}`;
+      coveredByBreakdown.set(k, (coveredByBreakdown.get(k) ?? 0) + (b.qty ?? 0));
+    }
+  }
   const variantBySkuForMissing = new Map<string, { label: string; fiche_id: string }>();
   if (orderLineSkus.length > 0) {
     const { data: vfull } = await supabase.from('lab_fiche_variants').select('sku, label, fiche_id').in('sku', orderLineSkus);
@@ -93,28 +104,31 @@ export default async function OrderDatePage({ params }: { params: { date: string
       for (const f of fm ?? []) ficheTeams.set(f.id, (f.teams ?? [])[0] ?? '');
     }
   }
-  // A line covered by a manual cake (pending → by SKU, confirmed → by order_ref+SKU) already has
-  // its production card (the manual one). It must NOT be flagged as "missing" — otherwise the
-  // assistant would recreate the exact duplicate the manual-cake flow is designed to avoid.
+  // Manual-cake coverage for this date (unmatched → whole SKU excluded; matched → capped at the
+  // cake's own qty, per order_ref — see manual-cake-coverage.ts). Also still needed below (Phase
+  // 3 duplicate-detection UI), so keep fetching the raw rows too.
   const { data: manualCakesForDate } = await supabase.from('lab_manual_cakes')
     .select('id, product_sku, matched_order_ref, product_name_vi, qty, needs_odoo, rejected_order_refs, shop_name, created_by_name')
     .eq('delivery_date', date);
-  const manualPendingSkus = new Set((manualCakesForDate ?? []).filter((m: any) => !m.matched_order_ref).map((m: any) => m.product_sku).filter(Boolean));
-  const producedManually = Array.from(new Set((manualCakesForDate ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
-  const producedManuallySet = new Set(producedManually);
+  const coverage = await getManualCakeCoverage(supabase, date);
 
   const missingMap = new Map<string, { name: string; team: string; qty: number }>();
   for (const l of orderLinesResult.data ?? []) {
     if (!publishedImportIds.has(l.import_id)) continue;
-    if (l.product_sku && (manualPendingSkus.has(l.product_sku) || producedManuallySet.has(`${l.order_ref}||${l.product_sku}`))) continue;
     const v = l.product_sku ? variantBySkuForMissing.get(l.product_sku) : null;
     if (!v) continue;
     const team = ficheTeams.get(v.fiche_id) ?? '';
     if (!['baby_mama', 'hung', 'entremet', 'baker'].includes(team)) continue;
+    const needed = (l.order_ref && l.product_sku)
+      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0)
+      : (l.qty ?? 0);
+    if (needed <= 0) continue; // fully covered by a manual cake
+    const tracked = l.order_ref ? (coveredByBreakdown.get(`${team}||${v.label}||${l.product_name_vi}||${l.order_ref}`) ?? 0) : 0;
+    const gap = needed - tracked;
+    if (gap <= 0) continue; // an existing card already covers this order's demand
     const key = `${l.import_id}||${team}||${v.label}||${l.product_name_vi}`;
-    if (asgKeys.has(key)) continue;
     const cur = missingMap.get(key) ?? { name: l.product_name_vi, team, qty: 0 };
-    cur.qty += l.qty ?? 0;
+    cur.qty += gap;
     missingMap.set(key, cur);
   }
   const missingCards = Array.from(missingMap.values());
@@ -124,7 +138,10 @@ export default async function OrderDatePage({ params }: { params: { date: string
         ? (await supabase.from('profiles').select('role').eq('id', userResult.data.session.user.id).single()).data
     : null;
 
-  // producedManually (Odoo orders whose cake is made via a linked manual cake) is computed above.
+  // Odoo order lines whose cake is actually made via a linked manual cake — used by the UI
+  // to badge that order line ("produced via manual cake"), independent of the card-coverage
+  // math above.
+  const producedManually = Array.from(new Set((manualCakesForDate ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`)));
 
   // Phase 3 — duplicate detection AT publication time: manual orders of this day still
   // to be entered in Odoo, with a suggested match among THIS day's order lines

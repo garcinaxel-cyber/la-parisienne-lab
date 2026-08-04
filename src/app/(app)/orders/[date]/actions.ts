@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { sendZaloWebhook } from '@/lib/zalo';
 import { TEAM_LABELS } from '@/lib/types';
+import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 
 export async function publishImportAction(
   importId: string,
@@ -162,21 +163,29 @@ export async function generateMissingCardsAction(
   const fById: Record<string, any> = {};
   for (const f of fiches ?? []) fById[f.id] = f;
 
-  // Existing assignments keyed by import+team+variant+name
+  // Existing assignments — need the breakdown, not just presence: a card may already exist but
+  // only cover PART of a line's demand (the sync creates "excess-only" cards for products also
+  // covered by a matched manual cake — see manual-cake-coverage.ts). Matched by team+variant+
+  // name+order_ref, NOT scoped to one import_id, so a card living under a different (e.g. a
+  // legacy same-day-merged) import still counts as coverage instead of causing a duplicate.
   const { data: existing } = await supabase
-    .from('lab_assignments').select('import_id, team, variant_label, product_name_vi').in('import_id', importIds);
-  const existingKeys = new Set((existing ?? []).map((a: any) =>
-    `${a.import_id}||${a.team}||${a.variant_label}||${a.product_name_vi}`));
+    .from('lab_assignments').select('import_id, team, variant_label, product_name_vi, breakdown, cancelled').in('import_id', importIds);
+  const coveredByBreakdown = new Map<string, number>();
+  for (const a of existing ?? []) {
+    if (a.cancelled) continue;
+    for (const b of Array.isArray(a.breakdown) ? a.breakdown : []) {
+      if (!b?.order_ref) continue;
+      const k = `${a.team}||${a.variant_label}||${a.product_name_vi}||${b.order_ref}`;
+      coveredByBreakdown.set(k, (coveredByBreakdown.get(k) ?? 0) + (b.qty ?? 0));
+    }
+  }
 
-  // Skip lines already covered by a manual cake for this date (the manual card IS the card):
-  //  - unmatched cake → matched by SKU (any order of that cake that day)
-  //  - confirmed cake → matched by order_ref + SKU (that specific Odoo order)
-  const { data: manualCakes } = await supabase
-    .from('lab_manual_cakes').select('product_sku, matched_order_ref').eq('delivery_date', date);
-  const pendingSkus = new Set((manualCakes ?? []).filter((m: any) => !m.matched_order_ref).map((m: any) => m.product_sku).filter(Boolean));
-  const matchedRefSku = new Set((manualCakes ?? []).filter((m: any) => m.matched_order_ref).map((m: any) => `${m.matched_order_ref}||${m.product_sku}`));
+  // Manual-cake coverage for this date (unmatched → whole SKU excluded; matched → capped at the
+  // cake's own qty, per order_ref — see manual-cake-coverage.ts).
+  const coverage = await getManualCakeCoverage(supabase, date);
 
-  // Group order lines that now resolve to a fiche/team, per import+team+variant+name
+  // Group order lines that now resolve to a fiche/team, per import+team+variant+name — only the
+  // portion of each line NOT already covered (by a manual cake, and/or by an existing card).
   type Group = { import_id: string; team: string; variant_label: string; name: string;
     fiche_id: string; variant_id: string; name_en: string; image_url: string | null;
     total: number; breakdown: any[] };
@@ -184,13 +193,18 @@ export async function generateMissingCardsAction(
   for (const l of orderLines) {
     const v = l.product_sku ? vBySku[l.product_sku] : null;
     if (!v) continue;                       // still no fiche → skip
-    if (l.product_sku && (pendingSkus.has(l.product_sku) || matchedRefSku.has(`${l.order_ref}||${l.product_sku}`))) continue; // covered by a manual cake
     const f = fById[v.fiche_id];
     const team = (f?.teams ?? [])[0] ?? '';
     if (!TEAMS.includes(team)) continue;    // no assignable team
     const variantLabel = v.label ?? l.variant_label ?? 'Standard';
+    const needed = (l.order_ref && l.product_sku)
+      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0)
+      : (l.qty ?? 0);
+    if (needed <= 0) continue;              // fully covered by a manual cake
+    const tracked = l.order_ref ? (coveredByBreakdown.get(`${team}||${variantLabel}||${l.product_name_vi}||${l.order_ref}`) ?? 0) : 0;
+    const gap = needed - tracked;
+    if (gap <= 0) continue;                 // an existing card already covers this order's demand
     const key = `${l.import_id}||${team}||${variantLabel}||${l.product_name_vi}`;
-    if (existingKeys.has(key)) continue;    // card already exists
     let g = groups.get(key);
     if (!g) {
       g = { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi,
@@ -198,8 +212,8 @@ export async function generateMissingCardsAction(
         image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [] };
       groups.set(key, g);
     }
-    g.total += l.qty ?? 0;
-    g.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: l.qty, delivery_time: l.delivery_time ?? null });
+    g.total += gap;
+    g.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: gap, delivery_time: l.delivery_time ?? null });
   }
 
   const toInsert = Array.from(groups.values()).filter(g => g.total > 0).map((g, idx) => ({
