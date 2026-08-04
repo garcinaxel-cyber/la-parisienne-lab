@@ -216,6 +216,134 @@ export async function createOdooOrderForSelection(
   }
 }
 
+// Add an admin-picked set of lab_manual_cakes rows onto an EXISTING Odoo document (quotation
+// or replenishment) instead of creating a new one — the counterpart to
+// createOdooOrderForSelection for the "one more cake on a commande that already has an Odoo
+// doc" case, which previously had no in-app path at all (had to be done directly in Odoo, then
+// matched back by hand). Same safety posture as createOdooOrderForSelection: atomic claim
+// before touching Odoo, one shop only, product SKUs must resolve. Additionally verifies the
+// existing document's partner/warehouse actually matches the selection's shop — picking the
+// wrong existing order would silently attach a cake to someone else's commande. On a failure
+// partway through line creation, only the lines THIS call just created are rolled back — the
+// pre-existing document and its other lines are never touched.
+export async function addManualCakesToExistingOrder(
+  supabase: SupabaseClient,
+  orderRef: string,
+  manualCakeIds: string[],
+): Promise<CreateOrderResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
+  if (!manualCakeIds.length) return { ok: false, error: 'No order selected' };
+  if (!orderRef) return { ok: false, error: 'No target order' };
+
+  const { data: rows } = await supabase.from('lab_manual_cakes')
+    .select('id, product_sku, product_name_vi, qty, shop_name, delivery_date, matched_order_ref')
+    .in('id', manualCakeIds);
+
+  const already = (rows ?? []).find(r => r.matched_order_ref);
+  if (already) return { ok: false, error: `An order in this selection is already linked to ${already.matched_order_ref}` };
+
+  const lines = (rows ?? []).filter(r => r.product_sku && (r.qty ?? 0) > 0);
+  if (!lines.length) return { ok: false, error: 'No valid line in this selection' };
+
+  const shopNames = Array.from(new Set(lines.map(l => l.shop_name).filter(Boolean)));
+  if (shopNames.length === 0) return { ok: false, error: 'Selected order(s) have no shop attached' };
+  if (shopNames.length > 1) return { ok: false, error: `Selection mixes several shops: ${shopNames.join(', ')}` };
+  const shopName = shopNames[0] as string;
+
+  const map = SHOP_ODOO_MAP[shopName];
+  if (!map) return { ok: false, error: `No Odoo mapping for shop "${shopName}"` };
+
+  // Resolve the target document and confirm it really belongs to this shop's partner/warehouse
+  // BEFORE claiming anything — a wrong order_ref here must fail loudly, not attach a cake to
+  // an unrelated client's commande.
+  const model = map.docType === 'quotation' ? 'sale.order' : 'stock.replenishment.request';
+  const docId = await findDocIdByName(model, orderRef);
+  if (!docId) return { ok: false, error: `Odoo order "${orderRef}" not found` };
+
+  if (map.docType === 'quotation') {
+    if (!map.partnerName) return { ok: false, error: `No Odoo partner mapped for "${shopName}"` };
+    const partnerId = await resolvePartnerId(map.partnerName);
+    const [doc] = await tmo(odooExecute<any[]>('sale.order', 'read', [[docId]], { fields: ['partner_id', 'state'] }), 15000, 'read order');
+    const docPartnerId = Array.isArray(doc?.partner_id) ? doc.partner_id[0] : doc?.partner_id;
+    if (!partnerId || docPartnerId !== partnerId) {
+      return { ok: false, error: `${orderRef} belongs to a different client than "${shopName}" — refusing to attach a cake to the wrong order` };
+    }
+  } else {
+    if (!map.warehouseCode) return { ok: false, error: `No Odoo warehouse mapped for "${shopName}"` };
+    const wh = await resolveWarehouseId(map.warehouseCode);
+    const [doc] = await tmo(odooExecute<any[]>('stock.replenishment.request', 'read', [[docId]], { fields: ['warehouse_id', 'state'] }), 15000, 'read request');
+    const docWhId = Array.isArray(doc?.warehouse_id) ? doc.warehouse_id[0] : doc?.warehouse_id;
+    if (!wh || docWhId !== wh.id) {
+      return { ok: false, error: `${orderRef} belongs to a different warehouse than "${shopName}" — refusing to attach a cake to the wrong order` };
+    }
+  }
+
+  // ── Claim every row BEFORE calling Odoo (same atomic race guard as createOdooOrderForSelection) ──
+  const PENDING = '__pending_create__';
+  const lineIds = lines.map(l => l.id as string);
+  const { data: claimed } = await supabase.from('lab_manual_cakes')
+    .update({ matched_order_ref: PENDING }).in('id', lineIds).is('matched_order_ref', null).select('id');
+  const claimedIds = (claimed ?? []).map((r: any) => r.id as string);
+  if (claimedIds.length !== lineIds.length) {
+    if (claimedIds.length) await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', claimedIds).eq('matched_order_ref', PENDING);
+    return { ok: false, error: 'One of these orders was just claimed by someone else — reload and try again' };
+  }
+  async function releaseClaim() {
+    await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', lineIds).eq('matched_order_ref', PENDING);
+  }
+
+  const skus = Array.from(new Set(lines.map(l => l.product_sku as string)));
+  let products: Record<string, { id: number; uom_id: number }>;
+  try {
+    products = await resolveProducts(skus);
+  } catch (e: any) {
+    await releaseClaim();
+    return { ok: false, error: `Odoo product lookup failed: ${String(e?.message ?? e)}` };
+  }
+  const missing = skus.filter(s => !products[s]);
+  if (missing.length) { await releaseClaim(); return { ok: false, error: `Product(s) not found in Odoo: ${missing.join(', ')}` }; }
+
+  // Only the lines THIS call creates go here — used to roll back on partial failure without
+  // ever touching the document's pre-existing lines.
+  const createdLineIds: number[] = [];
+  const lineModel = map.docType === 'quotation' ? 'sale.order.line' : 'stock.replenishment.request.line';
+  try {
+    if (map.docType === 'quotation') {
+      const uomField = await resolveSoLineUomField();
+      for (const l of lines) {
+        const p = products[l.product_sku as string];
+        const lineId = await tmo(odooExecuteWrite<number>('sale.order.line', 'create', [{
+          order_id: docId, product_id: p.id, product_uom_qty: l.qty,
+          ...(uomField ? { [uomField]: p.uom_id } : {}),
+          name: l.product_name_vi,
+        }]), 20000, 'create sale.order.line');
+        createdLineIds.push(lineId);
+      }
+    } else {
+      for (const l of lines) {
+        const p = products[l.product_sku as string];
+        const lineId = await tmo(odooExecuteWrite<number>('stock.replenishment.request.line', 'create', [{
+          request_id: docId, product_id: p.id, quantity_requested: l.qty,
+        }]), 20000, 'create replenishment line');
+        createdLineIds.push(lineId);
+      }
+    }
+  } catch (lineErr: any) {
+    for (const id of createdLineIds) {
+      try { await odooExecuteWrite(lineModel, 'unlink', [[id]]); } catch { /* best-effort — see cancelOdooOrderLine for why this can fail */ }
+    }
+    await releaseClaim();
+    return { ok: false, error: `Failed adding line(s) to ${orderRef}: ${String(lineErr?.message ?? lineErr)}` };
+  }
+
+  const { error: linkErr } = await supabase.from('lab_manual_cakes')
+    .update({ matched_order_ref: orderRef })
+    .in('id', lineIds).eq('matched_order_ref', PENDING);
+  if (linkErr) return { ok: true, order_ref: orderRef, error: `Line(s) added to ${orderRef} but failed to link locally: ${linkErr.message}` };
+
+  return { ok: true, order_ref: orderRef };
+}
+
 // ── Cancel ONE product line of an already-created Odoo document (scenario 5/6) ──
 // Never unlinks a line (Odoo forbids removing a line from a confirmed sale.order, and we
 // can't always know the doc's state up front) — always writes its quantity to 0, mirroring
@@ -226,6 +354,7 @@ export async function createOdooOrderForSelection(
 export interface CancelLineResult {
   ok: boolean;
   docCancelled?: boolean;
+  lineRemoved?: boolean; // true = the Odoo line was actually deleted; false = kept at qty 0 (Odoo refused removal, e.g. order already confirmed/locked)
   warning?: string;
   error?: string;
 }
@@ -263,17 +392,30 @@ export async function cancelOdooOrderLine(
         [[['order_id', '=', orderId], ['product_id', '=', product.id]]],
         { fields: ['id', 'product_uom_qty'] }), 15000, 'find line');
       if (!lines.length) return { ok: false, error: `Line for "${sku}" not found on ${orderRef} — already removed?` };
-      await tmo(odooExecuteWrite('sale.order.line', 'write', [[lines[0].id], { product_uom_qty: 0 }]), 15000, 'zero line');
 
+      // Prefer actually deleting the line — cleaner for whoever looks at the order in Odoo
+      // afterwards. Odoo refuses unlink on a line that's already invoiced/delivered/locked (the
+      // original reason this only ever zeroed the qty); fall back to that exact same safe
+      // behavior when it does, so nothing about the existing flow changes for those cases.
+      let lineRemoved = false;
+      try {
+        await tmo(odooExecuteWrite('sale.order.line', 'unlink', [[lines[0].id]]), 15000, 'unlink line');
+        lineRemoved = true;
+      } catch {
+        await tmo(odooExecuteWrite('sale.order.line', 'write', [[lines[0].id], { product_uom_qty: 0 }]), 15000, 'zero line');
+      }
+
+      // Works identically whether the line was removed (gone from the query entirely) or
+      // zeroed (excluded by the qty filter) — no branching needed here.
       const remaining = await tmo(odooExecute<any[]>('sale.order.line', 'search_read',
         [[['order_id', '=', orderId], ['product_uom_qty', '>', 0]]], { fields: ['id'] }), 15000, 'remaining lines');
-      if (remaining.length > 0) return { ok: true, docCancelled: false };
+      if (remaining.length > 0) return { ok: true, docCancelled: false, lineRemoved };
 
       try {
         await odooExecuteWrite('sale.order', 'action_cancel', [[orderId]]);
-        return { ok: true, docCancelled: true };
+        return { ok: true, docCancelled: true, lineRemoved };
       } catch (e: any) {
-        return { ok: true, docCancelled: false, warning: `All lines zeroed but the document itself could not be auto-cancelled in Odoo (${String(e?.message ?? e)}) — cancel it manually there.` };
+        return { ok: true, docCancelled: false, lineRemoved, warning: `Last line ${lineRemoved ? 'removed' : 'zeroed'} but the document itself could not be auto-cancelled in Odoo (${String(e?.message ?? e)}) — cancel it manually there.` };
       }
     } else {
       const reqId = await findDocIdByName('stock.replenishment.request', orderRef);

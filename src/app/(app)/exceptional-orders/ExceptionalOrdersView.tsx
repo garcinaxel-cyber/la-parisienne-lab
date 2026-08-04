@@ -130,6 +130,29 @@ export default function ExceptionalOrdersView({ orders, candidates, productChoic
     }
   }
 
+  // ── Add the current selection to an EXISTING Odoo order instead of creating a new one ──
+  const [pickExistingOrder, setPickExistingOrder] = useState(false);
+  const [addingToOrder, setAddingToOrder] = useState(false);
+  const [addOrderResult, setAddOrderResult] = useState<{ ok?: boolean; orderRef?: string; error?: string } | null>(null);
+  // Distinct existing Odoo orders for the selection's shop (candidates already carries every
+  // open order line for the relevant dates — dedupe down to one entry per order_ref).
+  const existingOrderChoices = selectionValid
+    ? Array.from(new Map(candidates.filter(c => c.shop === selectedShops[0]).map(c => [c.orderRef, c])).values())
+    : [];
+  async function addToExisting(orderRef: string) {
+    setAddingToOrder(true);
+    setAddOrderResult(null);
+    const { addToExistingOdooOrderAction } = await import('./actions');
+    const res = await addToExistingOdooOrderAction(Array.from(selected), orderRef);
+    setAddingToOrder(false);
+    setAddOrderResult(res);
+    if (res.ok) {
+      setSelected(new Set());
+      setPickExistingOrder(false);
+      router.refresh();
+    }
+  }
+
   // ── Manual link modal ──
   const [linkFor, setLinkFor] = useState<Order | null>(null);
   async function doManualLink(c: Candidate) {
@@ -431,15 +454,59 @@ Link anyway?`;
               )}
               {odooResult?.error && <div className="text-xs mt-0.5" style={{ color: '#DC2626' }}>{odooResult.error}</div>}
               {odooResult?.ok && <div className="text-xs mt-0.5" style={{ color: '#065F46' }}>{vi ? 'Đã tạo' : 'Created'} {odooResult.orderRef}</div>}
+              {addOrderResult?.error && <div className="text-xs mt-0.5" style={{ color: '#DC2626' }}>{addOrderResult.error}</div>}
+              {addOrderResult?.ok && <div className="text-xs mt-0.5" style={{ color: '#065F46' }}>{vi ? 'Đã thêm vào' : 'Added to'} {addOrderResult.orderRef}</div>}
             </div>
-            <button onClick={() => { setSelected(new Set()); setOdooResult(null); }} disabled={creatingOdoo}
+            <button onClick={() => { setSelected(new Set()); setOdooResult(null); setAddOrderResult(null); }} disabled={creatingOdoo || addingToOrder}
               className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
               {vi ? 'Hủy' : 'Cancel'}
             </button>
-            <button onClick={createOdooBatch} disabled={!selectionValid || creatingOdoo}
+            <button onClick={() => { setAddOrderResult(null); setPickExistingOrder(true); }} disabled={!selectionValid || creatingOdoo || addingToOrder}
+              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#1A4731', color: '#1A4731' }}>
+              {vi ? 'Thêm vào đơn có sẵn' : 'Add to existing order'}
+            </button>
+            <button onClick={createOdooBatch} disabled={!selectionValid || creatingOdoo || addingToOrder}
               className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
               <Send size={14} /> {creatingOdoo ? (vi ? 'Đang tạo…' : 'Creating…') : (vi ? 'Tạo đơn Odoo' : 'Create Odoo order')}
             </button>
+          </div>
+        </div>
+      )}
+
+      {pickExistingOrder && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => !addingToOrder && setPickExistingOrder(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3" style={{ maxHeight: '90vh', overflowY: 'auto' }} onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-navy text-lg">{vi ? 'Thêm vào đơn Odoo có sẵn' : 'Add to an existing Odoo order'}</h2>
+              <button onClick={() => setPickExistingOrder(false)} disabled={addingToOrder} className="p-1 text-ink-light"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-ink-light">
+              {vi ? 'Chọn đơn Odoo đang mở để thêm' : 'Pick the open Odoo order to add'}{' '}
+              <span className="font-semibold text-navy">{selected.size} {vi ? 'sản phẩm đã chọn' : 'selected item(s)'}</span>
+              {' '}{vi ? 'vào (cùng shop, khác ngày cũng được).' : 'to (same shop — different delivery date is fine).'}
+            </p>
+            {existingOrderChoices.length === 0 ? (
+              <p className="text-sm text-ink-light text-center py-4">
+                {vi ? 'Không có đơn Odoo nào đang mở cho shop này' : 'No open Odoo orders for this shop yet'}
+              </p>
+            ) : (
+              <div className="rounded-lg" style={{ border: '1px solid #E5E7EB', maxHeight: '55vh', overflowY: 'auto' }}>
+                {existingOrderChoices.map((c, i) => (
+                  <button key={c.orderRef} onClick={() => addToExisting(c.orderRef)} disabled={addingToOrder}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{c.name}</div>
+                      <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-bold">{c.orderRef}</span>
+                        {c.shop && <span>· {c.shop}</span>}
+                        <span>· {new Date(c.deliveryDate + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'short' })}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
