@@ -71,14 +71,36 @@ export async function submitStockTransferAction(
   }
 
   // Real-time: reflect what was just sent to stock in Odoo (create/update the day's draft MOs).
-  // BEST-EFFORT — the chef's transfer must never fail because of Odoo, so any error is swallowed.
+  // BEST-EFFORT — the chef's transfer must never fail because of Odoo — but a failure here must
+  // leave a trace instead of vanishing silently (2026-08-05: a sku-less line never reached Odoo
+  // and nobody knew until a manual 446-vs-447 reconciliation caught it). Any error surfaces on
+  // the dashboard the same way odoo-auto-sync.ts's write failures already do.
+  const day = labDateOf(new Date().toISOString());
   try {
     if (odooWriteConfigured()) {
       const skus = Array.from(new Set(clean.map(l => l.sku).filter(Boolean))) as string[];
-      const day = labDateOf(new Date().toISOString());
-      if (skus.length && day) await syncStockToOdoo(supabase, day, { commit: true, skus });
+      if (day) {
+        const syncRes = await syncStockToOdoo(supabase, day, { commit: true, skus });
+        if (syncRes.errors?.length) {
+          await supabase.from('lab_odoo_changes').insert({
+            order_ref: `stock-transfer:${transfer.id}`,
+            cancelled: false,
+            items: syncRes.errors.map(e => ({ sku: e.sku, name: e.sku, reason: e.error })),
+            delivery_date: day,
+            status: 'error',
+          });
+        }
+      }
     }
-  } catch { /* never block the chef on Odoo */ }
+  } catch (e: any) {
+    try {
+      await supabase.from('lab_odoo_changes').insert({
+        order_ref: `stock-transfer:${transfer.id}`, cancelled: false,
+        items: [{ reason: `Odoo sync threw: ${String(e?.message ?? e)}` }],
+        delivery_date: day, status: 'error',
+      });
+    } catch { /* truly best-effort — never block the chef, even if logging itself fails */ }
+  }
 
   return { ok: true, transferId: transfer.id };
 }

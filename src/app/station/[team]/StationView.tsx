@@ -464,7 +464,7 @@ export default function StationView({
         .select('id, order_ref, shop_name, product_name_vi, variant_label, qty, product_sku')
         .in('import_id', import_ids).eq('team', team).order('order_ref'),
       supabase.from('lab_assignments')
-        .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled')
+        .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled, variant_id')
         .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
       // Birthday-cake design photo/notes/message — only lives on lab_manual_cakes, never on
       // lab_order_lines. Matched by team+date so both Odoo-linked AND still-unlinked
@@ -518,11 +518,20 @@ export default function StationView({
       });
     }
     setHistoryDetails(prev => ({ ...prev, [delivery_date]: Array.from(byRef.values()) }));
+    // Resolve the real SKU via lab_fiche_variants — needed because "Send to stock" from this
+    // history tab feeds submitStockTransferAction the same as the live tab, and a null sku here
+    // means the Odoo sync can never match the product (silent gap — see 2026-08-05 Charlotte
+    // Watermint D14 investigation, 446 vs 447 units).
+    const variantIds = Array.from(new Set((prod ?? []).map((a: any) => a.variant_id).filter(Boolean)));
+    const { data: variantRows } = variantIds.length
+      ? await supabase.from('lab_fiche_variants').select('id, sku').in('id', variantIds)
+      : { data: [] as any[] };
+    const skuByVariantId: Record<string, string | null> = {};
+    for (const v of variantRows ?? []) skuByVariantId[v.id] = v.sku ?? null;
     const rows: HistoryProdRow[] = (prod ?? []).filter(a => !a.cancelled).map(a => ({
       id: a.id, product_name_vi: a.product_name_vi, product_name_en: a.product_name_en ?? '',
-      // lab_assignments has no sku column (it lives on lab_fiche_variants) — left null here
-      // rather than adding a join just for a label that already shows the product name.
-      sku: null, variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
+      sku: (a.variant_id && skuByVariantId[a.variant_id]) ?? null,
+      variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
       qty_produced: a.qty_produced ?? 0, total_qty: a.total_qty ?? 0, qty_sent_total: a.qty_sent_total ?? 0,
       is_extra: !!a.is_extra, delivery_date,
     }));

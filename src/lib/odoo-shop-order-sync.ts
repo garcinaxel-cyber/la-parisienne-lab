@@ -24,6 +24,35 @@ export interface CreateOrderResult {
   error?: string;
 }
 
+// Sentinel written to lab_manual_cakes.matched_order_ref while an Odoo document is being
+// created/attached for that row (race guard — see claimLines below).
+const PENDING = '__pending_create__';
+// A claim older than this is treated as orphaned (the request that made it crashed or was
+// killed before reaching a catch block) and may be stolen — same self-heal pattern as
+// lab_sync_lock's 2-minute expiry (odoo-auto-sync.ts), applied here per-row instead of globally.
+const STALE_CLAIM_MS = 5 * 60 * 1000;
+
+// Atomically claim every row in lineIds: a fresh claim (matched_order_ref IS NULL) always wins;
+// a row already stuck at the PENDING sentinel is only reclaimed if its claim is stale. Two
+// passes rather than one clever OR-query — easier to reason about and to verify does not
+// double-claim a row someone else is actively working on.
+async function claimLines(supabase: SupabaseClient, lineIds: string[]): Promise<string[]> {
+  const nowIso = new Date().toISOString();
+  const { data: free } = await supabase.from('lab_manual_cakes')
+    .update({ matched_order_ref: PENDING, claimed_at: nowIso })
+    .in('id', lineIds).is('matched_order_ref', null).select('id');
+  const claimedIds = new Set<string>((free ?? []).map((r: any) => r.id as string));
+  const stillUnclaimed = lineIds.filter(id => !claimedIds.has(id));
+  if (stillUnclaimed.length) {
+    const staleBefore = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+    const { data: stolen } = await supabase.from('lab_manual_cakes')
+      .update({ matched_order_ref: PENDING, claimed_at: nowIso })
+      .in('id', stillUnclaimed).eq('matched_order_ref', PENDING).lt('claimed_at', staleBefore).select('id');
+    for (const r of stolen ?? []) claimedIds.add(r.id as string);
+  }
+  return Array.from(claimedIds);
+}
+
 const partnerIdCache = new Map<string, number | null>();
 // Exact '=' search came back empty even for a partner visibly named "LAB" in the UI
 // (verified 07-28, id 347) — safer to match case/whitespace-insensitively via ilike then
@@ -100,17 +129,14 @@ export async function createOdooOrderForSelection(
   // one caller can ever flip a given row from null to the sentinel below. If we don't claim
   // every row we asked for, someone else got there first — release what we did claim and abort
   // *before* any Odoo document exists, so nothing needs to be rolled back on the Odoo side.
-  const PENDING = '__pending_create__';
   const lineIds = lines.map(l => l.id as string);
-  const { data: claimed } = await supabase.from('lab_manual_cakes')
-    .update({ matched_order_ref: PENDING }).in('id', lineIds).is('matched_order_ref', null).select('id');
-  const claimedIds = (claimed ?? []).map((r: any) => r.id as string);
+  const claimedIds = await claimLines(supabase, lineIds);
   if (claimedIds.length !== lineIds.length) {
-    if (claimedIds.length) await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', claimedIds).eq('matched_order_ref', PENDING);
+    if (claimedIds.length) await supabase.from('lab_manual_cakes').update({ matched_order_ref: null, claimed_at: null }).in('id', claimedIds).eq('matched_order_ref', PENDING);
     return { ok: false, error: 'One of these orders was just claimed by someone else — reload and try again' };
   }
   async function releaseClaim() {
-    await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', lineIds).eq('matched_order_ref', PENDING);
+    await supabase.from('lab_manual_cakes').update({ matched_order_ref: null, claimed_at: null }).in('id', lineIds).eq('matched_order_ref', PENDING);
   }
 
   const shopNames = Array.from(new Set(lines.map(l => l.shop_name).filter(Boolean)));
@@ -201,7 +227,7 @@ export async function createOdooOrderForSelection(
     // Replace the PENDING claim with the real Odoo reference so the UI reflects it
     // immediately (same field the existing auto-match mechanism uses).
     const { error: linkErr } = await supabase.from('lab_manual_cakes')
-      .update({ matched_order_ref: orderRef })
+      .update({ matched_order_ref: orderRef, claimed_at: null })
       .in('id', lineIds).eq('matched_order_ref', PENDING);
     if (linkErr) return { ok: true, order_ref: orderRef, error: `Order ${orderRef} created but failed to link locally: ${linkErr.message}` };
 
@@ -295,17 +321,14 @@ export async function addManualCakesToExistingOrder(
   }
 
   // ── Claim every row BEFORE calling Odoo (same atomic race guard as createOdooOrderForSelection) ──
-  const PENDING = '__pending_create__';
   const lineIds = lines.map(l => l.id as string);
-  const { data: claimed } = await supabase.from('lab_manual_cakes')
-    .update({ matched_order_ref: PENDING }).in('id', lineIds).is('matched_order_ref', null).select('id');
-  const claimedIds = (claimed ?? []).map((r: any) => r.id as string);
+  const claimedIds = await claimLines(supabase, lineIds);
   if (claimedIds.length !== lineIds.length) {
-    if (claimedIds.length) await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', claimedIds).eq('matched_order_ref', PENDING);
+    if (claimedIds.length) await supabase.from('lab_manual_cakes').update({ matched_order_ref: null, claimed_at: null }).in('id', claimedIds).eq('matched_order_ref', PENDING);
     return { ok: false, error: 'One of these orders was just claimed by someone else — reload and try again' };
   }
   async function releaseClaim() {
-    await supabase.from('lab_manual_cakes').update({ matched_order_ref: null }).in('id', lineIds).eq('matched_order_ref', PENDING);
+    await supabase.from('lab_manual_cakes').update({ matched_order_ref: null, claimed_at: null }).in('id', lineIds).eq('matched_order_ref', PENDING);
   }
 
   const skus = Array.from(new Set(lines.map(l => l.product_sku as string)));
@@ -353,7 +376,7 @@ export async function addManualCakesToExistingOrder(
   }
 
   const { error: linkErr } = await supabase.from('lab_manual_cakes')
-    .update({ matched_order_ref: orderRef })
+    .update({ matched_order_ref: orderRef, claimed_at: null })
     .in('id', lineIds).eq('matched_order_ref', PENDING);
   if (linkErr) return { ok: true, order_ref: orderRef, error: `Line(s) added to ${orderRef} but failed to link locally: ${linkErr.message}` };
 

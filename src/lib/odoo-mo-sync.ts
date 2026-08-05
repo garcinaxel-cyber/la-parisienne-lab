@@ -5,19 +5,32 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
 }
 
+export interface SentToStock {
+  bySku: Record<string, number>;
+  // Lines sent to stock with NO sku at all — these can never be matched to an Odoo product,
+  // so they'd otherwise vanish from the sync with no trace (see 2026-08-05 Charlotte Watermint
+  // D14 gap: 446 in Odoo vs 447 actually sent, caused by a history-tab send with sku=null).
+  missingSku: { productName: string; qty: number }[];
+}
+
 // Cumulative quantity SENT TO STOCK per SKU for one lab-day (from transfer notes created that day).
 // This is what the Odoo Manufacturing Orders must total for the day.
-export async function sentToStockBySku(supabase: SupabaseClient, date: string): Promise<Record<string, number>> {
+export async function sentToStockBySku(supabase: SupabaseClient, date: string): Promise<SentToStock> {
   const { start, end } = labDayUtcRange(date);
   const { data: transfers } = await supabase.from('lab_stock_transfers')
     .select('id').gte('created_at', start).lt('created_at', end);
   const tids = (transfers ?? []).map((t: any) => t.id);
-  if (!tids.length) return {};
+  if (!tids.length) return { bySku: {}, missingSku: [] };
   const { data: lines } = await supabase.from('lab_stock_transfer_lines')
-    .select('sku, qty_sent').in('transfer_id', tids);
-  const m: Record<string, number> = {};
-  for (const l of lines ?? []) if (l.sku && (l.qty_sent ?? 0) > 0) m[l.sku] = (m[l.sku] ?? 0) + l.qty_sent;
-  return m;
+    .select('sku, qty_sent, product_name_vi').in('transfer_id', tids);
+  const bySku: Record<string, number> = {};
+  const missingSku: { productName: string; qty: number }[] = [];
+  for (const l of lines ?? []) {
+    if (!l.qty_sent || l.qty_sent <= 0) continue;
+    if (l.sku) bySku[l.sku] = (bySku[l.sku] ?? 0) + l.qty_sent;
+    else missingSku.push({ productName: l.product_name_vi ?? '(unknown product)', qty: l.qty_sent });
+  }
+  return { bySku, missingSku };
 }
 
 export interface MoSyncResult {
@@ -26,7 +39,10 @@ export interface MoSyncResult {
   toUpdate: { id: number; mo: string; sku: string; product: string; from: number; to: number }[];
   unchanged: { sku: string; product: string; target: number; reason: string }[];
   noProduct: { sku: string; qty: number }[];
-  created?: any[]; updated?: any[]; errors?: any[];
+  // Sent to stock with no SKU at all — never even attempted (can't look up an Odoo product
+  // without one). Always populated, dry-run or not, so the manual resync route sees it too.
+  missingSku: { productName: string; qty: number }[];
+  created?: any[]; updated?: any[]; errors?: { sku: string; error: string }[];
 }
 
 // Sync Odoo MOs so that, per product for the day, SUM(non-cancelled MOs) == qty sent to stock.
@@ -36,10 +52,17 @@ export async function syncStockToOdoo(
   supabase: SupabaseClient, date: string, opts: { commit: boolean; skus?: string[] },
 ): Promise<MoSyncResult> {
   const origin = `Lab ${date}`;
-  const res: MoSyncResult = { date, origin, committed: false, toCreate: [], toUpdate: [], unchanged: [], noProduct: [] };
+  const res: MoSyncResult = { date, origin, committed: false, toCreate: [], toUpdate: [], unchanged: [], noProduct: [], missingSku: [] };
   if (!odooConfigured()) return res;
 
-  const bySku = await sentToStockBySku(supabase, date);
+  const { bySku, missingSku } = await sentToStockBySku(supabase, date);
+  res.missingSku = missingSku;
+  if (missingSku.length) {
+    res.errors = (res.errors ?? []).concat(missingSku.map(m => ({
+      sku: '(no SKU)',
+      error: `"${m.productName}" ×${m.qty} sent to stock without a SKU — cannot sync to Odoo (see loadHistoryDetails/StationView)`,
+    })));
+  }
   let entries = Object.entries(bySku).filter(([, q]) => q > 0);
   if (opts.skus?.length) { const set = new Set(opts.skus); entries = entries.filter(([sku]) => set.has(sku)); }
   if (!entries.length) return res;
@@ -90,7 +113,7 @@ export async function syncStockToOdoo(
 
   if (!opts.commit || !odooWriteConfigured()) return res;
 
-  res.created = []; res.updated = []; res.errors = [];
+  res.created = []; res.updated = []; res.errors = res.errors ?? [];
   for (const item of res.toCreate) {
     try {
       const id = await tmo(odooExecuteWrite<number>('mrp.production', 'create', [item.values]), 25000, 'create');

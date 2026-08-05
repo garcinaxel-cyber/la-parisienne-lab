@@ -30,15 +30,17 @@ export async function GET(req: Request) {
     date: r.date, origin: r.origin,
     to_create: r.toCreate.length, to_update: r.toUpdate.length,
     unchanged: r.unchanged.length, no_odoo_product: r.noProduct.length,
+    missing_sku: r.missingSku.length,
   };
   if (!commit) {
     return NextResponse.json({
       dryRun: true, summary,
       toCreate: r.toCreate.map(({ values, ...x }) => x), toUpdate: r.toUpdate, noProduct: r.noProduct,
+      missingSku: r.missingSku,
     });
   }
   summary.created = r.created?.length ?? 0;
   summary.updated = r.updated?.length ?? 0;
   summary.errors = r.errors?.length ?? 0;
-  return NextResponse.json({ committed: true, summary, created: r.created ?? [], updated: r.updated ?? [], errors: r.errors ?? [], noProduct: r.noProduct });
+  return NextResponse.json({ committed: true, summary, created: r.created ?? [], updated: r.updated ?? [], errors: r.errors ?? [], noProduct: r.noProduct, missingSku: r.missingSku });
 }
