@@ -89,7 +89,11 @@ export default async function ExceptionalOrdersPage() {
       imageUrl: v.image_url ?? f.image_url ?? null,
       team: (f.teams ?? [])[0] ?? '',
       category: f.category ?? null,
-      isCake: f.category === 'Birthday cake',
+      // Only these two categories can carry a customer-written custom message ("chữ trên bánh") —
+      // "Bento cake" added 2026-08-05 after a Bento product's birthday text got typed into the
+      // generic Notes field instead (no dedicated input shown), so it never reached
+      // lab_manual_cakes.message and thus never surfaced on the Birthday cakes tab / chef's card.
+      isCake: f.category === 'Birthday cake' || f.category === 'Bento cake',
     }];
   }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
 

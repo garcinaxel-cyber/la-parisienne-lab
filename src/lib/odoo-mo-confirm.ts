@@ -16,6 +16,11 @@ export interface MoConfirmResult {
 // running this once at end-of-day rather than per-transfer just avoids fragmenting one product's
 // day into several separately-confirmed MOs.
 //
+// Scoped strictly to THIS lab-day's origin — never sweeps other days' leftover drafts. A draft
+// left over from a past day (e.g. a very late/forgotten stock-transfer) is deliberately NOT
+// auto-confirmed here: some of those are drafts on purpose because they were never meant to be
+// accepted as-is (2026-08-05, explicit call — don't risk auto-confirming an old MO nobody reviewed).
+//
 // Semi-finished components: this Odoo instance has a custom "Auto Produce" mechanism — an MO
 // whose raw materials include a semi-finished product (itself has a BOM) needs "Auto Produce"
 // ticked on that line BEFORE confirming, otherwise Odoo confirms the parent MO but never spawns
