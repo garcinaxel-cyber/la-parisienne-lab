@@ -11,8 +11,12 @@ const PUBLIC_PATHS = ['/login', '/auth/set-password'];
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.includes(pathname)) return NextResponse.next();
-  // The cron endpoints have no session — they authenticate with their own CRON_SECRET
+  // The cron endpoints have no session — they authenticate with their own CRON_SECRET.
+  // 2026-08-05: confirm-mos was missing here, so pg_cron's call got silently redirected to
+  // /login (200 OK with login-page HTML, no error) and the daily MO auto-confirm never actually
+  // ran — caught by checking net._http_response's captured body after the 22:15 VN run.
   if (pathname.startsWith('/api/odoo/cron')) return NextResponse.next();
+  if (pathname.startsWith('/api/odoo/confirm-mos')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
