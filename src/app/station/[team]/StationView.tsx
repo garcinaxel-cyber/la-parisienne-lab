@@ -194,11 +194,18 @@ export default function StationView({
   // Live updates: the existing channel below patches assignment status/qty in place (smooth).
   // This refreshes the page for changes that need fresh server data — new cards (INSERT/DELETE),
   // a newly published order (lab_imports), per-order publish + birthday message/ready-time.
+  // Scoped by team where the table has a `team` column (lab_order_lines, lab_assignments) —
+  // 2026-08-06: previously unfiltered, so ANY team's change (all 4 stations open at once during
+  // the 7-9h rush) refreshed EVERY open /station/[team] tab, multiplying invocations/Active CPU
+  // 4x for no reason. lab_imports (one row per import session, no team column) and
+  // lab_birthday_details (no team column, reached only via order_line_id join — Realtime filters
+  // can't follow FKs) stay unfiltered, but both are low-frequency writes (a handful/day vs.
+  // hundreds of assignment/order-line updates as chefs work), so this is the lever that matters.
   useRealtimeRefresh(`station-refresh-${team}`, [
     { table: 'lab_imports' },
-    { table: 'lab_order_lines' },
+    { table: 'lab_order_lines', filter: `team=eq.${team}` },
     { table: 'lab_birthday_details' },
-    { table: 'lab_assignments' },
+    { table: 'lab_assignments', filter: `team=eq.${team}` },
   ]);
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
