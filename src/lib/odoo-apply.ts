@@ -75,24 +75,32 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
       const asg = asgRows?.[0];
       if (asg) {
         // A tracking card already exists (either a normal card, or a previously-created
-        // "excess" card for demand beyond a manual cake). The card's TOTAL moves by the plain
-        // delta either way (a manual cake's own qty is constant, so it cancels out of a delta).
-        // But the breakdown entry for this order_ref is an ABSOLUTE value, not a delta — it must
-        // be set to the excess over manual-cake coverage, same as when the card/entry was first
-        // created, or it would silently drift to the full Odoo qty on the next edit.
+        // "excess" card for demand beyond a manual cake).
         const coverage = await coverageFor(first.delivery_date);
-        const breakdownQty = Math.max(0, item.new_qty - (coverage.coveredByRefSku.get(`${ch.order_ref}||${item.sku}||${first.delivery_date}`) ?? 0));
         const breakdown = Array.isArray(asg.breakdown) ? [...asg.breakdown] : [];
         const bIdx = breakdown.findIndex((b: any) => b.order_ref === ch.order_ref);
+        // Coverage-adjusted value for THIS order_ref, before and after this change. The card
+        // must move by the CHANGE IN THIS (excess) VALUE, not by the raw Odoo delta — those two
+        // only agree when manual-cake coverage for this order_ref+sku+date hasn't itself changed
+        // since the card was last touched. They diverge exactly when a manual cake (birthday
+        // cake) gets matched/added to this SAME order in between two syncs: Odoo's qty jumps by
+        // the cake's own quantity, but that quantity is the cake's own separate card's job to
+        // cover — applying the raw delta on top double-counts one physical item as two units of
+        // demand (2026-08-07, Mangomind/S03114 on the same order as an unrelated Moon Flower
+        // birthday cake: card went 1→2 here while the cake's own card also carried its 1, for a
+        // real total of 3 against genuine Odoo demand of 2 — chef physically over-produced by 1).
+        const prevBreakdownQty = bIdx >= 0 ? (breakdown[bIdx].qty ?? 0) : 0;
+        const breakdownQty = Math.max(0, item.new_qty - (coverage.coveredByRefSku.get(`${ch.order_ref}||${item.sku}||${first.delivery_date}`) ?? 0));
         if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: breakdownQty };
+        const cardDelta = breakdownQty - prevBreakdownQty;
         const stamp = new Date().toISOString().slice(5, 16).replace('T', ' ');
         const note = ch.cancelled
           ? `⚠ ${ch.order_ref} annulée dans Odoo (−${oldTotal})`
           : `Odoo ${stamp}: ${ch.order_ref} ${delta > 0 ? '+' : ''}${delta}`;
-        const newTotal = Math.max(0, (asg.total_qty ?? 0) + delta);
+        const newTotal = Math.max(0, (asg.total_qty ?? 0) + cardDelta);
         const update: any = {
           total_qty: newTotal,
-          qty_to_produce: Math.max(0, (asg.qty_to_produce ?? 0) + delta),
+          qty_to_produce: Math.max(0, (asg.qty_to_produce ?? 0) + cardDelta),
           // Whole card down to 0 → mark cancelled (kept visible, struck through, out of progress).
           // Re-added later (total back above 0) → un-cancel.
           cancelled: newTotal === 0,
