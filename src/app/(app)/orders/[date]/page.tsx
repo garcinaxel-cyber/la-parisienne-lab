@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import OrdersTabs from './OrdersTabs';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 
@@ -37,7 +37,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
           .in('import_id', importIds)
           .order('shop_name')
       : Promise.resolve({ data: [] }),
-        supabase.auth.getSession(),
+        getSafeSession(supabase),
   ]);
 
   // Fetch breakdown separately (requires lab_v3.sql — safe fallback if not run)
@@ -148,6 +148,10 @@ export default async function OrderDatePage({ params }: { params: { date: string
   // (same SKU, previously rejected refs excluded). Confirmed here = same effect as
   // confirming from the exceptional-orders page (production never doubled).
   const openManual = (manualCakesForDate ?? []).filter((m: any) => m.needs_odoo && !m.matched_order_ref);
+  // lab_order_lines.shop_name comes straight from Odoo and is often ALL CAPS ("MOON FLOWER"),
+  // while lab_manual_cakes.shop_name is title case ("Moon Flower") — same normalization already
+  // used elsewhere (existingOrderChoices in exceptional-orders/ExceptionalOrdersView.tsx).
+  const normShop = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
   const manualMatches = openManual.flatMap((m: any) => {
     if (!m.product_sku) return [];
     const rejected = new Set<string>(m.rejected_order_refs ?? []);
@@ -156,6 +160,14 @@ export default async function OrderDatePage({ params }: { params: { date: string
     for (const l of orderLinesResult.data ?? []) {
       if (l.product_sku !== m.product_sku || !l.order_ref) continue;
       if (rejected.has(l.order_ref) || seen.has(l.order_ref)) continue;
+      // Never suggest a candidate from an obviously different shop — a Moon Flower manual cake
+      // must not be proposed against a Winmart replenishment just because they share a SKU and
+      // delivery date (2026-08-07: exactly this case caused several unnecessary "Not this one"
+      // clicks, which is what exposed the duplicate-card bug in rejectMatchAction). Only filter
+      // when BOTH sides actually carry a shop name — manual cakes created without one (the
+      // classic /birthday-cakes flow) keep the old permissive behavior rather than being hidden
+      // for lack of information.
+      if (m.shop_name && l.shop_name && normShop(m.shop_name) !== normShop(l.shop_name)) continue;
       seen.add(l.order_ref);
       cands.push({ ref: l.order_ref, shop: l.shop_name ?? null });
     }

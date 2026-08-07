@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import FicheView from './FicheView';
 
@@ -12,7 +12,7 @@ export default async function FichePage({
   searchParams: { back?: string };
 }) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
 
   const backUrl = searchParams.back ?? '/station/fiches';

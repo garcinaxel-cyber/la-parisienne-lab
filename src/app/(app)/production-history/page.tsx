@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import { labDateOf } from '@/lib/odoo';
 import ProductionHistoryView from './ProductionHistoryView';
@@ -10,7 +10,7 @@ export const revalidate = 0;
 // Read-only, lightweight aggregation (minimal columns, bounded to recent days).
 export default async function ProductionHistoryPage() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');

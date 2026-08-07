@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import StationView from './StationView';
 import type { Team } from '@/lib/types';
@@ -9,7 +9,7 @@ export const revalidate = 0;
 
 export default async function StationPage({ params }: { params: { team: string } }) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
 
   let team = params.team as Team;
 

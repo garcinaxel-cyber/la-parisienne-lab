@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { BookOpen, Plus, Tag, Users } from 'lucide-react';
@@ -11,7 +11,7 @@ export const revalidate = 0;
 async function createFiche() {
   'use server';
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data } = await supabase
     .from('lab_fiche_meta')
@@ -23,7 +23,7 @@ async function createFiche() {
 
 export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string; filter?: string } }) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();

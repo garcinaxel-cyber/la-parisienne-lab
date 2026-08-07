@@ -150,6 +150,19 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string,
     .select('id, product_sku, delivery_date, message, ready_time, delivered_by, delivery_address').eq('id', manualCakeId).maybeSingle();
   if (!mc) return { error: 'Cake not found' };
 
+  // Guard against two DIFFERENT manual cakes both getting confirmed onto the same Odoo order —
+  // manual-cake-coverage.ts sums qty per (order_ref, product_sku, delivery_date), so a second
+  // cake matched to the same trio would double-count coverage against one real Odoo line and
+  // could mask genuine extra demand later. Keyed on mc.product_sku (the cake's OWN sku — what
+  // coverage is actually computed from), not the picked line's sku, since a provisional "link to
+  // a different product's line" (below) still uses the cake's own sku as the coverage key.
+  if (mc.product_sku) {
+    const { data: already } = await supabase.from('lab_manual_cakes')
+      .select('id').eq('matched_order_ref', orderRef).eq('product_sku', mc.product_sku)
+      .eq('delivery_date', mc.delivery_date).is('cancelled_at', null).neq('id', manualCakeId).maybeSingle();
+    if (already) return { error: `${orderRef} is already linked to another manual order for this same product — check for a duplicate before confirming` };
+  }
+
   // The Odoo order line(s) this manual cake covers. Auto-match uses the manual cake's SKU;
   // a human "Link to order" passes the picked Odoo line's SKU (works even if the fiche SKU differs).
   const sku = targetSku || mc.product_sku;
@@ -238,7 +251,13 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
   const rejected = Array.from(new Set([...(mc.rejected_order_refs ?? []), orderRef]));
   await supabase.from('lab_manual_cakes').update({ rejected_order_refs: rejected }).eq('id', manualCakeId);
 
-  // Create the production card for that order's line(s), which the pipeline skipped.
+  // Create the production card for that order's line(s), which the pipeline skipped. Goes
+  // through upsertProductionCard (shared with odoo-apply.ts) so a repeated call for the SAME
+  // order_ref — a double-click, or a second click before the page has refreshed and hidden the
+  // button — grows the existing card instead of inserting a fresh duplicate. Before this fix,
+  // this block did a blind `.insert(rows)` with no existence check first: exactly what produced
+  // the 2026-08-07 finger-cake duplicate cards (Matcha/Pineapple Coconut/etc. — up to 4 cards
+  // for one product, fixed retroactively in the data after the fact). See [[lab-app-audit-2026-08-07]].
   const { data: oLines } = await supabase.from('lab_order_lines')
     .select('id, import_id, team, variant_label, product_name_vi, product_sku, shop_name, qty, delivery_time')
     .eq('order_ref', orderRef).eq('product_sku', mc.product_sku).eq('delivery_date', mc.delivery_date);
@@ -254,24 +273,26 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
   for (const f of fiches ?? []) fById[f.id] = f;
 
   const TEAMS4 = ['baby_mama', 'hung', 'entremet', 'baker'];
-  const groups = new Map<string, any>();
+  const { upsertProductionCard } = await import('@/lib/odoo-apply');
+  // Sequential, not Promise.all — upsertProductionCard reads-then-writes the card, so two lines
+  // that resolve to the SAME card (same import/team/variant/product) must run one after another
+  // to accumulate correctly instead of racing on the same read.
   for (const l of oLines) {
     const v = l.product_sku ? vBySku[l.product_sku] : null; if (!v) continue;
     const f = fById[v.fiche_id]; const team = (f?.teams ?? [])[0] ?? '';
     if (!TEAMS4.includes(team)) continue;
+    if (!l.qty || l.qty <= 0) continue;
     const variantLabel = v.label ?? l.variant_label ?? 'Standard';
-    const key = `${l.import_id}||${team}||${variantLabel}||${l.product_name_vi}`;
-    const g = groups.get(key) ?? { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi, fiche_id: v.fiche_id, variant_id: v.id, name_en: f?.name_en ?? '', image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [] as any[] };
-    g.total += l.qty ?? 0;
-    g.breakdown.push({ shop_name: l.shop_name, order_ref: orderRef, qty: l.qty, delivery_time: l.delivery_time ?? null });
-    groups.set(key, g);
+    const bEntry = { shop_name: l.shop_name, order_ref: orderRef, qty: l.qty, delivery_time: l.delivery_time ?? null };
+    // Best-effort: a card-write failure here shouldn't block the rejection itself (the refusal
+    // is already recorded above, and re-clicking "Not this one" is harmless now that this path
+    // is upsert-safe) — same non-fatal posture the rest of this file already uses.
+    await upsertProductionCard(supabase, {
+      importId: l.import_id, team, ficheId: v.fiche_id, variantId: v.id,
+      name: l.product_name_vi, nameEn: f?.name_en ?? '', image: v.image_url ?? f?.image_url ?? null,
+      variantLabel, qty: l.qty, bEntry,
+    });
   }
-  const rows = Array.from(groups.values()).filter((g: any) => g.total > 0).map((g: any, idx: number) => ({
-    import_id: g.import_id, team: g.team, fiche_id: g.fiche_id, variant_id: g.variant_id,
-    product_name_vi: g.name, product_name_en: g.name_en, image_url: g.image_url, variant_label: g.variant_label,
-    total_qty: g.total, qty_to_produce: g.total, qty_produced: 0, status: 'pending', sort_order: 5000 + idx, breakdown: g.breakdown,
-  }));
-  if (rows.length) await supabase.from('lab_assignments').insert(rows);
 
   revalidatePath('/birthday-cakes');
   revalidatePath('/exceptional-orders');

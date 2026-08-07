@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import SettingsView from './SettingsView';
 
@@ -6,7 +6,7 @@ export const revalidate = 0;
 
 export default async function SettingsPage() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
 
   const { data: profile } = await supabase

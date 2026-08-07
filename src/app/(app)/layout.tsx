@@ -1,11 +1,11 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import Sidebar from '@/components/Sidebar';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
 
   const { data: profile } = await supabase

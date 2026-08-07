@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import AnalyticsView from './AnalyticsView';
 
@@ -6,7 +6,7 @@ export const revalidate = 300; // 5 min cache — analytics don't need to be rea
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: { range?: string } }) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (profile?.role !== 'admin') redirect('/dashboard');

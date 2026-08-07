@@ -40,6 +40,14 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
 
   for (const ch of changes) {
     for (const item of ch.items) {
+      // A manual cake (birthday cake / commande exceptionnelle) matched to this exact
+      // order_ref+sku must be cancelled too when Odoo's own demand for it drops to 0 — whether
+      // the whole order was cancelled (ch.cancelled) or just this one product line was removed.
+      // Before this, only the app's own "Cancel" button (cancelMatchedCakeAction) knew how to
+      // do this; a cancellation made directly in Odoo left the manual cake's card sitting at
+      // "to produce" forever, invisible to the lab. See [[lab-app-audit-2026-08-07]].
+      await cancelMatchedManualCake(supabase, ch.order_ref, item.sku, item.new_qty);
+
       const { data: olRows } = await supabase
         .from('lab_order_lines')
         .select('id, qty, import_id, team, variant_label, product_name_vi, shop_name, delivery_date, delivery_time')
@@ -144,6 +152,35 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
   return { applied, errors };
 }
 
+// Cancel a manual cake matched to order_ref+sku when Odoo's demand for it has dropped to 0 —
+// mirrors the LOCAL side-effects of cancelMatchedCakeAction (birthday-cakes/actions.ts) exactly
+// (card marked cancelled, produced qty preserved, audit note), minus the Odoo-side write: Odoo
+// already reflects the cancellation here (that's how this got detected), there is nothing left
+// to tell it. A no-op when newQty > 0, or when no manual cake is matched to this order_ref+sku,
+// or when it's already cancelled (idempotent — safe to call on every sync pass).
+async function cancelMatchedManualCake(supabase: SupabaseClient, orderRef: string, sku: string, newQty: number) {
+  if (newQty > 0) return;
+  const { data: mcs } = await supabase
+    .from('lab_manual_cakes').select('id, assignment_id')
+    .eq('matched_order_ref', orderRef).eq('product_sku', sku).is('cancelled_at', null);
+  for (const mc of mcs ?? []) {
+    const now = new Date().toISOString();
+    await supabase.from('lab_manual_cakes').update({
+      cancelled_at: now, cancel_reason: 'Annulée dans Odoo (détecté au sync)', needs_odoo: false,
+    }).eq('id', mc.id);
+    if (mc.assignment_id) {
+      const { data: asg } = await supabase.from('lab_assignments').select('notes').eq('id', mc.assignment_id).maybeSingle();
+      const stamp = now.slice(5, 16).replace('T', ' ');
+      const note = `⚠ Commande Odoo annulée (détecté au sync ${stamp}) — carte annulée automatiquement`;
+      await supabase.from('lab_assignments').update({
+        cancelled: true, total_qty: 0, qty_to_produce: 0,
+        notes: asg?.notes ? `${asg.notes}\n${note}` : note,
+        updated_at: now,
+      }).eq('id', mc.assignment_id);
+    }
+  }
+}
+
 // Resolve SKU → variant → fiche (team, name_en, image). Shared by both card-creation paths.
 async function resolveSkuTeam(supabase: SupabaseClient, sku: string) {
   const { data: v } = await supabase
@@ -160,8 +197,12 @@ async function resolveSkuTeam(supabase: SupabaseClient, sku: string) {
 }
 
 // Create-or-grow the production card for `qty` NEW units of a product on one import. Shared by
-// the "new line" and "qty increased beyond manual-cake coverage" paths.
-async function upsertProductionCard(supabase: SupabaseClient, args: {
+// the "new line" and "qty increased beyond manual-cake coverage" paths, and (exported) by
+// rejectMatchAction in birthday-cakes/actions.ts — the ONLY safe way to add to a card's
+// breakdown/total, since it always looks up the existing card first instead of blindly
+// inserting. See the 2026-08-07 finger-cake duplicate-card incident (fixed retroactively in
+// data) for what happens when a caller skips this check.
+export async function upsertProductionCard(supabase: SupabaseClient, args: {
   importId: string; team: string; ficheId: string | null; variantId: string | null;
   name: string; nameEn: string; image: string | null; variantLabel: string; qty: number; bEntry: any;
 }): Promise<{ error?: string }> {

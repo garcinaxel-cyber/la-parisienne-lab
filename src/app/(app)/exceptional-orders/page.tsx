@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import ExceptionalOrdersView from './ExceptionalOrdersView';
 
@@ -10,7 +10,7 @@ export const revalidate = 0;
 // the "enter in Odoo" lifecycle is tracked and duplicates are reconciled.
 export default async function ExceptionalOrdersPage() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
@@ -97,10 +97,22 @@ export default async function ExceptionalOrdersPage() {
     }];
   }).sort((a: any, b: any) => a.nameVi.localeCompare(b.nameVi));
 
+  // lab_order_lines.shop_name comes straight from Odoo and is often ALL CAPS ("MOON FLOWER"),
+  // while lab_manual_cakes.shop_name is title case ("Moon Flower") — same normalization used
+  // elsewhere (existingOrderChoices in ExceptionalOrdersView.tsx, and the equivalent suggestion
+  // list in orders/[date]/page.tsx).
+  const normShop = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
   const list = orders.map(o => {
     const rejected = new Set<string>(o.rejected_order_refs ?? []);
+    // Never suggest a candidate from an obviously different shop — a Moon Flower manual cake
+    // must not be proposed against a Winmart replenishment just because they share a SKU and
+    // delivery date (2026-08-07 incident, see [[lab-app-audit-2026-08-07]]). Only filter when
+    // BOTH sides carry a shop name — manual cakes created without one (the classic
+    // /birthday-cakes flow) keep the old permissive behavior.
     const sug = (o.needs_odoo && !o.matched_order_ref)
-      ? ((matchBySkuDate[`${o.product_sku}||${o.delivery_date}`] ?? []).find(c => !rejected.has(c.ref)) ?? null)
+      ? ((matchBySkuDate[`${o.product_sku}||${o.delivery_date}`] ?? []).find(c =>
+          !rejected.has(c.ref) && (!o.shop_name || !c.shop || normShop(o.shop_name) === normShop(c.shop))
+        ) ?? null)
       : null;
     const asg = o.assignment_id ? asgById[o.assignment_id] ?? null : null;
     return {
