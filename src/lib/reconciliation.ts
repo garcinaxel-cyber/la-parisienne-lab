@@ -111,19 +111,24 @@ async function checkOneDate(supabase: SupabaseClient, date: string): Promise<Rec
     addNeeded(team, v.label, l.product_name_vi, Math.max(0, (l.qty ?? 0) - covered));
   }
 
-  // Pending (unmatched) manual cakes: real demand not yet visible in any Odoo order line.
-  // Match their own card's team/variant/name via assignment_id so it reconciles exactly
-  // against its own tracked entry below, instead of guessing team/variant independently.
-  const { data: pendingCakes } = await supabase
+  // Every non-cancelled manual cake (matched OR still pending) is real demand for its own
+  // qty — matched or not. Matched ones already have their corresponding order line's
+  // contribution reduced above (coveredByRefSku), so without adding the cake's own qty back
+  // here, that demand would vanish from "needed" entirely while its card still shows up on
+  // "tracked" (false doublon — found live testing this check on a matched cake, S03099 /
+  // mini cake Xoài: order-line side correctly went to 0 via coverage, but nothing credited
+  // the manual cake's own real 1-unit card). Matched their own card's team/variant/name via
+  // assignment_id so it reconciles exactly against its own tracked entry below, instead of
+  // guessing team/variant independently.
+  const { data: dayCakes } = await supabase
     .from('lab_manual_cakes')
     .select('assignment_id, qty')
     .eq('delivery_date', date)
-    .is('matched_order_ref', null)
     .is('cancelled_at', null);
-  const asgIds = (pendingCakes ?? []).map((m: any) => m.assignment_id).filter(Boolean) as string[];
+  const asgIds = (dayCakes ?? []).map((m: any) => m.assignment_id).filter(Boolean) as string[];
   const asgInfoById = new Map<string, { team: string; variant_label: string; product_name_vi: string }>();
   for (const a of assignments ?? []) if (asgIds.includes((a as any).id)) asgInfoById.set((a as any).id, a as any);
-  for (const m of pendingCakes ?? []) {
+  for (const m of dayCakes ?? []) {
     if (!m.assignment_id) continue;
     const info = asgInfoById.get(m.assignment_id);
     if (!info || !TEAMS.includes(info.team as any)) continue;
