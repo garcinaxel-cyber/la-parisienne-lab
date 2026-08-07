@@ -71,4 +71,6 @@ declare module 'lucide-react' {
   export const Square: LucideIcon;
   export const CheckSquare: LucideIcon;
   export const RefreshCw: LucideIcon;
+  export const ShieldCheck: LucideIcon;
+  export const TrendingDown: LucideIcon;
 }

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, FileSpreadsheet, Zap } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, FileSpreadsheet, Zap, ShieldCheck } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -21,9 +21,12 @@ const ADMIN_NAV = [
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const },
   { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
+  // Control tool over everyone else's work (Odoo-vs-app reconciliation), not an operational
+  // page — admin only, deliberately excluded from lab_manager per Axel's explicit request.
+  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Đối chiếu Odoo', labelEn: 'Reconciliation', adminOnly: true },
 ];
 
-export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number }) {
+export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {
   const { t, lang, setLang } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
@@ -76,14 +79,20 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
           {isAdmin && (
             <div className="pt-4 mt-4 border-t border-white/10">
               <p className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">Admin</p>
-              {ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map(({ href, icon: Icon, key }) => (
-                <Link key={href} href={href}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                    pathname.startsWith(href) ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
-                  }`}>
-                  <Icon size={18} />{t(key)}
-                </Link>
-              ))}
+              {ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
+                const { href, icon: Icon } = item;
+                return (
+                  <Link key={href} href={href}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                      pathname.startsWith(href) ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}>
+                    <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
+                    {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
+                      <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{reconciliationIssues}</span>
+                    )}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </nav>
@@ -149,6 +158,9 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
                 )}
                 {href === '/exceptional-orders' && pendingExceptional > 0 && (
                   <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{pendingExceptional}</span>
+                )}
+                {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
+                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{reconciliationIssues}</span>
                 )}
               </Link>
             );

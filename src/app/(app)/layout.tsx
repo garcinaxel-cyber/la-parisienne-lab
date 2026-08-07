@@ -30,9 +30,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
   ]);
 
+  // Reconciliation badge: admin-only table (RLS), so only fetched for admins.
+  let reconciliationIssues = 0;
+  if (profile.role === 'admin') {
+    const { data: lastRun } = await supabase
+      .from('lab_reconciliation_runs').select('issue_count').order('run_at', { ascending: false }).limit(1).maybeSingle();
+    reconciliationIssues = lastRun?.issue_count ?? 0;
+  }
+
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} reconciliationIssues={reconciliationIssues} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>
