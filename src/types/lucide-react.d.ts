@@ -73,4 +73,7 @@ declare module 'lucide-react' {
   export const RefreshCw: LucideIcon;
   export const ShieldCheck: LucideIcon;
   export const TrendingDown: LucideIcon;
+  export const ClipboardCheck: LucideIcon;
+  export const CircleAlert: LucideIcon;
+  export const Box: LucideIcon;
 }
