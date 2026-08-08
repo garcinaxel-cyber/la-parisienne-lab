@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
@@ -77,9 +77,18 @@ export default function DeliveryCheckOrderView({ header, lines }: { header: Deli
                   <div className="col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
                   <div className="col-span-5 flex items-center justify-center gap-2">
                     {isChecked ? (
-                      <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
-                        <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
-                      </span>
+                      <>
+                        <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
+                          <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
+                        </span>
+                        {!validated && (
+                          <button onClick={() => setChecked(p => { const n = new Set(p); n.delete(l.id); return n; })}
+                            className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                            title={vi ? 'Sửa' : 'Modifier'} aria-label={vi ? 'Sửa' : 'Modifier'}>
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                      </>
                     ) : (
                       <>
                         <input type="number" value={st.qty} onChange={e => upd(l.id, { qty: e.target.value })}

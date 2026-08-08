@@ -80,6 +80,7 @@ export default async function DeliveryCheckPage() {
   return (
     <DeliveryCheckIndexView
       today={today}
+      tomorrow={tomorrow}
       orders={ordersWithProgress}
       pendingCakesCount={(pendingCakes ?? []).length}
     />

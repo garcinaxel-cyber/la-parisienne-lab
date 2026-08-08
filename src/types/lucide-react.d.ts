@@ -77,4 +77,5 @@ declare module 'lucide-react' {
   export const CircleAlert: LucideIcon;
   export const Box: LucideIcon;
   export const LayoutGrid: LucideIcon;
+  export const Pencil: LucideIcon;
 }

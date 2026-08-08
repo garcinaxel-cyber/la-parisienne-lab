@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid } from 'lucide-react';
@@ -8,21 +9,14 @@ type OrderRow = {
   status: string; checked: number; total: number;
 };
 
-export default function DeliveryCheckIndexView({ today, orders, pendingCakesCount }: {
-  today: string; orders: OrderRow[]; pendingCakesCount: number;
+export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount }: {
+  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
-  const byDate = new Map<string, OrderRow[]>();
-  for (const o of orders) (byDate.get(o.delivery_date) ?? byDate.set(o.delivery_date, []).get(o.delivery_date)!).push(o);
-  const dates = Array.from(byDate.keys()).sort();
-
-  const dayLabel = (d: string) => {
-    const label = new Date(d + 'T12:00:00Z').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', {
-      weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Ho_Chi_Minh',
-    });
-    return d === today ? `${label} · ${vi ? 'hôm nay' : "aujourd'hui"}` : label;
-  };
+  const [day, setDay] = useState<'today' | 'tomorrow'>('today');
+  const activeDate = day === 'today' ? today : tomorrow;
+  const dayOrders = orders.filter(o => o.delivery_date === activeDate);
 
   return (
     <div className="space-y-5">
@@ -51,48 +45,57 @@ export default function DeliveryCheckIndexView({ today, orders, pendingCakesCoun
         </div>
       </div>
 
-      {orders.length === 0 ? (
+      <div className="flex gap-1.5">
+        {(['today', 'tomorrow'] as const).map(d => (
+          <button key={d} onClick={() => setDay(d)}
+            className="text-xs font-semibold rounded-full px-3.5 py-1.5"
+            style={{
+              border: '1px solid', borderColor: day === d ? '#1f2937' : '#D1D5DB',
+              backgroundColor: day === d ? '#F3F4F6' : 'transparent', color: '#1f2937',
+            }}>
+            {d === 'today' ? (vi ? 'Hôm nay' : "Aujourd'hui") : (vi ? 'Ngày mai' : 'Demain')}
+          </button>
+        ))}
+      </div>
+
+      {dayOrders.length === 0 ? (
         <div className="card p-10 text-center">
           <ClipboardCheck size={44} className="mx-auto mb-3 text-green-600" />
           <p className="font-semibold text-navy">{vi ? 'Không có đơn nào' : 'Aucune commande'}</p>
-          <p className="text-sm text-ink-light mt-1">{vi ? 'Đơn hôm nay/mai sẽ hiện ở đây.' : "Les commandes d'aujourd'hui/demain apparaîtront ici."}</p>
         </div>
       ) : (
-        dates.map(d => (
-          <div key={d}>
-            <div className="text-xs font-bold uppercase tracking-wide text-ink-light mb-2 capitalize">{dayLabel(d)}</div>
-            <div className="space-y-2">
-              {byDate.get(d)!.map(o => {
-                const validated = o.status === 'validated';
-                const pct = o.total > 0 ? Math.round((o.checked / o.total) * 100) : 0;
-                // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
-                // captures them as separate segments, so no encoding here.
-                return (
-                  <Link key={o.order_ref} href={`/delivery-check/${o.delivery_date}/${o.order_ref}`}
-                    className="card flex items-center justify-between px-4 py-3 hover:bg-cream/40 transition-colors">
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-navy">{o.order_ref}</div>
-                      <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      {validated ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-bold" style={{ color: '#059669' }}>
-                          <CheckCircle2 size={15} /> {vi ? 'đã xác nhận' : 'validé'}
-                        </span>
-                      ) : (
-                        <span className="text-xs font-semibold rounded-full px-2.5 py-1"
-                          style={{ backgroundColor: pct === 100 ? '#DCFCE7' : '#F3F4F6', color: pct === 100 ? '#166534' : '#6B7280' }}>
-                          {o.checked}/{o.total || '?'}
-                        </span>
-                      )}
-                      <ChevronRight size={18} className="text-ink-light" />
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        ))
+        <div className="space-y-2">
+          {dayOrders.map(o => {
+            const validated = o.status === 'validated';
+            const full = o.total > 0 && o.checked === o.total;
+            const dotColor = validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
+            const bg = validated || full ? '#F0FDF4' : undefined;
+            const border = validated || full ? '#BBF7D0' : '#E5E7EB';
+            return (
+              // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
+              // captures them as separate segments, so no encoding here.
+              <Link key={o.order_ref} href={`/delivery-check/${o.delivery_date}/${o.order_ref}`}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors"
+                style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-navy">{o.order_ref}</div>
+                  <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
+                </div>
+                {validated ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#059669' }}>
+                    <CheckCircle2 size={15} /> {vi ? 'đã xác nhận' : 'validé'}
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold shrink-0" style={{ color: full ? '#166534' : '#6B7280' }}>
+                    {o.checked}/{o.total || '?'}
+                  </span>
+                )}
+                <ChevronRight size={18} className="text-ink-light shrink-0" />
+              </Link>
+            );
+          })}
+        </div>
       )}
     </div>
   );

@@ -42,7 +42,7 @@ export default async function DeliveryCheckCategoryPage() {
 
   type Row = {
     sku: string | null; product_name_vi: string; product_name_en: string | null;
-    category: string; team: string | null; order_ref: string; shop_name: string | null;
+    category: string; product_category: string | null; team: string | null; order_ref: string; shop_name: string | null;
     delivery_date: string; qty_expected: number; qty_checked: number | null; status: string;
     id: string; discrepancy_reason: string | null; discrepancy_note: string | null;
   };
@@ -52,12 +52,13 @@ export default async function DeliveryCheckCategoryPage() {
     for (const l of r.lines) {
       rows.push({
         id: l.id, sku: l.sku, product_name_vi: l.product_name_vi, product_name_en: l.product_name_en,
-        category: l.category, team: l.team, order_ref: r.header.order_ref, shop_name: r.header.shop_name,
+        category: l.category, product_category: l.product_category, team: l.team,
+        order_ref: r.header.order_ref, shop_name: r.header.shop_name,
         delivery_date: r.header.delivery_date, qty_expected: l.qty_expected, qty_checked: l.qty_checked,
         status: l.status, discrepancy_reason: l.discrepancy_reason, discrepancy_note: l.discrepancy_note,
       });
     }
   }
 
-  return <DeliveryCheckCategoryView rows={rows} today={today} />;
+  return <DeliveryCheckCategoryView rows={rows} today={today} tomorrow={tomorrow} />;
 }

@@ -1,11 +1,13 @@
 // Assistant delivery-check: materializes lab_delivery_orders + lab_delivery_check_lines for
 // one (date, order_ref) on first open. Producible items come from lab_order_lines (already
-// imported); packaging/matières lines are read LIVE from Odoo (odoo-sync.ts's excludedSet
-// deliberately keeps them out of lab_order_lines — see lab_v33 migration note, and the
-// 2026-08-08 diagnostic: reusing lab_order_lines for them would break the reconciliation
-// feature, which expects every order-line row to eventually be produced).
+// imported); packaging/matières lines come from lab_order_packaging_lines, synced on the same
+// 15-min cron as everything else (see odoo-packaging-sync.ts) — NOT read live from Odoo here.
+// Reusing lab_order_lines directly for packaging would break the reconciliation feature
+// (expects every order-line row to eventually be produced); an earlier version of this file
+// fetched packaging live from Odoo on every page view, which was slow (2-3 Odoo round trips
+// per order, multiplied across every order on the category view) — Axel asked to piggyback
+// on the existing cron instead of mobilizing a separate on-demand API call (2026-08-08).
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { odooExecute, odooConfigured } from '@/lib/odoo';
 
 export type SourceType = 'sales_order' | 'replenishment';
 
@@ -16,6 +18,7 @@ export interface CheckLine {
   product_name_vi: string;
   product_name_en: string | null;
   category: 'production' | 'packaging';
+  product_category: string | null;
   team: string | null;
   qty_expected: number;
   qty_checked: number | null;
@@ -40,51 +43,13 @@ export interface DeliveryOrderHeader {
   odoo_push_error: string | null;
 }
 
-function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
-  return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
-}
-
-async function mapPackagingLines(rawLines: any[], qtyField: string, excludedSet: Set<string>) {
-  const productIds = Array.from(new Set(rawLines.map(l => l.product_id?.[0]).filter(Boolean)));
-  if (!productIds.length) return [];
-  const products = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['id', 'in', productIds]]], { fields: ['id', 'name', 'default_code'] }), 15000, 'products');
-  const bySku: Record<number, { sku: string; name: string }> = {};
-  for (const p of products) bySku[p.id] = { sku: p.default_code || '', name: p.name || '' };
-  const out: { sku: string; name: string; qty: number }[] = [];
-  for (const l of rawLines) {
-    const info = bySku[l.product_id?.[0]];
-    if (!info?.sku || !excludedSet.has(info.sku)) continue;
-    const qty = Math.round(Number(l[qtyField] ?? 0));
-    if (!qty) continue;
-    out.push({ sku: info.sku, name: String(info.name).replace(/\[.*?\]\s*/, ''), qty });
-  }
-  return out;
-}
-
-// Live Odoo read: packaging/matières lines for one order_ref — best-effort, never blocks
-// the check screen from opening if Odoo is slow/unreachable (returns [] on error).
-async function fetchPackagingLines(orderRef: string, sourceType: SourceType, excludedSet: Set<string>) {
-  if (!odooConfigured() || !excludedSet.size) return [];
-  try {
-    if (sourceType === 'sales_order') {
-      const orders = await tmo(odooExecute<any[]>('sale.order', 'search_read',
-        [[['name', '=', orderRef]]], { fields: ['id'], limit: 1 }), 15000, 'so');
-      if (!orders.length) return [];
-      const soLines = await tmo(odooExecute<any[]>('sale.order.line', 'search_read',
-        [[['order_id', '=', orders[0].id]]], { fields: ['product_id', 'product_uom_qty'], limit: 500 }), 15000, 'so-lines');
-      return mapPackagingLines(soLines, 'product_uom_qty', excludedSet);
-    } else {
-      const reqs = await tmo(odooExecute<any[]>('stock.replenishment.request', 'search_read',
-        [[['name', '=', orderRef]]], { fields: ['id'], limit: 1 }), 15000, 'repl');
-      if (!reqs.length) return [];
-      const repLines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-        [[['request_id', '=', reqs[0].id]]], { fields: ['product_id', 'quantity_requested'], limit: 500 }), 15000, 'repl-lines');
-      return mapPackagingLines(repLines, 'quantity_requested', excludedSet);
-    }
-  } catch {
-    return []; // best-effort — the produced-items check must still work if Odoo is unreachable
-  }
+// Packaging lines for one order_ref — plain Supabase read from the cron-synced table, no
+// Odoo call on the request path at all.
+async function fetchPackagingLines(supabase: SupabaseClient, orderRef: string) {
+  const { data, error } = await supabase.from('lab_order_packaging_lines')
+    .select('sku, product_name_vi, qty').eq('order_ref', orderRef);
+  if (error) throw error;
+  return (data ?? []).map(p => ({ sku: p.sku, name: p.product_name_vi, qty: p.qty }));
 }
 
 export async function ensureDeliveryOrderChecklist(
@@ -94,7 +59,7 @@ export async function ensureDeliveryOrderChecklist(
   // silently returned zero rows every time (PostgREST rejects unknown columns, and the
   // error wasn't being checked). Root cause of the 2026-08-08 "empty order" bug.
   const { data: orderLines, error: orderLinesError } = await supabase.from('lab_order_lines')
-    .select('source_type, shop_name, product_sku, product_name_vi, team, qty')
+    .select('source_type, shop_name, product_sku, product_name_vi, team, qty, fiche_id')
     .eq('delivery_date', date).eq('order_ref', orderRef);
   if (orderLinesError) throw orderLinesError;
 
@@ -113,9 +78,7 @@ export async function ensureDeliveryOrderChecklist(
     header = created as DeliveryOrderHeader;
   }
 
-  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
-  const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
-  const packaging = await fetchPackagingLines(orderRef, sourceType, excludedSet);
+  const packaging = await fetchPackagingLines(supabase, orderRef);
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
     .select('sku, category').eq('delivery_order_id', header.id);
@@ -123,12 +86,21 @@ export async function ensureDeliveryOrderChecklist(
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
   // variant rows (e.g. size), and the check is per SKU, not per variant, for now.
-  const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; qty: number }> = {};
+  const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; ficheId: string | null; qty: number }> = {};
   for (const l of orderLines ?? []) {
     const k = l.product_sku;
-    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, qty: 0 };
+    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, ficheId: l.fiche_id, qty: 0 };
     e.qty += l.qty;
   }
+
+  // Product family (Macaron/Viennoiserie/Savory/...) for the category-picker view — resolved
+  // from the fiche, not the chef team (teams are people-groups, not product families).
+  const ficheIds = Array.from(new Set(Object.values(bySku).map(e => e.ficheId).filter(Boolean))) as string[];
+  const { data: ficheRows } = ficheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, category').in('id', ficheIds)
+    : { data: [] as any[] };
+  const categoryByFiche: Record<string, string> = {};
+  for (const f of ficheRows ?? []) if (f.category) categoryByFiche[f.id] = f.category;
 
   const toInsert: any[] = [];
   for (const [sku, e] of Object.entries(bySku)) {
@@ -137,7 +109,8 @@ export async function ensureDeliveryOrderChecklist(
     toInsert.push({
       delivery_order_id: header.id, delivery_date: date, sku,
       product_name_vi: e.name_vi, product_name_en: e.name_en,
-      category: 'production', team: e.team, qty_expected: e.qty,
+      category: 'production', product_category: (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
+      team: e.team, qty_expected: e.qty,
     });
   }
   for (const p of packaging) {
@@ -146,7 +119,7 @@ export async function ensureDeliveryOrderChecklist(
     toInsert.push({
       delivery_order_id: header.id, delivery_date: date, sku: p.sku,
       product_name_vi: p.name, product_name_en: p.name,
-      category: 'packaging', team: null, qty_expected: p.qty,
+      category: 'packaging', product_category: 'Packaging', team: null, qty_expected: p.qty,
     });
   }
   if (toInsert.length) {
