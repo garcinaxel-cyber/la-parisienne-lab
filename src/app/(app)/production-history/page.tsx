@@ -13,7 +13,9 @@ export default async function ProductionHistoryPage() {
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
+  // Admin-only per Axel (2026-08-08) — was open to lab_manager/assistant, restricted to
+  // declutter their sidebar; tightened here to match the hidden nav link.
+  if (profile?.role !== 'admin') redirect('/dashboard');
 
   const today = new Date().toISOString().split('T')[0];
 

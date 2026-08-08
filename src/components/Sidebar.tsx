@@ -8,16 +8,20 @@ import type { UserRole } from '@/lib/types';
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const },
-  { href: '/import',    icon: Upload,          key: 'import'    as const },
+  // Import / Production export: admin-only per Axel (2026-08-08) — decluttering the
+  // lab_manager/assistant sidebar, they don't use these day to day.
+  { href: '/import',    icon: Upload,          key: 'import'    as const, adminOnly: true },
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
   { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes' },
   { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders' },
   { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
-  { href: '/production-history', icon: FileSpreadsheet, labelVi: 'Lịch sử sản xuất', labelEn: 'Production export' },
+  { href: '/production-history', icon: FileSpreadsheet, labelVi: 'Lịch sử sản xuất', labelEn: 'Production export', adminOnly: true },
 ];
 const ADMIN_NAV = [
   { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },
-  { href: '/admin/users',     icon: Users,    key: 'users'     as const },
+  // Users: admin-only per Axel (2026-08-08) — was already page-blocked for lab_manager,
+  // just wasn't hidden from the sidebar yet.
+  { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true },
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const },
   { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
@@ -57,7 +61,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV.map((item) => {
+          {NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
             const { href, icon: Icon } = item;
             return (
               <Link key={href} href={href}
@@ -143,7 +147,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
           </div>
         </div>
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV, ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
+          {[...NAV.filter(n => !n.adminOnly || profile?.role === 'admin'), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
             const { href, icon: Icon } = item;
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
