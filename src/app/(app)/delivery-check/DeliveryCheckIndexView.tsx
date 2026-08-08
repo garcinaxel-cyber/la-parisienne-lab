@@ -20,29 +20,45 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2">
-            <ClipboardCheck size={24} /> {vi ? 'Kiểm tra giao hàng' : 'Check livraison'}
-          </h1>
-          <p className="text-ink-light text-sm mt-0.5">
-            {vi ? 'Kiểm số lượng theo đơn, điều chỉnh nếu cần, sau đó xác nhận.' : 'Vérifier la quantité par commande, ajuster si besoin, puis valider.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/delivery-check/category"
-            className="text-xs font-semibold rounded-full px-3 py-1.5 inline-flex items-center gap-1.5"
-            style={{ backgroundColor: '#F3F4F6', color: '#374151' }}>
-            <LayoutGrid size={13} /> {vi ? 'Theo sản phẩm' : 'Par catégorie'}
-          </Link>
-          {pendingCakesCount > 0 && (
-            <Link href="/delivery-check/unreconciled"
-              className="text-xs font-semibold rounded-full px-3 py-1.5 inline-flex items-center gap-1.5"
-              style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-              <CircleAlert size={13} /> {pendingCakesCount} {vi ? 'chưa đồng bộ Odoo' : 'non conciliés Odoo'}
-            </Link>
-          )}
-        </div>
+      <div>
+        <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2">
+          <ClipboardCheck size={24} /> {vi ? 'Kiểm tra giao hàng' : 'Check livraison'}
+        </h1>
+        <p className="text-ink-light text-sm mt-0.5">
+          {vi ? 'Kiểm số lượng theo đơn, điều chỉnh nếu cần, sau đó xác nhận.' : 'Vérifier la quantité par commande, ajuster si besoin, puis valider.'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <Link href="/delivery-check/category"
+          className="flex items-center gap-3 rounded-xl px-4 py-3.5"
+          style={{ backgroundColor: '#1f2937' }}>
+          <LayoutGrid size={20} className="text-white shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-white">{vi ? 'Kiểm theo loại sản phẩm' : 'Check par catégorie'}</div>
+            <div className="text-xs" style={{ color: '#D1D5DB' }}>
+              {vi ? 'Macaron, Viennoiserie, Savory...' : 'Macaron, Viennoiserie, Savory...'}
+            </div>
+          </div>
+          <ChevronRight size={18} className="shrink-0" style={{ color: '#9CA3AF' }} />
+        </Link>
+
+        <Link href="/delivery-check/unreconciled"
+          className="flex items-center gap-3 rounded-xl px-4 py-3.5"
+          style={{ backgroundColor: pendingCakesCount > 0 ? '#DC2626' : '#F3F4F6' }}>
+          <CircleAlert size={20} className="shrink-0" style={{ color: pendingCakesCount > 0 ? 'white' : '#9CA3AF' }} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold" style={{ color: pendingCakesCount > 0 ? 'white' : '#6B7280' }}>
+              {pendingCakesCount > 0
+                ? `${pendingCakesCount} ${vi ? 'chưa đồng bộ Odoo' : 'non conciliés Odoo'}`
+                : (vi ? 'Tất cả đã đồng bộ' : 'Tout est concilié')}
+            </div>
+            <div className="text-xs" style={{ color: pendingCakesCount > 0 ? '#FECACA' : '#9CA3AF' }}>
+              {vi ? 'Bánh chưa có đơn Odoo' : 'Cakes sans commande Odoo'}
+            </div>
+          </div>
+          <ChevronRight size={18} className="shrink-0" style={{ color: pendingCakesCount > 0 ? '#FECACA' : '#9CA3AF' }} />
+        </Link>
       </div>
 
       <div className="flex gap-1.5">

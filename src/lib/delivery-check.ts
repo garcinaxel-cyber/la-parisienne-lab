@@ -81,7 +81,7 @@ export async function ensureDeliveryOrderChecklist(
   const packaging = await fetchPackagingLines(supabase, orderRef);
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
-    .select('sku, category').eq('delivery_order_id', header.id);
+    .select('id, sku, category, product_category').eq('delivery_order_id', header.id);
   const existingKeys = new Set((existingLines ?? []).map((l: any) => `${l.category}||${l.sku}`));
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
@@ -101,6 +101,24 @@ export async function ensureDeliveryOrderChecklist(
     : { data: [] as any[] };
   const categoryByFiche: Record<string, string> = {};
   for (const f of ficheRows ?? []) if (f.category) categoryByFiche[f.id] = f.category;
+
+  // Self-heal: rows created before this resolution logic existed (or before their fiche had
+  // a category set) got stuck with product_category = null forever, since the insert below
+  // only fires for SKUs not already present. Backfill any resolvable ones on every open
+  // instead of requiring a manual SQL fix each time (root cause of the 2026-08-08 "tout
+  // passe en Autre" bug — confirmed every existing row had product_category null in DB).
+  const toHeal: { id: string; product_category: string }[] = [];
+  for (const el of existingLines ?? []) {
+    if (el.category !== 'production' || el.product_category) continue;
+    const e = bySku[el.sku];
+    const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
+    if (resolved) toHeal.push({ id: el.id, product_category: resolved });
+  }
+  for (const h of toHeal) {
+    const { error: healError } = await supabase.from('lab_delivery_check_lines')
+      .update({ product_category: h.product_category }).eq('id', h.id);
+    if (healError) throw healError;
+  }
 
   const toInsert: any[] = [];
   for (const [sku, e] of Object.entries(bySku)) {
