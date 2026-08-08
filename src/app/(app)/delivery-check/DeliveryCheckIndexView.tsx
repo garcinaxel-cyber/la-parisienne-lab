@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2 } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
@@ -35,13 +35,20 @@ export default function DeliveryCheckIndexView({ today, orders, pendingCakesCoun
             {vi ? 'Kiểm số lượng theo đơn, điều chỉnh nếu cần, sau đó xác nhận.' : 'Vérifier la quantité par commande, ajuster si besoin, puis valider.'}
           </p>
         </div>
-        {pendingCakesCount > 0 && (
-          <Link href="/delivery-check/unreconciled"
+        <div className="flex items-center gap-2">
+          <Link href="/delivery-check/category"
             className="text-xs font-semibold rounded-full px-3 py-1.5 inline-flex items-center gap-1.5"
-            style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-            <CircleAlert size={13} /> {pendingCakesCount} {vi ? 'chưa đồng bộ Odoo' : 'non conciliés Odoo'}
+            style={{ backgroundColor: '#F3F4F6', color: '#374151' }}>
+            <LayoutGrid size={13} /> {vi ? 'Theo sản phẩm' : 'Par catégorie'}
           </Link>
-        )}
+          {pendingCakesCount > 0 && (
+            <Link href="/delivery-check/unreconciled"
+              className="text-xs font-semibold rounded-full px-3 py-1.5 inline-flex items-center gap-1.5"
+              style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+              <CircleAlert size={13} /> {pendingCakesCount} {vi ? 'chưa đồng bộ Odoo' : 'non conciliés Odoo'}
+            </Link>
+          )}
+        </div>
       </div>
 
       {orders.length === 0 ? (

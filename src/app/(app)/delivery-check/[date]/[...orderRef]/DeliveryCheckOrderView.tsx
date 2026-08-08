@@ -4,13 +4,7 @@ import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
-
-const REASONS = [
-  { v: 'casse', vi: 'Vỡ / hỏng', en: 'Broken / damaged' },
-  { v: 'shortage', vi: 'Không sản xuất đủ / hết hàng', en: 'Not enough produced / out of stock' },
-  { v: 'miscount', vi: 'Đếm sai', en: 'Miscount' },
-  { v: 'other', vi: 'Khác', en: 'Other' },
-];
+import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
 export default function DeliveryCheckOrderView({ header, lines }: { header: DeliveryOrderHeader; lines: CheckLine[] }) {
   const { lang } = useI18n();

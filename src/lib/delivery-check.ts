@@ -11,6 +11,7 @@ export type SourceType = 'sales_order' | 'replenishment';
 
 export interface CheckLine {
   id: string;
+  delivery_date: string;
   sku: string | null;
   product_name_vi: string;
   product_name_en: string | null;
@@ -89,9 +90,13 @@ async function fetchPackagingLines(orderRef: string, sourceType: SourceType, exc
 export async function ensureDeliveryOrderChecklist(
   supabase: SupabaseClient, date: string, orderRef: string,
 ): Promise<{ header: DeliveryOrderHeader; lines: CheckLine[] }> {
-  const { data: orderLines } = await supabase.from('lab_order_lines')
-    .select('source_type, shop_name, product_sku, product_name_vi, product_name_en, team, qty')
+  // lab_order_lines has NO product_name_en column (only product_name_vi) — selecting it
+  // silently returned zero rows every time (PostgREST rejects unknown columns, and the
+  // error wasn't being checked). Root cause of the 2026-08-08 "empty order" bug.
+  const { data: orderLines, error: orderLinesError } = await supabase.from('lab_order_lines')
+    .select('source_type, shop_name, product_sku, product_name_vi, team, qty')
     .eq('delivery_date', date).eq('order_ref', orderRef);
+  if (orderLinesError) throw orderLinesError;
 
   const sourceType: SourceType =
     (orderLines?.[0]?.source_type as SourceType) ?? (orderRef.toUpperCase().startsWith('REP') ? 'replenishment' : 'sales_order');
@@ -121,7 +126,7 @@ export async function ensureDeliveryOrderChecklist(
   const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; qty: number }> = {};
   for (const l of orderLines ?? []) {
     const k = l.product_sku;
-    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: l.product_name_en, team: l.team, qty: 0 };
+    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, qty: 0 };
     e.qty += l.qty;
   }
 
@@ -144,10 +149,62 @@ export async function ensureDeliveryOrderChecklist(
       category: 'packaging', team: null, qty_expected: p.qty,
     });
   }
-  if (toInsert.length) await supabase.from('lab_delivery_check_lines').insert(toInsert);
+  if (toInsert.length) {
+    const { error: insertError } = await supabase.from('lab_delivery_check_lines').insert(toInsert);
+    if (insertError) throw insertError;
+  }
 
-  const { data: lines } = await supabase.from('lab_delivery_check_lines')
+  const { data: lines, error: linesError } = await supabase.from('lab_delivery_check_lines')
     .select('*').eq('delivery_order_id', header.id).order('category', { ascending: true }).order('product_name_vi', { ascending: true });
+  if (linesError) throw linesError;
 
   return { header, lines: (lines ?? []) as CheckLine[] };
+}
+
+export interface UnreconciledLine extends CheckLine {
+  manual_cake_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+}
+
+// 3rd panier: manual cakes for the date range with no Odoo order behind them yet
+// (matched_order_ref null, not cancelled) — nothing to push to Odoo, checking here is
+// purely the assistant's own tracking. Materializes one check_line per pending cake.
+export async function ensureUnreconciledChecklist(
+  supabase: SupabaseClient, dates: string[],
+): Promise<UnreconciledLine[]> {
+  const { data: cakes, error: cakesError } = await supabase.from('lab_manual_cakes')
+    .select('id, product_name_vi, product_name_en, product_sku, qty, delivery_date, customer_name, customer_phone')
+    .in('delivery_date', dates).is('matched_order_ref', null).is('cancelled_at', null);
+  if (cakesError) throw cakesError;
+  if (!cakes?.length) return [];
+
+  const cakeIds = cakes.map(c => c.id);
+  const { data: existing, error: existingError } = await supabase.from('lab_delivery_check_lines')
+    .select('*').in('manual_cake_id', cakeIds);
+  if (existingError) throw existingError;
+  const existingByCake: Record<string, any> = {};
+  for (const l of existing ?? []) existingByCake[l.manual_cake_id] = l;
+
+  const toInsert = cakes.filter(c => !existingByCake[c.id]).map(c => ({
+    manual_cake_id: c.id, delivery_date: c.delivery_date, sku: c.product_sku,
+    product_name_vi: c.product_name_vi, product_name_en: c.product_name_en,
+    category: 'production', qty_expected: c.qty,
+  }));
+  if (toInsert.length) {
+    const { error: insertError } = await supabase.from('lab_delivery_check_lines').insert(toInsert);
+    if (insertError) throw insertError;
+  }
+
+  const { data: lines, error: linesError } = await supabase.from('lab_delivery_check_lines')
+    .select('*').in('manual_cake_id', cakeIds);
+  if (linesError) throw linesError;
+
+  const cakeById: Record<string, any> = {};
+  for (const c of cakes) cakeById[c.id] = c;
+  return (lines ?? []).map((l: any) => ({
+    ...l,
+    customer_name: cakeById[l.manual_cake_id]?.customer_name ?? null,
+    customer_phone: cakeById[l.manual_cake_id]?.customer_phone ?? null,
+  })) as UnreconciledLine[];
 }
