@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConsolidatedLine } from '@/lib/excel-parser';
-import { getManualCakeCoverage } from '@/lib/manual-cake-coverage';
+import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -145,15 +145,19 @@ export async function persistImportsFromLines(
     // bug by construction. Chefs still see one consolidated total via the Production tab's
     // "Tổng cần làm" recap (aggregates across cards), and send-to-stock is already grouped by
     // product via groupSendable() — neither depends on cards being merged in the database.
+    // 2026-08-09: withholding used to be all-or-nothing per SKU+date (any pending manual cake
+    // for this SKU held back every order's card, regardless of shop) — now scoped per breakdown
+    // entry (order_ref+shop), via excessQty, so only the shop the pending cake actually belongs
+    // to is held back. See manual-cake-coverage.ts for the full rationale and the incident this
+    // fixes (Moon Flower cakes silently starving Winmart/La Paris orders of the same product).
     const coverage = await getManualCakeCoverage(supabase, date);
     const assignable = dateLines
-      .filter(l => TEAMS.includes(l.team) && !coverage.pendingSkuDates.has(`${l.product_sku}||${date}`))
+      .filter(l => TEAMS.includes(l.team))
       .map(l => {
         let cardQty = 0;
         const cardBreakdown: any[] = [];
         for (const b of (l.breakdown ?? [])) {
-          const covered = coverage.coveredByRefSku.get(`${b.order_ref}||${l.product_sku}||${date}`) ?? 0;
-          const remainder = Math.max(0, (b.qty ?? 0) - covered);
+          const remainder = excessQty(coverage, b.order_ref, l.product_sku, date, b.qty ?? 0, b.shop_name);
           if (remainder > 0) { cardBreakdown.push({ ...b, qty: remainder }); cardQty += remainder; }
         }
         return { ...l, total_qty: cardQty, breakdown: cardBreakdown };

@@ -120,7 +120,7 @@ export default async function OrderDatePage({ params }: { params: { date: string
     const team = ficheTeams.get(v.fiche_id) ?? '';
     if (!['baby_mama', 'hung', 'entremet', 'baker'].includes(team)) continue;
     const needed = (l.order_ref && l.product_sku)
-      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0)
+      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0, l.shop_name)
       : (l.qty ?? 0);
     if (needed <= 0) continue; // fully covered by a manual cake
     const tracked = l.order_ref ? (coveredByBreakdown.get(`${team}||${v.label}||${l.product_name_vi}||${l.order_ref}`) ?? 0) : 0;

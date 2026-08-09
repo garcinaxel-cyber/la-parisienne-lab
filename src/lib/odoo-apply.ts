@@ -132,7 +132,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         // instead of the new-line path (Odoo line-level detail doesn't reach the app either way,
         // see odoo-sync.ts: changes are diffed per order_ref+sku, not per raw Odoo line).
         const coverage = await coverageFor(first.delivery_date);
-        const cardQty = excessQty(coverage, ch.order_ref, item.sku, first.delivery_date, item.new_qty);
+        const cardQty = excessQty(coverage, ch.order_ref, item.sku, first.delivery_date, item.new_qty, first.shop_name);
         if (cardQty > 0) {
           const resolved = await resolveSkuTeam(supabase, item.sku);
           if (resolved.team && TEAMS.includes(resolved.team)) {
@@ -279,7 +279,7 @@ async function createLineAndCard(
   // only for the portion NOT already covered by a matched (or still-pending) manual cake.
   if (team && TEAMS.includes(team)) {
     const coverage = await coverageFor(ctx.delivery_date);
-    const cardQty = excessQty(coverage, orderRef, item.sku, ctx.delivery_date, item.new_qty);
+    const cardQty = excessQty(coverage, orderRef, item.sku, ctx.delivery_date, item.new_qty, ctx.shop_name);
     if (cardQty > 0) {
       const bEntry = { shop_name: ctx.shop_name, order_ref: orderRef, qty: cardQty, delivery_time: ctx.delivery_time ?? null };
       const cardErr = await upsertProductionCard(supabase, {

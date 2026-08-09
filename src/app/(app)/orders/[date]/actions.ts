@@ -198,7 +198,7 @@ export async function generateMissingCardsAction(
     if (!TEAMS.includes(team)) continue;    // no assignable team
     const variantLabel = v.label ?? l.variant_label ?? 'Standard';
     const needed = (l.order_ref && l.product_sku)
-      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0)
+      ? excessQty(coverage, l.order_ref, l.product_sku, date, l.qty ?? 0, l.shop_name)
       : (l.qty ?? 0);
     if (needed <= 0) continue;              // fully covered by a manual cake
     const tracked = l.order_ref ? (coveredByBreakdown.get(`${team}||${variantLabel}||${l.product_name_vi}||${l.order_ref}`) ?? 0) : 0;
