@@ -2,6 +2,15 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
+import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
+
+// Lab-local (Asia/Ho_Chi_Minh) rolling window for the packaging sync — matches the
+// delivery-check feature's own scope (today + tomorrow only, kept tight for cost).
+function labUpcomingDates(days: number): string[] {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const now = new Date();
+  return Array.from({ length: days }, (_, i) => fmt.format(new Date(now.getTime() + i * 24 * 3600 * 1000)));
+}
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,7 +37,13 @@ export async function GET(req: Request) {
   try {
     const result = await runAutoOdooSync(supabase as any);
     if (result.error) return NextResponse.json({ error: result.error }, { status: 502 });
-    return NextResponse.json(result);
+
+    // Best-effort — packaging sync must never fail the main order sync response.
+    let packaging: any = null;
+    try { packaging = await syncOrderPackagingLines(supabase as any, labUpcomingDates(2)); }
+    catch (e: any) { packaging = { ok: false, error: String(e?.message ?? e) }; }
+
+    return NextResponse.json({ ...result, packaging });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Cron sync failed' }, { status: 502 });
   }
