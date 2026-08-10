@@ -30,8 +30,16 @@ export default async function DeliveryCheckCategoryPage() {
     ? await supabase.from('lab_order_lines').select('order_ref, delivery_date').in('import_id', importIds)
     : { data: [] as any[] };
 
-  const orderKeys = Array.from(new Set((orderLines ?? []).map((l: any) => `${l.delivery_date}||${l.order_ref}`)))
-    .map(k => { const [delivery_date, order_ref] = k.split('||'); return { delivery_date, order_ref }; });
+  // 100%-packaging orders (nothing in lab_order_lines — e.g. a pure supplies-restock
+  // replenishment) only live in lab_order_packaging_lines — union both so they still show up
+  // here instead of being invisible (2026-08-10, REP/2026/01003).
+  const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
+    .select('order_ref, delivery_date').in('delivery_date', [today, tomorrow]);
+
+  const orderKeys = Array.from(new Set([
+    ...(orderLines ?? []).map((l: any) => `${l.delivery_date}||${l.order_ref}`),
+    ...(packagingOnlyLines ?? []).map((l: any) => `${l.delivery_date}||${l.order_ref}`),
+  ])).map(k => { const [delivery_date, order_ref] = k.split('||'); return { delivery_date, order_ref }; });
 
   // Materialize every order's check lines in parallel (same function the per-order screen
   // uses — one source of truth, this view is just a different grouping of the same rows).

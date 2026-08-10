@@ -33,10 +33,21 @@ export default async function DeliveryCheckPage() {
         .in('import_id', importIds)
     : { data: [] as any[] };
 
+  // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines
+  // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
+  // still shows up as a bon to check, instead of being invisible (2026-08-10, REP/2026/01003).
+  const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
+    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', [today, tomorrow]);
+
   type Row = { order_ref: string; delivery_date: string; shop_name: string; lineCount: number };
   const byKey: Record<string, Row> = {};
   for (const l of orderLines ?? []) {
     const key = `${l.delivery_date}||${l.order_ref}`;
+    (byKey[key] ??= { order_ref: l.order_ref, delivery_date: l.delivery_date, shop_name: l.shop_name, lineCount: 0 }).lineCount++;
+  }
+  for (const l of packagingOnlyLines ?? []) {
+    const key = `${l.delivery_date}||${l.order_ref}`;
+    if (byKey[key]) continue; // already counted via lab_order_lines
     (byKey[key] ??= { order_ref: l.order_ref, delivery_date: l.delivery_date, shop_name: l.shop_name, lineCount: 0 }).lineCount++;
   }
   const orders = Object.values(byKey).sort((a, b) => a.delivery_date.localeCompare(b.delivery_date) || a.order_ref.localeCompare(b.order_ref));

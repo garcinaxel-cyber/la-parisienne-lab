@@ -44,12 +44,14 @@ export interface DeliveryOrderHeader {
 }
 
 // Packaging lines for one order_ref — plain Supabase read from the cron-synced table, no
-// Odoo call on the request path at all.
+// Odoo call on the request path at all. Also carries shop_name/source_type so a 100%-packaging
+// order (nothing at all in lab_order_lines — e.g. REP/2026/01003, a pure supplies restock) can
+// still resolve its header instead of showing a blank shop (2026-08-10).
 async function fetchPackagingLines(supabase: SupabaseClient, orderRef: string) {
   const { data, error } = await supabase.from('lab_order_packaging_lines')
-    .select('sku, product_name_vi, qty').eq('order_ref', orderRef);
+    .select('sku, product_name_vi, qty, shop_name, source_type').eq('order_ref', orderRef);
   if (error) throw error;
-  return (data ?? []).map(p => ({ sku: p.sku, name: p.product_name_vi, qty: p.qty }));
+  return (data ?? []).map(p => ({ sku: p.sku, name: p.product_name_vi, qty: p.qty, shop_name: p.shop_name, source_type: p.source_type }));
 }
 
 export async function ensureDeliveryOrderChecklist(
@@ -63,9 +65,15 @@ export async function ensureDeliveryOrderChecklist(
     .eq('delivery_date', date).eq('order_ref', orderRef);
   if (orderLinesError) throw orderLinesError;
 
+  const packaging = await fetchPackagingLines(supabase, orderRef);
+
+  // A 100%-packaging order (e.g. a pure supplies-restock replenishment, nothing to produce)
+  // has NO lab_order_lines rows at all — fall back to the packaging rows for shop/source_type
+  // so the header isn't blank (2026-08-10).
   const sourceType: SourceType =
-    (orderLines?.[0]?.source_type as SourceType) ?? (orderRef.toUpperCase().startsWith('REP') ? 'replenishment' : 'sales_order');
-  const shopName = orderLines?.[0]?.shop_name ?? null;
+    (orderLines?.[0]?.source_type as SourceType) ?? (packaging[0]?.source_type as SourceType) ??
+    (orderRef.toUpperCase().startsWith('REP') ? 'replenishment' : 'sales_order');
+  const shopName = orderLines?.[0]?.shop_name ?? packaging[0]?.shop_name ?? null;
 
   const { data: existingHeader } = await supabase.from('lab_delivery_orders')
     .select('*').eq('delivery_date', date).eq('order_ref', orderRef).maybeSingle();
@@ -77,8 +85,6 @@ export async function ensureDeliveryOrderChecklist(
     if (error) throw error;
     header = created as DeliveryOrderHeader;
   }
-
-  const packaging = await fetchPackagingLines(supabase, orderRef);
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
     .select('id, sku, category, product_category').eq('delivery_order_id', header.id);
