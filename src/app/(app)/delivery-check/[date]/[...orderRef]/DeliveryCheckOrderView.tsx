@@ -6,7 +6,7 @@ import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil } fro
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
-export default function DeliveryCheckOrderView({ header, lines }: { header: DeliveryOrderHeader; lines: CheckLine[] }) {
+export default function DeliveryCheckOrderView({ header, lines, backHref }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const [state, setState] = useState<Record<string, { qty: string; reason: string; note: string }>>(() => {
@@ -127,7 +127,7 @@ export default function DeliveryCheckOrderView({ header, lines }: { header: Deli
 
   return (
     <div className="space-y-4">
-      <Link href="/delivery-check" className="inline-flex items-center gap-1.5 text-sm text-ink-light hover:text-navy">
+      <Link href={backHref} className="inline-flex items-center gap-1.5 text-sm text-ink-light hover:text-navy">
         <ArrowLeft size={15} /> {vi ? 'Quay lại' : 'Retour'}
       </Link>
 

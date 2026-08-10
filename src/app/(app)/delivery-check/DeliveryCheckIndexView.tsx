@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid } from 'lucide-react';
@@ -14,7 +14,15 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
-  const [day, setDay] = useState<'today' | 'tomorrow'>('today');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Day selection lives in the URL (?day=tomorrow), not local state — an assistant who taps
+  // "Demain", opens an order, then goes back was landing back on "Aujourd'hui" because the
+  // page remounted with useState's default. Reading it from the URL means both a real browser
+  // back-navigation and the order page's own "Retour" link (which sets ?day= explicitly) land
+  // on the right tab (2026-08-10).
+  const day: 'today' | 'tomorrow' = searchParams.get('day') === 'tomorrow' ? 'tomorrow' : 'today';
+  const setDay = (d: 'today' | 'tomorrow') => router.replace(d === 'today' ? '/delivery-check' : '/delivery-check?day=tomorrow', { scroll: false });
   const activeDate = day === 'today' ? today : tomorrow;
   const dayOrders = orders.filter(o => o.delivery_date === activeDate);
 

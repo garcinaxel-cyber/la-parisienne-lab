@@ -5,6 +5,14 @@ import DeliveryCheckOrderView from './DeliveryCheckOrderView';
 
 export const revalidate = 0;
 
+// Lab-local (Asia/Ho_Chi_Minh) "today" — used only to know whether this order's own date is
+// the "Aujourd'hui" or "Demain" tab, so the Retour link can send the assistant back to the
+// correct tab instead of always resetting to today (2026-08-10).
+function labToday(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  return fmt.format(new Date());
+}
+
 // order_ref can contain literal slashes (Odoo replenishment refs: "REP/2026/00985") —
 // a catch-all segment captures them as an array; a single [orderRef] segment would not.
 export default async function DeliveryCheckOrderPage({ params }: { params: { date: string; orderRef: string[] } }) {
@@ -19,6 +27,7 @@ export default async function DeliveryCheckOrderPage({ params }: { params: { dat
   if (!date || !orderRef) notFound();
 
   const { header, lines } = await ensureDeliveryOrderChecklist(supabase, date, orderRef);
+  const backHref = date === labToday() ? '/delivery-check' : '/delivery-check?day=tomorrow';
 
-  return <DeliveryCheckOrderView header={header} lines={lines} />;
+  return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} />;
 }
