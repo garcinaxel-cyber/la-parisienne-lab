@@ -5,6 +5,14 @@ export interface OdooSyncResult {
   lines: any[];
   changes: { order_ref: string; cancelled: boolean; items: { sku: string; name: string; old_qty: number; new_qty: number }[] }[];
   deletedRefs: string[]; // refs that no longer exist in Odoo at all (hard-deleted, not just cancelled)
+  // Replenishment requests whose lines are 100% excluded SKUs (lab_excluded_skus — packaging/
+  // matières) never produce a single entry in `lines`, so they'd otherwise be invisible
+  // EVERYWHERE: no lab_imports row, no lab_order_lines row, and odoo-packaging-sync.ts never
+  // discovers them either (it only looks for refs already present in lab_order_lines). Confirmed
+  // 2026-08-11 on REP/2026/01005-01007 (pure packaging restocks, e.g. "Kraft paper takeaway cake
+  // bag"). The caller upserts these straight into lab_order_packaging_lines so they still show
+  // up in delivery-check (which already unions that table independently of lab_imports status).
+  packagingOnly: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[];
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -229,13 +237,29 @@ for (const l of soLines) {
   });
 }
 
+// Requests that got at least one real production line — used below to tell "genuinely 100%
+// packaging" refs apart from ones that simply have zero qty/unmatched-SKU lines (nothing to do
+// for those; only a request whose EXCLUDED lines are its ONLY content needs the fallback).
+const replRefsWithProductionLine = new Set<string>();
+const excludedReplLinesByRef: Record<string, { name: string; delivery_date: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[]> = {};
+
 for (const l of replLines) {
   const req = replById[l.request_id?.[0]];
   if (!req) continue;
   if (alreadyImported.has(req.name)) { skippedRefs.add(req.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
   const qty = Math.round(Number(l.quantity_requested ?? 0));
-  if (!prod.sku || !qty || excludedSet.has(prod.sku)) continue;
+  if (!prod.sku || !qty) continue;
+  if (excludedSet.has(prod.sku)) {
+    (excludedReplLinesByRef[req.name] ??= []).push({
+      name: req.name, delivery_date: odooDateTimeToLocal(req.delivery_date).date,
+      shop_name: (req.warehouse_id?.[1] ?? '').replace(/\s*-\s*warehouse\s*$/i, ''),
+      sku: prod.sku, product_name_vi: prod.name,
+      qty, note: (typeof l.note === 'string' && l.note.trim()) ? l.note.trim() : null,
+    });
+    continue;
+  }
+  replRefsWithProductionLine.add(req.name);
   const dt = odooDateTimeToLocal(req.delivery_date);
   const t = teamBySku[prod.sku];
   if (t?.multi) multiTeamSkus.add(prod.sku);
@@ -263,10 +287,27 @@ const orderStates: Record<string, string> = {};
 for (const o of orders) orderStates[o.name] = o.state;      // draft | sent | sale
 for (const r of repls) orderStates[r.name] = r.state;       // draft | submitted | approved
 
+// Pure-packaging replenishments: only for refs with ZERO production lines — a ref that has
+// at least one real production line already gets its excluded lines picked up next cron tick
+// by odoo-packaging-sync.ts (which discovers refs via lab_order_lines), so injecting it here
+// too would just be redundant work against the same table.
+const packagingOnly: OdooSyncResult['packagingOnly'] = [];
+for (const [ref, excludedLines] of Object.entries(excludedReplLinesByRef)) {
+  if (replRefsWithProductionLine.has(ref) || alreadyImported.has(ref)) continue;
+  for (const el of excludedLines) {
+    packagingOnly.push({
+      order_ref: el.name, delivery_date: el.delivery_date, source_type: 'replenishment',
+      shop_name: el.shop_name, sku: el.sku,
+      product_name_vi: el.product_name_vi, qty: el.qty, note: el.note,
+    });
+  }
+}
+
   return {
     lines,
     changes,
     deletedRefs,
+    packagingOnly,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,

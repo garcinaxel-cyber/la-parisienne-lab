@@ -69,6 +69,15 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
   const result = await runOdooSync(supabase as any);
   const lines = result.lines;
 
+  // 100%-packaging replenishments (see OdooSyncResult.packagingOnly doc comment) — write
+  // straight into lab_order_packaging_lines so they show up in delivery-check even though
+  // they never get a lab_imports/lab_order_lines row. Same upsert key as odoo-packaging-sync.ts
+  // so re-running this never duplicates a row.
+  if (result.packagingOnly.length) {
+    await supabase.from('lab_order_packaging_lines')
+      .upsert(result.packagingOnly.map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
+  }
+
   // AUTO-APPLY modifications & cancellations so the app always reflects Odoo (today + future).
   // applyOdooChanges adjusts quantities, creates newly-added products, and strikes through
   // cancelled orders — produced quantities are always preserved. We log them as 'applied'

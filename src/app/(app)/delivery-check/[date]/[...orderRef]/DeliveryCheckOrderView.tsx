@@ -147,7 +147,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
               <CheckCircle2 size={16} /> {vi ? 'Đã xác nhận' : 'Validé'}
             </span>
             {header.source_type === 'replenishment' && (
-              <Link href={`/delivery-check/print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
+              <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
                 className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
                 style={{ backgroundColor: '#1f2937' }}>
                 <Printer size={15} /> {vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT'}

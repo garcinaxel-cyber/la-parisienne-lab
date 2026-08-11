@@ -60,7 +60,7 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
     const salesRefs = orders.filter(o => o.source_type === 'sales_order').map(o => o.order_ref);
     const replRefs = orders.filter(o => o.source_type === 'replenishment').map(o => o.order_ref);
 
-    const rows: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number }[] = [];
+    const rows: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[] = [];
 
     if (salesRefs.length) {
       const soOrders = await tmo(odooExecute<any[]>('sale.order', 'search_read',
@@ -71,6 +71,9 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       if (ids.length) {
         const lines = await tmo(odooExecute<any[]>('sale.order.line', 'search_read',
           [[['order_id', 'in', ids]]], { fields: ['order_id', 'product_id', 'product_uom_qty'], limit: 5000 }), 25000, 'so-lines');
+        // sale.order.line has no native `note` field for packaging rows (unlike replenishment
+        // lines) — a salesperson's note here would be a separate line_note row, not worth the
+        // extra query for packaging-only items. Left null on purpose.
         rows.push(...(await mapExcludedLines(lines, 'product_uom_qty', 'order_id', idByRef, excludedSet, orders, 'sales_order')));
       }
     }
@@ -82,7 +85,7 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       const ids = reqs.map((r: any) => r.id);
       if (ids.length) {
         const lines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-          [[['request_id', 'in', ids]]], { fields: ['request_id', 'product_id', 'quantity_requested'], limit: 5000 }), 25000, 'repl-lines');
+          [[['request_id', 'in', ids]]], { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: 5000 }), 25000, 'repl-lines');
         rows.push(...(await mapExcludedLines(lines, 'quantity_requested', 'request_id', idByRef, excludedSet, orders, 'replenishment')));
       }
     }
@@ -116,7 +119,7 @@ async function mapExcludedLines(
   const orderByRef: Record<string, { delivery_date: string; shop_name: string | null }> = {};
   for (const o of orders) orderByRef[o.order_ref] = { delivery_date: o.delivery_date, shop_name: o.shop_name };
 
-  const out: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number }[] = [];
+  const out: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[] = [];
   for (const l of lines) {
     const ref = idByRef[l[linkField]?.[0]];
     const info = bySku[l.product_id?.[0]];
@@ -128,6 +131,7 @@ async function mapExcludedLines(
     out.push({
       order_ref: ref, delivery_date: meta.delivery_date, source_type: sourceType, shop_name: meta.shop_name,
       sku: info.sku, product_name_vi: String(info.name).replace(/\[.*?\]\s*/, ''), qty,
+      note: (typeof l.note === 'string' && l.note.trim()) ? l.note.trim() : null,
     });
   }
   return out;

@@ -50,9 +50,9 @@ export interface DeliveryOrderHeader {
 // still resolve its header instead of showing a blank shop (2026-08-10).
 async function fetchPackagingLines(supabase: SupabaseClient, orderRef: string) {
   const { data, error } = await supabase.from('lab_order_packaging_lines')
-    .select('sku, product_name_vi, qty, shop_name, source_type').eq('order_ref', orderRef);
+    .select('sku, product_name_vi, qty, shop_name, source_type, note').eq('order_ref', orderRef);
   if (error) throw error;
-  return (data ?? []).map(p => ({ sku: p.sku, name: p.product_name_vi, qty: p.qty, shop_name: p.shop_name, source_type: p.source_type }));
+  return (data ?? []).map(p => ({ sku: p.sku, name: p.product_name_vi, qty: p.qty, shop_name: p.shop_name, source_type: p.source_type, note: p.note ?? null }));
 }
 
 export async function ensureDeliveryOrderChecklist(
@@ -118,19 +118,27 @@ export async function ensureDeliveryOrderChecklist(
   // only fires for SKUs not already present. Backfill any resolvable ones on every open
   // instead of requiring a manual SQL fix each time (root cause of the 2026-08-08 "tout
   // passe en Autre" bug — confirmed every existing row had product_category null in DB).
+  const packagingNoteBySku: Record<string, string> = {};
+  for (const p of packaging) if (p.note) packagingNoteBySku[p.sku] = p.note;
+
   const toHeal: { id: string; patch: { product_category?: string; note?: string } }[] = [];
   for (const el of existingLines ?? []) {
-    if (el.category !== 'production') continue;
-    const e = bySku[el.sku];
     const patch: { product_category?: string; note?: string } = {};
-    if (!el.product_category) {
-      const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
-      if (resolved) patch.product_category = resolved;
+    if (el.category === 'production') {
+      const e = bySku[el.sku];
+      if (!el.product_category) {
+        const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
+        if (resolved) patch.product_category = resolved;
+      }
+      // Same self-heal as product_category above: rows created before the note pipe existed
+      // (or before an Odoo note was added/synced) stay null forever otherwise, since the insert
+      // below only fires for SKUs not already present.
+      if (!el.note && e?.notes.size) patch.note = Array.from(e.notes).join('\n');
+    } else if (el.category === 'packaging') {
+      // Packaging notes only started being synced 2026-08-11 (lab_order_packaging_lines.note) —
+      // same backfill-on-open pattern for rows created before that.
+      if (!el.note && packagingNoteBySku[el.sku]) patch.note = packagingNoteBySku[el.sku];
     }
-    // Same self-heal as product_category above: rows created before the note pipe existed
-    // (or before an Odoo note was added/synced) stay null forever otherwise, since the insert
-    // below only fires for SKUs not already present.
-    if (!el.note && e?.notes.size) patch.note = Array.from(e.notes).join('\n');
     if (Object.keys(patch).length) toHeal.push({ id: el.id, patch });
   }
   for (const h of toHeal) {
@@ -158,6 +166,7 @@ export async function ensureDeliveryOrderChecklist(
       delivery_order_id: header.id, delivery_date: date, sku: p.sku,
       product_name_vi: p.name, product_name_en: p.name,
       category: 'packaging', product_category: 'Packaging', team: null, qty_expected: p.qty,
+      note: p.note ?? null,
     });
   }
   if (toInsert.length) {
