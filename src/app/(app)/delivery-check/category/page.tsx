@@ -26,8 +26,10 @@ export default async function DeliveryCheckCategoryPage() {
     .select('id').in('delivery_date', [today, tomorrow]).eq('status', 'published');
   const importIds = (imports ?? []).map((i: any) => i.id);
 
+  // qty > 0 only — see page.tsx (index) for why: a cancelled order's lab_order_lines rows are
+  // zeroed, never deleted (2026-08-11, REP/2026/01012).
   const { data: orderLines } = importIds.length
-    ? await supabase.from('lab_order_lines').select('order_ref, delivery_date').in('import_id', importIds)
+    ? await supabase.from('lab_order_lines').select('order_ref, delivery_date').in('import_id', importIds).gt('qty', 0)
     : { data: [] as any[] };
 
   // 100%-packaging orders (nothing in lab_order_lines — e.g. a pure supplies-restock

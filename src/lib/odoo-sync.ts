@@ -19,6 +19,12 @@ export interface OdooSyncResult {
   // in `lines`, not in `packagingOnly`. Persisted by the caller to lab_sync_gaps so delivery-
   // check's index page can show a banner without the app ever calling Odoo on a page view.
   syncGaps: { order_ref: string; source_type: string; delivery_date: string | null; state: string; reason: string }[];
+  // Warehouse/customer reassignment on an already-imported order (2026-08-11, REP/2026/01012:
+  // Odoo moved to "La Paris Bà Triệu" after import, the app kept showing "La Paris Timecity"
+  // forever). The existing change-detection above only ever diffs QUANTITY per (order_ref, sku)
+  // — it never re-checks shop_name, so this class of change silently never propagated. Caller
+  // auto-corrects every table carrying a denormalized shop_name for that ref.
+  shopNameChanges: { order_ref: string; old_shop_name: string; new_shop_name: string }[];
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -120,10 +126,30 @@ for (const r of repls) replById[r.id] = r;
 // ── 5. Anti-duplicate + change detection: refs already imported into the lab app ──
 const { data: existingLines } = await supabase
   .from('lab_order_lines')
-  .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date')
+  .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name')
   .gte('delivery_date', new Date().toISOString().split('T')[0])
   .limit(5000);
 const alreadyImported = new Set((existingLines ?? []).map(r => r.order_ref).filter(Boolean));
+
+// Current lab shop_name per already-imported ref (first row wins — same value on every row of
+// a ref in practice) — used below to detect a warehouse/customer reassignment made in Odoo.
+const labShopByRef: Record<string, string | null> = {};
+for (const r of existingLines ?? []) {
+  if (r.order_ref && !(r.order_ref in labShopByRef)) labShopByRef[r.order_ref] = (r as any).shop_name ?? null;
+}
+// Current Odoo shop_name per already-imported ref, same normalization as the "new order" paths
+// below (partner name for sales orders, warehouse name with the "- warehouse" suffix stripped
+// for replenishments) so the comparison isn't tripped up by a formatting-only mismatch.
+const odooShopByRef: Record<string, string> = {};
+for (const o of orders) if (alreadyImported.has(o.name)) odooShopByRef[o.name] = o.partner_id?.[1] ?? '';
+for (const r of repls) if (alreadyImported.has(r.name)) odooShopByRef[r.name] = (r.warehouse_id?.[1] ?? '').replace(/\s*-\s*warehouse\s*$/i, '');
+const shopNameChanges: OdooSyncResult['shopNameChanges'] = [];
+for (const [ref, newShop] of Object.entries(odooShopByRef)) {
+  const oldShop = labShopByRef[ref];
+  if (newShop && oldShop && newShop !== oldShop) {
+    shopNameChanges.push({ order_ref: ref, old_shop_name: oldShop, new_shop_name: newShop });
+  }
+}
 
 // Current Odoo quantities per (order_ref, sku) — for already-imported refs
 const odooQtyByRefSku: Record<string, { qty: number; name: string }> = {};
@@ -383,6 +409,7 @@ for (const r of repls) {
     deletedRefs,
     packagingOnly,
     syncGaps,
+    shopNameChanges,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,

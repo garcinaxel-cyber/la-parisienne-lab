@@ -27,10 +27,14 @@ export default async function DeliveryCheckPage() {
     .select('id, delivery_date, status').in('delivery_date', [today, tomorrow]).eq('status', 'published');
   const importIds = (imports ?? []).map((i: any) => i.id);
 
+  // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
+  // just zeroes its qty (odoo-apply.ts) and marks the production card cancelled — the row stays.
+  // Without this filter a cancelled order kept showing up here as a phantom bon to check, all
+  // lines ×0 (2026-08-11, REP/2026/01012).
   const { data: orderLines } = importIds.length
     ? await supabase.from('lab_order_lines')
         .select('order_ref, delivery_date, shop_name, qty')
-        .in('import_id', importIds)
+        .in('import_id', importIds).gt('qty', 0)
     : { data: [] as any[] };
 
   // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines

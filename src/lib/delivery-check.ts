@@ -64,9 +64,11 @@ export async function ensureDeliveryOrderChecklist(
   // lab_order_lines has NO product_name_en column (only product_name_vi) — selecting it
   // silently returned zero rows every time (PostgREST rejects unknown columns, and the
   // error wasn't being checked). Root cause of the 2026-08-08 "empty order" bug.
+  // qty > 0 only: a cancelled Odoo line is zeroed by applyOdooChanges, never deleted (2026-08-11,
+  // REP/2026/01012) — without this, a since-cancelled SKU would still get a bogus ×0 check line.
   const { data: orderLines, error: orderLinesError } = await supabase.from('lab_order_lines')
     .select('source_type, shop_name, product_sku, product_name_vi, team, qty, fiche_id, note')
-    .eq('delivery_date', date).eq('order_ref', orderRef);
+    .eq('delivery_date', date).eq('order_ref', orderRef).gt('qty', 0);
   if (orderLinesError) throw orderLinesError;
 
   const packaging = await fetchPackagingLines(supabase, orderRef);

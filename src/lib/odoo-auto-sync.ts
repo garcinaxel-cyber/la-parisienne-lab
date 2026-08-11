@@ -78,6 +78,16 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       .upsert(result.packagingOnly.map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
   }
 
+  // Warehouse/customer reassignment on an already-imported order (see OdooSyncResult.shopNameChanges
+  // doc comment — 2026-08-11, REP/2026/01012). Auto-correct every table carrying a denormalized
+  // shop_name for that ref; a ref only ever touches the tables it actually has rows in, the other
+  // updates are harmless no-ops (0 rows matched).
+  for (const c of result.shopNameChanges) {
+    await supabase.from('lab_order_lines').update({ shop_name: c.new_shop_name }).eq('order_ref', c.order_ref);
+    await supabase.from('lab_order_packaging_lines').update({ shop_name: c.new_shop_name }).eq('order_ref', c.order_ref);
+    await supabase.from('lab_delivery_orders').update({ shop_name: c.new_shop_name }).eq('order_ref', c.order_ref);
+  }
+
   // Coverage check (see OdooSyncResult.syncGaps doc comment): keep lab_sync_gaps in sync with
   // this tick's findings — drop refs no longer flagged (fixed, delivered, or fell out of the
   // sync window), upsert the current set. Kept as a plain diff (not a full wipe) so
@@ -126,6 +136,16 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
         order_ref, cancelled: false, items,
         delivery_date: dateByRef[order_ref] ?? null, status: 'error',
       })));
+    }
+
+    // lab_order_packaging_lines has NO cancellation cleanup anywhere else (confirmed 2026-08-11,
+    // REP/2026/01012): applyOdooChanges only ever zeroes lab_order_lines qty + marks the
+    // production card cancelled, it never touches this separate packaging table. Without this,
+    // a cancelled order's packaging items (bags, boxes, stickers...) would linger in
+    // delivery-check forever, orphaned from the now-gone/cancelled order they belonged to.
+    const cancelledRefsThisTick = result.changes.filter(c => c.cancelled).map(c => c.order_ref);
+    if (cancelledRefsThisTick.length) {
+      await supabase.from('lab_order_packaging_lines').delete().in('order_ref', cancelledRefsThisTick);
     }
   }
 
