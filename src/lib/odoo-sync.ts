@@ -25,6 +25,11 @@ export interface OdooSyncResult {
   // — it never re-checks shop_name, so this class of change silently never propagated. Caller
   // auto-corrects every table carrying a denormalized shop_name for that ref.
   shopNameChanges: { order_ref: string; old_shop_name: string; new_shop_name: string }[];
+  // Same blind spot, for notes (2026-08-11, REP/2026/01012 BCMD14 "trà Moon" added to Odoo after
+  // import). Only fires when Odoo currently HAS a note that differs from lab's — a note removed
+  // in Odoo is left alone (never seen a real case of "clear the note" yet, and being conservative
+  // here avoids wiping a note an assistant may have hand-typed some other way).
+  noteChanges: { order_ref: string; sku: string; note: string }[];
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -73,6 +78,17 @@ for (const l of allSoLines) {
   if (!l.display_type) lastProductLineId = l.id;
 }
 const soLines: any[] = allSoLines.filter(l => !l.display_type);
+
+// A salesperson's note lives on the Odoo line's `name`, AFTER the first line
+// (which is the product label). Everything past the first newline = the note.
+// Hoisted above section 2 (was originally declared down in section 6) so section 5's
+// already-imported-ref note-change detection can use it too.
+const extractNote = (raw: unknown): string | null => {
+  const s = String(raw ?? '');
+  if (!s.includes('\n')) return null;
+  const note = s.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
+  return note || null;
+};
 
 // ── 2. Replenishment requests — draft/submitted/approved (everything entered, not yet shipped) ──
 const repls: any[] = await odooExecute('stock.replenishment.request', 'search_read',
@@ -126,7 +142,7 @@ for (const r of repls) replById[r.id] = r;
 // ── 5. Anti-duplicate + change detection: refs already imported into the lab app ──
 const { data: existingLines } = await supabase
   .from('lab_order_lines')
-  .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name')
+  .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name, note')
   .gte('delivery_date', new Date().toISOString().split('T')[0])
   .limit(5000);
 const alreadyImported = new Set((existingLines ?? []).map(r => r.order_ref).filter(Boolean));
@@ -160,11 +176,19 @@ const addOdooQty = (ref: string, sku: string, qty: number, name: string) => {
   const cur = odooQtyByRefSku[k];
   odooQtyByRefSku[k] = { qty: (cur?.qty ?? 0) + qty, name };
 };
+// Notes, same already-imported-ref blind spot as shop_name above (2026-08-11, REP/2026/01012:
+// "trà Moon" was added on the Odoo line for BCMD14 AFTER the order was first imported — the
+// existing pipeline only ever WRITES lab_order_lines.note at initial insert time [import-persist.ts]
+// or leaves it untouched on a qty-only change [odoo-apply.ts], so an Odoo note added later never
+// reached the app). Only per-(ref,sku), matching how it's stored on lab_order_lines.
+const odooNoteByRefSku: Record<string, string> = {};
 for (const l of soLines) {
   const order = orderById[l.order_id?.[0]];
   const prod = skuByProductId[l.product_id?.[0]];
   if (order && prod?.sku && alreadyImported.has(order.name)) {
     addOdooQty(order.name, prod.sku, Math.round(Number(l.product_uom_qty ?? 0)), prod.name);
+    const n = [extractNote(l.name), attachedNoteByLineId[l.id]].filter(Boolean).join(' / ');
+    if (n) odooNoteByRefSku[`${order.name}||${prod.sku}`] = n;
   }
 }
 for (const l of replLines) {
@@ -172,7 +196,21 @@ for (const l of replLines) {
   const prod = skuByProductId[l.product_id?.[0]];
   if (req && prod?.sku && alreadyImported.has(req.name)) {
     addOdooQty(req.name, prod.sku, Math.round(Number(l.quantity_requested ?? 0)), prod.name);
+    const n = (typeof l.note === 'string' && l.note.trim()) ? l.note.trim() : '';
+    if (n) odooNoteByRefSku[`${req.name}||${prod.sku}`] = n;
   }
+}
+const labNoteByRefSku: Record<string, string | null> = {};
+for (const r of existingLines ?? []) {
+  if (!r.order_ref || !r.product_sku) continue;
+  const k = `${r.order_ref}||${r.product_sku}`;
+  if (!(k in labNoteByRefSku)) labNoteByRefSku[k] = (r as any).note ?? null;
+}
+const noteChanges: OdooSyncResult['noteChanges'] = [];
+for (const [k, odooNote] of Object.entries(odooNoteByRefSku)) {
+  const [order_ref, sku] = k.split('||');
+  const labNote = labNoteByRefSku[k];
+  if (odooNote !== (labNote ?? '')) noteChanges.push({ order_ref, sku, note: odooNote });
 }
 // Refs imported into the lab but no longer returned by Odoo (cancelled, or state left the
 // imported scope) — check their actual state explicitly
@@ -234,15 +272,6 @@ const changes = Object.entries(changesByRef)
 const lines: any[] = [];
 const skippedRefs = new Set<string>();
 let multiTeamSkus = new Set<string>();
-
-// A salesperson's note lives on the Odoo line's `name`, AFTER the first line
-// (which is the product label). Everything past the first newline = the note.
-const extractNote = (raw: unknown): string | null => {
-  const s = String(raw ?? '');
-  if (!s.includes('\n')) return null;
-  const note = s.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
-  return note || null;
-};
 
 // Sales orders that got at least one real production line — same "100%-packaging" fallback as
 // replenishments below (2026-08-11, S03154: a sales order whose only line was a packaging SKU
@@ -410,6 +439,7 @@ for (const r of repls) {
     packagingOnly,
     syncGaps,
     shopNameChanges,
+    noteChanges,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,

@@ -88,6 +88,15 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
     await supabase.from('lab_delivery_orders').update({ shop_name: c.new_shop_name }).eq('order_ref', c.order_ref);
   }
 
+  // Same blind spot, for notes (see OdooSyncResult.noteChanges doc comment — 2026-08-11,
+  // REP/2026/01012 BCMD14). lab_order_lines.note is the source of truth ensureDeliveryOrderChecklist
+  // self-heals lab_delivery_check_lines.note FROM (delivery-check.ts) — updating it here is enough
+  // for the note to reach the assistant's screen next time she opens that order's checklist.
+  for (const c of result.noteChanges) {
+    await supabase.from('lab_order_lines').update({ note: c.note })
+      .eq('order_ref', c.order_ref).eq('product_sku', c.sku);
+  }
+
   // Coverage check (see OdooSyncResult.syncGaps doc comment): keep lab_sync_gaps in sync with
   // this tick's findings — drop refs no longer flagged (fixed, delivered, or fell out of the
   // sync window), upsert the current set. Kept as a plain diff (not a full wipe) so
