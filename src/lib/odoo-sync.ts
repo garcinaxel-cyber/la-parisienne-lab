@@ -26,11 +26,33 @@ const orders: any[] = await odooExecute('sale.order', 'search_read',
   { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: 500 });
 
 const orderIds = orders.map(o => o.id);
-const soLines: any[] = orderIds.length
+// Fetch every line, including note-only rows (display_type='line_note') — Odoo lets a
+// salesperson attach a note as its OWN line right under a product (see 2026-08-11 screenshot,
+// S03161 "DÁN SẴN TEM VÀ HỘP DECOR" under Bánh Tiramisu), distinct from typing extra text
+// inside the product line's own description (handled separately by extractNote() below).
+// The previous ['display_type', '=', false] filter dropped these note rows entirely — they
+// were never imported anywhere. Sorting by (order, sequence) below lets us attach each note
+// to the product line immediately above it, matching Odoo's own display order.
+const allSoLines: any[] = orderIds.length
   ? await odooExecute('sale.order.line', 'search_read',
-      [[['order_id', 'in', orderIds], ['display_type', '=', false]]],
-      { fields: ['order_id', 'product_id', 'product_uom_qty', 'name'], limit: 4000 })
+      [[['order_id', 'in', orderIds]]],
+      { fields: ['order_id', 'product_id', 'product_uom_qty', 'name', 'sequence', 'display_type'], limit: 6000 })
   : [];
+allSoLines.sort((a, b) => (a.order_id?.[0] ?? 0) - (b.order_id?.[0] ?? 0) || (a.sequence ?? 0) - (b.sequence ?? 0));
+const attachedNoteByLineId: Record<number, string> = {};
+let lastProductLineId: number | null = null;
+for (const l of allSoLines) {
+  if (l.display_type === 'line_note') {
+    const text = String(l.name ?? '').trim();
+    if (lastProductLineId != null && text) {
+      attachedNoteByLineId[lastProductLineId] = attachedNoteByLineId[lastProductLineId]
+        ? `${attachedNoteByLineId[lastProductLineId]} / ${text}` : text;
+    }
+    continue;
+  }
+  if (!l.display_type) lastProductLineId = l.id;
+}
+const soLines: any[] = allSoLines.filter(l => !l.display_type);
 
 // ── 2. Replenishment requests — draft/submitted/approved (everything entered, not yet shipped) ──
 const repls: any[] = await odooExecute('stock.replenishment.request', 'search_read',
@@ -41,7 +63,7 @@ const replIds = repls.map(r => r.id);
 const replLines: any[] = replIds.length
   ? await odooExecute('stock.replenishment.request.line', 'search_read',
       [[['request_id', 'in', replIds]]],
-      { fields: ['request_id', 'product_id', 'quantity_requested'], limit: 2000 })
+      { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: 2000 })
   : [];
 
 // ── 3. SKUs for all products involved ──
@@ -203,7 +225,7 @@ for (const l of soLines) {
     qty,
     delivery_date: dt.date,
     delivery_time: dt.time,
-    note: extractNote(l.name),
+    note: [extractNote(l.name), attachedNoteByLineId[l.id]].filter(Boolean).join(' / ') || null,
   });
 }
 
@@ -228,7 +250,10 @@ for (const l of replLines) {
     qty,
     delivery_date: dt.date,
     delivery_time: dt.time,
-    note: null, // replenishment lines carry no salesperson note
+    // stock.replenishment.request.line DOES carry its own note field (confirmed 2026-08-11,
+    // REP/2026/01005 "Cream Ganache Montée Vani 200g" — a previous assumption here that
+    // replenishment lines never had notes was wrong).
+    note: (typeof l.note === 'string' && l.note.trim()) ? l.note.trim() : null,
   });
 }
 

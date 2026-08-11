@@ -2636,21 +2636,28 @@ function ProductionCard({
           </button>
           <div className={`${showBreakdown ? '' : 'hidden'} sm:block`}>
           {breakdown.map((b, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-2 text-sm"
+            <div key={i} className="px-4 py-2 text-sm"
               style={{
                 borderTop: i > 0 ? '1px solid #F5EFC8' : undefined,
                 backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE',
               }}>
-              <span className="text-ink font-medium flex items-center gap-1.5">
-                {b.shop_name}
-                {b.delivery_time && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                    style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                    ⏰ {b.delivery_time.slice(0, 5)}
-                  </span>
-                )}
-              </span>
-              <span className="font-black" style={{ color: '#1A4731' }}>x{b.qty}</span>
+              <div className="flex items-center justify-between">
+                <span className="text-ink font-medium flex items-center gap-1.5">
+                  {b.shop_name}
+                  {b.delivery_time && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
+                      ⏰ {b.delivery_time.slice(0, 5)}
+                    </span>
+                  )}
+                </span>
+                <span className="font-black" style={{ color: '#1A4731' }}>x{b.qty}</span>
+              </div>
+              {b.note && (
+                <div className="text-xs font-semibold mt-1 whitespace-pre-line" style={{ color: '#B45309' }}>
+                  📝 {b.note}
+                </div>
+              )}
             </div>
           ))}
           </div>
@@ -2812,10 +2819,17 @@ function TermineCard({
       {!isSkip && breakdown.length > 0 && (
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
           {breakdown.map((b, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs text-ink-light"
+            <div key={i} className="px-4 py-1.5 text-xs text-ink-light"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
-              <span>{b.shop_name}</span>
-              <span className="font-bold">x{b.qty}</span>
+              <div className="flex items-center justify-between">
+                <span>{b.shop_name}</span>
+                <span className="font-bold">x{b.qty}</span>
+              </div>
+              {b.note && (
+                <div className="font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
+                  📝 {b.note}
+                </div>
+              )}
             </div>
           ))}
         </div>

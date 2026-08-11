@@ -34,6 +34,18 @@ export async function checkLineAction(
     updated_at: new Date().toISOString(),
   }).eq('id', lineId);
   if (error) return { error: error.message };
+
+  // Invalidate the client Router Cache for this order's own page + the index/category lists.
+  // Without this, checking a line here never told Next.js the page was stale, so navigating
+  // back to the order (or to the list showing X/Y progress) served the RSC snapshot from
+  // before the check — the checkmark appeared to "disappear" even though it was saved fine
+  // in lab_delivery_check_lines all along (2026-08-11 bug report).
+  const { data: header } = await supabase.from('lab_delivery_orders')
+    .select('delivery_date, order_ref').eq('id', line.delivery_order_id).maybeSingle();
+  if (header) revalidatePath(`/delivery-check/${header.delivery_date}/${header.order_ref}`);
+  revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
+
   return { ok: true };
 }
 
@@ -59,5 +71,6 @@ export async function validateOrderAction(deliveryOrderId: string): Promise<{ ok
   }).eq('id', deliveryOrderId);
   if (error) return { error: error.message };
   revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
   return { ok: true };
 }

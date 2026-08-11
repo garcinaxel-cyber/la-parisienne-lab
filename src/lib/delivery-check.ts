@@ -20,6 +20,7 @@ export interface CheckLine {
   category: 'production' | 'packaging';
   product_category: string | null;
   team: string | null;
+  note: string | null;
   qty_expected: number;
   qty_checked: number | null;
   status: 'pending' | 'ok' | 'adjusted';
@@ -61,7 +62,7 @@ export async function ensureDeliveryOrderChecklist(
   // silently returned zero rows every time (PostgREST rejects unknown columns, and the
   // error wasn't being checked). Root cause of the 2026-08-08 "empty order" bug.
   const { data: orderLines, error: orderLinesError } = await supabase.from('lab_order_lines')
-    .select('source_type, shop_name, product_sku, product_name_vi, team, qty, fiche_id')
+    .select('source_type, shop_name, product_sku, product_name_vi, team, qty, fiche_id, note')
     .eq('delivery_date', date).eq('order_ref', orderRef);
   if (orderLinesError) throw orderLinesError;
 
@@ -87,16 +88,20 @@ export async function ensureDeliveryOrderChecklist(
   }
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
-    .select('id, sku, category, product_category').eq('delivery_order_id', header.id);
+    .select('id, sku, category, product_category, note').eq('delivery_order_id', header.id);
   const existingKeys = new Set((existingLines ?? []).map((l: any) => `${l.category}||${l.sku}`));
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
-  // variant rows (e.g. size), and the check is per SKU, not per variant, for now.
-  const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; ficheId: string | null; qty: number }> = {};
+  // variant rows (e.g. size), and the check is per SKU, not per variant, for now. Odoo notes
+  // (replenishment line note, or a sales-order line_note row) are collected per SKU too —
+  // kept as a Set so two different lines of the same SKU with two different notes both survive
+  // instead of one clobbering the other (2026-08-11, discussed with Axel).
+  const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; ficheId: string | null; qty: number; notes: Set<string> }> = {};
   for (const l of orderLines ?? []) {
     const k = l.product_sku;
-    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, ficheId: l.fiche_id, qty: 0 };
+    const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, ficheId: l.fiche_id, qty: 0, notes: new Set() };
     e.qty += l.qty;
+    if (l.note) e.notes.add(l.note);
   }
 
   // Product family (Macaron/Viennoiserie/Savory/...) for the category-picker view — resolved
@@ -113,16 +118,24 @@ export async function ensureDeliveryOrderChecklist(
   // only fires for SKUs not already present. Backfill any resolvable ones on every open
   // instead of requiring a manual SQL fix each time (root cause of the 2026-08-08 "tout
   // passe en Autre" bug — confirmed every existing row had product_category null in DB).
-  const toHeal: { id: string; product_category: string }[] = [];
+  const toHeal: { id: string; patch: { product_category?: string; note?: string } }[] = [];
   for (const el of existingLines ?? []) {
-    if (el.category !== 'production' || el.product_category) continue;
+    if (el.category !== 'production') continue;
     const e = bySku[el.sku];
-    const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
-    if (resolved) toHeal.push({ id: el.id, product_category: resolved });
+    const patch: { product_category?: string; note?: string } = {};
+    if (!el.product_category) {
+      const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
+      if (resolved) patch.product_category = resolved;
+    }
+    // Same self-heal as product_category above: rows created before the note pipe existed
+    // (or before an Odoo note was added/synced) stay null forever otherwise, since the insert
+    // below only fires for SKUs not already present.
+    if (!el.note && e?.notes.size) patch.note = Array.from(e.notes).join('\n');
+    if (Object.keys(patch).length) toHeal.push({ id: el.id, patch });
   }
   for (const h of toHeal) {
     const { error: healError } = await supabase.from('lab_delivery_check_lines')
-      .update({ product_category: h.product_category }).eq('id', h.id);
+      .update(h.patch).eq('id', h.id);
     if (healError) throw healError;
   }
 
@@ -135,6 +148,7 @@ export async function ensureDeliveryOrderChecklist(
       product_name_vi: e.name_vi, product_name_en: e.name_en,
       category: 'production', product_category: (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
       team: e.team, qty_expected: e.qty,
+      note: e.notes.size ? Array.from(e.notes).join('\n') : null,
     });
   }
   for (const p of packaging) {

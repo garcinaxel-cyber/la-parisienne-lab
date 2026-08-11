@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
@@ -73,6 +73,11 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
                   <div className="col-span-5 min-w-0">
                     <div className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
                     {l.sku && <div className="text-[11px] text-ink-light font-mono">{l.sku}</div>}
+                    {l.note && (
+                      <div className="text-[11px] font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
+                        📝 {l.note}
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
                   <div className="col-span-5 flex items-center justify-center gap-2">
@@ -137,9 +142,18 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
           <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
         </div>
         {validated ? (
-          <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
-            <CheckCircle2 size={16} /> {vi ? 'Đã xác nhận' : 'Validé'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
+              <CheckCircle2 size={16} /> {vi ? 'Đã xác nhận' : 'Validé'}
+            </span>
+            {header.source_type === 'replenishment' && (
+              <Link href={`/delivery-check/print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
+                className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
+                style={{ backgroundColor: '#1f2937' }}>
+                <Printer size={15} /> {vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT'}
+              </Link>
+            )}
+          </div>
         ) : (
           <span className="text-sm font-semibold rounded-full px-3 py-1.5"
             style={{ backgroundColor: allChecked ? '#DCFCE7' : '#F3F4F6', color: allChecked ? '#166534' : '#6B7280' }}>

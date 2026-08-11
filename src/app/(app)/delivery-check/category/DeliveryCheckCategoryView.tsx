@@ -9,7 +9,7 @@ type Row = {
   id: string; sku: string | null; product_name_vi: string; product_name_en: string | null;
   category: string; product_category: string | null; team: string | null; order_ref: string; shop_name: string | null;
   delivery_date: string; qty_expected: number; qty_checked: number | null; status: string;
-  discrepancy_reason: string | null; discrepancy_note: string | null;
+  discrepancy_reason: string | null; discrepancy_note: string | null; note: string | null;
 };
 
 export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { rows: Row[]; today: string; tomorrow: string }) {
@@ -125,6 +125,11 @@ export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { r
                               <div className="col-span-5 min-w-0">
                                 <div className="text-sm text-navy truncate">{r.order_ref}</div>
                                 <div className="text-xs text-ink-light truncate">{r.shop_name || '—'}</div>
+                                {r.note && (
+                                  <div className="text-[11px] font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
+                                    📝 {r.note}
+                                  </div>
+                                )}
                               </div>
                               <div className="col-span-2 text-center font-bold text-navy">×{r.qty_expected}</div>
                               <div className="col-span-5 flex items-center justify-center gap-2">
