@@ -8,9 +8,9 @@ import type { SoLinePricing } from '@/lib/odoo-so-pricing';
 
 // Reproduces the Odoo "Picking Operations" LAB/OUT export as closely as possible for
 // replenishment orders (validated against a real export, LAB/OUT/03078 REP/2026/00997, with
-// Axel on 2026-08-11), and a simpler "Sales order" printout for sales orders (2026-08-11:
-// Axel wanted a plain delivery note, NOT a "HÓA ĐƠN TẠM" invoice — titled "Sales order" + the
-// SO number, amount computed on DELIVERED qty, not the customer's ordered qty).
+// Axel on 2026-08-11), and a simpler "HÓA ĐƠN BÁN HÀNG" printout for sales orders (2026-08-11:
+// titled "HÓA ĐƠN BÁN HÀNG" + the SO number — not the earlier "HÓA ĐƠN TẠM" proposal — amount
+// computed on DELIVERED qty, not the customer's ordered qty).
 //
 // "Ghi chú" shows the product's own Odoo note (lab_delivery_check_lines.note) plus the
 // assistant's discrepancy note if any, stacked on separate lines.
@@ -83,7 +83,7 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
         </div>
 
         <div style={{ textAlign: 'center', fontSize: 18, fontWeight: 500, margin: '10px 0 8px' }}>
-          {isSo ? `Sales order — ${header.order_ref}` : 'Lệnh giao hàng'}
+          {isSo ? `HÓA ĐƠN BÁN HÀNG — ${header.order_ref}` : 'Lệnh giao hàng'}
         </div>
 
         <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>

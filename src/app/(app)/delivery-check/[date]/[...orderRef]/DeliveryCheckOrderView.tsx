@@ -155,7 +155,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
             <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
               className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
               style={{ backgroundColor: '#1f2937' }}>
-              <Printer size={15} /> {header.source_type === 'replenishment' ? (vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT') : (vi ? 'In Sales order' : 'Imprimer Sales order')}
+              <Printer size={15} /> {header.source_type === 'replenishment' ? (vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT') : (vi ? 'In hóa đơn bán hàng' : 'Imprimer hóa đơn bán hàng')}
             </Link>
           </div>
         ) : (
