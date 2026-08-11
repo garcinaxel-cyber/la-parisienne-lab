@@ -4,29 +4,54 @@ import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, Printer } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { formatOdooStyleDate, withWarehouseSuffix } from '@/lib/delivery-print';
+import type { SoLinePricing } from '@/lib/odoo-so-pricing';
 
-// Reproduces the Odoo "Picking Operations" LAB/OUT export as closely as possible without
-// calling Odoo — same header block, same field order, same date format quirk (MM/DD/YYYY,
-// not the Vietnamese DD/MM convention Odoo happens to use on this report). Validated against
-// a real export (LAB/OUT/03078, REP/2026/00997) with Axel on 2026-08-11.
+// Reproduces the Odoo "Picking Operations" LAB/OUT export as closely as possible for
+// replenishment orders (validated against a real export, LAB/OUT/03078 REP/2026/00997, with
+// Axel on 2026-08-11), and a simpler "Sales order" printout for sales orders (2026-08-11:
+// Axel wanted a plain delivery note, NOT a "HÓA ĐƠN TẠM" invoice — titled "Sales order" + the
+// SO number, amount computed on DELIVERED qty, not the customer's ordered qty).
 //
-// "Số phiếu" (the Odoo picking name) is left blank: we don't call Odoo for this print, so we
-// don't have that number yet. "Ghi chú" shows the product's own Odoo note (lab_delivery_check_lines.note)
-// plus the assistant's discrepancy note if any, stacked on separate lines.
-export default function DeliveryPrintView({ header, lines }: { header: DeliveryOrderHeader; lines: CheckLine[] }) {
+// "Ghi chú" shows the product's own Odoo note (lab_delivery_check_lines.note) plus the
+// assistant's discrepancy note if any, stacked on separate lines.
+export default function DeliveryPrintView({ header, lines, pricing }: {
+  header: DeliveryOrderHeader; lines: CheckLine[]; pricing?: SoLinePricing | null;
+}) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
+  const isSo = header.source_type === 'sales_order';
+  const showPricing = isSo && !!pricing && Object.keys(pricing.bySku).length > 0;
+
+  const fmtMoney = (n: number) => new Intl.NumberFormat('vi-VN').format(Math.round(n));
+
+  let grandTotal = 0;
+  if (showPricing) {
+    for (const l of lines) {
+      const unit = pricing!.bySku[l.sku ?? '']?.unitPrice;
+      if (unit != null) grandTotal += unit * (l.qty_checked ?? l.qty_expected);
+    }
+  }
+
+  async function handlePrint() {
+    // Fire the "already printed" mark alongside the print dialog — doesn't block printing if
+    // the request is slow/fails, this is a nice-to-have color-code, not a gate (2026-08-11).
+    try {
+      const { markPrintedAction } = await import('@/app/(app)/delivery-check/actions');
+      markPrintedAction(header.id);
+    } catch { /* best-effort */ }
+    window.print();
+  }
 
   return (
     <div>
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          @page { margin: 15mm 15mm 15mm 15mm; size: A4; }
+          @page { margin: 10mm 12mm; size: A4; }
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
         .labprint-table { border-collapse: collapse; width: 100%; }
-        .labprint-table th, .labprint-table td { border: 1px solid #000; padding: 4px 6px; }
+        .labprint-table th, .labprint-table td { border: 1px solid #000; padding: 3px 5px; }
       `}</style>
 
       <div className="no-print sticky top-0 z-10 bg-white border-b border-border-soft px-4 py-2 flex items-center justify-between gap-4 shadow-sm">
@@ -34,27 +59,34 @@ export default function DeliveryPrintView({ header, lines }: { header: DeliveryO
           className="flex items-center gap-1.5 text-sm text-ink-light hover:text-navy transition-colors">
           <ArrowLeft size={15} /> {vi ? 'Quay lại' : 'Retour'}
         </Link>
-        <button onClick={() => window.print()}
-          className="flex items-center gap-1.5 text-sm font-semibold text-white bg-navy rounded-xl px-4 py-2 hover:bg-navy/80 transition-colors">
-          <Printer size={15} /> {vi ? 'In phiếu' : 'Imprimer'}
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-ink-light hidden sm:inline">
+            {vi ? 'Nhiều sản phẩm → dùng "Vừa 1 trang" trong hộp thoại in nếu cần' : 'Beaucoup de lignes → cocher "Ajuster à la page" dans le dialogue d\'impression si besoin'}
+          </span>
+          <button onClick={handlePrint}
+            className="flex items-center gap-1.5 text-sm font-semibold text-white bg-navy rounded-xl px-4 py-2 hover:bg-navy/80 transition-colors">
+            <Printer size={15} /> {vi ? 'In phiếu' : 'Imprimer'}
+          </button>
+        </div>
       </div>
 
-      <div style={{ background: '#fff', color: '#111', maxWidth: '720px', margin: '24px auto', padding: '28px 32px', fontFamily: "'Times New Roman', serif" }}>
+      <div style={{ background: '#fff', color: '#111', maxWidth: '720px', margin: '24px auto', padding: '20px 28px', fontFamily: "'Times New Roman', serif", fontSize: 13 }}>
         <div style={{ textAlign: 'center' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-print.png" alt="La Paris" style={{ height: 70, margin: '0 auto' }} />
-          <div style={{ fontSize: 14, lineHeight: 1.5, marginTop: 6 }}>
-            <div style={{ fontWeight: 500, fontSize: 16 }}>CÔNG TY CỔ PHẦN LA PARISIENNE</div>
+          <img src="/logo-print.png" alt="La Paris" style={{ height: 56, margin: '0 auto' }} />
+          <div style={{ fontSize: 12.5, lineHeight: 1.4, marginTop: 4 }}>
+            <div style={{ fontWeight: 500, fontSize: 14 }}>CÔNG TY CỔ PHẦN LA PARISIENNE</div>
             <div>Địa chỉ: 18 Phú Xá, Phường Phú Thượng, TP Hà Nội, Việt Nam</div>
             <div>SĐT: 0985023553&nbsp;&nbsp;&nbsp;&nbsp;Email: Laparisiene09@gmail.com</div>
             <div>Ngân hàng Techcombank : 609609 mở tại TCB Lạc Long Quân.</div>
           </div>
         </div>
 
-        <div style={{ textAlign: 'center', fontSize: 20, fontWeight: 500, margin: '14px 0 10px' }}>Lệnh giao hàng</div>
+        <div style={{ textAlign: 'center', fontSize: 18, fontWeight: 500, margin: '10px 0 8px' }}>
+          {isSo ? `Sales order — ${header.order_ref}` : 'Lệnh giao hàng'}
+        </div>
 
-        <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
           <div>Số phiếu:</div>
           <div>Khách hàng:</div>
           <div>Từ: Lab&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Đến: {withWarehouseSuffix(header.shop_name)}</div>
@@ -62,32 +94,49 @@ export default function DeliveryPrintView({ header, lines }: { header: DeliveryO
           <div>Ngày giao hàng: {formatOdooStyleDate(header.delivery_date)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Tài liệu gốc: {header.order_ref}</div>
         </div>
 
-        <table className="labprint-table" style={{ marginTop: 12, fontSize: 13 }}>
+        <table className="labprint-table" style={{ marginTop: 10, fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: 'center' }}>
-              <th style={{ width: '6%' }}>STT</th>
-              <th style={{ width: '42%' }}>Mã hàng</th>
-              <th style={{ width: '12%' }}>ĐVT</th>
-              <th style={{ width: '14%' }}>S.L Yêu cầu</th>
-              <th style={{ width: '14%' }}>S.L Thực tế</th>
-              <th style={{ width: '22%' }}>Ghi chú</th>
+              <th style={{ width: '4%' }}>STT</th>
+              <th style={{ width: showPricing ? '28%' : '38%' }}>Mã hàng</th>
+              <th style={{ width: '8%' }}>ĐVT</th>
+              <th style={{ width: '10%' }}>S.L Yêu cầu</th>
+              <th style={{ width: '10%' }}>S.L Thực tế</th>
+              {showPricing && <th style={{ width: '12%' }}>Đơn giá</th>}
+              {showPricing && <th style={{ width: '13%' }}>Thành tiền</th>}
+              <th style={{ width: showPricing ? '15%' : '30%' }}>Ghi chú</th>
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => (
-              <tr key={l.id}>
-                <td style={{ textAlign: 'center' }}>{i + 1}</td>
-                <td>{l.product_name_vi}</td>
-                <td style={{ textAlign: 'center' }}>Đơn vị</td>
-                <td style={{ textAlign: 'center' }}>{l.qty_expected}</td>
-                <td style={{ textAlign: 'center' }}>{l.qty_checked ?? l.qty_expected}</td>
-                <td style={{ fontSize: 11, whiteSpace: 'pre-line' }}>{[l.note, l.discrepancy_note].filter(Boolean).join('\n')}</td>
-              </tr>
-            ))}
+            {lines.map((l, i) => {
+              const delivered = l.qty_checked ?? l.qty_expected;
+              const unit = showPricing ? pricing!.bySku[l.sku ?? '']?.unitPrice : undefined;
+              return (
+                <tr key={l.id}>
+                  <td style={{ textAlign: 'center' }}>{i + 1}</td>
+                  <td>{l.product_name_vi}</td>
+                  <td style={{ textAlign: 'center' }}>Đơn vị</td>
+                  <td style={{ textAlign: 'center' }}>{l.qty_expected}</td>
+                  <td style={{ textAlign: 'center' }}>{delivered}</td>
+                  {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit) : ''}</td>}
+                  {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit * delivered) : ''}</td>}
+                  <td style={{ fontSize: 10.5, whiteSpace: 'pre-line' }}>{[l.note, l.discrepancy_note].filter(Boolean).join('\n')}</td>
+                </tr>
+              );
+            })}
           </tbody>
+          {showPricing && (
+            <tfoot>
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'right', fontWeight: 700 }}>Tổng cộng ({pricing!.currency})</td>
+                <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtMoney(grandTotal)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
         </table>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 36, fontSize: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 28, fontSize: 13 }}>
           <div>Khách hàng</div>
           <div>Người lập phiếu</div>
         </div>

@@ -74,3 +74,25 @@ export async function validateOrderAction(deliveryOrderId: string): Promise<{ ok
   revalidatePath('/delivery-check/category');
   return { ok: true };
 }
+
+// Called when someone actually clicks "Imprimer" on the print page (not just opens it) — drives
+// the "already printed" color-code Axel asked for (2026-08-11) on the index + order views.
+export async function markPrintedAction(deliveryOrderId: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+
+  const { data: current } = await supabase.from('lab_delivery_orders')
+    .select('print_count').eq('id', deliveryOrderId).maybeSingle();
+  const { error } = await supabase.from('lab_delivery_orders').update({
+    printed_at: new Date().toISOString(),
+    printed_by: auth.session.user.id,
+    printed_by_name: auth.profile?.full_name ?? null,
+    print_count: (current?.print_count ?? 0) + 1,
+    updated_at: new Date().toISOString(),
+  }).eq('id', deliveryOrderId);
+  if (error) return { error: error.message };
+  revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
+  return { ok: true };
+}

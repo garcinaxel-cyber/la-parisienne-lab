@@ -42,6 +42,9 @@ export interface DeliveryOrderHeader {
   validated_by_name: string | null;
   odoo_push_status: string | null;
   odoo_push_error: string | null;
+  printed_at: string | null;
+  printed_by_name: string | null;
+  print_count: number;
 }
 
 // Packaging lines for one order_ref — plain Supabase read from the cron-synced table, no

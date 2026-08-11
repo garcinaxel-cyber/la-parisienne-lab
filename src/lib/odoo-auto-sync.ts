@@ -78,6 +78,21 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       .upsert(result.packagingOnly.map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
   }
 
+  // Coverage check (see OdooSyncResult.syncGaps doc comment): keep lab_sync_gaps in sync with
+  // this tick's findings — drop refs no longer flagged (fixed, delivered, or fell out of the
+  // sync window), upsert the current set. Kept as a plain diff (not a full wipe) so
+  // first_seen_at survives across ticks for a gap that persists.
+  {
+    const newGapRefs = new Set(result.syncGaps.map(g => g.order_ref));
+    const { data: existingGapRows } = await supabase.from('lab_sync_gaps').select('order_ref');
+    const staleGapRefs = (existingGapRows ?? []).map((r: any) => r.order_ref).filter((r: string) => !newGapRefs.has(r));
+    if (staleGapRefs.length) await supabase.from('lab_sync_gaps').delete().in('order_ref', staleGapRefs);
+    if (result.syncGaps.length) {
+      await supabase.from('lab_sync_gaps')
+        .upsert(result.syncGaps.map(g => ({ ...g, last_seen_at: new Date().toISOString() })), { onConflict: 'order_ref' });
+    }
+  }
+
   // AUTO-APPLY modifications & cancellations so the app always reflects Odoo (today + future).
   // applyOdooChanges adjusts quantities, creates newly-added products, and strikes through
   // cancelled orders — produced quantities are always preserved. We log them as 'applied'

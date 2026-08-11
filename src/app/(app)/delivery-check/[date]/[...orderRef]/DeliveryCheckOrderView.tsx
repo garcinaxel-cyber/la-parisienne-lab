@@ -142,17 +142,21 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
           <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
         </div>
         {validated ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
               <CheckCircle2 size={16} /> {vi ? 'Đã xác nhận' : 'Validé'}
             </span>
-            {header.source_type === 'replenishment' && (
-              <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
-                className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
-                style={{ backgroundColor: '#1f2937' }}>
-                <Printer size={15} /> {vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT'}
-              </Link>
+            {header.printed_at && (
+              <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}
+                title={header.printed_by_name ? `${vi ? 'In bởi' : 'Imprimé par'} ${header.printed_by_name}` : undefined}>
+                <Printer size={15} /> {vi ? 'Đã in' : 'Déjà imprimé'}{header.print_count > 1 ? ` ×${header.print_count}` : ''}
+              </span>
             )}
+            <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
+              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
+              style={{ backgroundColor: '#1f2937' }}>
+              <Printer size={15} /> {header.source_type === 'replenishment' ? (vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT') : (vi ? 'In Sales order' : 'Imprimer Sales order')}
+            </Link>
           </div>
         ) : (
           <span className="text-sm font-semibold rounded-full px-3 py-1.5"

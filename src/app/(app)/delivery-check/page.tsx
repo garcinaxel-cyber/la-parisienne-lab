@@ -55,11 +55,11 @@ export default async function DeliveryCheckPage() {
   // Progress: any lab_delivery_orders header already started for these (date, ref)
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
-        .select('id, order_ref, delivery_date, status')
+        .select('id, order_ref, delivery_date, status, printed_at')
         .in('delivery_date', [today, tomorrow])
     : { data: [] as any[] };
-  const headerByKey: Record<string, { id: string; status: string }> = {};
-  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status };
+  const headerByKey: Record<string, { id: string; status: string; printed_at: string | null }> = {};
+  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null };
   const headerIds = (headers ?? []).map((h: any) => h.id);
 
   // Lines checked so far, to show an "X/Y" progress badge without opening the order
@@ -76,6 +76,12 @@ export default async function DeliveryCheckPage() {
   const { data: pendingCakes } = await supabase.from('lab_manual_cakes')
     .select('id').in('delivery_date', [today, tomorrow]).is('matched_order_ref', null).is('cancelled_at', null);
 
+  // Coverage check (see odoo-sync.ts's syncGaps doc comment): the 15-min cron already flags any
+  // Odoo order that ended up with zero representation in the app — this is a plain read of that,
+  // no Odoo call here. Axel asked for this after REP/2026/01006 turned out invisible with no warning.
+  const { data: gapRows } = await supabase.from('lab_sync_gaps')
+    .select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${today},${tomorrow}),delivery_date.is.null`);
+
   const ordersWithProgress = orders.map(o => {
     const key = `${o.delivery_date}||${o.order_ref}`;
     const h = headerByKey[key];
@@ -85,6 +91,7 @@ export default async function DeliveryCheckPage() {
       status: h?.status ?? 'not_started',
       checked: counts?.checked ?? 0,
       total: counts?.total ?? o.lineCount,
+      printed_at: h?.printed_at ?? null,
     };
   });
 
@@ -94,6 +101,7 @@ export default async function DeliveryCheckPage() {
       tomorrow={tomorrow}
       orders={ordersWithProgress}
       pendingCakesCount={(pendingCakes ?? []).length}
+      syncGaps={gapRows ?? []}
     />
   );
 }

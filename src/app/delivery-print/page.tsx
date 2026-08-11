@@ -1,6 +1,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import { ensureDeliveryOrderChecklist } from '@/lib/delivery-check';
+import { fetchSoLinePricing } from '@/lib/odoo-so-pricing';
 import DeliveryPrintView from './DeliveryPrintView';
 
 export const revalidate = 0;
@@ -27,5 +28,14 @@ export default async function DeliveryPrintPage({ searchParams }: { searchParams
 
   const { header, lines } = await ensureDeliveryOrderChecklist(supabase, date, orderRef);
 
-  return <DeliveryPrintView header={header} lines={lines} />;
+  // Sales-order print needs a price per line (Axel, 2026-08-11: "Sales order" print, amount
+  // computed on delivered qty) — a live, order-scoped Odoo call, only paid when someone actually
+  // opens this print page for an SO, not on every delivery-check view. Degrades to no pricing
+  // (columns just omitted) if Odoo is unreachable rather than breaking the print entirely.
+  let pricing: Awaited<ReturnType<typeof fetchSoLinePricing>> = null;
+  if (header.source_type === 'sales_order') {
+    try { pricing = await fetchSoLinePricing(orderRef); } catch { pricing = null; }
+  }
+
+  return <DeliveryPrintView header={header} lines={lines} pricing={pricing} />;
 }

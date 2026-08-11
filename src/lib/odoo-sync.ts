@@ -13,6 +13,12 @@ export interface OdooSyncResult {
   // bag"). The caller upserts these straight into lab_order_packaging_lines so they still show
   // up in delivery-check (which already unions that table independently of lab_imports status).
   packagingOnly: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[];
+  // Coverage check (Axel, 2026-08-11, after REP/2026/01006 turned out invisible): every Odoo
+  // order currently open (same state+date window as this whole sync) that ends up with ZERO
+  // representation anywhere in the app by the end of this function — not already imported, not
+  // in `lines`, not in `packagingOnly`. Persisted by the caller to lab_sync_gaps so delivery-
+  // check's index page can show a banner without the app ever calling Odoo on a page view.
+  syncGaps: { order_ref: string; source_type: string; delivery_date: string | null; state: string; reason: string }[];
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -303,11 +309,52 @@ for (const [ref, excludedLines] of Object.entries(excludedReplLinesByRef)) {
   }
 }
 
+// ── 7. Coverage gap detection ── flag any currently-open Odoo order with zero representation
+// anywhere in the app by this point (see OdooSyncResult.syncGaps doc comment).
+const producedRefs = new Set(lines.map((l: any) => l.order_ref));
+const packagingRefs = new Set(packagingOnly.map(p => p.order_ref));
+const soLineStatsByRef: Record<string, { total: number; excluded: number }> = {};
+for (const l of soLines) {
+  const order = orderById[l.order_id?.[0]];
+  if (!order) continue;
+  const s = soLineStatsByRef[order.name] ??= { total: 0, excluded: 0 };
+  s.total++;
+  const prod = skuByProductId[l.product_id?.[0]];
+  if (prod?.sku && excludedSet.has(prod.sku)) s.excluded++;
+}
+const replLineStatsByRef: Record<string, { total: number; excluded: number }> = {};
+for (const l of replLines) {
+  const req = replById[l.request_id?.[0]];
+  if (!req) continue;
+  const s = replLineStatsByRef[req.name] ??= { total: 0, excluded: 0 };
+  s.total++;
+  const prod = skuByProductId[l.product_id?.[0]];
+  if (prod?.sku && excludedSet.has(prod.sku)) s.excluded++;
+}
+const syncGaps: OdooSyncResult['syncGaps'] = [];
+for (const o of orders) {
+  if (alreadyImported.has(o.name) || producedRefs.has(o.name) || packagingRefs.has(o.name)) continue;
+  const s = soLineStatsByRef[o.name];
+  const reason = !s || s.total === 0 ? 'no_lines_in_odoo'
+    : s.excluded === s.total ? 'all_lines_excluded_sku_no_fallback_yet' // known gap: no packaging-only fallback for sales orders yet
+    : 'unmatched_sku_or_zero_qty';
+  syncGaps.push({ order_ref: o.name, source_type: 'sales_order', delivery_date: odooDateTimeToLocal(o.commitment_date).date || null, state: o.state, reason });
+}
+for (const r of repls) {
+  if (alreadyImported.has(r.name) || producedRefs.has(r.name) || packagingRefs.has(r.name)) continue;
+  const s = replLineStatsByRef[r.name];
+  const reason = !s || s.total === 0 ? 'no_lines_in_odoo'
+    : s.excluded === s.total ? 'all_lines_excluded' // shouldn't happen (packagingOnly covers this) — safety net
+    : 'unmatched_sku_or_zero_qty';
+  syncGaps.push({ order_ref: r.name, source_type: 'replenishment', delivery_date: odooDateTimeToLocal(r.delivery_date).date || null, state: r.state, reason });
+}
+
   return {
     lines,
     changes,
     deletedRefs,
     packagingOnly,
+    syncGaps,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,

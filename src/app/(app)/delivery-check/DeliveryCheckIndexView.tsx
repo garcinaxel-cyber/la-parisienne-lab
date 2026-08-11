@@ -1,19 +1,30 @@
 'use client';
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid, Printer, AlertTriangle, ChevronDown } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
-  status: string; checked: number; total: number;
+  status: string; checked: number; total: number; printed_at: string | null;
 };
 
-export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount }: {
-  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number;
+type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
+
+const GAP_REASON_LABEL: Record<string, { vi: string; fr: string }> = {
+  all_lines_excluded_sku_no_fallback_yet: { vi: 'chỉ có bao bì, chưa hỗ trợ cho sales order', fr: 'que du packaging, pas encore géré côté sales order' },
+  all_lines_excluded: { vi: 'chỉ có bao bì', fr: 'que du packaging' },
+  no_lines_in_odoo: { vi: 'không có dòng sản phẩm trên Odoo', fr: "aucune ligne produit sur Odoo" },
+  unmatched_sku_or_zero_qty: { vi: 'SKU không khớp hoặc số lượng = 0', fr: 'SKU non reconnu ou quantité = 0' },
+};
+
+export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps }: {
+  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[];
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
+  const [gapsOpen, setGapsOpen] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   // Day selection lives in the URL (?day=tomorrow), not local state — an assistant who taps
@@ -36,6 +47,31 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           {vi ? 'Kiểm số lượng theo đơn, điều chỉnh nếu cần, sau đó xác nhận.' : 'Vérifier la quantité par commande, ajuster si besoin, puis valider.'}
         </p>
       </div>
+
+      {syncGaps.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #FCA5A5', backgroundColor: '#FEF2F2' }}>
+          <button onClick={() => setGapsOpen(o => !o)} className="w-full flex items-center gap-2.5 px-4 py-3 text-left">
+            <AlertTriangle size={18} className="shrink-0" style={{ color: '#DC2626' }} />
+            <span className="flex-1 text-sm font-bold" style={{ color: '#991B1B' }}>
+              {syncGaps.length} {vi ? 'đơn Odoo có thể chưa hiện ở đây' : 'commande(s) Odoo peut-être invisible(s) ici'}
+            </span>
+            <ChevronDown size={16} className="shrink-0 transition-transform" style={{ color: '#DC2626', transform: gapsOpen ? 'rotate(180deg)' : undefined }} />
+          </button>
+          {gapsOpen && (
+            <div className="px-4 pb-3 space-y-1.5">
+              {syncGaps.map(g => {
+                const label = GAP_REASON_LABEL[g.reason];
+                return (
+                  <div key={g.order_ref} className="text-xs flex items-center justify-between gap-2" style={{ color: '#991B1B' }}>
+                    <span className="font-mono font-semibold">{g.order_ref}</span>
+                    <span className="text-right">{label ? (vi ? label.vi : label.fr) : g.reason}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         <Link href="/delivery-check/category"
@@ -93,8 +129,10 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             const validated = o.status === 'validated';
             const full = o.total > 0 && o.checked === o.total;
             const dotColor = validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
-            const bg = validated || full ? '#F0FDF4' : undefined;
-            const border = validated || full ? '#BBF7D0' : '#E5E7EB';
+            // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
+            // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
+            const bg = validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+            const border = validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
             return (
               // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
               // captures them as separate segments, so no encoding here.
@@ -103,7 +141,14 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                 style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-navy">{o.order_ref}</div>
+                  <div className="text-sm font-bold text-navy flex items-center gap-1.5">
+                    {o.order_ref}
+                    {o.printed_at && (
+                      <span title={vi ? 'Đã in' : 'Déjà imprimé'}>
+                        <Printer size={12} style={{ color: '#2563EB' }} />
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
                 </div>
                 {validated ? (
