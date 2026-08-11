@@ -218,13 +218,29 @@ const extractNote = (raw: unknown): string | null => {
   return note || null;
 };
 
+// Sales orders that got at least one real production line — same "100%-packaging" fallback as
+// replenishments below (2026-08-11, S03154: a sales order whose only line was a packaging SKU
+// [VTTH0140] was invisible everywhere for the same reason REP/2026/01005-01007 were).
+const soRefsWithProductionLine = new Set<string>();
+const excludedSoLinesByRef: Record<string, { name: string; delivery_date: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[]> = {};
+
 for (const l of soLines) {
   const order = orderById[l.order_id?.[0]];
   if (!order) continue;
   if (alreadyImported.has(order.name)) { skippedRefs.add(order.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
   const qty = Math.round(Number(l.product_uom_qty ?? 0));
-  if (!prod.sku || !qty || excludedSet.has(prod.sku)) continue;
+  if (!prod.sku || !qty) continue;
+  if (excludedSet.has(prod.sku)) {
+    (excludedSoLinesByRef[order.name] ??= []).push({
+      name: order.name, delivery_date: odooDateTimeToLocal(order.commitment_date).date,
+      shop_name: order.partner_id?.[1] ?? null,
+      sku: prod.sku, product_name_vi: prod.name,
+      qty, note: [extractNote(l.name), attachedNoteByLineId[l.id]].filter(Boolean).join(' / ') || null,
+    });
+    continue;
+  }
+  soRefsWithProductionLine.add(order.name);
   const dt = odooDateTimeToLocal(order.commitment_date);
   const t = teamBySku[prod.sku];
   if (t?.multi) multiTeamSkus.add(prod.sku);
@@ -293,16 +309,28 @@ const orderStates: Record<string, string> = {};
 for (const o of orders) orderStates[o.name] = o.state;      // draft | sent | sale
 for (const r of repls) orderStates[r.name] = r.state;       // draft | submitted | approved
 
-// Pure-packaging replenishments: only for refs with ZERO production lines — a ref that has
-// at least one real production line already gets its excluded lines picked up next cron tick
-// by odoo-packaging-sync.ts (which discovers refs via lab_order_lines), so injecting it here
-// too would just be redundant work against the same table.
+// Pure-packaging orders (sales orders AND replenishments): only for refs with ZERO production
+// lines — a ref that has at least one real production line already gets its excluded lines
+// picked up next cron tick by odoo-packaging-sync.ts (which discovers refs via lab_order_lines),
+// so injecting it here too would just be redundant work against the same table.
 const packagingOnly: OdooSyncResult['packagingOnly'] = [];
 for (const [ref, excludedLines] of Object.entries(excludedReplLinesByRef)) {
   if (replRefsWithProductionLine.has(ref) || alreadyImported.has(ref)) continue;
   for (const el of excludedLines) {
     packagingOnly.push({
       order_ref: el.name, delivery_date: el.delivery_date, source_type: 'replenishment',
+      shop_name: el.shop_name, sku: el.sku,
+      product_name_vi: el.product_name_vi, qty: el.qty, note: el.note,
+    });
+  }
+}
+// 2026-08-11 (S03154, "que du packaging, pas encore géré côté sales order"): same fallback,
+// mirrored for sales orders.
+for (const [ref, excludedLines] of Object.entries(excludedSoLinesByRef)) {
+  if (soRefsWithProductionLine.has(ref) || alreadyImported.has(ref)) continue;
+  for (const el of excludedLines) {
+    packagingOnly.push({
+      order_ref: el.name, delivery_date: el.delivery_date, source_type: 'sales_order',
       shop_name: el.shop_name, sku: el.sku,
       product_name_vi: el.product_name_vi, qty: el.qty, note: el.note,
     });
@@ -336,7 +364,7 @@ for (const o of orders) {
   if (alreadyImported.has(o.name) || producedRefs.has(o.name) || packagingRefs.has(o.name)) continue;
   const s = soLineStatsByRef[o.name];
   const reason = !s || s.total === 0 ? 'no_lines_in_odoo'
-    : s.excluded === s.total ? 'all_lines_excluded_sku_no_fallback_yet' // known gap: no packaging-only fallback for sales orders yet
+    : s.excluded === s.total ? 'all_lines_excluded' // shouldn't happen (packagingOnly covers this) — safety net
     : 'unmatched_sku_or_zero_qty';
   syncGaps.push({ order_ref: o.name, source_type: 'sales_order', delivery_date: odooDateTimeToLocal(o.commitment_date).date || null, state: o.state, reason });
 }

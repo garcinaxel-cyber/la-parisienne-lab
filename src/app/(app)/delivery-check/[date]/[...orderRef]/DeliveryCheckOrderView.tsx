@@ -6,6 +6,99 @@ import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Prin
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
+type LineState = { qty: string; reason: string; note: string };
+
+// Hoisted to module scope on purpose (2026-08-11 bug: assistants could only type one letter at
+// a time into the reason note, losing focus after every keystroke). It used to be declared
+// INSIDE DeliveryCheckOrderView's render body — React saw a brand-new function/component
+// identity on every setState-triggered re-render (i.e. every keystroke via upd()), so it
+// unmounted and remounted this entire subtree each time, including whatever input had focus.
+// Needs everything it used to read from closure passed in as props instead.
+function Section({ title, icon: Icon, items, state, checked, savingLine, validated, vi, upd, checkLine, setChecked }: {
+  title: string; icon: any; items: CheckLine[];
+  state: Record<string, LineState>; checked: Set<string>; savingLine: string | null; validated: boolean; vi: boolean;
+  upd: (id: string, patch: Partial<LineState>) => void;
+  checkLine: (l: CheckLine) => void;
+  setChecked: (fn: (p: Set<string>) => Set<string>) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+        <Icon size={16} className="text-navy" />
+        <span className="text-sm font-bold text-navy">{title}</span>
+        <span className="text-xs text-ink-light">· {items.filter(l => checked.has(l.id)).length}/{items.length}</span>
+      </div>
+      <div className="divide-y divide-border-soft">
+        {items.map(l => {
+          const st = state[l.id] ?? { qty: String(l.qty_expected), reason: '', note: '' };
+          const qty = Number(st.qty);
+          const diff = qty - l.qty_expected;
+          const isDiff = diff !== 0;
+          const isChecked = checked.has(l.id);
+          return (
+            <div key={l.id} className="px-4 py-2.5" style={{ backgroundColor: isChecked ? '#F0FDF4' : isDiff ? '#FEF2F2' : undefined }}>
+              <div className="grid grid-cols-12 items-center gap-2">
+                <div className="col-span-5 min-w-0">
+                  <div className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
+                  {l.sku && <div className="text-[11px] text-ink-light font-mono">{l.sku}</div>}
+                  {l.note && (
+                    <div className="text-[11px] font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
+                      📝 {l.note}
+                    </div>
+                  )}
+                </div>
+                <div className="col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
+                <div className="col-span-5 flex items-center justify-center gap-2">
+                  {isChecked ? (
+                    <>
+                      <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
+                        <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
+                      </span>
+                      {!validated && (
+                        <button onClick={() => setChecked(p => { const n = new Set(p); n.delete(l.id); return n; })}
+                          className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                          title={vi ? 'Sửa' : 'Modifier'} aria-label={vi ? 'Sửa' : 'Modifier'}>
+                          <Pencil size={12} />
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input type="number" value={st.qty} onChange={e => upd(l.id, { qty: e.target.value })}
+                        className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
+                        style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
+                      {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{diff}</span>}
+                      <button onClick={() => checkLine(l)} disabled={savingLine === l.id || (isDiff && !st.reason)}
+                        className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
+                        style={{ backgroundColor: '#16A34A' }}>
+                        {savingLine === l.id ? '…' : (vi ? 'OK' : 'OK')}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {isDiff && !isChecked && (
+                <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                  <select value={st.reason} onChange={e => upd(l.id, { reason: e.target.value })}
+                    className="rounded-lg px-2 py-1.5 text-sm sm:w-56"
+                    style={{ border: '1px solid', borderColor: st.reason ? '#D1D5DB' : '#F87171', backgroundColor: 'white' }}>
+                    <option value="">{vi ? '— Lý do —' : '— Raison —'}</option>
+                    {REASONS.map(r => <option key={r.v} value={r.v}>{vi ? r.vi : r.en}</option>)}
+                  </select>
+                  <input type="text" value={st.note} onChange={e => upd(l.id, { note: e.target.value })}
+                    placeholder={vi ? 'Ghi chú (tuỳ chọn)' : 'Note (optionnel)'}
+                    className="flex-1 rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function DeliveryCheckOrderView({ header, lines, backHref }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -51,85 +144,6 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
   const doneCount = lines.filter(l => checked.has(l.id)).length;
   const allChecked = total > 0 && doneCount === total;
 
-  const Section = ({ title, icon: Icon, items }: { title: string; icon: any; items: CheckLine[] }) => {
-    if (!items.length) return null;
-    return (
-      <div className="card overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
-          <Icon size={16} className="text-navy" />
-          <span className="text-sm font-bold text-navy">{title}</span>
-          <span className="text-xs text-ink-light">· {items.filter(l => checked.has(l.id)).length}/{items.length}</span>
-        </div>
-        <div className="divide-y divide-border-soft">
-          {items.map(l => {
-            const st = state[l.id] ?? { qty: String(l.qty_expected), reason: '', note: '' };
-            const qty = Number(st.qty);
-            const diff = qty - l.qty_expected;
-            const isDiff = diff !== 0;
-            const isChecked = checked.has(l.id);
-            return (
-              <div key={l.id} className="px-4 py-2.5" style={{ backgroundColor: isChecked ? '#F0FDF4' : isDiff ? '#FEF2F2' : undefined }}>
-                <div className="grid grid-cols-12 items-center gap-2">
-                  <div className="col-span-5 min-w-0">
-                    <div className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
-                    {l.sku && <div className="text-[11px] text-ink-light font-mono">{l.sku}</div>}
-                    {l.note && (
-                      <div className="text-[11px] font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
-                        📝 {l.note}
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
-                  <div className="col-span-5 flex items-center justify-center gap-2">
-                    {isChecked ? (
-                      <>
-                        <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
-                          <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
-                        </span>
-                        {!validated && (
-                          <button onClick={() => setChecked(p => { const n = new Set(p); n.delete(l.id); return n; })}
-                            className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
-                            title={vi ? 'Sửa' : 'Modifier'} aria-label={vi ? 'Sửa' : 'Modifier'}>
-                            <Pencil size={12} />
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <input type="number" value={st.qty} onChange={e => upd(l.id, { qty: e.target.value })}
-                          className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
-                          style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
-                        {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{diff}</span>}
-                        <button onClick={() => checkLine(l)} disabled={savingLine === l.id || (isDiff && !st.reason)}
-                          className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
-                          style={{ backgroundColor: '#16A34A' }}>
-                          {savingLine === l.id ? '…' : (vi ? 'OK' : 'OK')}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                {isDiff && !isChecked && (
-                  <div className="mt-2 flex flex-col sm:flex-row gap-2">
-                    <select value={st.reason} onChange={e => upd(l.id, { reason: e.target.value })}
-                      className="rounded-lg px-2 py-1.5 text-sm sm:w-56"
-                      style={{ border: '1px solid', borderColor: st.reason ? '#D1D5DB' : '#F87171', backgroundColor: 'white' }}>
-                      <option value="">{vi ? '— Lý do —' : '— Raison —'}</option>
-                      {REASONS.map(r => <option key={r.v} value={r.v}>{vi ? r.vi : r.en}</option>)}
-                    </select>
-                    <input type="text" value={st.note} onChange={e => upd(l.id, { note: e.target.value })}
-                      placeholder={vi ? 'Ghi chú (tuỳ chọn)' : 'Note (optionnel)'}
-                      className="flex-1 rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-4">
       <Link href={backHref} className="inline-flex items-center gap-1.5 text-sm text-ink-light hover:text-navy">
@@ -166,8 +180,10 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
         )}
       </div>
 
-      <Section title={vi ? 'Sản phẩm sản xuất' : 'Produits fabriqués'} icon={PackageCheck} items={production} />
-      <Section title={vi ? 'Bao bì / khác' : 'Packaging / divers'} icon={Box} items={packaging} />
+      <Section title={vi ? 'Sản phẩm sản xuất' : 'Produits fabriqués'} icon={PackageCheck} items={production}
+        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked} />
+      <Section title={vi ? 'Bao bì / khác' : 'Packaging / divers'} icon={Box} items={packaging}
+        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked} />
 
       {!validated && (
         <div className="card px-4 py-3 flex items-center justify-between flex-wrap gap-2">
