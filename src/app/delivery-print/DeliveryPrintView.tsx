@@ -24,13 +24,21 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
 
   const fmtMoney = (n: number) => new Intl.NumberFormat('vi-VN').format(Math.round(n));
 
-  let grandTotal = 0;
+  // Subtotal (untaxed) + VAT, both based on DELIVERED qty like every per-line amount here.
+  // VAT is summed per-line at each line's OWN rate (see odoo-so-pricing.ts's taxRate doc
+  // comment — confirmed live that tax can differ line-to-line on the same order, e.g. a
+  // tax-exempt product mixed with 8%-taxed ones), never a single order-wide percentage.
+  let subtotal = 0, vatTotal = 0;
   if (showPricing) {
     for (const l of lines) {
-      const unit = pricing!.bySku[l.sku ?? '']?.unitPrice;
-      if (unit != null) grandTotal += unit * (l.qty_checked ?? l.qty_expected);
+      const p = pricing!.bySku[l.sku ?? ''];
+      if (!p) continue;
+      const untaxed = p.unitPrice * (l.qty_checked ?? l.qty_expected);
+      subtotal += untaxed;
+      vatTotal += untaxed * p.taxRate;
     }
   }
+  const grandTotal = subtotal + vatTotal;
 
   async function handlePrint() {
     // Fire the "already printed" mark alongside the print dialog — doesn't block printing if
@@ -127,6 +135,19 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
           </tbody>
           {showPricing && (
             <tfoot>
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'right' }}>Tổng tiền hàng ({pricing!.currency})</td>
+                <td style={{ textAlign: 'right' }}>{fmtMoney(subtotal)}</td>
+                <td />
+              </tr>
+              <tr>
+                {/* No single "(X%)" in the label — confirmed live that the VAT rate can differ
+                    line-to-line on the same order (a tax-exempt product mixed with 8%-taxed
+                    ones), so there isn't always one order-wide rate to print. */}
+                <td colSpan={6} style={{ textAlign: 'right' }}>Thuế GTGT</td>
+                <td style={{ textAlign: 'right' }}>{fmtMoney(vatTotal)}</td>
+                <td />
+              </tr>
               <tr>
                 <td colSpan={6} style={{ textAlign: 'right', fontWeight: 700 }}>Tổng cộng ({pricing!.currency})</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtMoney(grandTotal)}</td>
