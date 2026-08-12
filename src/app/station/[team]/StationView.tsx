@@ -1160,7 +1160,7 @@ export default function StationView({
                               reported long names getting cut — a name sharing one truncated line
                               with its SKU had even less room to breathe). */}
                           <div className="flex-1 min-w-0">
-                            <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                            <div className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ color: '#1A4731', WebkitOverflowScrolling: 'touch' }}>{r.name}</div>
                             {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
                           </div>
                           <span className="font-black shrink-0" style={{ color: '#92600A' }}>×{r.qty}</span>
@@ -1346,7 +1346,7 @@ export default function StationView({
                             <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                               style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
                               <div className="flex-1 min-w-0">
-                                <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                                <div className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ color: '#1A4731', WebkitOverflowScrolling: 'touch' }}>{r.name}</div>
                                 {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
                               </div>
                               <span className="font-black shrink-0" style={{ color: '#2D6A4F' }}>×{r.qty}</span>
@@ -1508,7 +1508,7 @@ export default function StationView({
                               style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
                               {/* SKU on its own line — see the Production tab recap above for why. */}
                               <div className="flex-1 min-w-0">
-                                <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                                <div className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ color: '#1A4731', WebkitOverflowScrolling: 'touch' }}>{r.name}</div>
                                 {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
                               </div>
                               <span className="font-black shrink-0" style={{ color: '#2D6A4F' }}>×{r.qty}</span>

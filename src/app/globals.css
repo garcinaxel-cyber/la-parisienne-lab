@@ -31,6 +31,12 @@
 
   /* Skeleton loading placeholder */
   .skeleton { @apply animate-pulse rounded-lg bg-black/10; }
+
+  /* Hides the scrollbar on a horizontally-scrollable element while keeping it swipeable —
+     used on the recap grids' product-name cell (2026-08-12: a chef asked to be able to slide
+     right to read a name too long for its column, instead of it being cut off with "..."). */
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }
 
 @keyframes overlay-in {
