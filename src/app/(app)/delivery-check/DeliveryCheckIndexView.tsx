@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid, Printer, AlertTriangle, ChevronDown } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
@@ -11,6 +11,9 @@ type OrderRow = {
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
+// Date reassigned in Odoo after import (2026-08-12, S03188/KAFEBEAN) — see odoo-sync.ts's
+// OdooSyncResult.dateChanges doc comment for why this is flag-only, not auto-corrected.
+type DateAlert = { order_ref: string; source_type: string; old_date: string; new_date: string };
 
 const GAP_REASON_LABEL: Record<string, { vi: string; fr: string }> = {
   all_lines_excluded_sku_no_fallback_yet: { vi: 'chỉ có bao bì, chưa hỗ trợ cho sales order', fr: 'que du packaging, pas encore géré côté sales order' },
@@ -19,12 +22,13 @@ const GAP_REASON_LABEL: Record<string, { vi: string; fr: string }> = {
   unmatched_sku_or_zero_qty: { vi: 'SKU không khớp hoặc số lượng = 0', fr: 'SKU non reconnu ou quantité = 0' },
 };
 
-export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps }: {
-  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[];
+export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps, dateAlerts }: {
+  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[]; dateAlerts: DateAlert[];
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const [gapsOpen, setGapsOpen] = useState(false);
+  const [dateAlertsOpen, setDateAlertsOpen] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   // Day selection lives in the URL (?day=tomorrow), not local state — an assistant who taps
@@ -68,6 +72,28 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {dateAlerts.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #FCD34D', backgroundColor: '#FFFBEB' }}>
+          <button onClick={() => setDateAlertsOpen(o => !o)} className="w-full flex items-center gap-2.5 px-4 py-3 text-left">
+            <CalendarDays size={18} className="shrink-0" style={{ color: '#B45309' }} />
+            <span className="flex-1 text-sm font-bold" style={{ color: '#92400E' }}>
+              {dateAlerts.length} {vi ? 'đơn đã đổi ngày trên Odoo — cần sửa tay' : 'commande(s) déplacée(s) sur Odoo — à corriger à la main'}
+            </span>
+            <ChevronDown size={16} className="shrink-0 transition-transform" style={{ color: '#B45309', transform: dateAlertsOpen ? 'rotate(180deg)' : undefined }} />
+          </button>
+          {dateAlertsOpen && (
+            <div className="px-4 pb-3 space-y-1.5">
+              {dateAlerts.map(d => (
+                <div key={d.order_ref} className="text-xs flex items-center justify-between gap-2" style={{ color: '#92400E' }}>
+                  <span className="font-mono font-semibold">{d.order_ref}</span>
+                  <span className="text-right">{d.old_date} → {d.new_date}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>

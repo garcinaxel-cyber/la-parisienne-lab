@@ -86,6 +86,12 @@ export default async function DeliveryCheckPage() {
   const { data: gapRows } = await supabase.from('lab_sync_gaps')
     .select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${today},${tomorrow}),delivery_date.is.null`);
 
+  // Date reassigned in Odoo after import (see odoo-sync.ts's OdooSyncResult.dateChanges doc
+  // comment, 2026-08-12 S03188/KAFEBEAN) — flag-only banner, not filtered to today/tomorrow since
+  // the OLD (wrong) date could be any day still in the sync window.
+  const { data: dateAlertRows } = await supabase.from('lab_sync_date_alerts')
+    .select('order_ref, source_type, old_date, new_date');
+
   const ordersWithProgress = orders.map(o => {
     const key = `${o.delivery_date}||${o.order_ref}`;
     const h = headerByKey[key];
@@ -106,6 +112,7 @@ export default async function DeliveryCheckPage() {
       orders={ordersWithProgress}
       pendingCakesCount={(pendingCakes ?? []).length}
       syncGaps={gapRows ?? []}
+      dateAlerts={dateAlertRows ?? []}
     />
   );
 }

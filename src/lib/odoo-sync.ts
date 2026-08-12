@@ -30,6 +30,14 @@ export interface OdooSyncResult {
   // in Odoo is left alone (never seen a real case of "clear the note" yet, and being conservative
   // here avoids wiping a note an assistant may have hand-typed some other way).
   noteChanges: { order_ref: string; sku: string; note: string }[];
+  // Delivery-date reassignment on an already-imported order (2026-08-12, S03188/KAFEBEAN: moved
+  // from 08-13 to 08-12 in Odoo, app kept showing 08-13). Same blind spot as shop_name/note, but
+  // NOT auto-corrected here — lab_order_lines' import_id can batch several order_refs on the same
+  // day, and lab_assignments cards can be shared across those refs' breakdown[], so moving one
+  // ref's date is a real migration (split shared cards, re-home lines) rather than a column
+  // update. Axel chose to just surface it as a banner and keep doing the move by hand
+  // (2026-08-12) rather than risk a wrong auto-split. Caller persists to lab_sync_date_alerts.
+  dateChanges: { order_ref: string; source_type: string; old_date: string; new_date: string; state: string }[];
   stats: {
     sales_orders: number;
     replenishments: number;
@@ -164,6 +172,31 @@ for (const [ref, newShop] of Object.entries(odooShopByRef)) {
   const oldShop = labShopByRef[ref];
   if (newShop && oldShop && newShop !== oldShop) {
     shopNameChanges.push({ order_ref: ref, old_shop_name: oldShop, new_shop_name: newShop });
+  }
+}
+
+// Delivery-date reassignment (see OdooSyncResult.dateChanges doc comment — 2026-08-12,
+// S03188/KAFEBEAN). Flag-only, deliberately NOT auto-applied like shop_name/note above.
+const labDateByRef: Record<string, string | null> = {};
+for (const r of existingLines ?? []) {
+  if (r.order_ref && !(r.order_ref in labDateByRef)) labDateByRef[r.order_ref] = r.delivery_date ?? null;
+}
+const odooDateByRef: Record<string, { date: string; source_type: string; state: string }> = {};
+for (const o of orders) {
+  if (alreadyImported.has(o.name)) {
+    odooDateByRef[o.name] = { date: odooDateTimeToLocal(o.commitment_date).date, source_type: 'sales_order', state: o.state };
+  }
+}
+for (const r of repls) {
+  if (alreadyImported.has(r.name)) {
+    odooDateByRef[r.name] = { date: odooDateTimeToLocal(r.delivery_date).date, source_type: 'replenishment', state: r.state };
+  }
+}
+const dateChanges: OdooSyncResult['dateChanges'] = [];
+for (const [ref, odoo] of Object.entries(odooDateByRef)) {
+  const labDate = labDateByRef[ref];
+  if (labDate && odoo.date && odoo.date !== labDate) {
+    dateChanges.push({ order_ref: ref, source_type: odoo.source_type, old_date: labDate, new_date: odoo.date, state: odoo.state });
   }
 }
 
@@ -440,6 +473,7 @@ for (const r of repls) {
     syncGaps,
     shopNameChanges,
     noteChanges,
+    dateChanges,
     stats: {
       sales_orders: orders.length,
       replenishments: repls.length,

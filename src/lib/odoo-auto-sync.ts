@@ -97,6 +97,26 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       .eq('order_ref', c.order_ref).eq('product_sku', c.sku);
   }
 
+  // Delivery-date reassignment (see OdooSyncResult.dateChanges doc comment — 2026-08-12,
+  // S03188/KAFEBEAN). Flag-only, same diff-sync shape as lab_sync_gaps below — not auto-applied,
+  // Axel does the actual date move by hand once alerted (splitting a shared import/card safely
+  // isn't a blind column update).
+  {
+    const newDateRefs = new Set(result.dateChanges.map(c => c.order_ref));
+    const { data: existingDateRows } = await supabase.from('lab_sync_date_alerts').select('order_ref');
+    const staleDateRefs = (existingDateRows ?? []).map((r: any) => r.order_ref).filter((r: string) => !newDateRefs.has(r));
+    if (staleDateRefs.length) await supabase.from('lab_sync_date_alerts').delete().in('order_ref', staleDateRefs);
+    if (result.dateChanges.length) {
+      await supabase.from('lab_sync_date_alerts').upsert(
+        result.dateChanges.map(c => ({
+          order_ref: c.order_ref, source_type: c.source_type, old_date: c.old_date, new_date: c.new_date,
+          state: c.state, last_seen_at: new Date().toISOString(),
+        })),
+        { onConflict: 'order_ref' },
+      );
+    }
+  }
+
   // Coverage check (see OdooSyncResult.syncGaps doc comment): keep lab_sync_gaps in sync with
   // this tick's findings — drop refs no longer flagged (fixed, delivered, or fell out of the
   // sync window), upsert the current set. Kept as a plain diff (not a full wipe) so
