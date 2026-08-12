@@ -39,6 +39,11 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
     }
   }
   const grandTotal = subtotal + vatTotal;
+  // Shown in the "Thuế GTGT (X%)" label — computed from the actual blended rate (vatTotal/
+  // subtotal), NOT hardcoded to 8%: a mixed-rate order (confirmed live, S03135 — one tax-exempt
+  // line alongside 8%-taxed ones) will show its true blended rate here (e.g. "7.58%") instead of
+  // a misleading flat "8%", while the normal single-rate case still shows a clean "8%".
+  const vatPct = subtotal > 0 ? Math.round((vatTotal / subtotal) * 10000) / 100 : 0;
 
   async function handlePrint() {
     // Fire the "already printed" mark alongside the print dialog — doesn't block printing if
@@ -141,10 +146,7 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
                 <td />
               </tr>
               <tr>
-                {/* No single "(X%)" in the label — confirmed live that the VAT rate can differ
-                    line-to-line on the same order (a tax-exempt product mixed with 8%-taxed
-                    ones), so there isn't always one order-wide rate to print. */}
-                <td colSpan={6} style={{ textAlign: 'right' }}>Thuế GTGT</td>
+                <td colSpan={6} style={{ textAlign: 'right' }}>Thuế GTGT ({vatPct}%)</td>
                 <td style={{ textAlign: 'right' }}>{fmtMoney(vatTotal)}</td>
                 <td />
               </tr>
