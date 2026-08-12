@@ -212,6 +212,7 @@ export default function StationView({
   const [showInStock, setShowInStock] = useState(false);
   const [showRecap, setShowRecap] = useState(true);
   const [showDoneRecap, setShowDoneRecap] = useState(true);
+  const [showOrderRecap, setShowOrderRecap] = useState(true);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -1155,7 +1156,13 @@ export default function StationView({
                       ...items.filter(r => r.cat === cat).map((r, i) => (
                         <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                           style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
-                          <span className="flex-1 truncate" style={{ color: '#1A4731' }}>{r.name}{r.sku && <span className="ml-1 text-[9px] font-mono text-ink-light">{r.sku}</span>}</span>
+                          {/* SKU on its own line, not appended after the name (2026-08-12: chefs
+                              reported long names getting cut — a name sharing one truncated line
+                              with its SKU had even less room to breathe). */}
+                          <div className="flex-1 min-w-0">
+                            <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                            {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
+                          </div>
                           <span className="font-black shrink-0" style={{ color: '#92600A' }}>×{r.qty}</span>
                         </div>
                       )),
@@ -1302,6 +1309,55 @@ export default function StationView({
                   <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
                 </div>
               </div>
+
+              {/* Consolidated recap: total ORDERED per SKU (qty_to_produce, same field the row
+                  below shows per-card) — same shape as the Production/Terminé tabs' recaps
+                  (2026-08-12, chefs asked for the same style here, to consolidate total commandé
+                  the way "Total produit" already consolidates total fabriqué). */}
+              {(() => {
+                const OTHER = lang === 'vi' ? 'Khác' : 'Other';
+                const om = new Map<string, { name: string; sku: string | null; cat: string; qty: number }>();
+                for (const a of orderList) {
+                  const key = a.sku || a.product_name_vi;
+                  const cat = (lang === 'vi' ? a.category_name_vi : a.category_name_en) || a.category_name_vi || OTHER;
+                  const name = lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi);
+                  const e = om.get(key) ?? { name, sku: a.sku ?? null, cat, qty: 0 };
+                  e.qty += a.qty_to_produce;
+                  om.set(key, e);
+                }
+                const orderItems = Array.from(om.values());
+                const orderTotalUnits = orderItems.reduce((s, r) => s + r.qty, 0);
+                const orderCats = Array.from(new Set(orderItems.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
+                return (
+                  <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E0D49A' }}>
+                    <button onClick={() => setShowOrderRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#1A4731' }}>
+                      <span className="text-sm font-bold">🧾 {lang === 'vi' ? 'Tổng đặt hàng' : 'Total commandé'}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs font-bold" style={{ color: '#F0D98A' }}>{orderItems.length} · {orderTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <ChevronRight size={16} className={`transition-transform ${showOrderRecap ? 'rotate-90' : ''}`} />
+                      </span>
+                    </button>
+                    {showOrderRecap && (
+                      <div className="grid grid-cols-2 bg-white">
+                        {orderCats.flatMap(cat => [
+                          <div key={`oc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
+                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>{cat}</div>,
+                          ...orderItems.filter(r => r.cat === cat).map((r, i) => (
+                            <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
+                              style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                                {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
+                              </div>
+                              <span className="font-black shrink-0" style={{ color: '#2D6A4F' }}>×{r.qty}</span>
+                            </div>
+                          )),
+                        ])}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Order lines */}
               <div className="rounded-2xl overflow-hidden"
@@ -1450,7 +1506,11 @@ export default function StationView({
                           ...doneItems.filter(r => r.cat === cat).map((r, i) => (
                             <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                               style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
-                              <span className="flex-1 truncate" style={{ color: '#1A4731' }}>{r.name}{r.sku && <span className="ml-1 text-[9px] font-mono text-ink-light">{r.sku}</span>}</span>
+                              {/* SKU on its own line — see the Production tab recap above for why. */}
+                              <div className="flex-1 min-w-0">
+                                <div className="truncate" style={{ color: '#1A4731' }}>{r.name}</div>
+                                {r.sku && <div className="text-[9px] font-mono text-ink-light truncate">{r.sku}</div>}
+                              </div>
                               <span className="font-black shrink-0" style={{ color: '#2D6A4F' }}>×{r.qty}</span>
                             </div>
                           )),
