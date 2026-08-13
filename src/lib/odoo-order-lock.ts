@@ -45,13 +45,13 @@ function tomorrowUtcRange(): { date: string; start: string; end: string } {
 // longer matches the search, so the 23:59 run just skips it. Safe to run more than twice, or to
 // re-run by hand — idempotent by construction.
 //
-// stock.replenishment.request: confirmed via a live Odoo dev-mode screenshot (2026-08-13) that
-// the "Approve" button (method action_approve) is only VISIBLE when state == 'submitted'
-// (Invisible: state != 'submitted'). Whether action_approve also works when called directly on
-// a 'draft' record (skipping the submit step) is unverified — included here anyway since a
-// failure is isolated per-record (try/catch, same pattern as confirmDoneMOs in
-// odoo-mo-confirm.ts) and surfaces in `errors` rather than blocking the batch. Worth checking
-// the first few real runs' error lists for a pattern of draft-record failures.
+// stock.replenishment.request: two-step transition, both confirmed via live Odoo dev-mode
+// screenshots (2026-08-13) — "Submit for Approval" (method action_submit) is only visible when
+// state == 'draft', and "Approve" (method action_approve) is only visible when state ==
+// 'submitted'. A draft record therefore needs action_submit called first (draft → submitted)
+// before action_approve (submitted → approved) — calling action_approve directly on a draft
+// would have silently been the wrong method. Per-record try/catch (same pattern as
+// confirmDoneMOs in odoo-mo-confirm.ts) still isolates any failure to that one record.
 export async function lockTomorrowOrders(dryRun: boolean): Promise<OrderLockResult> {
   const { date, start, end } = tomorrowUtcRange();
   const res: OrderLockResult = {
@@ -77,11 +77,14 @@ export async function lockTomorrowOrders(dryRun: boolean): Promise<OrderLockResu
 
   const repls = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
     [[['state', 'in', ['draft', 'submitted']], ['delivery_date', '>=', start], ['delivery_date', '<', end]]],
-    { fields: ['id', 'name'] });
+    { fields: ['id', 'name', 'state'] });
   res.replenishments.eligible = repls.length;
   for (const r of repls) {
     if (dryRun) { res.replenishments.confirmed.push({ id: r.id, name: r.name }); continue; }
     try {
+      if (r.state === 'draft') {
+        await odooExecuteWrite('stock.replenishment.request', 'action_submit', [[r.id]]);
+      }
       await odooExecuteWrite('stock.replenishment.request', 'action_approve', [[r.id]]);
       res.replenishments.confirmed.push({ id: r.id, name: r.name });
     } catch (e: any) {
