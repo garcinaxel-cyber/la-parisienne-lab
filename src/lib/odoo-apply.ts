@@ -73,6 +73,26 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
       await supabase.from('lab_order_lines').update({ qty: item.new_qty }).eq('id', first.id);
       for (const r of rest) await supabase.from('lab_order_lines').update({ qty: 0 }).eq('id', r.id);
 
+      // Keep delivery-check's qty_expected in sync too — otherwise an already-materialized check
+      // line stays frozen at whatever it was when first opened, forever, even as Odoo's demand
+      // moves (2026-08-13, REP/2026/01021: assistants checked 6 SKUs — Red Naomi, Matcha Finger,
+      // Yuki, Eclair Choco, Mikan-Chan, Yoko — at stale HIGHER quantities after Odoo reduced or
+      // zeroed demand mid-morning; meanwhile a genuinely NEW sku on the same order always showed
+      // the correct current qty, because it never had a prior row to freeze — only an EXISTING
+      // check line was ever stuck). Updated even if the line was already checked: qty_checked
+      // (what was physically produced) is left untouched, only qty_expected moves — the UI's
+      // existing diff logic (qty_checked vs qty_expected) then surfaces the mismatch on its own,
+      // no separate banner needed.
+      {
+        const { data: doHeaders } = await supabase.from('lab_delivery_orders').select('id').eq('order_ref', ch.order_ref);
+        if (doHeaders?.length) {
+          await supabase.from('lab_delivery_check_lines')
+            .update({ qty_expected: item.new_qty })
+            .in('delivery_order_id', doHeaders.map(h => h.id))
+            .eq('sku', item.sku);
+        }
+      }
+
       const { data: asgRows } = await supabase
         .from('lab_assignments')
         .select('id, total_qty, qty_to_produce, qty_produced, status, breakdown, notes')

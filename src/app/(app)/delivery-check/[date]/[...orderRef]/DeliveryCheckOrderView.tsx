@@ -37,7 +37,12 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
           const isDiff = diff !== 0;
           const isChecked = checked.has(l.id);
           return (
-            <div key={l.id} className="px-4 py-2.5" style={{ backgroundColor: isChecked ? '#F0FDF4' : isDiff ? '#FEF2F2' : undefined }}>
+            <div key={l.id} className="px-4 py-2.5"
+              // Checked but the expected qty has since moved (Odoo changed it after this line
+              // was validated — see odoo-apply.ts's qty_expected sync doc comment, 2026-08-13
+              // REP/2026/01021) → amber instead of green, so the mismatch is visible at a glance
+              // instead of only in the small "(±X)" text next to the checked value.
+              style={{ backgroundColor: isChecked ? (isDiff ? '#FFFBEB' : '#F0FDF4') : isDiff ? '#FEF2F2' : undefined }}>
               <div className="grid grid-cols-12 items-center gap-2">
                 <div className="col-span-5 min-w-0">
                   <div className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
