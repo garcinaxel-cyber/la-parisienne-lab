@@ -135,14 +135,18 @@ export async function ensureDeliveryOrderChecklist(
         const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
         if (resolved) patch.product_category = resolved;
       }
-      // Same self-heal as product_category above: rows created before the note pipe existed
-      // (or before an Odoo note was added/synced) stay null forever otherwise, since the insert
-      // below only fires for SKUs not already present.
-      if (!el.note && e?.notes.size) patch.note = Array.from(e.notes).join('\n');
+      // Keeps re-syncing, not just backfilling once (2026-08-13, same freeze pattern as
+      // qty_expected: a note added to lab_order_lines AFTER this check line already existed
+      // used to never reach the screen, since this only ever fired when note was still null).
+      // note is system-derived only — nothing in the UI lets an assistant hand-edit it — so
+      // always overwriting with the current computed value is safe, nothing manual to protect.
+      const computedNote = e?.notes.size ? Array.from(e.notes).join('\n') : null;
+      if (computedNote && computedNote !== el.note) patch.note = computedNote;
     } else if (el.category === 'packaging') {
       // Packaging notes only started being synced 2026-08-11 (lab_order_packaging_lines.note) —
-      // same backfill-on-open pattern for rows created before that.
-      if (!el.note && packagingNoteBySku[el.sku]) patch.note = packagingNoteBySku[el.sku];
+      // same re-sync pattern as production notes above (was backfill-on-null-only before).
+      const computedPkgNote = packagingNoteBySku[el.sku] ?? null;
+      if (computedPkgNote && computedPkgNote !== el.note) patch.note = computedPkgNote;
     }
     if (Object.keys(patch).length) toHeal.push({ id: el.id, patch });
   }

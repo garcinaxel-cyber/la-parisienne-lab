@@ -17,6 +17,12 @@ const NAV = [
   { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders' },
   { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
   { href: '/production-history', icon: FileSpreadsheet, labelVi: 'Lịch sử sản xuất', labelEn: 'Production export', adminOnly: true },
+  // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
+  // assistants need to open a chef's station view same as a chef would, e.g. to check what's
+  // showing on their tablet). The page itself has no role gate of its own, just this sidebar
+  // entry, so this alone is enough to unlock it — no adminOnly, visible to admin/lab_manager/
+  // assistant (everyone who reaches this sidebar; chef/worker never do, they're on /station/me).
+  { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
 ];
 const ADMIN_NAV = [
   { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },
@@ -25,7 +31,6 @@ const ADMIN_NAV = [
   { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true },
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const },
-  { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
   // Control tool over everyone else's work (Odoo-vs-app reconciliation), not an operational
   // page — admin only, deliberately excluded from lab_manager per Axel's explicit request.
   { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Đối chiếu Odoo', labelEn: 'Reconciliation', adminOnly: true },

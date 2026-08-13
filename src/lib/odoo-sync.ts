@@ -214,14 +214,23 @@ const addOdooQty = (ref: string, sku: string, qty: number, name: string) => {
 // existing pipeline only ever WRITES lab_order_lines.note at initial insert time [import-persist.ts]
 // or leaves it untouched on a qty-only change [odoo-apply.ts], so an Odoo note added later never
 // reached the app). Only per-(ref,sku), matching how it's stored on lab_order_lines.
+// Accumulates rather than overwrites (2026-08-13, REP/2026/01019: a second bergamot line was
+// added with its own note — a plain `= n` assignment would silently drop an earlier line's note
+// on the same SKU if it had one too; now both survive, joined, same pattern delivery-check.ts
+// already uses on its own side of this same data).
 const odooNoteByRefSku: Record<string, string> = {};
+const addOdooNote = (key: string, n: string) => {
+  if (!n) return;
+  const cur = odooNoteByRefSku[key];
+  odooNoteByRefSku[key] = cur ? (cur.includes(n) ? cur : `${cur} / ${n}`) : n;
+};
 for (const l of soLines) {
   const order = orderById[l.order_id?.[0]];
   const prod = skuByProductId[l.product_id?.[0]];
   if (order && prod?.sku && alreadyImported.has(order.name)) {
     addOdooQty(order.name, prod.sku, Math.round(Number(l.product_uom_qty ?? 0)), prod.name);
     const n = [extractNote(l.name), attachedNoteByLineId[l.id]].filter(Boolean).join(' / ');
-    if (n) odooNoteByRefSku[`${order.name}||${prod.sku}`] = n;
+    addOdooNote(`${order.name}||${prod.sku}`, n);
   }
 }
 for (const l of replLines) {
@@ -230,20 +239,34 @@ for (const l of replLines) {
   if (req && prod?.sku && alreadyImported.has(req.name)) {
     addOdooQty(req.name, prod.sku, Math.round(Number(l.quantity_requested ?? 0)), prod.name);
     const n = (typeof l.note === 'string' && l.note.trim()) ? l.note.trim() : '';
-    if (n) odooNoteByRefSku[`${req.name}||${prod.sku}`] = n;
+    addOdooNote(`${req.name}||${prod.sku}`, n);
   }
 }
 const labNoteByRefSku: Record<string, string | null> = {};
+// Lab's current qty per (ref,sku), used only to tag a changed note with the qty delta it
+// arrived alongside, below — a small local aggregate rather than reusing the later
+// labQtyByRefSku block (built further down, for the qty-change list) to avoid reordering
+// unrelated code.
+const labQtyByRefSkuForNote: Record<string, number> = {};
 for (const r of existingLines ?? []) {
   if (!r.order_ref || !r.product_sku) continue;
   const k = `${r.order_ref}||${r.product_sku}`;
   if (!(k in labNoteByRefSku)) labNoteByRefSku[k] = (r as any).note ?? null;
+  labQtyByRefSkuForNote[k] = (labQtyByRefSkuForNote[k] ?? 0) + (r.qty ?? 0);
 }
 const noteChanges: OdooSyncResult['noteChanges'] = [];
 for (const [k, odooNote] of Object.entries(odooNoteByRefSku)) {
   const [order_ref, sku] = k.split('||');
   const labNote = labNoteByRefSku[k];
-  if (odooNote !== (labNote ?? '')) noteChanges.push({ order_ref, sku, note: odooNote });
+  if (odooNote === (labNote ?? '')) continue;
+  // Tag with the qty delta the note arrived alongside (2026-08-13, Axel: "comment la delivery
+  // check identifie que la note est pour cette ligne et non toute la ligne consolidée" — a note
+  // added on a duplicate SKU line otherwise reads as if it applies to the whole consolidated
+  // quantity. This isn't a real per-line link — the data model has none — just enough context
+  // that "(+1) elle avait une quantité en plus" reads as about the increment, not the total).
+  const delta = (odooQtyByRefSku[k]?.qty ?? 0) - (labQtyByRefSkuForNote[k] ?? 0);
+  const tagged = delta !== 0 ? `(${delta > 0 ? '+' : ''}${delta}) ${odooNote}` : odooNote;
+  noteChanges.push({ order_ref, sku, note: tagged });
 }
 // Refs imported into the lab but no longer returned by Odoo (cancelled, or state left the
 // imported scope) — check their actual state explicitly
