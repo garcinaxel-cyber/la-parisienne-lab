@@ -21,6 +21,8 @@ export function middleware(req: NextRequest) {
   // above): any new cron endpoint MUST be exempted here, or pg_cron's call gets silently
   // redirected to /login (200 OK, no error) and the job never actually runs.
   if (pathname.startsWith('/api/odoo/reconciliation-check')) return NextResponse.next();
+  // Same treatment — J+1 order auto-lock cron (2026-08-13), called twice daily by pg_cron.
+  if (pathname.startsWith('/api/odoo/lock-orders')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
