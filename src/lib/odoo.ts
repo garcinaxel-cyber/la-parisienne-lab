@@ -118,6 +118,18 @@ export function labLocalToOdooUtc(date: string, time?: string | null): string {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())} ${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}:00`;
 }
 
+/** "MM-DD HH:mm" in lab-local (Vietnam) time for the current moment — used in the
+ *  per-client "changed at" tag on a production card's breakdown (2026-08-13, Axel: the
+ *  audit-trail stamp was being written in raw server UTC, 7h behind what a chef in Hanoi
+ *  actually reads on the clock). */
+export function nowLabStamp(): string {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: LAB_TZ, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const p = Object.fromEntries(fmt.formatToParts(new Date()).map(x => [x.type, x.value]));
+  return `${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
 /** UTC datetime string for "today 00:00 in lab timezone" — used as Odoo query threshold */
 export function labTodayUtcThreshold(): string {
   const now = new Date();

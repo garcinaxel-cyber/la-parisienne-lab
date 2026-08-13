@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
+import { nowLabStamp } from '@/lib/odoo';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -119,12 +120,15 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         // real total of 3 against genuine Odoo demand of 2 — chef physically over-produced by 1).
         const prevBreakdownQty = bIdx >= 0 ? (breakdown[bIdx].qty ?? 0) : 0;
         const breakdownQty = Math.max(0, item.new_qty - (coverage.coveredByRefSku.get(`${ch.order_ref}||${item.sku}||${first.delivery_date}`) ?? 0));
-        if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: breakdownQty };
         const cardDelta = breakdownQty - prevBreakdownQty;
-        const stamp = new Date().toISOString().slice(5, 16).replace('T', ' ');
-        const note = ch.cancelled
-          ? `⚠ ${ch.order_ref} annulée dans Odoo (−${oldTotal})`
-          : `Odoo ${stamp}: ${ch.order_ref} ${delta > 0 ? '+' : ''}${delta}`;
+        // Tag the change directly on the breakdown ROW for this client instead of appending a
+        // flat line to the card's free-text notes (2026-08-13, Axel: "je veux que ça apparaisse
+        // à côté du client correspondant... au lieu de chercher quel client est la REP..." — the
+        // old approach dumped every change into one running list at the bottom of the card, so
+        // a chef had to cross-reference an order_ref to figure out which client's line it was
+        // about). changed_at uses lab-local (Vietnam) time, not the server's UTC clock — same
+        // fix as the old stamp, which showed e.g. "07:00" for what was actually 14h00 in Hanoi.
+        if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: breakdownQty, changed_at: nowLabStamp(), changed_delta: cardDelta };
         const newTotal = Math.max(0, (asg.total_qty ?? 0) + cardDelta);
         const update: any = {
           total_qty: newTotal,
@@ -133,7 +137,6 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
           // Re-added later (total back above 0) → un-cancel.
           cancelled: newTotal === 0,
           breakdown,
-          notes: asg.notes ? `${asg.notes}\n${note}` : note,
           updated_at: new Date().toISOString(),
         };
         // Re-open a card already marked 'done' if the modification now asks for more than what
@@ -156,7 +159,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         if (cardQty > 0) {
           const resolved = await resolveSkuTeam(supabase, item.sku);
           if (resolved.team && TEAMS.includes(resolved.team)) {
-            const bEntry = { shop_name: first.shop_name, order_ref: ch.order_ref, qty: cardQty, delivery_time: first.delivery_time ?? null };
+            const bEntry = { shop_name: first.shop_name, order_ref: ch.order_ref, qty: cardQty, delivery_time: first.delivery_time ?? null, changed_at: nowLabStamp(), changed_delta: cardQty };
             const upsertErr = await upsertProductionCard(supabase, {
               importId: first.import_id, team: resolved.team, ficheId: resolved.ficheId, variantId: resolved.variantId,
               name: first.product_name_vi, nameEn: resolved.nameEn, image: resolved.image, variantLabel: resolved.variantLabel,
@@ -190,8 +193,7 @@ async function cancelMatchedManualCake(supabase: SupabaseClient, orderRef: strin
     }).eq('id', mc.id);
     if (mc.assignment_id) {
       const { data: asg } = await supabase.from('lab_assignments').select('notes').eq('id', mc.assignment_id).maybeSingle();
-      const stamp = now.slice(5, 16).replace('T', ' ');
-      const note = `⚠ Commande Odoo annulée (détecté au sync ${stamp}) — carte annulée automatiquement`;
+      const note = `⚠ Commande Odoo annulée (détecté au sync ${nowLabStamp()}) — carte annulée automatiquement`;
       await supabase.from('lab_assignments').update({
         cancelled: true, total_qty: 0, qty_to_produce: 0,
         notes: asg?.notes ? `${asg.notes}\n${note}` : note,
@@ -301,7 +303,7 @@ async function createLineAndCard(
     const coverage = await coverageFor(ctx.delivery_date);
     const cardQty = excessQty(coverage, orderRef, item.sku, ctx.delivery_date, item.new_qty, ctx.shop_name);
     if (cardQty > 0) {
-      const bEntry = { shop_name: ctx.shop_name, order_ref: orderRef, qty: cardQty, delivery_time: ctx.delivery_time ?? null };
+      const bEntry = { shop_name: ctx.shop_name, order_ref: orderRef, qty: cardQty, delivery_time: ctx.delivery_time ?? null, changed_at: nowLabStamp(), changed_delta: cardQty };
       const cardErr = await upsertProductionCard(supabase, {
         importId: ctx.import_id, team, ficheId, variantId, name, nameEn, image, variantLabel, qty: cardQty, bEntry,
       });

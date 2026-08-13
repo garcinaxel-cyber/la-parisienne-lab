@@ -34,7 +34,15 @@ function SkeletonRow() {
   );
 }
 
-type BreakdownItem = { shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null; note?: string | null };
+// changed_at/changed_delta: set by odoo-apply.ts whenever Odoo moves this client's demand after
+// the card already existed — lab-local "MM-DD HH:mm" stamp + the delta applied, shown inline next
+// to the client instead of a flat audit-trail line at the bottom of the card (2026-08-13, Axel:
+// "je veux que ça apparaisse à côté du client correspondant... au lieu de chercher quel client
+// est la REP...").
+type BreakdownItem = {
+  shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null; note?: string | null;
+  changed_at?: string; changed_delta?: number;
+};
 
 type Assignment = {
   id: string;
@@ -1423,19 +1431,26 @@ export default function StationView({
                       {breakdown.length > 0 && (
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
-                            <div key={bi} className="flex items-center justify-between px-5 py-1.5 text-sm"
+                            <div key={bi} className="px-5 py-1.5 text-sm"
                               style={{ backgroundColor: bi % 2 === 0 ? '#FFFDF0' : '#FFFAEE' }}>
-                              <div className="flex items-center gap-2 text-ink-light">
-                                <Store size={11} className="shrink-0" />
-                                <span>{b.shop_name}</span>
-                                {b.delivery_time && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                                    style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
-                                    ⏰ {b.delivery_time.slice(0, 5)}
-                                  </span>
-                                )}
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-ink-light">
+                                  <Store size={11} className="shrink-0" />
+                                  <span>{b.shop_name}</span>
+                                  {b.delivery_time && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                      style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
+                                      ⏰ {b.delivery_time.slice(0, 5)}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-bold text-sm" style={{ color: '#1A4731' }}>x{b.qty}</span>
                               </div>
-                              <span className="font-bold text-sm" style={{ color: '#1A4731' }}>x{b.qty}</span>
+                              {b.changed_at && (
+                                <div className="text-[10px] font-semibold mt-0.5" style={{ color: '#92600A' }}>
+                                  🔄 {lang === 'vi' ? 'Odoo sửa' : 'Modifié'} {b.changed_at} ({(b.changed_delta ?? 0) > 0 ? '+' : ''}{b.changed_delta})
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -2716,6 +2731,11 @@ function ProductionCard({
               {b.note && (
                 <div className="text-xs font-semibold mt-1 whitespace-pre-line" style={{ color: '#B45309' }}>
                   📝 {b.note}
+                </div>
+              )}
+              {b.changed_at && (
+                <div className="text-[10px] font-semibold mt-1" style={{ color: '#92600A' }}>
+                  🔄 {lang === 'vi' ? 'Odoo sửa' : 'Modifié'} {b.changed_at} ({(b.changed_delta ?? 0) > 0 ? '+' : ''}{b.changed_delta})
                 </div>
               )}
             </div>
