@@ -10,6 +10,17 @@ async function requireProfile(supabase: ReturnType<typeof createClient>) {
   return { session, profile };
 }
 
+// A weighed raw material (e.g. "Mango" 152-MH.210, tracked in kg) never matches its nominal
+// expected qty exactly. There's no unit-of-measure field on the line (Odoo qty is rounded to a
+// whole number on import), so a non-integer typed value is treated as the weighed-item signal
+// instead — nobody mistypes a count-based product ("4 bánh") as "3.87" by accident. Mirrors the
+// client-side gate in DeliveryCheckOrderView.tsx exactly; must stay in sync with it (2026-08-14
+// bug: fixing only the client button left this server gate still rejecting the save with
+// "Reason required", so OK appeared to do nothing).
+function isWeighedEntry(qty: number): boolean {
+  return Number.isFinite(qty) && !Number.isInteger(qty);
+}
+
 export async function checkLineAction(
   lineId: string, qtyChecked: number, reason: string | null, note: string | null,
 ): Promise<{ ok?: boolean; error?: string }> {
@@ -21,7 +32,7 @@ export async function checkLineAction(
     .select('qty_expected, delivery_order_id').eq('id', lineId).single();
   if (!line) return { error: 'Line not found' };
   const isDiff = qtyChecked !== line.qty_expected;
-  if (isDiff && !reason) return { error: 'Reason required' };
+  if (isDiff && !isWeighedEntry(qtyChecked) && !reason) return { error: 'Reason required' };
 
   const { error } = await supabase.from('lab_delivery_check_lines').update({
     qty_checked: qtyChecked,
