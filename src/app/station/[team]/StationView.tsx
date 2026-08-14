@@ -1437,6 +1437,7 @@ export default function StationView({
                                 <div className="flex items-center gap-2 text-ink-light">
                                   <Store size={11} className="shrink-0" />
                                   <span>{b.shop_name}</span>
+                                  {b.order_ref && <span className="text-[10px] font-mono">{b.order_ref}</span>}
                                   {b.delivery_time && (
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                                       style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
@@ -2719,6 +2720,10 @@ function ProductionCard({
               <div className="flex items-center justify-between">
                 <span className="text-ink font-medium flex items-center gap-1.5">
                   {b.shop_name}
+                  {/* Order ref — same shop can appear twice on one card (e.g. two separate
+                      LAB orders), which used to be indistinguishable at a glance (Axel,
+                      2026-08-14). */}
+                  {b.order_ref && <span className="text-[10px] font-mono text-ink-light">{b.order_ref}</span>}
                   {b.delivery_time && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                       style={{ backgroundColor: '#FFF4CC', color: '#C9A84C' }}>
@@ -2902,7 +2907,10 @@ function TermineCard({
             <div key={i} className="px-4 py-1.5 text-xs text-ink-light"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
               <div className="flex items-center justify-between">
-                <span>{b.shop_name}</span>
+                <span className="flex items-center gap-1.5">
+                  {b.shop_name}
+                  {b.order_ref && <span className="text-[10px] font-mono">{b.order_ref}</span>}
+                </span>
                 <span className="font-bold">x{b.qty}</span>
               </div>
               {b.note && (
