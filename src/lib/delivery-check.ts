@@ -120,6 +120,18 @@ export async function ensureDeliveryOrderChecklist(
   const categoryByFiche: Record<string, string> = {};
   for (const f of ficheRows ?? []) if (f.category) categoryByFiche[f.id] = f.category;
 
+  // A SKU permanently marked "not produced" (packaging, drinks, merchandise like a branded
+  // spoon…) still gets a raw lab_order_lines row for the record/invoice, but was landing in
+  // "Produits fabriqués" here regardless — this file only ever branched on which TABLE a line
+  // came from (lab_order_lines vs lab_order_packaging_lines), never on lab_excluded_skus (Axel,
+  // 2026-08-14, REP/2026/01039 "Thìa in logo" ITEM-Y08Q). Now routed to the packaging bucket
+  // like any other non-produced item.
+  const producibleSkus = Array.from(new Set(Object.keys(bySku)));
+  const { data: excludedRows } = producibleSkus.length
+    ? await supabase.from('lab_excluded_skus').select('sku').in('sku', producibleSkus)
+    : { data: [] as any[] };
+  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+
   // Self-heal: rows created before this resolution logic existed (or before their fiche had
   // a category set) got stuck with product_category = null forever, since the insert below
   // only fires for SKUs not already present. Backfill any resolvable ones on every open
@@ -128,12 +140,17 @@ export async function ensureDeliveryOrderChecklist(
   const packagingNoteBySku: Record<string, string> = {};
   for (const p of packaging) if (p.note) packagingNoteBySku[p.sku] = p.note;
 
-  const toHeal: { id: string; patch: { product_category?: string; note?: string } }[] = [];
+  const toHeal: { id: string; patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null } }[] = [];
   for (const el of existingLines ?? []) {
-    const patch: { product_category?: string; note?: string } = {};
+    const patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null } = {};
     if (el.category === 'production') {
       const e = bySku[el.sku];
-      if (!el.product_category) {
+      // Re-check on every open, not just at creation — a SKU can get excluded AFTER its check
+      // line already exists (or vice versa: un-excluded, but that side self-corrects for free
+      // since a resolvable fiche's own product_category patch already runs below).
+      if (el.sku && excludedSkuSet.has(el.sku)) {
+        patch.category = 'packaging'; patch.product_category = 'Packaging'; patch.team = null;
+      } else if (!el.product_category) {
         const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
         if (resolved) patch.product_category = resolved;
       }
@@ -162,11 +179,13 @@ export async function ensureDeliveryOrderChecklist(
   for (const [sku, e] of Object.entries(bySku)) {
     const key = `production||${sku}`;
     if (existingKeys.has(key)) continue;
+    const isExcluded = excludedSkuSet.has(sku);
     toInsert.push({
       delivery_order_id: header.id, delivery_date: date, sku,
       product_name_vi: e.name_vi, product_name_en: e.name_en,
-      category: 'production', product_category: (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
-      team: e.team, qty_expected: e.qty,
+      category: isExcluded ? 'packaging' : 'production',
+      product_category: isExcluded ? 'Packaging' : (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
+      team: isExcluded ? null : e.team, qty_expected: e.qty,
       note: e.notes.size ? Array.from(e.notes).join('\n') : null,
     });
   }
