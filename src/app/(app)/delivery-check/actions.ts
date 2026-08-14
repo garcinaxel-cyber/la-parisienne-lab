@@ -86,6 +86,30 @@ export async function validateOrderAction(deliveryOrderId: string): Promise<{ ok
   return { ok: true };
 }
 
+// Re-open a validated order so a line can be fixed and the order re-validated (Axel,
+// 2026-08-14 — assistants had no way back once "Valider" was clicked, short of a DB edit).
+// Does NOT clear qty_checked on any line — the previous values stay pre-filled, ready to tweak,
+// matching the actual use case (fix one wrong line, not start the whole check over). Same role
+// gate as every other delivery-check action; tracked (unlocked_by/at) the same way
+// validated_by/printed_by already are on this table.
+export async function unlockOrderAction(deliveryOrderId: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+
+  const { error } = await supabase.from('lab_delivery_orders').update({
+    status: 'in_progress',
+    unlocked_by: auth.session.user.id,
+    unlocked_by_name: auth.profile?.full_name ?? null,
+    unlocked_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', deliveryOrderId);
+  if (error) return { error: error.message };
+  revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
+  return { ok: true };
+}
+
 // Called when someone actually clicks "Imprimer" on the print page (not just opens it) — drives
 // the "already printed" color-code Axel asked for (2026-08-11) on the index + order views.
 export async function markPrintedAction(deliveryOrderId: string): Promise<{ ok?: boolean; error?: string }> {

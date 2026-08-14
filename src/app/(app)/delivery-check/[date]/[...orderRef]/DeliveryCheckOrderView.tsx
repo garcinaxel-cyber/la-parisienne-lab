@@ -142,6 +142,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
   const [validating, setValidating] = useState(false);
   const [validated, setValidated] = useState(header.status === 'validated');
   const [validateError, setValidateError] = useState<string | null>(null);
+  const [unlocking, setUnlocking] = useState(false);
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -162,6 +163,14 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
     const res = await validateOrderAction(header.id);
     setValidating(false);
     if (res.ok) setValidated(true); else setValidateError(res.error ?? 'Error');
+  }
+
+  async function unlock() {
+    setUnlocking(true);
+    const { unlockOrderAction } = await import('../../actions');
+    const res = await unlockOrderAction(header.id);
+    setUnlocking(false);
+    if (res.ok) setValidated(false);
   }
 
   const production = lines.filter(l => l.category === 'production');
@@ -197,6 +206,14 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
               style={{ backgroundColor: '#1f2937' }}>
               <Printer size={15} /> {header.source_type === 'replenishment' ? (vi ? 'In phiếu LAB/OUT' : 'Imprimer LAB/OUT') : (vi ? 'In hóa đơn bán hàng' : 'Imprimer hóa đơn bán hàng')}
             </Link>
+            {/* Re-open a validated order to fix a line and re-validate (Axel, 2026-08-14) —
+                doesn't clear any checked qty, just unlocks editing again. */}
+            <button onClick={unlock} disabled={unlocking}
+              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 disabled:opacity-50"
+              style={{ border: '1px solid #D1D5DB', color: '#374151' }}
+              title={vi ? 'Mở lại để sửa' : 'Rouvrir pour corriger'}>
+              <Pencil size={14} /> {unlocking ? '…' : (vi ? 'Sửa lại' : 'Modifier')}
+            </button>
           </div>
         ) : (
           <span className="text-sm font-semibold rounded-full px-3 py-1.5"

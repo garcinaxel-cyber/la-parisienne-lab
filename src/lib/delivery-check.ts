@@ -45,6 +45,8 @@ export interface DeliveryOrderHeader {
   printed_at: string | null;
   printed_by_name: string | null;
   print_count: number;
+  unlocked_at: string | null;
+  unlocked_by_name: string | null;
 }
 
 // Packaging lines for one order_ref — plain Supabase read from the cron-synced table, no
