@@ -213,7 +213,9 @@ export async function generateMissingCardsAction(
       groups.set(key, g);
     }
     g.total += gap;
-    g.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: gap, delivery_time: l.delivery_time ?? null });
+    // sku carried through so the post-insert backfill below can match each breakdown entry
+    // back to its exact lab_order_lines row (order_ref + sku).
+    g.breakdown.push({ shop_name: l.shop_name, order_ref: l.order_ref, qty: gap, delivery_time: l.delivery_time ?? null, sku: l.product_sku });
   }
 
   const toInsert = Array.from(groups.values()).filter(g => g.total > 0).map((g, idx) => ({
@@ -224,8 +226,24 @@ export async function generateMissingCardsAction(
   }));
   if (!toInsert.length) return { created: 0 };
 
-  const { error } = await supabase.from('lab_assignments').insert(toInsert);
+  const { data: inserted, error } = await supabase.from('lab_assignments').insert(toInsert).select('id, team, breakdown');
   if (error) return { error: error.message };
+
+  // Backfill lab_order_lines.team/assignment_id for the lines this just covered — without this,
+  // the Orders page keeps showing "Not assigned" forever even though a real card now exists
+  // (2026-08-14 bug: unlike the normal Odoo-sync import flow in import-persist.ts, this action
+  // never wrote these fields back, so the card was correctly created and visible in the
+  // station tab, but the Orders/Commandes page stayed stuck on the pre-fix state). Only ever
+  // touches rows that don't already have an assignment_id — purely additive, never overwrites
+  // an existing (possibly different) card link.
+  for (const row of inserted ?? []) {
+    for (const b of Array.isArray(row.breakdown) ? row.breakdown : []) {
+      if (!b?.order_ref || !b?.sku) continue;
+      await supabase.from('lab_order_lines')
+        .update({ team: row.team, assignment_id: row.id })
+        .eq('order_ref', b.order_ref).eq('product_sku', b.sku).is('assignment_id', null);
+    }
+  }
 
   revalidatePath(`/orders/${date}`);
   return { created: toInsert.length };
