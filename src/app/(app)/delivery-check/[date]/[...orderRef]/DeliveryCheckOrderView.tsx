@@ -8,6 +8,26 @@ import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons'
 
 type LineState = { qty: string; reason: string; note: string };
 
+// A weighed raw material (e.g. "Mango" 152-MH.210, sold/consumed in kg) never matches its
+// nominal expected qty exactly — the real weight is whatever the scale reads. There's no
+// unit-of-measure field on CheckLine to flag this explicitly (Odoo qty is rounded to a whole
+// number on import — see odoo-sync.ts Math.round(product_uom_qty) — so qty_expected is always
+// an integer placeholder like "1"), so a typed DECIMAL value is treated as the signal instead:
+// nobody fat-fingers a count-based product ("4 bánh") as "3.87" by accident, so any non-integer
+// entry is assumed to be an actual measured weight and skips the mandatory reason (2026-08-14,
+// Axel — assistants couldn't press OK after typing the real weight because the reason
+// dropdown, required for ANY nonzero diff, was hidden below the iPad keyboard).
+function isWeighedEntry(qty: number): boolean {
+  return Number.isFinite(qty) && !Number.isInteger(qty);
+}
+
+// Raw float subtraction (0.896 - 1) prints as "-0.10399999999999998" — round to a sane
+// precision (grams) before display.
+function fmtDiff(diff: number): string {
+  const r = Math.round(diff * 1000) / 1000;
+  return String(r);
+}
+
 // Hoisted to module scope on purpose (2026-08-11 bug: assistants could only type one letter at
 // a time into the reason note, losing focus after every keystroke). It used to be declared
 // INSIDE DeliveryCheckOrderView's render body — React saw a brand-new function/component
@@ -35,6 +55,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
           const qty = Number(st.qty);
           const diff = qty - l.qty_expected;
           const isDiff = diff !== 0;
+          const needsReason = isDiff && !isWeighedEntry(qty);
           const isChecked = checked.has(l.id);
           return (
             <div key={l.id} className="px-4 py-2.5"
@@ -58,7 +79,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                   {isChecked ? (
                     <>
                       <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
-                        <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
+                        <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{fmtDiff(diff)})</span>}
                       </span>
                       {!validated && (
                         <button onClick={() => setChecked(p => { const n = new Set(p); n.delete(l.id); return n; })}
@@ -73,8 +94,8 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                       <input type="number" value={st.qty} onChange={e => upd(l.id, { qty: e.target.value })}
                         className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
                         style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
-                      {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{diff}</span>}
-                      <button onClick={() => checkLine(l)} disabled={savingLine === l.id || (isDiff && !st.reason)}
+                      {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{fmtDiff(diff)}</span>}
+                      <button onClick={() => checkLine(l)} disabled={savingLine === l.id || (needsReason && !st.reason)}
                         className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
                         style={{ backgroundColor: '#16A34A' }}>
                         {savingLine === l.id ? '…' : (vi ? 'OK' : 'OK')}
@@ -83,7 +104,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                   )}
                 </div>
               </div>
-              {isDiff && !isChecked && (
+              {needsReason && !isChecked && (
                 <div className="mt-2 flex flex-col sm:flex-row gap-2">
                   <select value={st.reason} onChange={e => upd(l.id, { reason: e.target.value })}
                     className="rounded-lg px-2 py-1.5 text-sm sm:w-56"
@@ -127,7 +148,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
 
   async function checkLine(l: CheckLine) {
     const st = state[l.id]; const qty = Number(st?.qty);
-    if (qty !== l.qty_expected && !st?.reason) return;
+    if (qty !== l.qty_expected && !isWeighedEntry(qty) && !st?.reason) return;
     setSavingLine(l.id);
     const { checkLineAction } = await import('../../actions');
     const res = await checkLineAction(l.id, qty, st?.reason || null, st?.note || null);
