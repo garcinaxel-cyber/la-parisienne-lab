@@ -200,7 +200,14 @@ export async function ensureDeliveryOrderChecklist(
     });
   }
   if (toInsert.length) {
-    const { error: insertError } = await supabase.from('lab_delivery_check_lines').insert(toInsert);
+    // upsert + ignoreDuplicates, not insert — two concurrent page loads (e.g. two tabs open on
+    // the category view) both running this same read-then-insert sequence could each decide a
+    // line was missing and both insert it, with nothing stopping the race (2026-08-14 bug: 86
+    // duplicate rows found for one order+SKU). The lab_v39 unique index on
+    // (delivery_order_id, category, sku) makes this the DB-enforced backstop, not just this
+    // check — ignoreDuplicates means the loser of the race silently no-ops instead of erroring.
+    const { error: insertError } = await supabase.from('lab_delivery_check_lines')
+      .upsert(toInsert, { onConflict: 'delivery_order_id,category,sku', ignoreDuplicates: true });
     if (insertError) throw insertError;
   }
 
@@ -242,7 +249,11 @@ export async function ensureUnreconciledChecklist(
     category: 'production', qty_expected: c.qty,
   }));
   if (toInsert.length) {
-    const { error: insertError } = await supabase.from('lab_delivery_check_lines').insert(toInsert);
+    // Same race-condition fix as ensureDeliveryOrderChecklist above — upsert + ignoreDuplicates
+    // against the lab_v39 unique index on manual_cake_id, instead of a plain insert that two
+    // concurrent calls could both perform for the same cake.
+    const { error: insertError } = await supabase.from('lab_delivery_check_lines')
+      .upsert(toInsert, { onConflict: 'manual_cake_id', ignoreDuplicates: true });
     if (insertError) throw insertError;
   }
 
