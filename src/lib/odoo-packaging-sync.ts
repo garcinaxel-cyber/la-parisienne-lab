@@ -124,7 +124,11 @@ async function mapExcludedLines(
     const ref = idByRef[l[linkField]?.[0]];
     const info = bySku[l.product_id?.[0]];
     if (!ref || !info?.sku || !excludedSet.has(info.sku)) continue;
-    const qty = Math.round(Number(l[qtyField] ?? 0));
+    // NOT Math.round — a raw material requested by weight/fraction (e.g. Mascarpone 500g
+    // requested as 0.2, REP/2026/01043) used to round straight to 0 and get silently dropped by
+    // the guard below (2026-08-14). Packaging/matiere qty is stored as numeric (lab_v41)
+    // specifically so a fractional request survives intact.
+    const qty = Number(l[qtyField] ?? 0);
     if (!qty) continue;
     const meta = orderByRef[ref];
     if (!meta) continue;
