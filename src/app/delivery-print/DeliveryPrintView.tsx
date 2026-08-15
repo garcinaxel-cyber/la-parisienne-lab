@@ -21,6 +21,11 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
   const vi = lang === 'vi';
   const isSo = header.source_type === 'sales_order';
   const showPricing = isSo && !!pricing && Object.keys(pricing.bySku).length > 0;
+  // hidden_from_print (2026-08-14, Axel) — a checked line an assistant deliberately hid (e.g. a
+  // wrong SKU checked to 0 after a mistake) is filtered out everywhere on this printout,
+  // including the subtotal/tax sums below — a hidden row but a total that still silently
+  // accounts for it would be its own source of client confusion.
+  const printLines = lines.filter(l => !l.hidden_from_print);
 
   const fmtMoney = (n: number) => new Intl.NumberFormat('vi-VN').format(Math.round(n));
 
@@ -30,7 +35,7 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
   // tax-exempt product mixed with 8%-taxed ones), never a single order-wide percentage.
   let subtotal = 0, vatTotal = 0;
   if (showPricing) {
-    for (const l of lines) {
+    for (const l of printLines) {
       const p = pricing!.bySku[l.sku ?? ''];
       if (!p) continue;
       const untaxed = p.unitPrice * (l.qty_checked ?? l.qty_expected);
@@ -121,7 +126,7 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
             </tr>
           </thead>
           <tbody>
-            {lines.map((l, i) => {
+            {printLines.map((l, i) => {
               const delivered = l.qty_checked ?? l.qty_expected;
               const unit = showPricing ? pricing!.bySku[l.sku ?? '']?.unitPrice : undefined;
               return (

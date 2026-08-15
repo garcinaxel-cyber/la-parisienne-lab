@@ -86,6 +86,31 @@ export async function validateOrderAction(deliveryOrderId: string): Promise<{ ok
   return { ok: true };
 }
 
+// Hide/show a checked line on the printed delivery slip without touching its tracked data —
+// e.g. a wrong SKU an assistant checked to 0 after a mistake, where the real item was re-added
+// on Odoo as a separate line; internal tracking keeps the ×0 record, but the client-facing print
+// shouldn't show it (Axel, 2026-08-14).
+export async function toggleHideFromPrintAction(lineId: string, hidden: boolean): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+
+  const { data: line } = await supabase.from('lab_delivery_check_lines')
+    .select('delivery_order_id').eq('id', lineId).single();
+  if (!line) return { error: 'Line not found' };
+
+  const { error } = await supabase.from('lab_delivery_check_lines')
+    .update({ hidden_from_print: hidden, updated_at: new Date().toISOString() }).eq('id', lineId);
+  if (error) return { error: error.message };
+
+  const { data: header } = await supabase.from('lab_delivery_orders')
+    .select('delivery_date, order_ref').eq('id', line.delivery_order_id).maybeSingle();
+  if (header) revalidatePath(`/delivery-check/${header.delivery_date}/${header.order_ref}`);
+  revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
+  return { ok: true };
+}
+
 // Re-open a validated order so a line can be fixed and the order re-validated (Axel,
 // 2026-08-14 — assistants had no way back once "Valider" was clicked, short of a DB edit).
 // Does NOT clear qty_checked on any line — the previous values stay pre-filled, ready to tweak,

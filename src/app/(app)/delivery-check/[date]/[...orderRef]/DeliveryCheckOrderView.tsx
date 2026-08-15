@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
@@ -34,12 +34,14 @@ function fmtDiff(diff: number): string {
 // identity on every setState-triggered re-render (i.e. every keystroke via upd()), so it
 // unmounted and remounted this entire subtree each time, including whatever input had focus.
 // Needs everything it used to read from closure passed in as props instead.
-function Section({ title, icon: Icon, items, state, checked, savingLine, validated, vi, upd, checkLine, setChecked }: {
+function Section({ title, icon: Icon, items, state, checked, savingLine, validated, vi, upd, checkLine, setChecked, hiddenFromPrint, toggleHidden }: {
   title: string; icon: any; items: CheckLine[];
   state: Record<string, LineState>; checked: Set<string>; savingLine: string | null; validated: boolean; vi: boolean;
   upd: (id: string, patch: Partial<LineState>) => void;
   checkLine: (l: CheckLine) => void;
   setChecked: (fn: (p: Set<string>) => Set<string>) => void;
+  hiddenFromPrint: Record<string, boolean>;
+  toggleHidden: (id: string, hidden: boolean) => void;
 }) {
   if (!items.length) return null;
   return (
@@ -57,6 +59,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
           const isDiff = diff !== 0;
           const needsReason = isDiff && !isWeighedEntry(qty);
           const isChecked = checked.has(l.id);
+          const isHidden = hiddenFromPrint[l.id] ?? l.hidden_from_print;
           return (
             <div key={l.id} className="px-4 py-2.5"
               // Checked but the expected qty has since moved (Odoo changed it after this line
@@ -81,6 +84,17 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                       <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
                         <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{fmtDiff(diff)})</span>}
                       </span>
+                      {/* Hide/show on the printed slip — never touches the tracked qty, only
+                          whether the client-facing document shows this line (2026-08-14, Axel:
+                          a wrong SKU checked to 0 after a mistake shouldn't confuse the client).
+                          Available regardless of validated state, unlike the pencil edit. */}
+                      <button onClick={() => toggleHidden(l.id, !isHidden)}
+                        className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0"
+                        style={{ border: '1px solid', borderColor: isHidden ? '#FCA5A5' : '#D1D5DB', color: isHidden ? '#DC2626' : undefined }}
+                        title={vi ? (isHidden ? 'Hiện khi in' : 'Ẩn khi in') : (isHidden ? 'Afficher à l\'impression' : 'Masquer à l\'impression')}
+                        aria-label={vi ? 'Ẩn khi in' : 'Masquer à l\'impression'}>
+                        {isHidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                      </button>
                       {!validated && (
                         <button onClick={() => setChecked(p => { const n = new Set(p); n.delete(l.id); return n; })}
                           className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
@@ -143,9 +157,19 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
   const [validated, setValidated] = useState(header.status === 'validated');
   const [validateError, setValidateError] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const [hiddenFromPrint, setHiddenFromPrint] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(lines.map(l => [l.id, l.hidden_from_print])));
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
+
+  // Optimistic — flips immediately, server action fires in the background (best-effort, same
+  // pattern as markPrintedAction). Doesn't touch qty/status, so nothing else depends on it
+  // actually landing before continuing.
+  function toggleHidden(id: string, hidden: boolean) {
+    setHiddenFromPrint(p => ({ ...p, [id]: hidden }));
+    import('../../actions').then(({ toggleHideFromPrintAction }) => toggleHideFromPrintAction(id, hidden));
+  }
 
   async function checkLine(l: CheckLine) {
     const st = state[l.id]; const qty = Number(st?.qty);
@@ -224,9 +248,11 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
       </div>
 
       <Section title={vi ? 'Sản phẩm sản xuất' : 'Produits fabriqués'} icon={PackageCheck} items={production}
-        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked} />
+        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked}
+        hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} />
       <Section title={vi ? 'Bao bì / khác' : 'Packaging / divers'} icon={Box} items={packaging}
-        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked} />
+        state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked}
+        hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} />
 
       {!validated && (
         <div className="card px-4 py-3 flex items-center justify-between flex-wrap gap-2">

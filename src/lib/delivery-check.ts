@@ -28,6 +28,7 @@ export interface CheckLine {
   discrepancy_note: string | null;
   checked_by_name: string | null;
   checked_at: string | null;
+  hidden_from_print: boolean;
 }
 
 export interface DeliveryOrderHeader {
