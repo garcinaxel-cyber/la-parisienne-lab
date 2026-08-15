@@ -43,13 +43,27 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       [l.order_ref, { order_ref: l.order_ref, source_type: l.source_type, delivery_date: l.delivery_date, shop_name: l.shop_name }])).values());
     if (!allOrders.length) return { ...res, ok: true };
 
-    // Cost control: only ever call Odoo for an order_ref once. lab_order_packaging_sync_state
-    // records every order checked (even ones with zero packaging lines) so a steady-state
-    // cron tick with no new orders costs one cheap Supabase query and zero Odoo calls.
+    // Cost control: only ever call Odoo again for an order_ref once its delivery date has
+    // PASSED. lab_order_packaging_sync_state records every order checked (even ones with zero
+    // packaging lines) so a steady-state cron tick with no new/upcoming orders costs one cheap
+    // Supabase query and zero Odoo calls.
+    //
+    // BUG FIX 2026-08-16 (REP/2026/01049, Axel: "je n'ai pas les packaging de cette commande"):
+    // this used to skip an order FOREVER after its first check, even a zero-result one. odoo-sync.ts
+    // explicitly assumes (see its packagingOnly comment) that a mixed order's excluded lines "get
+    // picked up next cron tick by odoo-packaging-sync.ts" — true only the FIRST tick. VTTH113/
+    // VTTH085 were added to REP/2026/01049 in Odoo well AFTER this order's first (zero-result)
+    // packaging check, so they were silently invisible forever: nothing else in the sync ever
+    // re-examines packaging for an already-seen order (odoo-sync.ts's own diff explicitly ignores
+    // excluded SKUs — see its excludedSet.has(sku) guards — precisely so this file stays the one
+    // and only place responsible for them). Now only orders whose delivery date is in the past are
+    // treated as permanently done; anything still upcoming is re-checked every tick until it is —
+    // bounded cost since `dates` is already a short rolling window (today + a few days ahead).
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
     const { data: alreadySynced } = await supabase.from('lab_order_packaging_sync_state')
       .select('order_ref').in('order_ref', allOrders.map(o => o.order_ref));
     const syncedSet = new Set((alreadySynced ?? []).map((r: any) => r.order_ref));
-    const orders = allOrders.filter(o => !syncedSet.has(o.order_ref));
+    const orders = allOrders.filter(o => !syncedSet.has(o.order_ref) || o.delivery_date >= today);
     res.orders_checked = orders.length;
     if (!orders.length) return { ...res, ok: true };
 

@@ -1,6 +1,10 @@
 'use server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { odooConfigured } from '@/lib/odoo';
+import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
+import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
@@ -155,4 +159,48 @@ export async function markPrintedAction(deliveryOrderId: string): Promise<{ ok?:
   revalidatePath('/delivery-check');
   revalidatePath('/delivery-check/category');
   return { ok: true };
+}
+
+// On-demand "Sync Odoo" for delivery-check specifically (Axel, 2026-08-16: "si les assistantes
+// voient pas un produit directement elles peuvent synchro" — REP/2026/01049's VTTH113/VTTH085
+// packaging lines were invisible until the next cron tick because of the one-shot-forever guard
+// in odoo-packaging-sync.ts; see that file's 2026-08-16 fix comment). Mirrors station/[team]
+// actions.ts's syncOdooAction (same runAutoOdooSync call, any logged-in assistant/admin can
+// trigger it), but ALSO runs syncOrderPackagingLines — the station button never did, only the
+// cron route did, which is exactly why re-syncing from the station page alone wouldn't have
+// surfaced a missing packaging line either. Revalidates every delivery-check path so a stale RSC
+// snapshot doesn't hide the newly-synced line even after a successful sync (same bug class as
+// checkLineAction's own revalidation, 2026-08-11).
+function labUpcomingDatesVN(days: number): string[] {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const now = new Date();
+  return Array.from({ length: days }, (_, i) => fmt.format(new Date(now.getTime() + i * 24 * 3600 * 1000)));
+}
+
+export async function syncOdooForDeliveryCheckAction(
+  orderDate?: string, orderRef?: string,
+): Promise<{ ok?: boolean; createdImports?: number; changesApplied?: number; packagingSynced?: number; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+
+  if (!odooConfigured() || !process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Odoo sync not configured' };
+  const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+  try {
+    const result = await runAutoOdooSync(service as any);
+    if (result.error) return { error: result.error };
+    let packagingSynced = 0;
+    try {
+      const pkg = await syncOrderPackagingLines(service as any, labUpcomingDatesVN(3));
+      packagingSynced = pkg.lines_synced ?? 0;
+    } catch { /* best-effort, same as the cron route — never fail the sync over this */ }
+
+    if (orderDate && orderRef) revalidatePath(`/delivery-check/${orderDate}/${orderRef}`);
+    revalidatePath('/delivery-check');
+    revalidatePath('/delivery-check/category');
+    return { ok: true, createdImports: result.created_imports, changesApplied: result.changes_applied, packagingSynced };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Odoo sync failed' };
+  }
 }

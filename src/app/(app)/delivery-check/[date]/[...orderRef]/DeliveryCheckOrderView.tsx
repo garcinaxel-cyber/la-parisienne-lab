@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
@@ -142,6 +143,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
 export default function DeliveryCheckOrderView({ header, lines, backHref }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
+  const router = useRouter();
   const [state, setState] = useState<Record<string, { qty: string; reason: string; note: string }>>(() => {
     const s: Record<string, { qty: string; reason: string; note: string }> = {};
     for (const l of lines) s[l.id] = {
@@ -159,6 +161,8 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
   const [unlocking, setUnlocking] = useState(false);
   const [hiddenFromPrint, setHiddenFromPrint] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(lines.map(l => [l.id, l.hidden_from_print])));
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -197,6 +201,21 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
     if (res.ok) setValidated(false);
   }
 
+  // Manual "Sync Odoo" for when an assistant can't find a product that should be on this order
+  // (Axel, 2026-08-16) — same on-demand sync the station pages already have, just triggered from
+  // here so nobody has to wait for the next 15-min cron pass. Read-only from this component's
+  // point of view: it only pulls fresher data in, router.refresh() re-fetches this same page's
+  // server data afterward so any newly-synced line shows up without a full reload.
+  async function syncOdoo() {
+    setSyncing(true); setSyncMsg(null);
+    const { syncOdooForDeliveryCheckAction } = await import('../../actions');
+    const res = await syncOdooForDeliveryCheckAction(header.delivery_date, header.order_ref);
+    setSyncing(false);
+    if (res.error) setSyncMsg({ text: vi ? 'Lỗi đồng bộ' : 'Erreur de synchro', error: true });
+    else { setSyncMsg({ text: vi ? 'Đã đồng bộ' : 'Synchronisé' }); router.refresh(); }
+    setTimeout(() => setSyncMsg(null), 4000);
+  }
+
   const production = lines.filter(l => l.category === 'production');
   const packaging = lines.filter(l => l.category === 'packaging');
   const total = lines.length;
@@ -210,9 +229,21 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
       </Link>
 
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="font-serif text-xl sm:text-2xl font-bold text-navy">{header.order_ref}</h1>
-          <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <h1 className="font-serif text-xl sm:text-2xl font-bold text-navy">{header.order_ref}</h1>
+            <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
+          </div>
+          {/* Manual Odoo resync — an assistant who can't find a product she expects on this
+              order doesn't have to wait for the next cron pass (2026-08-16, Axel). */}
+          <button onClick={syncOdoo} disabled={syncing}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 disabled:opacity-50"
+            style={{ border: '1px solid #D1D5DB', color: '#374151' }}
+            title={vi ? 'Không thấy sản phẩm? Đồng bộ lại Odoo' : "Produit manquant ? Resynchroniser Odoo"}>
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? (vi ? 'Đang đồng bộ…' : 'Synchro…') : (vi ? 'Đồng bộ Odoo' : 'Sync Odoo')}
+          </button>
+          {syncMsg && <span className="text-xs font-semibold" style={{ color: syncMsg.error ? '#DC2626' : '#166534' }}>{syncMsg.text}</span>}
         </div>
         {validated ? (
           <div className="flex items-center gap-2 flex-wrap justify-end">
