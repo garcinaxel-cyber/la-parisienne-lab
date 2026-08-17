@@ -188,17 +188,29 @@ export async function syncOdooForDeliveryCheckAction(
   const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   try {
-    const result = await runAutoOdooSync(service as any);
+    // BUG FIX 2026-08-17 (REP/2026/01076): runAutoOdooSync silently no-ops (ok, zero counts, no
+    // error) when the cron/another click already holds the 2-min sync lock — before this fix that
+    // looked identical to a real "nothing changed" success. One retry after a short wait covers
+    // the common case (cron runs are seconds long, not the full 2-min expiry); if it's still
+    // locked after that, say so explicitly instead of a misleading "Synchronisé".
+    let result = await runAutoOdooSync(service as any);
+    if (result.skipped_concurrent) {
+      await new Promise(r => setTimeout(r, 4000));
+      result = await runAutoOdooSync(service as any);
+    }
     if (result.error) return { error: result.error };
-    let packagingSynced = 0;
+    if (result.skipped_concurrent) return { error: 'Une autre synchro est en cours, réessaie dans une minute' };
+
+    let packagingSynced = (result.packaging_only_synced ?? 0);
     try {
       const pkg = await syncOrderPackagingLines(service as any, labUpcomingDatesVN(3));
-      packagingSynced = pkg.lines_synced ?? 0;
+      packagingSynced += pkg.lines_synced ?? 0;
     } catch { /* best-effort, same as the cron route — never fail the sync over this */ }
 
     if (orderDate && orderRef) revalidatePath(`/delivery-check/${orderDate}/${orderRef}`);
     revalidatePath('/delivery-check');
     revalidatePath('/delivery-check/category');
+    if (result.packaging_only_error) return { error: `Sync partielle: ${result.packaging_only_error}` };
     return { ok: true, createdImports: result.created_imports, changesApplied: result.changes_applied, packagingSynced };
   } catch (e: any) {
     return { error: e?.message ?? 'Odoo sync failed' };

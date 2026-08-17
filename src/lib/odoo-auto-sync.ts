@@ -14,6 +14,8 @@ export interface AutoSyncResult {
   checked?: { sales: number; replenishments: number };
   error?: string;
   skipped_concurrent?: boolean; // another sync (cron or a chef's button) was already running
+  packaging_only_synced?: number;
+  packaging_only_error?: string; // best-effort, never fails the main sync (see write site below)
 }
 
 // Single-row mutex (lab_sync_lock, see lab_v28_sync_lock.sql) so two overlapping calls — the
@@ -73,9 +75,37 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
   // straight into lab_order_packaging_lines so they show up in delivery-check even though
   // they never get a lab_imports/lab_order_lines row. Same upsert key as odoo-packaging-sync.ts
   // so re-running this never duplicates a row.
-  if (result.packagingOnly.length) {
-    await supabase.from('lab_order_packaging_lines')
-      .upsert(result.packagingOnly.map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
+  //
+  // BUG FIX 2026-08-17 (REP/2026/01076, Axel: "cette commande de produit hors production
+  // n'apparaît pas du tout"): ROOT CAUSE, reproduced directly against a throwaway temp table —
+  // Postgres error 21000 "ON CONFLICT DO UPDATE command cannot affect row a second time". Odoo
+  // lets the same excluded SKU appear on several lines of one order (here VTTH.713 ×2, TEM ×3 —
+  // one line per note, e.g. one sticker line per cake flavor), so `result.packagingOnly` can carry
+  // duplicate (order_ref, sku) pairs; upserting them in one batch with onConflict on that same
+  // pair is rejected outright by Postgres, deterministically, every single sync (cron or manual
+  // button) — never a fluke, and this upsert's result was never checked, so it failed silently
+  // with no trace anywhere: no thrown exception (nothing in Vercel's runtime-error tracking), and
+  // the coverage-check right below builds `packagingRefs` from this SAME in-memory array
+  // regardless of whether the write actually landed, so it never flagged a gap either. Fixed by
+  // aggregating same-SKU lines (sum qty, merge notes) before the upsert — mirrors how
+  // delivery-check.ts already aggregates duplicate production SKUs on the same order.
+  const packagingOnlyAgg = new Map<string, typeof result.packagingOnly[number]>();
+  for (const p of result.packagingOnly) {
+    const k = `${p.order_ref}||${p.sku}`;
+    const cur = packagingOnlyAgg.get(k);
+    if (!cur) packagingOnlyAgg.set(k, { ...p });
+    else {
+      cur.qty += p.qty;
+      if (p.note && !cur.note?.includes(p.note)) cur.note = cur.note ? `${cur.note} / ${p.note}` : p.note;
+    }
+  }
+  let packagingOnlySynced = 0;
+  let packagingOnlyError: string | undefined;
+  if (packagingOnlyAgg.size) {
+    const { error: packagingOnlyErr } = await supabase.from('lab_order_packaging_lines')
+      .upsert(Array.from(packagingOnlyAgg.values()).map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
+    if (packagingOnlyErr) packagingOnlyError = packagingOnlyErr.message;
+    else packagingOnlySynced = packagingOnlyAgg.size;
   }
 
   // Warehouse/customer reassignment on an already-imported order (see OdooSyncResult.shopNameChanges
@@ -221,6 +251,7 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       changes_applied: changesApplied,
       deleted_refs: result.deletedRefs.length, cleaned_drafts: cleanedDrafts,
       checked: { sales: result.stats.sales_orders, replenishments: result.stats.replenishments },
+      packaging_only_synced: packagingOnlySynced, packaging_only_error: packagingOnlyError,
     };
   }
 
@@ -245,6 +276,7 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       created_imports: 0, new_lines: 0, changes_detected: result.changes.length,
       changes_applied: changesApplied, deleted_refs: result.deletedRefs.length,
       cleaned_drafts: cleanedDrafts, error,
+      packaging_only_synced: packagingOnlySynced, packaging_only_error: packagingOnlyError,
     };
   }
 
@@ -254,5 +286,6 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
     changes_detected: result.changes.length,
     changes_applied: changesApplied,
     deleted_refs: result.deletedRefs.length, cleaned_drafts: cleanedDrafts,
+    packaging_only_synced: packagingOnlySynced, packaging_only_error: packagingOnlyError,
   };
 }

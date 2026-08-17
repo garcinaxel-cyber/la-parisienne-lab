@@ -104,16 +104,34 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       }
     }
 
-    if (rows.length) {
+    // BUG FIX 2026-08-17 (REP/2026/01076, same root cause as odoo-auto-sync.ts's packagingOnly
+    // write — see that file's doc comment for the reproduced Postgres error): Odoo lets the same
+    // excluded SKU appear on multiple lines of one order (e.g. one sticker line per cake flavor),
+    // so `rows` can carry duplicate (order_ref, sku) pairs. Upserting duplicates in one batch is
+    // rejected outright by Postgres (21000 "ON CONFLICT DO UPDATE command cannot affect row a
+    // second time") — worse here than in odoo-auto-sync.ts, since this upsert spans EVERY order in
+    // the current batch, so one order with a repeated SKU would fail packaging sync for every
+    // other order alongside it too. Aggregate (sum qty, merge notes) before upserting.
+    const rowsAgg = new Map<string, typeof rows[number]>();
+    for (const r of rows) {
+      const k = `${r.order_ref}||${r.sku}`;
+      const cur = rowsAgg.get(k);
+      if (!cur) rowsAgg.set(k, { ...r });
+      else {
+        cur.qty += r.qty;
+        if (r.note && !cur.note?.includes(r.note)) cur.note = cur.note ? `${cur.note} / ${r.note}` : r.note;
+      }
+    }
+    if (rowsAgg.size) {
       const { error } = await supabase.from('lab_order_packaging_lines')
-        .upsert(rows.map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
+        .upsert(Array.from(rowsAgg.values()).map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
       if (error) return { ...res, error: error.message };
     }
     // Mark every order this pass actually checked as synced — including ones with zero
     // packaging lines — so they're never re-queried against Odoo again.
     await supabase.from('lab_order_packaging_sync_state')
       .upsert(orders.map(o => ({ order_ref: o.order_ref, synced_at: new Date().toISOString() })), { onConflict: 'order_ref' });
-    res.lines_synced = rows.length;
+    res.lines_synced = rowsAgg.size;
     return { ...res, ok: true };
   } catch (e: any) {
     return { ...res, error: String(e?.message ?? e) };
