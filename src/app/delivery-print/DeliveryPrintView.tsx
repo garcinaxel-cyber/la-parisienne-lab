@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, Printer, CheckCircle2, AlertTriangle, X } from 'lucide-react';
@@ -16,8 +16,8 @@ import type { NeedsSplitEntry, PlannedWrite, SplitInput } from '@/lib/odoo-deliv
 //
 // "Ghi chú" shows the product's own Odoo note (lab_delivery_check_lines.note) plus the
 // assistant's discrepancy note if any, stacked on separate lines.
-export default function DeliveryPrintView({ header, lines, pricing }: {
-  header: DeliveryOrderHeader; lines: CheckLine[]; pricing?: SoLinePricing | null;
+export default function DeliveryPrintView({ header, lines, pricing, openValidate }: {
+  header: DeliveryOrderHeader; lines: CheckLine[]; pricing?: SoLinePricing | null; openValidate?: boolean;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -65,6 +65,14 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
   const [plan, setPlan] = useState<PlannedWrite[]>([]);
   const [alreadyDone, setAlreadyDone] = useState(false);
   const [pickingName, setPickingName] = useState<string | null>(null);
+
+  // ?validate=1 (Axel, 2026-08-18) — coming from the order page's "À valider sur Odoo" link,
+  // which only shows once the order is already printed — jump straight to the pop-up instead of
+  // requiring another Imprimer click (no window.print() here, unlike handlePrint below).
+  useEffect(() => {
+    if (openValidate && !isSo) { setValidateOpen(true); setStep('choice'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function buildSplits(): SplitInput[] {
     return needsSplit.map(ns => ({

@@ -32,6 +32,18 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 
+// Every write call in this file passes this context — Odoo's mail module posts a tracked-field
+// chatter message (and tries to notify followers by email) whenever a tracked field actually
+// changes value (e.g. state on action_submit/approve, quantity on stock.move). The API write
+// account's linked partner has no email configured, so that notification attempt crashes the
+// whole call with "Unable to send message, please configure the sender's email address" —
+// discovered 2026-08-18 testing the first live delivery-validation batch: every order that still
+// needed action_submit/action_approve (still draft/submitted, same-day, outside the J+1 cron's
+// scope) hit this, while already-approved orders (no state change -> no tracked message) didn't.
+// These context flags tell mail.thread to skip tracking-message creation entirely for this call —
+// doesn't change any business data, purely suppresses the chatter/notification side effect.
+const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true };
+
 export interface DeliveryValidateLine { sku: string; product_name_vi: string; qty_checked: number; qty_expected: number }
 
 export interface NeedsSplitEntry {
@@ -91,8 +103,8 @@ export async function validateReplenishmentDeliveryOnOdoo(
     // we need the order actually approved to even discover its delivery picking.
     let orderConfirmed = false;
     if (req.state === 'draft' || req.state === 'submitted') {
-      if (req.state === 'draft') await odooExecuteWrite('stock.replenishment.request', 'action_submit', [[req.id]]);
-      await odooExecuteWrite('stock.replenishment.request', 'action_approve', [[req.id]]);
+      if (req.state === 'draft') await odooExecuteWrite('stock.replenishment.request', 'action_submit', [[req.id]], { context: NO_MAIL_CONTEXT });
+      await odooExecuteWrite('stock.replenishment.request', 'action_approve', [[req.id]], { context: NO_MAIL_CONTEXT });
       orderConfirmed = true;
       const refreshed = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
         [[['id', '=', req.id]]], { fields: ['id', 'name', 'state', 'delivery_picking_ids'] });
@@ -203,10 +215,10 @@ export async function validateReplenishmentDeliveryOnOdoo(
     // simplement la quantité livrée"). NOT yet live-verified against this Odoo version's exact
     // backorder-skip mechanism — this is precisely what the first pilot order is for.
     for (const p of plan) {
-      await odooExecuteWrite('stock.move', 'write', [[p.moveId], { quantity: p.deliverQty }]);
+      await odooExecuteWrite('stock.move', 'write', [[p.moveId], { quantity: p.deliverQty }], { context: NO_MAIL_CONTEXT });
     }
     const validateRes = await odooExecuteWrite('stock.picking', 'button_validate', [[pickingId]], {
-      context: { skip_backorder: true, button_validate_picking_ids: [pickingId] },
+      context: { skip_backorder: true, button_validate_picking_ids: [pickingId], ...NO_MAIL_CONTEXT },
     });
     // A plain `true` means Odoo validated cleanly. Anything else (an action dict, a wizard
     // reference) means our skip_backorder context didn't fully suppress the interactive flow —

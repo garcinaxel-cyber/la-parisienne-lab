@@ -15,7 +15,7 @@ export const revalidate = 0;
 // Query-param route (?date=&orderRef=) rather than nesting under the [...orderRef] catch-all —
 // order_ref can itself contain slashes (REP/2026/00985), which would make an extra path segment
 // under it ambiguous to parse back apart. Kept as its own top-level page for that reason.
-export default async function DeliveryPrintPage({ searchParams }: { searchParams: { date?: string; orderRef?: string } }) {
+export default async function DeliveryPrintPage({ searchParams }: { searchParams: { date?: string; orderRef?: string; validate?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
@@ -37,5 +37,8 @@ export default async function DeliveryPrintPage({ searchParams }: { searchParams
     try { pricing = await fetchSoLinePricing(orderRef); } catch { pricing = null; }
   }
 
-  return <DeliveryPrintView header={header} lines={lines} pricing={pricing} />;
+  // ?validate=1 (Axel, 2026-08-18) — "À valider sur Odoo" link on the order page skips straight
+  // to the validation pop-up instead of forcing another Imprimer click first (the order's already
+  // been printed once by the time that link is even shown).
+  return <DeliveryPrintView header={header} lines={lines} pricing={pricing} openValidate={searchParams.validate === '1'} />;
 }
