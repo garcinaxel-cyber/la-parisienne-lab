@@ -77,6 +77,11 @@ export interface DeliveryValidateResult {
   pickingId?: number;
   pickingName?: string;
   plan?: PlannedWrite[]; // what would be / was written per stock.move
+  // Set when button_validate returned `true` (no error) but Odoo created a backorder picking
+  // anyway — belt-and-suspenders after cancel_backorder failed silently once already (2026-08-18,
+  // 4 orders). Still ok:true (the delivered quantities DID get written correctly), but surfaced
+  // so it's never invisible again — Axel wants zero backorders, full stop.
+  backorderWarning?: string;
 }
 
 // Odoo's stock.picking.state values that mean "already fully processed" — never re-validate.
@@ -227,8 +232,17 @@ export async function validateReplenishmentDeliveryOnOdoo(
     for (const p of plan) {
       await odooExecuteWrite('stock.move', 'write', [[p.moveId], { quantity: p.deliverQty }], { context: NO_MAIL_CONTEXT });
     }
+    // BUG FOUND 2026-08-18 (Axel, after 4 live orders — REP/2026/01069/01070/01074/01075):
+    // skip_backorder alone does NOT stop Odoo from creating a backorder picking for whatever
+    // wasn't reserved/delivered — confirmed live, all 4 pickings we validated today ended up
+    // with a second stock.picking attached (backorder_id pointing back at ours), even though
+    // button_validate itself returned `true` (no wizard, no error). skip_backorder only
+    // suppresses the interactive "Create backorder?" wizard; it does NOT decide which answer
+    // gets applied — Odoo's default when unspecified is to still create one. cancel_backorder
+    // is the context key that actually picks "No backorder, deliver only what was set" —
+    // exactly "on ne fait jamais de back order, on valide simplement la quantité livrée."
     const validateRes = await odooExecuteWrite('stock.picking', 'button_validate', [[pickingId]], {
-      context: { skip_backorder: true, button_validate_picking_ids: [pickingId], ...NO_MAIL_CONTEXT },
+      context: { skip_backorder: true, cancel_backorder: true, button_validate_picking_ids: [pickingId], ...NO_MAIL_CONTEXT },
     });
     // A plain `true` means Odoo validated cleanly. Anything else (an action dict, a wizard
     // reference) means our skip_backorder context didn't fully suppress the interactive flow —
@@ -237,7 +251,19 @@ export async function validateReplenishmentDeliveryOnOdoo(
       return { ok: false, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, error: `Odoo a renvoyé une réponse inattendue à la validation : ${JSON.stringify(validateRes)} — le picking n'est peut-être pas validé, vérifier manuellement dans Odoo.` };
     }
 
-    return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan };
+    // Verify no backorder actually got created, rather than trust button_validate's `true` return
+    // at face value — that's exactly what silently let 4 orders through with an unwanted backorder
+    // today despite skip_backorder. cancel_backorder should prevent it now; this just makes sure.
+    let backorderWarning: string | undefined;
+    const afterReq = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
+      [[['id', '=', req.id]]], { fields: ['delivery_picking_ids'] });
+    const afterPickingIds: number[] = afterReq[0]?.delivery_picking_ids ?? [];
+    const newPickingIds = afterPickingIds.filter(id => id !== pickingId);
+    if (newPickingIds.length) {
+      backorderWarning = `Odoo a quand même créé ${newPickingIds.length > 1 ? 'des bons de livraison' : 'un bon de livraison'} supplémentaire(s) (${newPickingIds.join(', ')}) malgré cancel_backorder — à supprimer manuellement dans Odoo si tu ne veux pas de reliquat ouvert.`;
+    }
+
+    return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, backorderWarning };
   } catch (e: any) {
     return { ok: false, dryRun, error: String(e?.message ?? e) };
   }

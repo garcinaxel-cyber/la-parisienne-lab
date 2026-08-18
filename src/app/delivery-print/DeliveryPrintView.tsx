@@ -65,6 +65,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   const [plan, setPlan] = useState<PlannedWrite[]>([]);
   const [alreadyDone, setAlreadyDone] = useState(false);
   const [pickingName, setPickingName] = useState<string | null>(null);
+  const [backorderWarning, setBackorderWarning] = useState<string | null>(null);
 
   // ?validate=1 (Axel, 2026-08-18) — coming from the order page's "À valider sur Odoo" link,
   // which only shows once the order is already printed — jump straight to the pop-up instead of
@@ -114,6 +115,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
     const res = await validateDeliveryOnOdooAction(header.id, false, buildSplits());
     if (!res.ok) { setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return; }
     setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setBackorderWarning(res.backorderWarning ?? null);
     setStep('success');
   }
 
@@ -368,6 +370,12 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                     ? (vi ? 'Đơn hàng đã được xác nhận trên Odoo.' : 'La commande était déjà validée sur Odoo.')
                     : (vi ? `Số lượng đã được ghi và bàn giao trên Odoo (${pickingName}).` : `Quantités écrites et livraison validée sur Odoo (${pickingName}).`)}
                 </p>
+                {backorderWarning && (
+                  <div className="flex items-start gap-2 text-xs font-semibold rounded-lg px-3 py-2 mb-4" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>{backorderWarning}</span>
+                  </div>
+                )}
                 <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: '#16A34A' }}>
                   {vi ? 'Xong' : 'Terminé'}
                 </button>
