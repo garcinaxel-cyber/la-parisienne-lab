@@ -240,8 +240,16 @@ export async function validateDeliveryOnOdooAction(
 
   const { data: lines } = await supabase.from('lab_delivery_check_lines')
     .select('sku, product_name_vi, qty_checked, qty_expected').eq('delivery_order_id', deliveryOrderId);
+  // Ghost 0/0 lines (Axel, 2026-08-18, REP/2026/01069 "BBF"/"BBB") — same root cause as the
+  // page.tsx gt('qty', 0) filter and the odoo-apply.ts qty-change collapse: Odoo dropped its
+  // demand for that SKU to 0 (order edited/cancelled after the checklist line was first
+  // materialized) but the row itself is never deleted, so it sits forever at qty_expected=0,
+  // qty_checked=0 — never actually checked, just a leftover. Odoo genuinely has no live move for
+  // a 0-demand product, so pushing this line always fails with "produit introuvable". A real
+  // shortfall (qty_expected > 0, assistant checked 0 because it was actually out of stock) still
+  // goes through untouched — only the true both-zero ghost rows are skipped.
   const checklistLines = (lines ?? [])
-    .filter((l: any) => l.sku && l.qty_checked != null)
+    .filter((l: any) => l.sku && l.qty_checked != null && !(Number(l.qty_expected) === 0 && Number(l.qty_checked) === 0))
     .map((l: any) => ({ sku: l.sku as string, product_name_vi: l.product_name_vi as string, qty_checked: Number(l.qty_checked), qty_expected: Number(l.qty_expected) }));
 
   const result = await validateReplenishmentDeliveryOnOdoo(

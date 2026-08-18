@@ -42,7 +42,17 @@ import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 // scope) hit this, while already-approved orders (no state change -> no tracked message) didn't.
 // These context flags tell mail.thread to skip tracking-message creation entirely for this call —
 // doesn't change any business data, purely suppresses the chatter/notification side effect.
-const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true };
+//
+// UPDATE 2026-08-18, second live test (REP/2026/01068): tracking_disable alone wasn't enough —
+// confirmed live that the stock.move quantity writes went through fine (Odoo shows the written
+// quantity, e.g. move 257409 = 12 as pushed), but button_validate itself still crashed with the
+// same error. That means the notification button_validate triggers isn't a tracked-field chatter
+// message (which tracking_disable covers) but an explicit message_post() in its own business
+// logic, which still tries to actually SEND an email synchronously. mail_notify_force_send=false
+// tells Odoo to queue that email for its own mail cron instead of sending it inline — the write
+// (delivered qty + validated picking) completes either way, only the notification's timing/success
+// changes, and a queued email failing later (same missing-sender-email root cause) never blocks us.
+const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
 
 export interface DeliveryValidateLine { sku: string; product_name_vi: string; qty_checked: number; qty_expected: number }
 
