@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
-import { validateReplenishmentDeliveryOnOdoo, type SplitInput, type DeliveryValidateResult } from '@/lib/odoo-delivery-validate';
+import { validateDeliveryOnOdoo, type SplitInput, type DeliveryValidateResult } from '@/lib/odoo-delivery-validate';
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
@@ -252,7 +252,7 @@ export async function validateDeliveryOnOdooAction(
     .filter((l: any) => l.sku && l.qty_checked != null && !(Number(l.qty_expected) === 0 && Number(l.qty_checked) === 0))
     .map((l: any) => ({ sku: l.sku as string, product_name_vi: l.product_name_vi as string, qty_checked: Number(l.qty_checked), qty_expected: Number(l.qty_expected) }));
 
-  const result = await validateReplenishmentDeliveryOnOdoo(
+  const result = await validateDeliveryOnOdoo(
     supabase as any, header.order_ref, header.source_type, checklistLines, dryRun, splits,
   );
 

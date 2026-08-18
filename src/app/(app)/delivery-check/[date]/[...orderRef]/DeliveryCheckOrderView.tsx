@@ -260,7 +260,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
                 <CheckCheck size={16} /> {vi ? 'Đã xử lý xong 100%' : 'Traité à 100%'}
               </span>
             )}
-            {header.source_type === 'replenishment' && header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
+            {header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
               <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
                 className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
                 style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}

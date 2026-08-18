@@ -52,10 +52,11 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   // a misleading flat "8%", while the normal single-rate case still shows a clean "8%".
   const vatPct = subtotal > 0 ? Math.round((vatTotal / subtotal) * 10000) / 100 : 0;
 
-  // "Valider la livraison sur Odoo" (Axel, 2026-08-17) — mandatory pop-up right after printing,
-  // REP orders only for this pilot phase (sales orders + invoice creation come later). Two-step
-  // confirmation, never a single blind write: dryRun=true first (preview + surface any needsSplit
-  // requirement), then dryRun=false only once the assistant has explicitly confirmed the preview.
+  // "Valider la livraison sur Odoo" (Axel, 2026-08-17) — mandatory pop-up right after printing.
+  // REP proven first (2026-08-17/18), sales orders added 2026-08-18 once REP was stable — same
+  // pop-up, same two-step confirmation (dryRun=true preview first, dryRun=false only once the
+  // assistant has explicitly confirmed), plus a regular draft invoice gets created automatically
+  // for SO on the real confirm (odoo-delivery-validate.ts's validateSalesOrder).
   const [validateOpen, setValidateOpen] = useState(false);
   const [step, setStep] = useState<'choice' | 'loading' | 'split' | 'preview' | 'success' | 'error'>('choice');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -66,12 +67,15 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   const [alreadyDone, setAlreadyDone] = useState(false);
   const [pickingName, setPickingName] = useState<string | null>(null);
   const [backorderWarning, setBackorderWarning] = useState<string | null>(null);
+  const [invoiceName, setInvoiceName] = useState<string | null>(null);
+  const [invoiceAlreadyExisted, setInvoiceAlreadyExisted] = useState(false);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
 
   // ?validate=1 (Axel, 2026-08-18) — coming from the order page's "À valider sur Odoo" link,
   // which only shows once the order is already printed — jump straight to the pop-up instead of
   // requiring another Imprimer click (no window.print() here, unlike handlePrint below).
   useEffect(() => {
-    if (openValidate && !isSo) { setValidateOpen(true); setStep('choice'); }
+    if (openValidate) { setValidateOpen(true); setStep('choice'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -106,6 +110,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
       setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return;
     }
     setPlan(res.plan ?? []); setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setInvoiceAlreadyExisted(!!res.invoiceAlreadyExisted); setInvoiceName(res.invoiceName ?? null);
     setStep('preview');
   }
 
@@ -116,6 +121,9 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
     if (!res.ok) { setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return; }
     setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
     setBackorderWarning(res.backorderWarning ?? null);
+    setInvoiceName(res.invoiceName ?? null);
+    setInvoiceAlreadyExisted(!!res.invoiceAlreadyExisted);
+    setInvoiceError(res.invoiceError ?? null);
     setStep('success');
   }
 
@@ -132,8 +140,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
       markPrintedAction(header.id);
     } catch { /* best-effort */ }
     window.print();
-    // REP only for this pilot phase — sales orders don't get the pop-up yet (Axel, 2026-08-17).
-    if (!isSo) { setValidateOpen(true); setStep('choice'); }
+    setValidateOpen(true); setStep('choice');
   }
 
   return (
@@ -327,33 +334,53 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
             {step === 'preview' && (
               <>
                 <h2 className="font-serif text-lg font-bold text-navy mb-3">{vi ? 'Xem trước' : 'Aperçu'}</h2>
-                {alreadyDone ? (
-                  <p className="text-sm mb-4" style={{ color: '#166534' }}>
-                    {vi ? `Đã được xác nhận trên Odoo (${pickingName}) — không cần làm gì thêm.` : `Déjà validé sur Odoo (${pickingName}) — rien à faire de plus.`}
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-sm text-ink-light mb-3">
-                      {vi ? `Sẽ ghi trên Odoo (${pickingName}):` : `Sera écrit sur Odoo (${pickingName}) :`}
+                {(() => {
+                  // For SO, "picking déjà done" doesn't necessarily mean nothing left to do — the
+                  // invoice might still be pending (e.g. a retry after a previous attempt validated
+                  // the delivery but failed before creating the invoice). Only truly nothing to do
+                  // when both the picking AND (for SO) the invoice are already settled.
+                  const nothingLeftToDo = alreadyDone && (!isSo || invoiceAlreadyExisted);
+                  return nothingLeftToDo ? (
+                    <p className="text-sm mb-4" style={{ color: '#166534' }}>
+                      {vi ? `Đã được xác nhận trên Odoo (${pickingName}) — không cần làm gì thêm.` : `Déjà validé sur Odoo (${pickingName}) — rien à faire de plus.`}
                     </p>
-                    <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                      {plan.map((p, i) => (
-                        <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs" style={{ borderTop: i ? '1px solid #F3F4F6' : undefined }}>
-                          <span className="text-ink-light truncate flex-1">{p.sku}{p.note ? ` · ${p.note}` : ''}</span>
-                          <span className="font-bold text-navy">{p.deliverQty} / {p.expectedQty}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      {alreadyDone ? (
+                        <p className="text-sm mb-3" style={{ color: '#166534' }}>
+                          {vi ? `Đã được xác nhận trên Odoo (${pickingName}) — chỉ còn thiếu hóa đơn.` : `Déjà validé sur Odoo (${pickingName}) — il ne reste que la facture.`}
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-sm text-ink-light mb-3">
+                            {vi ? `Sẽ ghi trên Odoo (${pickingName}):` : `Sera écrit sur Odoo (${pickingName}) :`}
+                          </p>
+                          <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                            {plan.map((p, i) => (
+                              <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs" style={{ borderTop: i ? '1px solid #F3F4F6' : undefined }}>
+                                <span className="text-ink-light truncate flex-1">{p.sku}{p.note ? ` · ${p.note}` : ''}</span>
+                                <span className="font-bold text-navy">{p.deliverQty} / {p.expectedQty}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      {isSo && (
+                        <p className="text-xs text-ink-light mb-4">
+                          {vi ? '+ một hóa đơn thường (nháp) sẽ được tạo tự động.' : '+ une facture normale (brouillon) sera créée automatiquement.'}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 <div className="flex flex-col gap-2">
-                  {!alreadyDone && (
+                  {!(alreadyDone && (!isSo || invoiceAlreadyExisted)) && (
                     <button onClick={confirmReal} className="w-full py-2.5 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: '#16A34A' }}>
                       {vi ? 'Xác nhận — ghi vào Odoo' : 'Confirmer — écrire sur Odoo'}
                     </button>
                   )}
                   <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
-                    {alreadyDone ? (vi ? 'Đóng' : 'Fermer') : (vi ? 'Quay lại đơn hàng' : 'Revenir à la commande')}
+                    {alreadyDone && (!isSo || invoiceAlreadyExisted) ? (vi ? 'Đóng' : 'Fermer') : (vi ? 'Quay lại đơn hàng' : 'Revenir à la commande')}
                   </button>
                 </div>
               </>
@@ -370,6 +397,19 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                     ? (vi ? 'Đơn hàng đã được xác nhận trên Odoo.' : 'La commande était déjà validée sur Odoo.')
                     : (vi ? `Số lượng đã được ghi và bàn giao trên Odoo (${pickingName}).` : `Quantités écrites et livraison validée sur Odoo (${pickingName}).`)}
                 </p>
+                {isSo && invoiceName && (
+                  <p className="text-sm mb-3" style={{ color: '#166534' }}>
+                    {invoiceAlreadyExisted
+                      ? (vi ? `Hóa đơn đã tồn tại: ${invoiceName}.` : `Facture déjà existante : ${invoiceName}.`)
+                      : (vi ? `Hóa đơn nháp đã tạo: ${invoiceName}.` : `Facture brouillon créée : ${invoiceName}.`)}
+                  </p>
+                )}
+                {isSo && invoiceError && (
+                  <div className="flex items-start gap-2 text-xs font-semibold rounded-lg px-3 py-2 mb-3" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>{invoiceError}</span>
+                  </div>
+                )}
                 {backorderWarning && (
                   <div className="flex items-start gap-2 text-xs font-semibold rounded-lg px-3 py-2 mb-4" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
                     <AlertTriangle size={15} className="shrink-0 mt-0.5" />
