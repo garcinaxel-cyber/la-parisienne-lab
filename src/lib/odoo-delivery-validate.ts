@@ -227,10 +227,25 @@ export async function validateReplenishmentDeliveryOnOdoo(
 
     // Real writes from here — quantity per move, then validate the picking without ever
     // creating a backorder (Axel, 2026-08-17: "on ne fait jamais de back order, on valide
-    // simplement la quantité livrée"). NOT yet live-verified against this Odoo version's exact
-    // backorder-skip mechanism — this is precisely what the first pilot order is for.
+    // simplement la quantité livrée").
+    //
+    // BUG FOUND 2026-08-18, THIRD occurrence (REP/2026/01072, after skip_backorder alone, then
+    // skip_backorder+cancel_backorder, both failed to stop Odoo creating a backorder): trying to
+    // suppress backorder creation purely via button_validate's context has proven unreliable on
+    // this Odoo version/custom module — can't fully verify the exact internal reason since the
+    // evidence (the backorder picking) gets deleted by Axel before it can be inspected. Switched
+    // approach: instead of asking Odoo not to create a backorder for the shortfall, remove the
+    // shortfall itself. Any move delivered LESS than its demanded qty also gets its
+    // product_uom_qty (the "demanded" quantity) reduced down to match what was actually
+    // delivered — same as manually editing the Demand column in Odoo's UI to close a partial
+    // delivery cleanly. With demand == done on every move, there's structurally nothing left for
+    // Odoo to spin into a backorder, regardless of which context flag it does or doesn't respect.
+    // Only touches the stock.move (this specific delivery), never the original
+    // stock.replenishment.request.line demand that the order itself was built from.
     for (const p of plan) {
-      await odooExecuteWrite('stock.move', 'write', [[p.moveId], { quantity: p.deliverQty }], { context: NO_MAIL_CONTEXT });
+      const patch: Record<string, unknown> = { quantity: p.deliverQty };
+      if (p.deliverQty < p.expectedQty) patch.product_uom_qty = p.deliverQty;
+      await odooExecuteWrite('stock.move', 'write', [[p.moveId], patch], { context: NO_MAIL_CONTEXT });
     }
     // BUG FOUND 2026-08-18 (Axel, after 4 live orders — REP/2026/01069/01070/01074/01075):
     // skip_backorder alone does NOT stop Odoo from creating a backorder picking for whatever
