@@ -43,6 +43,9 @@ export interface DeliveryOrderHeader {
   validated_by_name: string | null;
   odoo_push_status: string | null;
   odoo_push_error: string | null;
+  odoo_picking_ids: number[] | null;
+  odoo_validated_at: string | null;
+  odoo_validated_by_name: string | null;
   printed_at: string | null;
   printed_by_name: string | null;
   print_count: number;

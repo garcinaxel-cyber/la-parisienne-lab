@@ -1,10 +1,12 @@
 'use client';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, Printer } from 'lucide-react';
+import { ArrowLeft, Printer, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { formatOdooStyleDate, withWarehouseSuffix } from '@/lib/delivery-print';
 import type { SoLinePricing } from '@/lib/odoo-so-pricing';
+import type { NeedsSplitEntry, PlannedWrite, SplitInput } from '@/lib/odoo-delivery-validate';
 
 // Reproduces the Odoo "Picking Operations" LAB/OUT export as closely as possible for
 // replenishment orders (validated against a real export, LAB/OUT/03078 REP/2026/00997, with
@@ -50,6 +52,68 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
   // a misleading flat "8%", while the normal single-rate case still shows a clean "8%".
   const vatPct = subtotal > 0 ? Math.round((vatTotal / subtotal) * 10000) / 100 : 0;
 
+  // "Valider la livraison sur Odoo" (Axel, 2026-08-17) — mandatory pop-up right after printing,
+  // REP orders only for this pilot phase (sales orders + invoice creation come later). Two-step
+  // confirmation, never a single blind write: dryRun=true first (preview + surface any needsSplit
+  // requirement), then dryRun=false only once the assistant has explicitly confirmed the preview.
+  const [validateOpen, setValidateOpen] = useState(false);
+  const [step, setStep] = useState<'choice' | 'loading' | 'split' | 'preview' | 'success' | 'error'>('choice');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const [needsSplit, setNeedsSplit] = useState<NeedsSplitEntry[]>([]);
+  const [splitValues, setSplitValues] = useState<Record<string, Record<number, string>>>({});
+  const [plan, setPlan] = useState<PlannedWrite[]>([]);
+  const [alreadyDone, setAlreadyDone] = useState(false);
+  const [pickingName, setPickingName] = useState<string | null>(null);
+
+  function buildSplits(): SplitInput[] {
+    return needsSplit.map(ns => ({
+      sku: ns.sku,
+      allocations: ns.lines.map(l => ({ moveId: l.moveId, qty: Number(splitValues[ns.sku]?.[l.moveId] ?? 0) })),
+    }));
+  }
+
+  async function runDryRun(fromSplitScreen = false) {
+    setStep('loading'); setErrorMsg(null); setSplitError(null);
+    const { validateDeliveryOnOdooAction } = await import('@/app/(app)/delivery-check/actions');
+    const res = await validateDeliveryOnOdooAction(header.id, true, buildSplits());
+    if (res.needsSplit?.length) {
+      setNeedsSplit(res.needsSplit);
+      // Prefill with each line's own original expected qty — the natural starting point an
+      // assistant then adjusts down for whichever line actually fell short.
+      setSplitValues(p => {
+        const next = { ...p };
+        for (const ns of res.needsSplit!) if (!next[ns.sku]) next[ns.sku] = Object.fromEntries(ns.lines.map(l => [l.moveId, String(l.expectedQty)]));
+        return next;
+      });
+      setStep('split');
+      return;
+    }
+    if (!res.ok) {
+      // A split submitted from the split screen that doesn't sum correctly comes back as a
+      // plain error (not needsSplit again) — show it inline, right there, instead of jumping to
+      // the generic error screen and losing everything she just typed.
+      if (fromSplitScreen) { setSplitError(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('split'); return; }
+      setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return;
+    }
+    setPlan(res.plan ?? []); setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setStep('preview');
+  }
+
+  async function confirmReal() {
+    setStep('loading'); setErrorMsg(null);
+    const { validateDeliveryOnOdooAction } = await import('@/app/(app)/delivery-check/actions');
+    const res = await validateDeliveryOnOdooAction(header.id, false, buildSplits());
+    if (!res.ok) { setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return; }
+    setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setStep('success');
+  }
+
+  function closeAndReturn() {
+    setValidateOpen(false); setStep('choice');
+    window.location.href = `/delivery-check/${header.delivery_date}/${header.order_ref}`;
+  }
+
   async function handlePrint() {
     // Fire the "already printed" mark alongside the print dialog — doesn't block printing if
     // the request is slow/fails, this is a nice-to-have color-code, not a gate (2026-08-11).
@@ -58,6 +122,8 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
       markPrintedAction(header.id);
     } catch { /* best-effort */ }
     window.print();
+    // REP only for this pilot phase — sales orders don't get the pop-up yet (Axel, 2026-08-17).
+    if (!isSo) { setValidateOpen(true); setStep('choice'); }
   }
 
   return (
@@ -169,6 +235,157 @@ export default function DeliveryPrintView({ header, lines, pricing }: {
           <div>Người lập phiếu</div>
         </div>
       </div>
+
+      {validateOpen && (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.55)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'white', borderRadius: 16, maxWidth: 480, width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: 24 }}>
+            {step === 'choice' && (
+              <>
+                <h2 className="font-serif text-lg font-bold text-navy mb-2">
+                  {vi ? 'Xác nhận giao hàng trên Odoo?' : 'Valider la livraison sur Odoo ?'}
+                </h2>
+                <p className="text-sm text-ink-light mb-5">
+                  {vi
+                    ? 'Bước cuối cùng: cập nhật số lượng đã giao trên Odoo. Bắt buộc để hoàn tất quy trình.'
+                    : "Dernière étape : met à jour les quantités livrées sur Odoo. Obligatoire pour clore le process."}
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => runDryRun()} className="w-full py-2.5 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: '#16A34A' }}>
+                    {vi ? 'Xác nhận giao hàng trên Odoo' : 'Valider la livraison sur Odoo'}
+                  </button>
+                  <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {vi ? 'Quay lại đơn hàng' : 'Revenir à la commande'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {step === 'loading' && (
+              <div className="py-10 text-center text-sm text-ink-light">{vi ? 'Đang xử lý…' : 'Traitement en cours…'}</div>
+            )}
+
+            {step === 'split' && (
+              <>
+                <h2 className="font-serif text-lg font-bold text-navy mb-1 flex items-center gap-2">
+                  <AlertTriangle size={18} style={{ color: '#D97706' }} />
+                  {vi ? 'Cần phân bổ theo dòng' : 'Répartition nécessaire'}
+                </h2>
+                <p className="text-sm text-ink-light mb-4">
+                  {vi
+                    ? 'Sản phẩm này có nhiều dòng trên Odoo và số lượng không khớp — cho biết dòng nào bị thiếu/dư.'
+                    : "Ce produit a plusieurs lignes sur Odoo et la quantité ne correspond pas — indique quelle(s) ligne(s) ont un écart."}
+                </p>
+                {splitError && (
+                  <div className="text-xs font-semibold rounded-lg px-3 py-2 mb-3" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>{splitError}</div>
+                )}
+                <div className="space-y-4 mb-4">
+                  {needsSplit.map(ns => {
+                    const values = splitValues[ns.sku] ?? {};
+                    const sum = ns.lines.reduce((s, l) => s + Number(values[l.moveId] ?? 0), 0);
+                    const ok = sum === ns.qtyChecked;
+                    return (
+                      <div key={ns.sku} className="rounded-xl p-3" style={{ border: '1px solid #E5E7EB' }}>
+                        <div className="text-sm font-semibold text-navy mb-2">{ns.product_name_vi} — {vi ? 'tổng đã kiểm' : 'total coché'} {ns.qtyChecked}</div>
+                        {ns.lines.map(l => (
+                          <div key={l.moveId} className="flex items-center justify-between gap-2 mb-1.5">
+                            <span className="text-xs text-ink-light flex-1 truncate">{l.note || (vi ? '(không ghi chú)' : '(sans note)')} — {vi ? 'dự kiến' : 'attendu'} {l.expectedQty}</span>
+                            <input type="number" value={values[l.moveId] ?? ''}
+                              onChange={e => setSplitValues(p => ({ ...p, [ns.sku]: { ...p[ns.sku], [l.moveId]: e.target.value } }))}
+                              className="w-16 text-center rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                          </div>
+                        ))}
+                        <div className="text-xs font-semibold mt-1" style={{ color: ok ? '#059669' : '#DC2626' }}>
+                          {vi ? 'Tổng' : 'Somme'}: {sum} / {ns.qtyChecked}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => runDryRun(true)}
+                    disabled={needsSplit.some(ns => ns.lines.reduce((s, l) => s + Number((splitValues[ns.sku] ?? {})[l.moveId] ?? 0), 0) !== ns.qtyChecked)}
+                    className="w-full py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                    {vi ? 'Tiếp tục' : 'Continuer'}
+                  </button>
+                  <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {vi ? 'Quay lại đơn hàng' : 'Revenir à la commande'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {step === 'preview' && (
+              <>
+                <h2 className="font-serif text-lg font-bold text-navy mb-3">{vi ? 'Xem trước' : 'Aperçu'}</h2>
+                {alreadyDone ? (
+                  <p className="text-sm mb-4" style={{ color: '#166534' }}>
+                    {vi ? `Đã được xác nhận trên Odoo (${pickingName}) — không cần làm gì thêm.` : `Déjà validé sur Odoo (${pickingName}) — rien à faire de plus.`}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-ink-light mb-3">
+                      {vi ? `Sẽ ghi trên Odoo (${pickingName}):` : `Sera écrit sur Odoo (${pickingName}) :`}
+                    </p>
+                    <div className="rounded-xl mb-4 overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                      {plan.map((p, i) => (
+                        <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs" style={{ borderTop: i ? '1px solid #F3F4F6' : undefined }}>
+                          <span className="text-ink-light truncate flex-1">{p.sku}{p.note ? ` · ${p.note}` : ''}</span>
+                          <span className="font-bold text-navy">{p.deliverQty} / {p.expectedQty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <div className="flex flex-col gap-2">
+                  {!alreadyDone && (
+                    <button onClick={confirmReal} className="w-full py-2.5 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: '#16A34A' }}>
+                      {vi ? 'Xác nhận — ghi vào Odoo' : 'Confirmer — écrire sur Odoo'}
+                    </button>
+                  )}
+                  <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {alreadyDone ? (vi ? 'Đóng' : 'Fermer') : (vi ? 'Quay lại đơn hàng' : 'Revenir à la commande')}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {step === 'success' && (
+              <>
+                <div className="flex items-center gap-2 mb-3" style={{ color: '#166534' }}>
+                  <CheckCircle2 size={22} />
+                  <h2 className="font-serif text-lg font-bold">{vi ? 'Đã xử lý xong 100%' : 'Traité à 100%'}</h2>
+                </div>
+                <p className="text-sm text-ink-light mb-5">
+                  {alreadyDone
+                    ? (vi ? 'Đơn hàng đã được xác nhận trên Odoo.' : 'La commande était déjà validée sur Odoo.')
+                    : (vi ? `Số lượng đã được ghi và bàn giao trên Odoo (${pickingName}).` : `Quantités écrites et livraison validée sur Odoo (${pickingName}).`)}
+                </p>
+                <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: '#16A34A' }}>
+                  {vi ? 'Xong' : 'Terminé'}
+                </button>
+              </>
+            )}
+
+            {step === 'error' && (
+              <>
+                <div className="flex items-center gap-2 mb-3" style={{ color: '#DC2626' }}>
+                  <X size={22} />
+                  <h2 className="font-serif text-lg font-bold">{vi ? 'Lỗi' : 'Erreur'}</h2>
+                </div>
+                <p className="text-sm mb-5" style={{ color: '#DC2626' }}>{errorMsg}</p>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => runDryRun()} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {vi ? 'Thử lại' : 'Réessayer'}
+                  </button>
+                  <button onClick={closeAndReturn} className="w-full py-2.5 rounded-xl font-semibold text-sm" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {vi ? 'Quay lại đơn hàng' : 'Revenir à la commande'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

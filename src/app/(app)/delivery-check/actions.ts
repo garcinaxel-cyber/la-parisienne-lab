@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
+import { validateReplenishmentDeliveryOnOdoo, type SplitInput, type DeliveryValidateResult } from '@/lib/odoo-delivery-validate';
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
@@ -215,4 +216,58 @@ export async function syncOdooForDeliveryCheckAction(
   } catch (e: any) {
     return { error: e?.message ?? 'Odoo sync failed' };
   }
+}
+
+// "Valider la livraison sur Odoo" (Axel, 2026-08-17) — writes delivered quantities back onto
+// Odoo's stock.move lines and validates the picking. REP orders only for this pilot phase (see
+// odoo-delivery-validate.ts's own doc comment for the full design). Called twice from the UI for
+// a real (non-dry-run) validation: once with dryRun=true to preview + surface any needsSplit
+// requirement, then again with dryRun=false once the assistant has confirmed (and provided any
+// required splits) — never a single blind write.
+export async function validateDeliveryOnOdooAction(
+  deliveryOrderId: string, dryRun: boolean, splits: SplitInput[] = [],
+): Promise<DeliveryValidateResult> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { ok: false, dryRun, error: auth.error };
+
+  const { data: header } = await supabase.from('lab_delivery_orders')
+    .select('order_ref, source_type, delivery_date, status').eq('id', deliveryOrderId).maybeSingle();
+  if (!header) return { ok: false, dryRun, error: 'Commande introuvable' };
+  // The checklist itself must already be fully checked + validated (existing "Valider" button) —
+  // that's what guarantees every line below has a real qty_checked, not a half-finished count.
+  if (header.status !== 'validated') return { ok: false, dryRun, error: "La fiche de vérification doit d'abord être validée (bouton \"Valider\")" };
+
+  const { data: lines } = await supabase.from('lab_delivery_check_lines')
+    .select('sku, product_name_vi, qty_checked, qty_expected').eq('delivery_order_id', deliveryOrderId);
+  const checklistLines = (lines ?? [])
+    .filter((l: any) => l.sku && l.qty_checked != null)
+    .map((l: any) => ({ sku: l.sku as string, product_name_vi: l.product_name_vi as string, qty_checked: Number(l.qty_checked), qty_expected: Number(l.qty_expected) }));
+
+  const result = await validateReplenishmentDeliveryOnOdoo(
+    supabase as any, header.order_ref, header.source_type, checklistLines, dryRun, splits,
+  );
+
+  // Only persist an outcome for a REAL attempt (not a dry-run preview, and not a needsSplit
+  // pause — neither of those is a final state worth recording).
+  if (!dryRun && !result.needsSplit) {
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (result.ok) {
+      patch.odoo_push_status = result.alreadyDoneOnOdoo ? 'already_done' : 'validated';
+      patch.odoo_push_error = null;
+      patch.odoo_picking_ids = result.pickingId ? [result.pickingId] : null;
+      patch.odoo_validated_at = new Date().toISOString();
+      patch.odoo_validated_by = auth.session.user.id;
+      patch.odoo_validated_by_name = auth.profile?.full_name ?? null;
+    } else {
+      patch.odoo_push_status = 'error';
+      patch.odoo_push_error = result.error ?? 'Erreur inconnue';
+    }
+    await supabase.from('lab_delivery_orders').update(patch).eq('id', deliveryOrderId);
+    revalidatePath(`/delivery-check/${header.delivery_date}/${header.order_ref}`);
+    revalidatePath('/delivery-check');
+    revalidatePath('/delivery-check/category');
+  }
+
+  return result;
 }

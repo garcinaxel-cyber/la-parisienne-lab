@@ -3,11 +3,12 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
   status: string; checked: number; total: number; printed_at: string | null;
+  odoo_push_status: string | null;
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -154,11 +155,16 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           {dayOrders.map(o => {
             const validated = o.status === 'validated';
             const full = o.total > 0 && o.checked === o.total;
-            const dotColor = validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
+            // Odoo delivery validation (Axel, 2026-08-17) — the strongest signal, takes priority
+            // over the checklist-only "validé": that one just means every line was checked in the
+            // app, this one means it's actually been written back to Odoo. Distinct gold tint so
+            // it's never confused with plain checklist-validated at a glance.
+            const odooDone = o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done';
+            const dotColor = odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
             // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
             // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
-            const bg = validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
-            const border = validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
+            const bg = odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+            const border = odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
             return (
               // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
               // captures them as separate segments, so no encoding here.
@@ -177,7 +183,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                   </div>
                   <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
                 </div>
-                {validated ? (
+                {odooDone ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#92400E' }}>
+                    <CheckCheck size={15} /> {vi ? '100%' : '100%'}
+                  </span>
+                ) : validated ? (
                   <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#059669' }}>
                     <CheckCircle2 size={15} /> {vi ? 'đã xác nhận' : 'validé'}
                   </span>

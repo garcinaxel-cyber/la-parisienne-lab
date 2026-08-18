@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
@@ -250,6 +250,24 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
             <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
               <CheckCircle2 size={16} /> {vi ? 'Đã xác nhận' : 'Validé'}
             </span>
+            {/* Odoo delivery validation status (Axel, 2026-08-17) — a distinct badge from the
+                checklist "Validé" above: that one only means every line was checked in the app,
+                this one means the delivered quantities were actually written back to Odoo and
+                the picking validated, i.e. the full process Axel wants assistants to never skip. */}
+            {(header.odoo_push_status === 'validated' || header.odoo_push_status === 'already_done') && (
+              <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}
+                title={header.odoo_validated_by_name ? `${vi ? 'Xác nhận bởi' : 'Validé par'} ${header.odoo_validated_by_name}` : undefined}>
+                <CheckCheck size={16} /> {vi ? 'Đã xử lý xong 100%' : 'Traité à 100%'}
+              </span>
+            )}
+            {header.source_type === 'replenishment' && header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
+              <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}`}
+                className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
+                style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}
+                title={header.odoo_push_error ?? undefined}>
+                <AlertTriangle size={15} /> {vi ? 'Cần xác nhận trên Odoo' : 'À valider sur Odoo'}
+              </Link>
+            )}
             {header.printed_at && (
               <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}
                 title={header.printed_by_name ? `${vi ? 'In bởi' : 'Imprimé par'} ${header.printed_by_name}` : undefined}>

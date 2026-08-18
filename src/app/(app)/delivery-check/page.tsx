@@ -59,11 +59,11 @@ export default async function DeliveryCheckPage() {
   // Progress: any lab_delivery_orders header already started for these (date, ref)
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
-        .select('id, order_ref, delivery_date, status, printed_at')
+        .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status')
         .in('delivery_date', [today, tomorrow])
     : { data: [] as any[] };
-  const headerByKey: Record<string, { id: string; status: string; printed_at: string | null }> = {};
-  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null };
+  const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null }> = {};
+  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null };
   const headerIds = (headers ?? []).map((h: any) => h.id);
 
   // Lines checked so far, to show an "X/Y" progress badge without opening the order
@@ -102,6 +102,7 @@ export default async function DeliveryCheckPage() {
       checked: counts?.checked ?? 0,
       total: counts?.total ?? o.lineCount,
       printed_at: h?.printed_at ?? null,
+      odoo_push_status: h?.odoo_push_status ?? null,
     };
   });
 
