@@ -43,6 +43,22 @@ async function requireStaffSession(): Promise<{ ok: true } | { error: string }> 
   return { ok: true };
 }
 
+// shop_name is stored inconsistently across sync sources — found live 2026-08-19 while
+// testing Moon Flower (stored "MOON FLOWER", all caps) and confirmed via SQL that
+// lab_order_packaging_lines additionally carries raw unprocessed forms for some shops
+// ("La Paris - Bà Triệu", "La Paris - Timecity warehouse") that odoo-sync.ts's own
+// ` - warehouse` suffix strip doesn't catch (different dash position). A plain ilike exact
+// match isn't enough, so every read here normalizes both sides the same way before comparing
+// instead of filtering in the SQL query itself.
+function normalizeShopName(s: string | null | undefined): string {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/\s*warehouse\s*$/, '')
+    .replace(/^la paris\s*-\s*/, 'la paris ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function labTodayTomorrow(): [string, string] {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
   const now = new Date();
@@ -65,13 +81,17 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   // lab_order_packaging_lines), not lab_delivery_orders directly — an order no assistant has
   // opened yet still needs to show up, with its checklist materialized on the fly via the same
   // idempotent helper the assistants' own pages use.
+  // No shop_name filter in the query itself — only 2 dates' worth of rows across every shop,
+  // cheap to fetch, then filtered with normalizeShopName() below (see its comment for why).
+  const target = normalizeShopName(shopName);
   const { data: orderLines } = await supabase.from('lab_order_lines')
-    .select('order_ref, delivery_date, shop_name').eq('shop_name', shopName).in('delivery_date', [today, tomorrow]).gt('qty', 0);
+    .select('order_ref, delivery_date, shop_name').in('delivery_date', [today, tomorrow]).gt('qty', 0);
   const { data: packagingLines } = await supabase.from('lab_order_packaging_lines')
-    .select('order_ref, delivery_date, shop_name').eq('shop_name', shopName).in('delivery_date', [today, tomorrow]);
+    .select('order_ref, delivery_date, shop_name').in('delivery_date', [today, tomorrow]);
 
   const pairs = new Map<string, { date: string; orderRef: string }>();
   for (const l of [...(orderLines ?? []), ...(packagingLines ?? [])]) {
+    if (normalizeShopName(l.shop_name) !== target) continue;
     pairs.set(`${l.delivery_date}||${l.order_ref}`, { date: l.delivery_date, orderRef: l.order_ref });
   }
 
@@ -103,13 +123,14 @@ export type ShopCake = {
 async function fetchCakes(shopName: string): Promise<ShopCake[]> {
   const supabase = service();
   if (!supabase) return [];
+  const target = normalizeShopName(shopName);
   const since = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
   const { data } = await supabase.from('lab_manual_cakes')
-    .select('id, product_name_vi, qty, delivery_date, ready_time, matched_order_ref, cancelled_at, cancel_reason, customer_name, customer_phone, delivery_address, notes, message')
-    .eq('shop_name', shopName).gte('delivery_date', since)
-    .order('delivery_date', { ascending: true }).limit(50);
+    .select('id, product_name_vi, qty, delivery_date, ready_time, matched_order_ref, cancelled_at, cancel_reason, customer_name, customer_phone, delivery_address, notes, message, shop_name')
+    .gte('delivery_date', since)
+    .order('delivery_date', { ascending: true }).limit(500);
 
-  return (data ?? []).map((c: any) => {
+  return (data ?? []).filter((c: any) => normalizeShopName(c.shop_name) === target).slice(0, 50).map((c: any) => {
     const realRef = c.matched_order_ref && c.matched_order_ref !== '__pending_create__' ? c.matched_order_ref : null;
     const note = [c.notes, c.message].filter(Boolean).join(' — ') || null;
     return {
@@ -150,7 +171,8 @@ export async function confirmReceiptAction(input: {
   // before writing — never trust the client-supplied deliveryOrderId pairing blindly.
   const { data: header } = await supabase.from('lab_delivery_orders')
     .select('id, shop_name').eq('id', input.deliveryOrderId).maybeSingle();
-  if (!header || header.shop_name !== auth.shopName) return { error: 'Order not found for this shop' };
+  // Normalized compare — same shop_name inconsistency as fetchDeliveries above.
+  if (!header || normalizeShopName(header.shop_name) !== normalizeShopName(auth.shopName)) return { error: 'Order not found for this shop' };
   const { data: line } = await supabase.from('lab_delivery_check_lines')
     .select('id').eq('id', input.checkLineId).eq('delivery_order_id', input.deliveryOrderId).maybeSingle();
   if (!line) return { error: 'Line not found' };
