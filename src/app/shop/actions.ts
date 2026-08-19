@@ -144,10 +144,11 @@ async function fetchCakes(shopName: string): Promise<ShopCake[]> {
 }
 
 // ── Shop's own session ──────────────────────────────────────────────────────
-export async function getMyShopDeliveriesAction(): Promise<{ shopName?: string; orders?: ShopDeliveryOrder[]; error?: string }> {
+export async function getMyShopDeliveriesAction(): Promise<{ shopName?: string; orders?: ShopDeliveryOrder[]; today?: string; tomorrow?: string; error?: string }> {
   const auth = await requireShopSession();
   if ('error' in auth) return { error: auth.error };
-  return { shopName: auth.shopName, orders: await fetchDeliveries(auth.shopName) };
+  const [today, tomorrow] = labTodayTomorrow();
+  return { shopName: auth.shopName, orders: await fetchDeliveries(auth.shopName), today, tomorrow };
 }
 
 export async function getMyShopCakesAction(): Promise<{ cakes?: ShopCake[]; error?: string }> {
@@ -187,10 +188,11 @@ export async function confirmReceiptAction(input: {
 }
 
 // ── Staff preview (read-only, any shop by name) ─────────────────────────────
-export async function getShopDeliveriesForStaffAction(shopName: string): Promise<{ orders?: ShopDeliveryOrder[]; error?: string }> {
+export async function getShopDeliveriesForStaffAction(shopName: string): Promise<{ orders?: ShopDeliveryOrder[]; today?: string; tomorrow?: string; error?: string }> {
   const auth = await requireStaffSession();
   if ('error' in auth) return { error: auth.error };
-  return { orders: await fetchDeliveries(shopName) };
+  const [today, tomorrow] = labTodayTomorrow();
+  return { orders: await fetchDeliveries(shopName), today, tomorrow };
 }
 
 export async function getShopCakesForStaffAction(shopName: string): Promise<{ cakes?: ShopCake[]; error?: string }> {

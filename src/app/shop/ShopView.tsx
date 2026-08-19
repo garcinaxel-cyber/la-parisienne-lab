@@ -22,6 +22,15 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Axel, 2026-08-19: "ne met pas la possibilite de clicker recu pour une commande du
+  // lendemain. je veux pouvoir selectionner aujourd hui ou demain" — a day picker like the
+  // assistants' own delivery-check, and tomorrow's lines are view-only even for the shop's own
+  // account (confirming a receipt before the delivery has actually happened doesn't mean
+  // anything). todayDate/tomorrowDate come from the server (Asia/Ho_Chi_Minh) so "today" can't
+  // drift from a client clock in a different timezone.
+  const [day, setDay] = useState<'today' | 'tomorrow'>('today');
+  const [todayDate, setTodayDate] = useState<string | null>(null);
+  const [tomorrowDate, setTomorrowDate] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Record<string, { qty: string; note: string }>>({});
@@ -43,6 +52,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setLoading(false);
     if (delRes.error) { setError(delRes.error); return; }
     setOrders(delRes.orders ?? []);
+    setTodayDate(delRes.today ?? null);
+    setTomorrowDate(delRes.tomorrow ?? null);
     setCakes(cakeRes.cakes ?? []);
   }
 
@@ -90,6 +101,13 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     router.push('/login');
   }
 
+  const dayDate = day === 'today' ? todayDate : tomorrowDate;
+  const filteredOrders = orders?.filter(o => o.header.delivery_date === dayDate) ?? null;
+  // Only today's deliveries are confirmable — a tomorrow order hasn't been delivered yet, so
+  // "received" wouldn't mean anything. Since the list is already filtered to one day at a time,
+  // this only needs to check which tab is active.
+  const canConfirm = !readOnly && day === 'today';
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
@@ -125,20 +143,33 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
         ) : error ? (
           <div className="text-center py-10 text-sm font-semibold" style={{ color: '#DC2626' }}>{error}</div>
         ) : tab === 'deliveries' ? (
-          !orders?.length ? (
-            <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
-              Không có đơn giao hôm nay hoặc ngày mai
+          <div className="space-y-3">
+            <div className="flex gap-1.5">
+              <button onClick={() => setDay('today')}
+                className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
+                style={{ backgroundColor: day === 'today' ? '#F3E8B8' : 'white', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                Hôm nay{todayDate ? ` · ${fmtDate(todayDate)}` : ''}
+              </button>
+              <button onClick={() => setDay('tomorrow')}
+                className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
+                style={{ backgroundColor: day === 'tomorrow' ? '#F3E8B8' : 'white', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                Ngày mai{tomorrowDate ? ` · ${fmtDate(tomorrowDate)}` : ''}
+              </button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {!readOnly && (
+            {!filteredOrders?.length ? (
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                {day === 'today' ? 'Không có đơn giao hôm nay' : 'Không có đơn giao ngày mai'}
+              </div>
+            ) : (
+              <>
+              {!readOnly && day === 'today' && (
                 <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: '1px solid #E5E7EB' }}>
                   <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
                   <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Tên của bạn"
                     className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                 </div>
               )}
-              {orders.map(o => (
+              {filteredOrders.map(o => (
               <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
                 <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
                   <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
@@ -171,7 +202,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                                 {l.qty_checked != null ? `×${l.qty_checked}` : '—'}
                               </div>
                             </div>
-                            {readOnly ? (
+                            {!canConfirm ? (
                               l.receipt ? (
                                 <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
                                   {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
@@ -206,7 +237,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             )}
                           </div>
                         </div>
-                        {isEditing && !readOnly && isDiff && (
+                        {isEditing && canConfirm && isDiff && (
                           <div className="mt-2">
                             <input type="text" value={d.note} onChange={e => updDraft(l, { note: e.target.value })}
                               placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
@@ -223,8 +254,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
               </div>
               ))}
-            </div>
-          )
+              </>
+            )}
+          </div>
         ) : (
           !cakes?.length ? (
             <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
