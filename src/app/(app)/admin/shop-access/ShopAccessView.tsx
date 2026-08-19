@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { Store, Copy, Check, Eye, KeyRound } from 'lucide-react';
+import { Store, Copy, Check, Eye, KeyRound, AlertTriangle } from 'lucide-react';
 
 type Shop = { name: string; hasAccount: boolean; email: string | null };
 
@@ -14,26 +14,42 @@ export default function ShopAccessView({ shops }: { shops: Shop[] }) {
   const [link, setLink] = useState<{ shop: string; url: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [rows, setRows] = useState(shops);
+  // Bug found 2026-08-19 (Axel: "j'essaie de créer mais ça fonctionne pas") — a failed create
+  // gave zero feedback, res.error was silently dropped. Also surfaced the real cause: an email
+  // with Vietnamese diacritics in the local part (e.g. "Hoànkiếm@...") is rejected by Supabase
+  // Auth as an invalid address — the server error now actually reaches the screen.
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function create(shopName: string) {
     const email = (emailDraft[shopName] ?? '').trim();
     if (!email) return;
+    // ASCII-only check up front — Supabase Auth rejects accented characters (e.g. "Hoànkiếm@...")
+    // as an invalid address, and that round trip is avoidable.
+    if (!/^[\x00-\x7F]+$/.test(email)) {
+      setErrors(p => ({ ...p, [shopName]: vi ? 'Email không được có dấu (chỉ chữ cái, số thường)' : 'Email sans accents (lettres/chiffres standards uniquement)' }));
+      return;
+    }
     setBusy(shopName);
+    setErrors(p => ({ ...p, [shopName]: '' }));
     const { createShopAccountAction } = await import('./actions');
     const res = await createShopAccountAction(shopName, email);
     setBusy(null);
     if (res.link) {
       setLink({ shop: shopName, url: res.link });
       setRows(p => p.map(s => s.name === shopName ? { ...s, hasAccount: true, email } : s));
+    } else {
+      setErrors(p => ({ ...p, [shopName]: res.error ?? (vi ? 'Không tạo được tài khoản' : 'Échec de la création') }));
     }
   }
 
   async function resetLink(shopName: string) {
     setBusy(shopName);
+    setErrors(p => ({ ...p, [shopName]: '' }));
     const { generateShopResetLinkAction } = await import('./actions');
     const res = await generateShopResetLinkAction(shopName);
     setBusy(null);
     if (res.link) setLink({ shop: shopName, url: res.link });
+    else setErrors(p => ({ ...p, [shopName]: res.error ?? (vi ? 'Lỗi' : 'Erreur') }));
   }
 
   async function copyLink() {
@@ -75,6 +91,11 @@ export default function ShopAccessView({ shops }: { shops: Shop[] }) {
             <div className="min-w-0">
               <div className="text-sm font-bold text-navy">{shop.name}</div>
               {shop.email && <div className="text-xs text-ink-light truncate">{shop.email}</div>}
+              {errors[shop.name] && (
+                <div className="text-xs font-semibold flex items-center gap-1 mt-0.5" style={{ color: '#DC2626' }}>
+                  <AlertTriangle size={11} className="shrink-0" /> {errors[shop.name]}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {shop.hasAccount ? (
@@ -93,7 +114,7 @@ export default function ShopAccessView({ shops }: { shops: Shop[] }) {
               ) : (
                 <>
                   <input type="email" value={emailDraft[shop.name] ?? ''} onChange={e => setEmailDraft(p => ({ ...p, [shop.name]: e.target.value }))}
-                    placeholder="email@..." className="text-xs rounded-lg px-2.5 py-1.5 w-40" style={{ border: '1px solid #D1D5DB' }} />
+                    placeholder="moonflower@laparisienne.lab" className="text-xs rounded-lg px-2.5 py-1.5 w-44" style={{ border: '1px solid #D1D5DB' }} />
                   <button onClick={() => create(shop.name)} disabled={busy === shop.name || !(emailDraft[shop.name] ?? '').trim()}
                     className="text-xs font-bold rounded-lg px-3.5 py-1.5 text-white disabled:opacity-50"
                     style={{ backgroundColor: '#16A34A' }}>
