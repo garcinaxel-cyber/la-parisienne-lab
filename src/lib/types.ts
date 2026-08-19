@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'lab_manager' | 'assistant' | 'chef' | 'worker' | 'sales' | 'viewer';
+export type UserRole = 'admin' | 'lab_manager' | 'assistant' | 'chef' | 'worker' | 'sales' | 'viewer' | 'shop';
 export type Team = 'baby_mama' | 'hung' | 'entremet' | 'baker';
 export type ImportType = 'daily' | 'cake_addon';
 export type ImportStatus = 'draft' | 'published' | 'cancelled';

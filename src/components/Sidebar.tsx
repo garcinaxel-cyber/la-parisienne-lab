@@ -67,8 +67,11 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
           </div>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        {/* Nav — scrolls internally now that the list has grown (inventaire + accès boutiques
+            added 2026-08-19) so the footer (lang toggle + logout) never gets pushed off-screen
+            with no way to reach it. min-h-0 is required alongside flex-1 for a flex child to
+            actually be allowed to shrink and scroll instead of just overflowing its parent. */}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
           {NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
             const { href, icon: Icon } = item;
             return (

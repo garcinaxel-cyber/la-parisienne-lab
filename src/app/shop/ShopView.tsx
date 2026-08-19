@@ -1,16 +1,21 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Truck, Cake, CheckCircle2, AlertTriangle, Clock, Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Truck, Cake, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake } from './actions';
 
-const NAME_STORAGE_KEY = 'lab_shop_portal_name';
+const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 
 function fmtDate(d: string) {
   const [y, m, day] = d.split('-');
   return `${day}/${m}`;
 }
 
-export default function ShopPortalView({ token, shopName }: { token: string; shopName: string }) {
+// Shared UI for both the shop's own portal (/shop, editable) and the staff preview
+// (/admin/shop-access/[shopName], readOnly — Axel wants staff to see exactly what a shop sees
+// from the dashboard, without pretending to confirm receipts on the shop's behalf).
+export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
+  const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes'>('deliveries');
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
@@ -22,14 +27,18 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {}
+    if (!readOnly) { try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {} }
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {
     setLoading(true); setError(null);
-    const { getShopDeliveriesAction, getShopCakesAction } = await import('./actions');
-    const [delRes, cakeRes] = await Promise.all([getShopDeliveriesAction(token), getShopCakesAction(token)]);
+    const actions = await import('./actions');
+    const [delRes, cakeRes] = await Promise.all([
+      readOnly ? actions.getShopDeliveriesForStaffAction(shopName) : actions.getMyShopDeliveriesAction(),
+      readOnly ? actions.getShopCakesForStaffAction(shopName) : actions.getMyShopCakesAction(),
+    ]);
     setLoading(false);
     if (delRes.error) { setError(delRes.error); return; }
     setOrders(delRes.orders ?? []);
@@ -49,7 +58,7 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
     try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
     setSaving(lineId);
     const { confirmReceiptAction } = await import('./actions');
-    const res = await confirmReceiptAction(token, {
+    const res = await confirmReceiptAction({
       checkLineId: lineId, deliveryOrderId: order.header.id,
       qtyReceived: d.qty.trim() === '' ? null : Number(d.qty), status: d.status, note: d.note.trim() || null,
       confirmedByName: trimmedName,
@@ -58,12 +67,25 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
     if (res.ok) { setOpenLine(null); load(); }
   }
 
+  async function logout() {
+    const { createClient } = await import('@/lib/supabase-browser');
+    await createClient().auth.signOut();
+    router.push('/login');
+  }
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
-        <div className="max-w-xl mx-auto">
-          <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab</div>
-          <h1 className="text-white font-serif text-xl font-bold">{shopName}</h1>
+        <div className="max-w-xl mx-auto flex items-center justify-between">
+          <div>
+            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? ' · Xem trước' : ''}</div>
+            <h1 className="text-white font-serif text-xl font-bold">{shopName}</h1>
+          </div>
+          {!readOnly && (
+            <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label="Đăng xuất">
+              <LogOut size={18} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -113,12 +135,14 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
                               {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
                               {l.receipt.status === 'ok' ? 'Đã nhận' : 'Có vấn đề'}
                             </span>
-                          ) : (
+                          ) : !readOnly ? (
                             <button onClick={() => startConfirm(l.id, l.qty_expected)}
                               className="text-xs font-bold rounded-lg px-3 py-1.5 shrink-0"
                               style={{ border: '1px solid #D1D5DB' }}>
                               Xác nhận
                             </button>
+                          ) : (
+                            <span className="text-xs shrink-0" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
                           )}
                         </div>
                         {l.receipt && (
@@ -126,7 +150,7 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
                             {l.receipt.confirmed_by_name} · ×{l.receipt.qty_received ?? '?'}{l.receipt.note ? ` · ${l.receipt.note}` : ''}
                           </div>
                         )}
-                        {isOpen && d && (
+                        {isOpen && d && !readOnly && (
                           <div className="mt-2.5 space-y-2 rounded-xl p-3" style={{ backgroundColor: '#F9FAFB' }}>
                             <div className="flex gap-2">
                               <input type="number" value={d.qty} onChange={e => setDraft(p => ({ ...p, [l.id]: { ...p[l.id], qty: e.target.value } }))}
@@ -169,19 +193,36 @@ export default function ShopPortalView({ token, shopName }: { token: string; sho
               Chưa có bánh sinh nhật nào
             </div>
           ) : (
-            <div className="bg-white rounded-2xl divide-y overflow-hidden" style={{ border: '1px solid #E5E7EB', borderColor: '#F3F4F6' }}>
+            <div className="space-y-2.5">
               {cakes.map(c => (
-                <div key={c.id} className="px-4 py-3 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-navy truncate">{c.name} ×{c.qty}</div>
-                    <div className="text-xs" style={{ color: '#9CA3AF' }}>{fmtDate(c.deliveryDate)}{c.readyTime ? ` · ${c.readyTime}` : ''}</div>
-                    {c.cancelReason && <div className="text-[11px] mt-0.5" style={{ color: '#DC2626' }}>{c.cancelReason}</div>}
+                <div key={c.id} className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-bold text-navy">{c.name} ×{c.qty}</div>
+                    <span className="inline-flex items-center gap-1 text-xs font-bold shrink-0"
+                      style={{ color: c.status === 'confirmed' ? '#059669' : c.status === 'cancelled' ? '#DC2626' : '#D97706' }}>
+                      {c.status === 'confirmed' ? <CheckCircle2 size={14} /> : c.status === 'cancelled' ? <AlertTriangle size={14} /> : <Clock size={14} />}
+                      {c.status === 'confirmed' ? 'Đã xác nhận' : c.status === 'cancelled' ? 'Đã huỷ' : 'Đang chờ'}
+                    </span>
                   </div>
-                  <span className="inline-flex items-center gap-1 text-xs font-bold shrink-0"
-                    style={{ color: c.status === 'confirmed' ? '#059669' : c.status === 'cancelled' ? '#DC2626' : '#D97706' }}>
-                    {c.status === 'confirmed' ? <CheckCircle2 size={14} /> : c.status === 'cancelled' ? <AlertTriangle size={14} /> : <Clock size={14} />}
-                    {c.status === 'confirmed' ? 'Đã xác nhận' : c.status === 'cancelled' ? 'Đã huỷ' : 'Đang chờ'}
-                  </span>
+                  <div className="text-xs mt-0.5" style={{ color: '#9CA3AF' }}>{fmtDate(c.deliveryDate)}{c.readyTime ? ` · ${c.readyTime}` : ''}</div>
+                  {c.cancelReason && <div className="text-xs mt-1 font-semibold" style={{ color: '#DC2626' }}>{c.cancelReason}</div>}
+                  <div className="mt-2 pt-2 space-y-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+                    {c.customerName && (
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><User size={12} /> {c.customerName}</div>
+                    )}
+                    {c.customerPhone && (
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><Phone size={12} /> {c.customerPhone}</div>
+                    )}
+                    {c.deliveryAddress && (
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><MapPin size={12} /> {c.deliveryAddress}</div>
+                    )}
+                    {c.note && (
+                      <div className="text-xs flex items-start gap-1.5" style={{ color: '#B45309' }}><StickyNote size={12} className="mt-0.5 shrink-0" /> {c.note}</div>
+                    )}
+                    {!c.customerName && !c.customerPhone && !c.deliveryAddress && !c.note && (
+                      <div className="text-xs" style={{ color: '#9CA3AF' }}>Không có thông tin bổ sung</div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -14,6 +14,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .eq('id', session.user.id)
     .single();
 
+  // Shop accounts (shared login per shop, 2026-08-19) never see the admin dashboard/Sidebar —
+  // same treatment as chef/worker below, redirected to their own space before anything else.
+  if (profile?.role === 'shop') redirect('/shop');
+
   // Only lab roles can access the app — catalogue-only users get bounced to login
   const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
   if (!profile || !LAB_ROLES.includes(profile.role)) redirect('/login');

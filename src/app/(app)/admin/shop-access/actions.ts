@@ -1,56 +1,85 @@
 'use server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
+import { SHOP_NAMES } from './page';
 
-async function requireProfile(supabase: ReturnType<typeof createClient>) {
+// Isolated from /admin/users/actions.ts on purpose — same createUser pattern (proven, already
+// in production for chef/assistant/lab_manager accounts) but kept in its own file so this new
+// 'shop' role work never touches that existing, live file.
+
+async function requireStaff(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' as const };
-  const { data: profile } = await supabase.from('profiles').select('full_name, role').eq('id', session.user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' as const };
-  return { session, profile };
+  return { ok: true as const };
 }
 
-function newToken(): string {
-  return crypto.randomUUID().replace(/-/g, '');
+function admin() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 }
 
-export async function generateShopLinkAction(shopName: string): Promise<{ token?: string; error?: string }> {
+export async function createShopAccountAction(shopName: string, email: string): Promise<{ link?: string; error?: string }> {
   const supabase = createClient();
-  const auth = await requireProfile(supabase);
+  const auth = await requireStaff(supabase);
   if ('error' in auth) return { error: auth.error };
-  const name = shopName.trim();
-  if (!name) return { error: 'Nom de boutique manquant' };
+  if (!SHOP_NAMES.includes(shopName)) return { error: 'Unknown shop' };
+  const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return { error: 'Invalid email' };
 
-  const token = newToken();
-  const { error } = await supabase.from('lab_shop_portal_links').upsert({
-    shop_name: name, token, active: true,
-    created_by: auth.session.user.id, created_by_name: auth.profile?.full_name ?? null,
-  }, { onConflict: 'shop_name' });
-  if (error) return { error: error.message };
+  const svc = admin();
+  if (!svc) return { error: 'Server not configured' };
+
+  const { data: authData, error: authErr } = await svc.auth.admin.createUser({
+    email: cleanEmail, email_confirm: true, user_metadata: { full_name: shopName },
+  });
+  let userId = authData?.user?.id;
+  if (authErr || !userId) {
+    const alreadyExists = authErr?.message?.toLowerCase().includes('already');
+    if (!alreadyExists) return { error: authErr?.message ?? 'Failed to create user' };
+    const { data: list } = await svc.auth.admin.listUsers();
+    userId = list?.users?.find(u => u.email?.toLowerCase() === cleanEmail)?.id;
+    if (!userId) return { error: 'User exists but could not be located' };
+  }
+
+  const { error: profileErr } = await svc.from('profiles').upsert({ id: userId, full_name: shopName, role: 'shop' }, { onConflict: 'id' });
+  if (profileErr) return { error: profileErr.message };
+  const { error: lpErr } = await svc.from('lab_profiles').upsert({ id: userId, shop_name: shopName }, { onConflict: 'id' });
+  if (lpErr) return { error: lpErr.message };
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://la-parisienne-lab.vercel.app';
+  const { data: linkData, error: linkErr } = await svc.auth.admin.generateLink({
+    type: 'recovery', email: cleanEmail, options: { redirectTo: `${siteUrl}/auth/set-password` },
+  });
+  if (linkErr || !linkData?.properties?.hashed_token) {
+    return { error: linkErr?.message ?? 'Account created but link generation failed' };
+  }
+  const link = `${siteUrl}/auth/set-password?token_hash=${linkData.properties.hashed_token}&type=recovery`;
+
   revalidatePath('/admin/shop-access');
-  return { token };
+  return { link };
 }
 
-export async function regenerateShopLinkAction(id: string): Promise<{ token?: string; error?: string }> {
+export async function generateShopResetLinkAction(shopName: string): Promise<{ link?: string; error?: string }> {
   const supabase = createClient();
-  const auth = await requireProfile(supabase);
+  const auth = await requireStaff(supabase);
   if ('error' in auth) return { error: auth.error };
 
-  const token = newToken();
-  const { error } = await supabase.from('lab_shop_portal_links').update({
-    token, regenerated_at: new Date().toISOString(),
-  }).eq('id', id);
-  if (error) return { error: error.message };
-  revalidatePath('/admin/shop-access');
-  return { token };
-}
+  const svc = admin();
+  if (!svc) return { error: 'Server not configured' };
+  const { data: lp } = await svc.from('lab_profiles').select('id').eq('shop_name', shopName).maybeSingle();
+  if (!lp) return { error: 'No account for this shop' };
+  const { data: userData } = await svc.auth.admin.getUserById(lp.id);
+  const email = userData?.user?.email;
+  if (!email) return { error: 'User email not found' };
 
-export async function setShopLinkActiveAction(id: string, active: boolean): Promise<{ ok?: boolean; error?: string }> {
-  const supabase = createClient();
-  const auth = await requireProfile(supabase);
-  if ('error' in auth) return { error: auth.error };
-  const { error } = await supabase.from('lab_shop_portal_links').update({ active }).eq('id', id);
-  if (error) return { error: error.message };
-  revalidatePath('/admin/shop-access');
-  return { ok: true };
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://la-parisienne-lab.vercel.app';
+  const { data, error } = await svc.auth.admin.generateLink({
+    type: 'recovery', email, options: { redirectTo: `${siteUrl}/auth/set-password` },
+  });
+  if (error || !data?.properties?.hashed_token) return { error: error?.message ?? 'Failed to generate link' };
+  const link = `${siteUrl}/auth/set-password?token_hash=${data.properties.hashed_token}&type=recovery`;
+  return { link };
 }
