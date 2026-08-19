@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
@@ -132,17 +132,24 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         </Link>
       </div>
 
-      <div className="flex gap-1.5">
-        {(['today', 'tomorrow'] as const).map(d => (
-          <button key={d} onClick={() => setDay(d)}
-            className="text-xs font-semibold rounded-full px-3.5 py-1.5"
-            style={{
-              border: '1px solid', borderColor: day === d ? '#1f2937' : '#D1D5DB',
-              backgroundColor: day === d ? '#F3F4F6' : 'transparent', color: '#1f2937',
-            }}>
-            {d === 'today' ? (vi ? 'Hôm nay' : "Aujourd'hui") : (vi ? 'Ngày mai' : 'Demain')}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex gap-1.5">
+          {(['today', 'tomorrow'] as const).map(d => (
+            <button key={d} onClick={() => setDay(d)}
+              className="text-xs font-semibold rounded-full px-3.5 py-1.5"
+              style={{
+                border: '1px solid', borderColor: day === d ? '#1f2937' : '#D1D5DB',
+                backgroundColor: day === d ? '#F3F4F6' : 'transparent', color: '#1f2937',
+              }}>
+              {d === 'today' ? (vi ? 'Hôm nay' : "Aujourd'hui") : (vi ? 'Ngày mai' : 'Demain')}
+            </button>
+          ))}
+        </div>
+        <Link href="/delivery-check/history"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 shrink-0"
+          style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+          <History size={13} /> {vi ? 'Lịch sử' : 'Historique'}
+        </Link>
       </div>
 
       {dayOrders.length === 0 ? (

@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, FileSpreadsheet, Zap, ShieldCheck, ClipboardCheck, Box } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, FileSpreadsheet, Zap, ShieldCheck, ClipboardCheck, Box, Store } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -17,6 +17,7 @@ const NAV = [
   { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders' },
   { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
   { href: '/inventory', icon: Box,            labelVi: 'Kiểm kê', labelEn: 'Inventaire' },
+  { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques' },
   { href: '/production-history', icon: FileSpreadsheet, labelVi: 'Lịch sử sản xuất', labelEn: 'Production export', adminOnly: true },
   // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
   // assistants need to open a chef's station view same as a chef would, e.g. to check what's

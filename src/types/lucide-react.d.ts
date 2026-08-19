@@ -78,4 +78,9 @@ declare module 'lucide-react' {
   export const Box: LucideIcon;
   export const LayoutGrid: LucideIcon;
   export const Pencil: LucideIcon;
+  export const History: LucideIcon;
+  export const Copy: LucideIcon;
+  export const Check: LucideIcon;
+  export const ExternalLink: LucideIcon;
+  export const PlayCircle: LucideIcon;
 }

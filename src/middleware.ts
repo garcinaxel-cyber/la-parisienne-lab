@@ -25,6 +25,9 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/odoo/lock-orders')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
+  // Public shop delivery/cakes portal (2026-08-19) — one token per shop, no login (each shop
+  // has 5-6 staff, an individual account per person isn't manageable). Same treatment as /order.
+  if (pathname.startsWith('/boutique')) return NextResponse.next();
 
   // Is a Supabase auth cookie present? (name: sb-<ref>-auth-token, possibly chunked .0/.1)
   const hasAuth = req.cookies.getAll().some(
