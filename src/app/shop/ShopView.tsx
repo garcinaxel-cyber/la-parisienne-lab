@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote } from 'lucide-react';
+import { Truck, Cake, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake } from './actions';
+import type { CheckLine } from '@/lib/delivery-check';
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 
@@ -22,8 +23,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [openLine, setOpenLine] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<string, { qty: string; status: 'ok' | 'issue'; note: string }>>({});
+  const [editing, setEditing] = useState<Set<string>>(new Set());
+  const [draft, setDraft] = useState<Record<string, { qty: string; note: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
@@ -45,26 +46,42 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setCakes(cakeRes.cakes ?? []);
   }
 
-  function startConfirm(lineId: string, qtyExpected: number) {
-    setDraft(p => ({ ...p, [lineId]: p[lineId] ?? { qty: String(qtyExpected), status: 'ok', note: '' } }));
-    setOpenLine(lineId);
+  // Reference qty is what the assistant already checked (l.qty_checked) — that's what the shop
+  // actually got sent — falling back to the original order qty if the assistant hasn't checked
+  // it yet. Axel, 2026-08-19: same input+OK / checkmark+pencil interaction as the assistants'
+  // own delivery-check screen (Section() in DeliveryCheckOrderView.tsx), not the old
+  // button-opens-a-panel pattern. Status ('ok'/'issue') is derived from the diff instead of a
+  // manual toggle, mirroring how Section() colors a diff instead of asking for it explicitly.
+  function refQty(l: CheckLine): number {
+    return l.qty_checked ?? l.qty_expected;
   }
 
-  async function submitConfirm(order: ShopDeliveryOrder, lineId: string) {
-    const d = draft[lineId];
+  function updDraft(l: CheckLine, patch: Partial<{ qty: string; note: string }>) {
+    setDraft(p => ({ ...p, [l.id]: { qty: p[l.id]?.qty ?? String(refQty(l)), note: p[l.id]?.note ?? '', ...patch } }));
+  }
+
+  function startEdit(l: CheckLine & { receipt: { qty_received: number | null; note: string | null } | null }) {
+    setDraft(p => ({ ...p, [l.id]: { qty: String(l.receipt?.qty_received ?? refQty(l)), note: l.receipt?.note ?? '' } }));
+    setEditing(p => { const n = new Set(p); n.add(l.id); return n; });
+  }
+
+  async function submitLine(order: ShopDeliveryOrder, l: CheckLine) {
+    const d = draft[l.id];
     if (!d) return;
     const trimmedName = name.trim();
     if (!trimmedName) return;
     try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
-    setSaving(lineId);
+    const qtyNum = d.qty.trim() === '' ? null : Number(d.qty);
+    const status: 'ok' | 'issue' = qtyNum === null || qtyNum !== refQty(l) ? 'issue' : 'ok';
+    setSaving(l.id);
     const { confirmReceiptAction } = await import('./actions');
     const res = await confirmReceiptAction({
-      checkLineId: lineId, deliveryOrderId: order.header.id,
-      qtyReceived: d.qty.trim() === '' ? null : Number(d.qty), status: d.status, note: d.note.trim() || null,
+      checkLineId: l.id, deliveryOrderId: order.header.id,
+      qtyReceived: qtyNum, status, note: d.note.trim() || null,
       confirmedByName: trimmedName,
     });
     setSaving(null);
-    if (res.ok) { setOpenLine(null); load(); }
+    if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load(); }
   }
 
   async function logout() {
@@ -113,7 +130,15 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               Không có đơn giao hôm nay hoặc ngày mai
             </div>
           ) : (
-            orders.map(o => (
+            <div className="space-y-3">
+              {!readOnly && (
+                <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: '1px solid #E5E7EB' }}>
+                  <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
+                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Tên của bạn"
+                    className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                </div>
+              )}
+              {orders.map(o => (
               <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
                 <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
                   <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
@@ -121,63 +146,75 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
                 <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                   {o.lines.map(l => {
-                    const isOpen = openLine === l.id;
-                    const d = draft[l.id];
+                    const ref = refQty(l);
+                    // Unconfirmed lines are always in the input state; confirmed lines flip back
+                    // to it only while the shop is actively editing (pencil pressed) — same
+                    // two-state shape as Section()'s `checked` Set in DeliveryCheckOrderView.tsx.
+                    const isEditing = !l.receipt || editing.has(l.id);
+                    const d = draft[l.id] ?? { qty: String(l.receipt?.qty_received ?? ref), note: l.receipt?.note ?? '' };
+                    const qtyNum = Number(d.qty);
+                    const isDiff = d.qty.trim() !== '' && qtyNum !== ref;
+                    const savedDiff = l.receipt?.qty_received != null ? l.receipt.qty_received - ref : 0;
                     return (
                       <div key={l.id} className="px-4 py-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold text-navy truncate">{l.product_name_vi}</div>
                             <div className="text-xs" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
                           </div>
-                          {l.receipt ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold shrink-0" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
-                              {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-                              {l.receipt.status === 'ok' ? 'Đã nhận' : 'Có vấn đề'}
-                            </span>
-                          ) : !readOnly ? (
-                            <button onClick={() => startConfirm(l.id, l.qty_expected)}
-                              className="text-xs font-bold rounded-lg px-3 py-1.5 shrink-0"
-                              style={{ border: '1px solid #D1D5DB' }}>
-                              Xác nhận
-                            </button>
-                          ) : (
-                            <span className="text-xs shrink-0" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
-                          )}
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* What the assistant already checked in the lab — the shop's real
+                                reference point, not the original order qty. */}
+                            <div className="text-center">
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Bếp</div>
+                              <div className="text-sm font-bold" style={{ color: l.qty_checked != null ? '#1f2937' : '#D1D5DB' }}>
+                                {l.qty_checked != null ? `×${l.qty_checked}` : '—'}
+                              </div>
+                            </div>
+                            {readOnly ? (
+                              l.receipt ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                  {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
+                                </span>
+                              ) : (
+                                <span className="text-xs" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
+                              )
+                            ) : isEditing ? (
+                              <div className="flex items-center gap-1.5">
+                                <input type="number" value={d.qty} onChange={e => updDraft(l, { qty: e.target.value })}
+                                  className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
+                                  style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
+                                {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
+                                <button onClick={() => submitLine(o, l)} disabled={saving === l.id || !name.trim()}
+                                  className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
+                                  style={{ backgroundColor: '#16A34A' }}>
+                                  {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'OK'}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: l.receipt!.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                  <CheckCircle2 size={16} /> ×{l.receipt!.qty_received ?? '?'}
+                                  {savedDiff !== 0 && <span style={{ color: '#DC2626' }}> ({savedDiff > 0 ? '+' : ''}{savedDiff})</span>}
+                                </span>
+                                <button onClick={() => startEdit(l)}
+                                  className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                                  title="Sửa" aria-label="Sửa">
+                                  <Pencil size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {l.receipt && (
-                          <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>
-                            {l.receipt.confirmed_by_name} · ×{l.receipt.qty_received ?? '?'}{l.receipt.note ? ` · ${l.receipt.note}` : ''}
+                        {isEditing && !readOnly && isDiff && (
+                          <div className="mt-2">
+                            <input type="text" value={d.note} onChange={e => updDraft(l, { note: e.target.value })}
+                              placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                           </div>
                         )}
-                        {isOpen && d && !readOnly && (
-                          <div className="mt-2.5 space-y-2 rounded-xl p-3" style={{ backgroundColor: '#F9FAFB' }}>
-                            <div className="flex gap-2">
-                              <input type="number" value={d.qty} onChange={e => setDraft(p => ({ ...p, [l.id]: { ...p[l.id], qty: e.target.value } }))}
-                                className="w-20 text-center rounded-lg px-2 py-1.5 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
-                              <button onClick={() => setDraft(p => ({ ...p, [l.id]: { ...p[l.id], status: 'ok' } }))}
-                                className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5"
-                                style={{ backgroundColor: d.status === 'ok' ? '#DCFCE7' : 'white', color: d.status === 'ok' ? '#166534' : '#6B7280', border: '1px solid #D1D5DB' }}>
-                                Đủ hàng
-                              </button>
-                              <button onClick={() => setDraft(p => ({ ...p, [l.id]: { ...p[l.id], status: 'issue' } }))}
-                                className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5"
-                                style={{ backgroundColor: d.status === 'issue' ? '#FEE2E2' : 'white', color: d.status === 'issue' ? '#B91C1C' : '#6B7280', border: '1px solid #D1D5DB' }}>
-                                Có vấn đề
-                              </button>
-                            </div>
-                            <input type="text" value={d.note} onChange={e => setDraft(p => ({ ...p, [l.id]: { ...p[l.id], note: e.target.value } }))}
-                              placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                            <input type="text" value={name} onChange={e => setName(e.target.value)}
-                              placeholder="Tên của bạn" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                            <div className="flex justify-end gap-2">
-                              <button onClick={() => setOpenLine(null)} className="text-xs font-semibold px-3 py-1.5" style={{ color: '#6B7280' }}>Huỷ</button>
-                              <button onClick={() => submitConfirm(o, l.id)} disabled={saving === l.id || !name.trim()}
-                                className="text-xs font-bold rounded-lg px-3.5 py-1.5 text-white disabled:opacity-40"
-                                style={{ backgroundColor: '#16A34A' }}>
-                                {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'Xác nhận'}
-                              </button>
-                            </div>
+                        {l.receipt && (
+                          <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>
+                            {l.receipt.confirmed_by_name}{l.receipt.note ? ` · ${l.receipt.note}` : ''}
                           </div>
                         )}
                       </div>
@@ -185,7 +222,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   })}
                 </div>
               </div>
-            ))
+              ))}
+            </div>
           )
         ) : (
           !cakes?.length ? (
