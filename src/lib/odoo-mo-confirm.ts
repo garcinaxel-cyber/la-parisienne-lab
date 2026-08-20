@@ -8,11 +8,17 @@ export interface MoInspectResult {
   moveFields: string[];
   moves: any[];
   finishedMoves: any[];
+  moveLines: any[];
   error?: string;
 }
 
+// 2026-08-21 — extended to also read move_line_ids: the mrp.consumption.warning wizard computes
+// "consumed" from these, not from stock.move.quantity — a move with no move_line_ids (never
+// reserved, e.g. negative on-hand) shows 0 consumed no matter what we write on the move header.
+// Also pulls location_id/location_dest_id/product_uom so a move line could be constructed if
+// none exist yet.
 export async function inspectMO(moId: number): Promise<MoInspectResult> {
-  const res: MoInspectResult = { mo: null, moveFields: [], moves: [], finishedMoves: [] };
+  const res: MoInspectResult = { mo: null, moveFields: [], moves: [], finishedMoves: [], moveLines: [] };
   try {
     const mos = await odooExecute<any[]>('mrp.production', 'search_read',
       [[['id', '=', moId]]], { fields: ['id', 'name', 'state', 'product_qty', 'qty_producing', 'move_raw_ids', 'move_finished_ids'] });
@@ -25,12 +31,17 @@ export async function inspectMO(moId: number): Promise<MoInspectResult> {
     const candidateFields = Object.keys(fieldsMeta).filter(f => /qty|quant/i.test(f));
     res.moveFields = candidateFields;
 
-    const selectFields = Array.from(new Set(['id', 'product_id', 'state', 'product_uom_qty', ...candidateFields]));
+    const selectFields = Array.from(new Set(['id', 'product_id', 'state', 'product_uom_qty', 'product_uom', 'location_id', 'location_dest_id', 'picking_id', 'move_line_ids', ...candidateFields]));
     if (moveIds.length) {
       res.moves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', moveIds]]], { fields: selectFields });
     }
     if (finishedIds.length) {
       res.finishedMoves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', finishedIds]]], { fields: selectFields });
+    }
+    const allMoveLineIds: number[] = [...res.moves, ...res.finishedMoves].flatMap((m: any) => m.move_line_ids || []);
+    if (allMoveLineIds.length) {
+      res.moveLines = await odooExecute<any[]>('stock.move.line', 'search_read',
+        [[['id', 'in', allMoveLineIds]]], { fields: ['id', 'move_id', 'product_id', 'quantity', 'location_id', 'location_dest_id', 'lot_id'] });
     }
   } catch (e: any) {
     res.error = String(e?.message ?? e);
