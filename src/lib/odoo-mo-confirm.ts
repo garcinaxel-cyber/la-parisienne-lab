@@ -186,7 +186,13 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
   for (const mo of mos) {
     if (dryRun) { res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty }); continue; }
     try {
-      await odooExecuteWrite('mrp.production', 'write', [[mo.id], { qty_producing: mo.product_qty }]);
+      // 2026-08-21, round 3 — Axel confirmed via Odoo's own field inspector that the box he
+      // actually types into (post-confirm, cascades every component correctly) is bound to
+      // `product_qty`, not `qty_producing` as assumed. Writing the wrong field this whole time
+      // is almost certainly why every earlier attempt needed manual workarounds. Testing this
+      // alone, on a genuinely untouched MO, before deciding whether the move-line/picked
+      // workaround below is even still needed.
+      await odooExecuteWrite('mrp.production', 'write', [[mo.id], { product_qty: mo.product_qty }]);
 
       // 2026-08-21 — root cause confirmed via inspectMO on a genuinely untouched MO (38324,
       // WH/MO/38405): the mrp.consumption.warning wizard computes "consumed" from each raw
