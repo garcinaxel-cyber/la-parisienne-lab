@@ -62,7 +62,7 @@ export async function syncOdooAction(): Promise<{ ok?: boolean; createdImports?:
 // lab_manager/assistant, so a station chef's own session can't read them directly — confirm the
 // call comes from a logged-in station account, then use the service-role client, returning only
 // pre-aggregated, team-scoped numbers.
-export type StockLevel = { sku: string; name: string; qty: number; found: boolean };
+export type StockLevel = { sku: string; name: string; qty: number; found: boolean; threshold: number | null };
 export type StockCategoryGroup = { category: string; items: StockLevel[] };
 export type CompletionProductDetail = { sku: string; name: string; expected: number; checked: number; gap: number };
 export type TeamAnalytics = {
@@ -145,9 +145,17 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
     if (skus.length) {
       try {
         const { getLabStockLevels } = await import('@/lib/odoo-inventory');
-        const levels = await getLabStockLevels(skus);
+        const [levels, { data: thresholdRows }] = await Promise.all([
+          getLabStockLevels(skus),
+          service.from('lab_stock_safety_thresholds').select('sku, threshold').in('sku', skus),
+        ]);
+        const thresholdBySku: Record<string, number> = {};
+        for (const t of thresholdRows ?? []) thresholdBySku[t.sku] = Number(t.threshold);
         const byCategory: Record<string, StockLevel[]> = {};
-        for (const l of levels) (byCategory[categoryBySku[l.sku] || ''] ??= []).push(l);
+        for (const l of levels) {
+          const withThreshold: StockLevel = { ...l, threshold: thresholdBySku[l.sku] ?? null };
+          (byCategory[categoryBySku[l.sku] || ''] ??= []).push(withThreshold);
+        }
         for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name));
         stock = categories.filter(c => byCategory[c]?.length).map(c => ({ category: c, items: byCategory[c] }));
       } catch {
@@ -157,4 +165,27 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
   }
 
   return { data: { completion, stock } };
+}
+
+// Safety stock threshold per SKU (Axel, 2026-08-21: "mettre la possibilite de mettre un stock de
+// securite par ligne de produit, si ca passe sous ce seuil la ligne se met en rouge et dit : faut
+// produire"). Chefs edit this themselves, inline in the Lab stock card — same auth gate as the
+// rest of this file (must be a logged-in station session), service-role write since
+// lab_stock_safety_thresholds has no client RLS policies (see lab_v47). userName comes from the
+// client (already known there, same as blocked_by_name in StationView.tsx) rather than an extra
+// profile lookup.
+export async function setStockThresholdAction(sku: string, threshold: number, userName: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { error: 'Not authenticated' };
+  if (!Number.isFinite(threshold) || threshold < 0) return { error: 'Invalid threshold' };
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Service role not configured' };
+  const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+  const { error } = await service.from('lab_stock_safety_thresholds').upsert({
+    sku, threshold, updated_by: session.user.id, updated_by_name: userName, updated_at: new Date().toISOString(),
+  });
+  if (error) return { error: error.message };
+  return { ok: true };
 }

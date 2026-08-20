@@ -122,7 +122,7 @@ type DateSummary = {
 // for the team's own products, everything else removed). Today only, no more 7j/30j range.
 // Stock grouped by category (Axel: "ranger par categorie"); completion includes a per-product
 // detail (Axel: "je veux le detail aussi").
-type StockLevel = { sku: string; name: string; qty: number; found: boolean };
+type StockLevel = { sku: string; name: string; qty: number; found: boolean; threshold: number | null };
 type StockCategoryGroup = { category: string; items: StockLevel[] };
 type CompletionProductDetail = { sku: string; name: string; expected: number; checked: number; gap: number };
 type TeamTodaySnapshot = {
@@ -255,6 +255,10 @@ export default function StationView({
   // Analytics tab — today's Completion by team (delivery) + Lab stock (2026-08-21 rework)
   const [analyticsData, setAnalyticsData] = useState<TeamTodaySnapshot | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  // Safety stock threshold — inline edit per Lab stock line (Axel, 2026-08-21)
+  const [thresholdEdit, setThresholdEdit] = useState<string | null>(null); // sku being edited
+  const [thresholdDraft, setThresholdDraft] = useState('');
+  const [savingThreshold, setSavingThreshold] = useState<string | null>(null);
 
   // Stock transfer (send finished products to stock)
   const [stockModal, setStockModal] = useState(false);
@@ -472,6 +476,22 @@ export default function StationView({
       setLoadingAnalytics(false);
     })();
   }, [activeTab, team, analyticsData]);
+
+  async function saveThreshold(sku: string) {
+    const val = parseFloat(thresholdDraft);
+    if (!Number.isFinite(val) || val < 0) return;
+    setSavingThreshold(sku);
+    const { setStockThresholdAction } = await import('./actions');
+    const res = await setStockThresholdAction(sku, val, userName);
+    if (!res.error) {
+      setAnalyticsData(prev => prev ? {
+        ...prev,
+        stock: prev.stock.map(g => ({ ...g, items: g.items.map(s => s.sku === sku ? { ...s, threshold: val } : s) })),
+      } : prev);
+      setThresholdEdit(null);
+    }
+    setSavingThreshold(null);
+  }
 
   async function loadHistoryDetails(delivery_date: string, import_ids: string[]) {
     if (historyDetails[delivery_date] !== undefined) return;
@@ -1897,15 +1917,44 @@ export default function StationView({
                           <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
                             {group.category}
                           </div>
-                          <div className="space-y-2">
-                            {group.items.map(s => (
-                              <div key={s.sku} className="flex justify-between items-center text-[13px]">
-                                <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
-                                <span className="font-bold shrink-0" style={{ color: s.found ? '#1A4731' : '#B45309' }}>
-                                  {s.found ? s.qty : '—'}
-                                </span>
-                              </div>
-                            ))}
+                          <div className="space-y-1.5">
+                            {group.items.map(s => {
+                              const low = s.found && s.threshold != null && s.qty < s.threshold;
+                              const editing = thresholdEdit === s.sku;
+                              return (
+                                <div key={s.sku} className="rounded-lg px-2 py-1.5 -mx-2" style={low ? { backgroundColor: '#FEF2F2' } : undefined}>
+                                  <div className="flex justify-between items-center text-[13px]">
+                                    <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
+                                    <span className="font-bold shrink-0" style={{ color: s.found ? (low ? '#B42318' : '#1A4731') : '#B45309' }}>
+                                      {s.found ? s.qty : '—'}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-center mt-0.5">
+                                    {low
+                                      ? <span className="text-[10px] font-bold" style={{ color: '#B42318' }}>{lang === 'vi' ? 'Cần sản xuất' : 'Faut produire'}</span>
+                                      : <span />}
+                                    {editing ? (
+                                      <span className="flex items-center gap-1 shrink-0">
+                                        <input type="number" value={thresholdDraft} onChange={e => setThresholdDraft(e.target.value)}
+                                          autoFocus className="w-14 text-center rounded-lg px-1.5 py-0.5 text-[11px]" style={{ border: '1px solid #D1D5DB' }} />
+                                        <button onClick={() => saveThreshold(s.sku)} disabled={savingThreshold === s.sku}
+                                          className="text-[10px] font-bold px-2 py-0.5 rounded-full disabled:opacity-50"
+                                          style={{ backgroundColor: '#1A4731', color: '#FFF4CC' }}>
+                                          OK
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <button onClick={() => { setThresholdEdit(s.sku); setThresholdDraft(s.threshold != null ? String(s.threshold) : ''); }}
+                                        className="text-[10px] shrink-0" style={{ color: '#6B6455' }}>
+                                        {s.threshold != null
+                                          ? `${lang === 'vi' ? 'Ngưỡng' : 'Seuil'}: ${s.threshold}`
+                                          : (lang === 'vi' ? 'Đặt ngưỡng' : 'Définir seuil')}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       ))}

@@ -56,3 +56,55 @@ export async function confirmDoneMOs(date: string): Promise<MoConfirmResult> {
   }
   return res;
 }
+
+export interface MoProduceResult {
+  date: string;
+  origin: string;
+  eligible: number;
+  produced: { id: number; name: string }[];
+  errors: { id: number; name: string; error: string }[];
+}
+
+// "Produce All" — fully validates the day's confirmed MOs, called right after confirmDoneMOs()
+// in the same nightly cron (Axel, 2026-08-21: "je voudrais... si il est possible de produire
+// completement la prod" — confirmed direct in the cron, no manual-review step first).
+//
+// Quantity: Axel confirmed the MO's own product_qty is already exactly "qty sent to stock" — set
+// by syncStockToOdoo()/odoo-mo-sync.ts when the MO was created/updated during the day. There is
+// no separate "how much was actually produced" figure to reconcile; validating for product_qty
+// as-is is correct by construction, so this never needs to read lab_assignments.
+//
+// Mechanism: this mirrors exactly what a human does by hand on the MO form — edit the "Quantity
+// Producing" field, then click Validate/Mark as Done. `qty_producing` is set explicitly first
+// (Odoo's external API does not always default it from product_qty the way the UI wizard does),
+// then `button_mark_done` — the same core Odoo method the "Mark as Done" button calls, standard
+// across the mrp module for many versions. NOT independently tested against this Odoo instance
+// before shipping (no way to do so from outside the app) — the first nightly run is the real
+// test; check Odoo/lab_odoo_changes the next morning to confirm it behaved as expected.
+//
+// Per-MO try/catch, same as confirmDoneMOs — an MO whose components are short on stock (or any
+// other Odoo-side validation error) must not block the rest of the day's MOs from being produced.
+// A failure here is NOT retried on a later day (same "never sweep other days" rule as
+// confirmDoneMOs above) — it just stays 'confirmed' and shows up in lab_odoo_changes for an
+// admin to handle by hand.
+export async function produceMOs(date: string): Promise<MoProduceResult> {
+  const origin = `Lab ${date}`;
+  const res: MoProduceResult = { date, origin, eligible: 0, produced: [], errors: [] };
+  if (!odooWriteConfigured()) return res;
+
+  const mos = await odooExecute<any[]>('mrp.production', 'search_read',
+    [[['origin', '=', origin], ['state', '=', 'confirmed']]],
+    { fields: ['id', 'name', 'product_qty'] });
+  res.eligible = mos.length;
+
+  for (const mo of mos) {
+    try {
+      await odooExecuteWrite('mrp.production', 'write', [[mo.id], { qty_producing: mo.product_qty }]);
+      await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
+      res.produced.push({ id: mo.id, name: mo.name });
+    } catch (e: any) {
+      res.errors.push({ id: mo.id, name: mo.name, error: String(e?.message ?? e) });
+    }
+  }
+  return res;
+}
