@@ -38,7 +38,8 @@ export default function AnalyticsView({
   const current = range;
   const vi = lang === 'vi';
   const [openReason, setOpenReason] = useState<string | null>(null);
-  const [openGapTeam, setOpenGapTeam] = useState<string | null>(null);
+  const [openGapTeams, setOpenGapTeams] = useState<Set<string>>(new Set());
+  const toggleGapTeam = (team: string) => setOpenGapTeams(p => { const n = new Set(p); n.has(team) ? n.delete(team) : n.add(team); return n; });
 
   const setRange = (r: string) => router.push(`/analytics?range=${r}`);
   const maxUnits = Math.max(1, ...daily.map(d => d.units));
@@ -135,7 +136,16 @@ export default function AnalyticsView({
 
         {/* Completion by team — delivery-check: demanded vs actually delivered */}
         <div className="card p-4">
-          <h3 className="font-semibold text-sm text-navy mb-0.5">{vi ? 'Hoàn thành theo đội (giao hàng)' : 'Completion by team (delivery)'}</h3>
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <h3 className="font-semibold text-sm text-navy">{vi ? 'Hoàn thành theo đội (giao hàng)' : 'Completion by team (delivery)'}</h3>
+            {Object.values(completionGapsByTeam).some(g => g.length > 0) && (
+              <button
+                onClick={() => setOpenGapTeams(p => p.size > 0 ? new Set() : new Set(completionByTeamDelivery.filter(t => (completionGapsByTeam[t.team] ?? []).length > 0).map(t => t.team)))}
+                className="text-[11px] font-semibold text-ink-light hover:text-navy shrink-0">
+                {openGapTeams.size > 0 ? (vi ? 'Thu gọn tất cả' : 'Collapse all') : (vi ? 'Mở tất cả' : 'Expand all')}
+              </button>
+            )}
+          </div>
           <p className="text-[11px] text-ink-light mb-3">
             {vi ? 'SL trợ lý đã check thực tế / SL khách đặt' : 'Qty actually checked by assistants / qty client ordered'}
           </p>
@@ -144,10 +154,10 @@ export default function AnalyticsView({
               {completionByTeamDelivery.map(t => {
                 const meta = TEAM_LABELS[t.team as Team];
                 const gapProducts = completionGapsByTeam[t.team] ?? [];
-                const isOpen = openGapTeam === t.team;
+                const isOpen = openGapTeams.has(t.team);
                 return (
                   <div key={t.team}>
-                    <button onClick={() => gapProducts.length > 0 && setOpenGapTeam(isOpen ? null : t.team)}
+                    <button onClick={() => gapProducts.length > 0 && toggleGapTeam(t.team)}
                       className="w-full text-left" disabled={gapProducts.length === 0}>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-navy flex items-center gap-1">
