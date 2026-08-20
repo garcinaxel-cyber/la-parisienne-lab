@@ -100,7 +100,7 @@ export interface MoProduceResult {
   origin: string;
   eligible: number;
   dryRun: boolean;
-  produced: { id: number; name: string; qty: number }[];
+  produced: { id: number; name: string; qty: number; markDoneResult?: any }[];
   errors: { id: number; name: string; error: string }[];
 }
 
@@ -169,8 +169,19 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
         }
       }
 
-      await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
-      res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty });
+      // Diagnostic (2026-08-21): capture the raw return value instead of assuming success on
+      // "no exception". Axel manually reproduced this exact case in the Odoo UI (WH/MO/38403,
+      // header Quantity=4 then Produce All) and it went straight to Done — but MO 38321/WH-MO-
+      // 38402 stays stuck at "to_close" even with move_raw_ids quantities already correctly
+      // forced to should_consume_qty (confirmed via inspectMO) and button_mark_done called twice
+      // with no error surfaced either time. button_mark_done normally returns `true` when it
+      // fully validates, or an ir.actions.act_window dict (e.g. the mrp.consumption.warning
+      // wizard) when it needs a follow-up confirmation instead — which an API write call would
+      // silently swallow as "success" since Odoo doesn't raise for that. Surfacing the raw
+      // result here to see which case this actually is before writing any wizard-resolution
+      // logic blind.
+      const markDoneResult = await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
+      res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty, markDoneResult });
     } catch (e: any) {
       res.errors.push({ id: mo.id, name: mo.name, error: String(e?.message ?? e) });
     }
