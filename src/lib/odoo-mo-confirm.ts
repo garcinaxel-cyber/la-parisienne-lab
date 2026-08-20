@@ -61,7 +61,8 @@ export interface MoProduceResult {
   date: string;
   origin: string;
   eligible: number;
-  produced: { id: number; name: string }[];
+  dryRun: boolean;
+  produced: { id: number; name: string; qty: number }[];
   errors: { id: number; name: string; error: string }[];
 }
 
@@ -87,21 +88,30 @@ export interface MoProduceResult {
 // A failure here is NOT retried on a later day (same "never sweep other days" rule as
 // confirmDoneMOs above) — it just stays 'confirmed' and shows up in lab_odoo_changes for an
 // admin to handle by hand.
-export async function produceMOs(date: string): Promise<MoProduceResult> {
+//
+// opts.onlyMoId / opts.dryRun (2026-08-21, Axel: "essayer sur 1 ligne pour voir si tout
+// fonctionne") — lets /api/odoo/confirm-mos test this in isolation on a single real MO (or just
+// list what's eligible, writing nothing) before trusting it on the whole day's batch. Neither
+// option is used by the nightly cron call itself (no query params = unchanged full-batch
+// behavior).
+export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRun?: boolean }): Promise<MoProduceResult> {
   const origin = `Lab ${date}`;
-  const res: MoProduceResult = { date, origin, eligible: 0, produced: [], errors: [] };
+  const dryRun = !!opts?.dryRun;
+  const res: MoProduceResult = { date, origin, eligible: 0, dryRun, produced: [], errors: [] };
   if (!odooWriteConfigured()) return res;
 
+  const domain: any[] = [['origin', '=', origin], ['state', '=', 'confirmed']];
+  if (opts?.onlyMoId) domain.push(['id', '=', opts.onlyMoId]);
   const mos = await odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '=', 'confirmed']]],
-    { fields: ['id', 'name', 'product_qty'] });
+    [domain], { fields: ['id', 'name', 'product_qty'] });
   res.eligible = mos.length;
 
   for (const mo of mos) {
+    if (dryRun) { res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty }); continue; }
     try {
       await odooExecuteWrite('mrp.production', 'write', [[mo.id], { qty_producing: mo.product_qty }]);
       await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
-      res.produced.push({ id: mo.id, name: mo.name });
+      res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty });
     } catch (e: any) {
       res.errors.push({ id: mo.id, name: mo.name, error: String(e?.message ?? e) });
     }

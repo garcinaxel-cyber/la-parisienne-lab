@@ -14,6 +14,11 @@ export const maxDuration = 60;
 // completement la prod", confirmed direct in the cron). Runs on whatever is in state='confirmed'
 // for the day's origin, so it also catches MOs confirmed by an earlier/manual run, not just ones
 // confirmDoneMOs just confirmed in this same call.
+//
+// ?mo=<id> and/or ?dryRun=1 (2026-08-21, Axel: "essayer sur 1 ligne pour voir si tout
+// fonctionne") — manual single-MO test path. Either param skips confirmDoneMOs entirely (a test
+// must not confirm the whole day's remaining drafts as a side effect) and scopes/limits
+// produceMOs instead. Omit both for the normal nightly cron call — unchanged full-batch behavior.
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') ?? req.headers.get('authorization')?.replace('Bearer ', '');
@@ -24,10 +29,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'ODOO_* / ODOO_WRITE_* not configured' }, { status: 503 });
   }
   const date = url.searchParams.get('date') || labDateOf(new Date().toISOString())!;
+  const moParam = url.searchParams.get('mo');
+  const onlyMoId = moParam ? parseInt(moParam, 10) : undefined;
+  const dryRun = url.searchParams.get('dryRun') === '1';
+  const isTestMode = onlyMoId !== undefined || dryRun;
 
   try {
-    const confirmResult = await confirmDoneMOs(date);
-    const produceResult = await produceMOs(date);
+    const confirmResult = isTestMode
+      ? { date, origin: `Lab ${date}`, eligible: 0, bypassed: [], confirmed: [], errors: [] }
+      : await confirmDoneMOs(date);
+    const produceResult = await produceMOs(date, isTestMode ? { onlyMoId, dryRun } : undefined);
     // Surface failures the same way the rest of the Odoo sync already does (odoo-auto-sync.ts,
     // stock-actions.ts) — a confirm/produce that silently fails must not just sit there with no
     // one told.
