@@ -2,19 +2,50 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runReconciliationCheck, type ReconciliationResult } from '@/lib/reconciliation';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 
-// "Check" — Axel, 2026-08-20: one button, everything checks automatically, 7-day history
+// "Check" — Axel, 2026-08-20: one button, everything checks automatically, 7-day run-history
 // (see lab_v46_check_and_blocked_tracking.sql). Reconciliation (lib/reconciliation.ts) already
 // existed and keeps its own forward-looking window (yesterday..+6 days — it's about upcoming
-// plannable production). The 3 checks below are about what already HAPPENED, so they share a
-// trailing 7-day window instead (today-6..today), matching the run-history retention.
-
+// plannable production).
+//
+// The 3 checks below originally shared a trailing 7-day window (today-6..today). Axel, 2026-08-21:
+// "ca devrait comparer seulement le jour j et le jour suivant" — narrowed to today + tomorrow.
+// Rationale: these checks exist to catch drift on deliveries that are imminent (today, already
+// in progress) or already published (tomorrow), so it can be fixed before the delivery happens —
+// not to dig up a week-old discrepancy that's now moot. Run-history retention (7 days of past
+// RUNS) is unrelated and unaffected — this only shrinks what EACH run compares.
+//
+// Day boundary in Vietnam local time (Asia/Ho_Chi_Minh) — same convention as the shop portal and
+// delivery-check "today/tomorrow" picker elsewhere in the app. A naive UTC day would drift by the
+// +7h offset right around VN midnight, when the morning cron runs.
 function toDateStr(d: Date): string {
-  return d.toISOString().split('T')[0];
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
-function trailingWindow(): { from: string; to: string } {
-  const today = new Date();
-  return { from: toDateStr(new Date(today.getTime() - 6 * 86400000)), to: toDateStr(today) };
+function checkWindow(): { from: string; to: string } {
+  const now = new Date();
+  return { from: toDateStr(now), to: toDateStr(new Date(now.getTime() + 86400000)) };
+}
+
+// Supabase/PostgREST caps a single request at 1000 rows by default. With the old 7-day trailing
+// window this silently truncated lab_order_lines/lab_delivery_check_lines and produced false
+// "qty_drift" issues for whatever fell past row 1000 — confirmed live 2026-08-20: order
+// REP/2026/01085 had a correct qty_expected=36 for BMCRCXBH in the DB, yet checkDeliveryCoverage
+// reported expected_app=0, purely because that row didn't fit in the first page (1140 check-lines
+// in a window sized for 1000). The narrower 2-day window above makes this unlikely to recur, but
+// paginate anyway so a busy day can't silently reintroduce it.
+async function fetchAllPages<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await build(offset, offset + PAGE - 1);
+    if (error) throw error;
+    const batch = data ?? [];
+    out.push(...batch);
+    if (batch.length < PAGE) break;
+    offset += PAGE;
+  }
+  return out;
 }
 
 // ── 1. Delivery-check coverage ──────────────────────────────────────────────
@@ -42,12 +73,15 @@ export async function checkDeliveryCoverage(supabase: SupabaseClient, from: stri
     .select('id, delivery_date').eq('status', 'published').gte('delivery_date', from).lte('delivery_date', to);
   const importIds = (imports ?? []).map((i: any) => i.id);
 
-  const [{ data: orderLines }, { data: packagingLines }, { data: headers }] = await Promise.all([
+  const [orderLines, packagingLines, headers] = await Promise.all([
     importIds.length
-      ? supabase.from('lab_order_lines').select('order_ref, delivery_date, product_sku, qty').in('import_id', importIds).gt('qty', 0)
-      : Promise.resolve({ data: [] as any[] }),
-    supabase.from('lab_order_packaging_lines').select('order_ref, delivery_date, sku, qty').gte('delivery_date', from).lte('delivery_date', to),
-    supabase.from('lab_delivery_orders').select('id, order_ref, delivery_date').gte('delivery_date', from).lte('delivery_date', to),
+      ? fetchAllPages<any>((f, t) => supabase.from('lab_order_lines')
+          .select('order_ref, delivery_date, product_sku, qty').in('import_id', importIds).gt('qty', 0).range(f, t))
+      : Promise.resolve([]),
+    fetchAllPages<any>((f, t) => supabase.from('lab_order_packaging_lines')
+      .select('order_ref, delivery_date, sku, qty').gte('delivery_date', from).lte('delivery_date', to).range(f, t)),
+    fetchAllPages<any>((f, t) => supabase.from('lab_delivery_orders')
+      .select('id, order_ref, delivery_date').gte('delivery_date', from).lte('delivery_date', to).range(f, t)),
   ]);
 
   const key = (orderRef: string, date: string) => `${orderRef}||${date}`;
@@ -59,18 +93,19 @@ export async function checkDeliveryCoverage(supabase: SupabaseClient, from: stri
     m.set(sku, (m.get(sku) ?? 0) + qty);
     rawBySku.set(k, m);
   };
-  for (const l of orderLines ?? []) addRaw(l.order_ref, l.delivery_date, l.product_sku, l.qty);
-  for (const l of packagingLines ?? []) addRaw(l.order_ref, l.delivery_date, l.sku, l.qty);
+  for (const l of orderLines) addRaw(l.order_ref, l.delivery_date, l.product_sku, l.qty);
+  for (const l of packagingLines) addRaw(l.order_ref, l.delivery_date, l.sku, l.qty);
 
   const headerByKey = new Map<string, string>();
-  for (const h of headers ?? []) headerByKey.set(key(h.order_ref, h.delivery_date), h.id);
+  for (const h of headers) headerByKey.set(key(h.order_ref, h.delivery_date), h.id);
   const headerIds = Array.from(headerByKey.values());
 
-  const { data: checkLines } = headerIds.length
-    ? await supabase.from('lab_delivery_check_lines').select('delivery_order_id, sku, qty_expected').in('delivery_order_id', headerIds)
-    : { data: [] as any[] };
+  const checkLines = headerIds.length
+    ? await fetchAllPages<any>((f, t) => supabase.from('lab_delivery_check_lines')
+        .select('delivery_order_id, sku, qty_expected').in('delivery_order_id', headerIds).range(f, t))
+    : [];
   const appByHeader = new Map<string, Map<string, number>>();
-  for (const l of checkLines ?? []) {
+  for (const l of checkLines) {
     if (!l.sku) continue;
     const m = appByHeader.get(l.delivery_order_id) ?? new Map<string, number>();
     m.set(l.sku, (m.get(l.sku) ?? 0) + (l.qty_expected ?? 0));
@@ -133,7 +168,7 @@ export async function checkProductionToStock(supabase: SupabaseClient, from: str
 // ── 3. Stock → Odoo ──────────────────────────────────────────────────────────
 // Reuses syncStockToOdoo() in dry-run — it already computes exactly this comparison (sum sent
 // to stock per SKU/day vs sum of Odoo MOs) for the real-time sync and the manual resync route;
-// this just runs it read-only across the trailing window instead of one day, so drift shows up
+// this just runs it read-only across the check window instead of one day, so drift shows up
 // even if the real-time trigger silently failed on a given transfer.
 export interface StockOdooIssue {
   date: string; kind: 'not_synced' | 'drifted' | 'no_odoo_product' | 'missing_sku' | 'error';
@@ -170,7 +205,7 @@ export interface AllChecksResult {
 }
 
 export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksResult> {
-  const { from, to } = trailingWindow();
+  const { from, to } = checkWindow();
   const [reconciliation, deliveryCoverage, productionStock, stockOdoo] = await Promise.all([
     runReconciliationCheck(supabase),
     checkDeliveryCoverage(supabase, from, to),

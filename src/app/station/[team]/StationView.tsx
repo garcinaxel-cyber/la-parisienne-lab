@@ -118,14 +118,12 @@ type DateSummary = {
   unsentCount: number; // distinct products still not sent to stock (history tab only)
 };
 
-type ProductStat = { name: string; avg: number; trendPct: number };
-type CategoryGroup = { category: string; products: ProductStat[] };
-type AnalyticsData = {
-  completion: number;
-  blocked: number;
-  margin: number; // qty_extra / qty_ordered, %
-  categories: CategoryGroup[];
-  daily: { date: string; units: number }[];
+// Analytics tab — reworked 2026-08-21 (Axel: "Completion by team (delivery) du jour" + Lab stock
+// for the team's own products, everything else removed). Today only, no more 7j/30j range.
+type StockLevel = { sku: string; name: string; qty: number; found: boolean };
+type TeamTodaySnapshot = {
+  completion: { expected: number; checked: number; rate: number };
+  stock: StockLevel[]; // empty for teams with no dedicated stock category (entremet, baker)
 };
 
 type OrderDetail = {
@@ -250,9 +248,8 @@ export default function StationView({
   const [historySel, setHistorySel] = useState<Record<string, Set<string>>>({});
   const [sendingHistoryStock, setSendingHistoryStock] = useState<string | null>(null);
 
-  // Analytics tab — team-scoped read of lab_daily_stats, cached per range (7 / 30 days)
-  const [analyticsRange, setAnalyticsRange] = useState<7 | 30>(30);
-  const [analyticsData, setAnalyticsData] = useState<Partial<Record<7 | 30, AnalyticsData>>>({});
+  // Analytics tab — today's Completion by team (delivery) + Lab stock (2026-08-21 rework)
+  const [analyticsData, setAnalyticsData] = useState<TeamTodaySnapshot | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   // Stock transfer (send finished products to stock)
@@ -455,22 +452,22 @@ export default function StationView({
   }, [activeTab, team, today]);
 
   // Lazy-load analytics — via a server action (see getTeamAnalyticsAction in ./actions), NOT
-  // a direct client query: lab_daily_stats' RLS only grants SELECT to admin/lab_manager/
-  // assistant (it backs the admin analytics page), so a chef's own browser session can't read
-  // it. The action checks the chef is logged in, then reads through the service-role client and
-  // returns only the pre-aggregated, team-scoped numbers below — same pattern as the Odoo sync
-  // button. Cached per range so switching 7j/30j back and forth doesn't re-fetch.
+  // a direct client query: lab_delivery_check_lines/lab_excluded_skus RLS only grants SELECT to
+  // admin/lab_manager/assistant, so a chef's own browser session can't read them. The action
+  // checks the chef is logged in, then reads through the service-role client and returns only
+  // today's team-scoped completion + Lab stock — same pattern as the Odoo sync button. Fetched
+  // once per tab open (today-only data, no range to cache per).
   useEffect(() => {
     if (activeTab !== 'analytics') return;
-    if (analyticsData[analyticsRange]) return;
+    if (analyticsData) return;
     setLoadingAnalytics(true);
     (async () => {
       const { getTeamAnalyticsAction } = await import('./actions');
-      const res = await getTeamAnalyticsAction(team, analyticsRange);
-      if (res.data) setAnalyticsData(prev => ({ ...prev, [analyticsRange]: res.data! }));
+      const res = await getTeamAnalyticsAction(team);
+      if (res.data) setAnalyticsData(res.data);
       setLoadingAnalytics(false);
     })();
-  }, [activeTab, analyticsRange, team]);
+  }, [activeTab, team, analyticsData]);
 
   async function loadHistoryDetails(delivery_date: string, import_ids: string[]) {
     if (historyDetails[delivery_date] !== undefined) return;
@@ -1845,22 +1842,9 @@ export default function StationView({
       )}
 
       {activeTab === 'analytics' && (() => {
-        const stats = analyticsData[analyticsRange];
+        const stats = analyticsData;
         return (
           <div className="max-w-3xl mx-auto px-4 py-5 space-y-4 pb-16">
-            <div className="flex justify-end gap-1.5">
-              {([7, 30] as const).map(r => (
-                <button key={r} onClick={() => setAnalyticsRange(r)}
-                  className="px-3 py-1 rounded-full text-xs font-bold transition-all active:scale-95"
-                  style={analyticsRange === r
-                    ? { backgroundColor: '#1A4731', color: '#FFF4CC' }
-                    : { backgroundColor: '#FFFFFF', color: '#1A4731', border: '1px solid #E0D49A' }
-                  }>
-                  {r}{lang === 'vi' ? ' ngày' : 'd'}
-                </button>
-              ))}
-            </div>
-
             {loadingAnalytics && !stats && (
               <div className="space-y-3">
                 <SkeletonRow /><SkeletonRow />
@@ -1869,97 +1853,40 @@ export default function StationView({
 
             {!loadingAnalytics && stats && (
               <>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
-                    <div className="text-lg font-bold" style={{ color: '#2D6A4F' }}>{stats.completion}%</div>
-                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
-                      {lang === 'vi' ? 'Hoàn thành' : 'Completion'}
-                    </div>
+                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
+                  <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
+                    {lang === 'vi' ? 'Hoàn thành hôm nay (delivery-check)' : "Completion by team (delivery) — today"}
                   </div>
-                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
-                    <div className="text-lg font-bold" style={{ color: stats.blocked > 0 ? '#92600A' : '#1A4731' }}>{stats.blocked}</div>
-                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
-                      {lang === 'vi' ? `Bị chặn (${analyticsRange}n)` : `Blocked (${analyticsRange}d)`}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-white p-3 text-center" style={{ border: '1px solid #E0D49A' }}>
-                    <div className="text-lg font-bold" style={{ color: '#1A4731' }}>{stats.margin > 0 ? '+' : ''}{stats.margin}%</div>
-                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
-                      {lang === 'vi' ? 'Chênh lệch' : 'Margin'}
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="text-3xl font-bold" style={{ color: '#2D6A4F' }}>{stats.completion.rate}%</div>
+                    <div className="text-xs text-right" style={{ color: '#6B6455' }}>
+                      {stats.completion.checked} / {stats.completion.expected} {lang === 'vi' ? 'đã check' : 'checked'}
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
-                  <div className="mb-3">
-                    <div className="font-bold text-xs" style={{ color: '#1A4731' }}>
-                      {lang === 'vi' ? 'Số lượng đặt trung bình / ngày' : 'Average quantity ordered / day'}
+                {stats.stock.length > 0 && (
+                  <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
+                    <div className="mb-3">
+                      <div className="font-bold text-xs" style={{ color: '#1A4731' }}>
+                        {lang === 'vi' ? 'Tồn kho Lab' : 'Lab stock'}
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
+                        {lang === 'vi' ? 'Trực tiếp từ Odoo (kho LAB)' : 'Live from Odoo (LAB warehouse)'}
+                      </div>
                     </div>
-                    <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
-                      {lang === 'vi'
-                        ? `Theo loại sản phẩm · so với nửa đầu giai đoạn ${analyticsRange} ngày`
-                        : `Grouped by category · vs the first half of the ${analyticsRange}-day range`}
-                    </div>
-                  </div>
-                  {stats.categories.length === 0 ? (
-                    <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
-                  ) : (
-                    <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 320 }}>
-                      {stats.categories.map(cat => (
-                        <div key={cat.category}>
-                          <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
-                            {cat.category === 'Other' ? (lang === 'vi' ? 'Khác' : 'Other') : cat.category}
-                          </div>
-                          <div className="space-y-2">
-                            {cat.products.map(p => {
-                              // Chefs read direction, not math — a word + arrow, never the raw %.
-                              const trendLabel = p.trendPct > 10 ? (lang === 'vi' ? 'Tăng' : 'Up')
-                                : p.trendPct < -10 ? (lang === 'vi' ? 'Giảm' : 'Down')
-                                : (lang === 'vi' ? 'Ổn định' : 'Stable');
-                              const trendSymbol = p.trendPct > 10 ? '▲' : p.trendPct < -10 ? '▼' : '–';
-                              const trendColor = p.trendPct > 10 ? '#92600A' : p.trendPct < -10 ? '#2D6A4F' : '#6B6455';
-                              return (
-                                <div key={p.name} className="flex justify-between items-center text-[13px]">
-                                  <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
-                                  <span className="flex items-center gap-1.5 shrink-0">
-                                    <span className="font-bold" style={{ color: '#1A4731' }}>{p.avg}</span>
-                                    <span className="text-[11px]" style={{ color: trendColor }}>
-                                      {trendSymbol} {trendLabel}
-                                    </span>
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                    <div className="space-y-2">
+                      {stats.stock.map(s => (
+                        <div key={s.sku} className="flex justify-between items-center text-[13px]">
+                          <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
+                          <span className="font-bold shrink-0" style={{ color: s.found ? '#1A4731' : '#B45309' }}>
+                            {s.found ? s.qty : '—'}
+                          </span>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-
-                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
-                  <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
-                    {lang === 'vi' ? 'Sản lượng theo ngày' : 'Volume produced per day'}
                   </div>
-                  {stats.daily.length === 0 ? (
-                    <p className="text-xs text-center py-2" style={{ color: '#6B6455' }}>—</p>
-                  ) : (
-                    <div className="flex items-end gap-1" style={{ height: 90 }}>
-                      {(() => {
-                        const max = Math.max(1, ...stats.daily.map(d => d.units));
-                        return stats.daily.map(d => (
-                          <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
-                            <span className="text-[9px] font-bold mb-0.5" style={{ color: '#1A4731' }}>{d.units}</span>
-                            <div className="w-full rounded-t" style={{ height: `${Math.max(6, d.units / max * 100)}%`, backgroundColor: '#1A4731' }} />
-                            <span className="text-[8px] mt-1 truncate w-full text-center" style={{ color: '#6B6455' }}>
-                              {new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'numeric' })}
-                            </span>
-                          </div>
-                        ));
-                      })()}
-                    </div>
-                  )}
-                </div>
+                )}
               </>
             )}
           </div>

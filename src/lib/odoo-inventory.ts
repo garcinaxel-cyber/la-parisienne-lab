@@ -148,3 +148,31 @@ export async function previewInventoryPush(lines: InventoryCountInput[]): Promis
 export async function applyInventoryPush(lines: InventoryCountInput[], inventoryDate: string): Promise<InventoryPushResult> {
   return pushInventory(lines, inventoryDate, false);
 }
+
+export interface LabStockLevel { sku: string; name: string; qty: number; found: boolean; }
+
+// Read-only current on-hand at LAB/Stock for a list of SKUs — same lookup as pushInventory()
+// above (getLabStockLocationId + resolveProductsBySku + stock.quant), just without the write/diff
+// half. Used by the station analytics tab (2026-08-21) to show a chef their team's finished-goods
+// stock at a glance. Never writes anything to Odoo.
+export async function getLabStockLevels(skus: string[]): Promise<LabStockLevel[]> {
+  if (!skus.length) return [];
+  const locationId = await getLabStockLocationId();
+  const productBySku = await resolveProductsBySku(skus);
+  const foundIds = Object.values(productBySku).map(p => p.id);
+
+  const quants = foundIds.length ? await odooExecute<any[]>('stock.quant', 'search_read',
+    [[['product_id', 'in', foundIds], ['location_id', '=', locationId]]],
+    { fields: ['product_id', 'quantity'] }) : [];
+  const qtyByProductId: Record<number, number> = {};
+  for (const q of quants) {
+    const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+    qtyByProductId[pid] = (qtyByProductId[pid] ?? 0) + Number(q.quantity ?? 0);
+  }
+
+  return skus.map(sku => {
+    const prod = productBySku[sku];
+    if (!prod) return { sku, name: sku, qty: 0, found: false };
+    return { sku, name: prod.name, qty: qtyByProductId[prod.id] ?? 0, found: true };
+  });
+}
