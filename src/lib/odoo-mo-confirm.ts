@@ -4,28 +4,33 @@ import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 // names (fields_get) plus the move_raw_ids values for one MO, so the real "how much was
 // consumed" field can be identified and force-set before button_mark_done, instead of guessing.
 export interface MoInspectResult {
-  mo: { id: number; name: string; state: string; product_qty: number; qty_producing: number; move_raw_ids: number[] } | null;
+  mo: { id: number; name: string; state: string; product_qty: number; qty_producing: number; move_raw_ids: number[]; move_finished_ids: number[] } | null;
   moveFields: string[];
   moves: any[];
+  finishedMoves: any[];
   error?: string;
 }
 
 export async function inspectMO(moId: number): Promise<MoInspectResult> {
-  const res: MoInspectResult = { mo: null, moveFields: [], moves: [] };
+  const res: MoInspectResult = { mo: null, moveFields: [], moves: [], finishedMoves: [] };
   try {
     const mos = await odooExecute<any[]>('mrp.production', 'search_read',
-      [[['id', '=', moId]]], { fields: ['id', 'name', 'state', 'product_qty', 'qty_producing', 'move_raw_ids'] });
+      [[['id', '=', moId]]], { fields: ['id', 'name', 'state', 'product_qty', 'qty_producing', 'move_raw_ids', 'move_finished_ids'] });
     if (!mos.length) { res.error = 'MO not found'; return res; }
     res.mo = mos[0];
     const moveIds: number[] = mos[0].move_raw_ids || [];
+    const finishedIds: number[] = mos[0].move_finished_ids || [];
 
     const fieldsMeta = await odooExecute<Record<string, any>>('stock.move', 'fields_get', [], { attributes: ['string', 'type'] });
     const candidateFields = Object.keys(fieldsMeta).filter(f => /qty|quant/i.test(f));
     res.moveFields = candidateFields;
 
+    const selectFields = Array.from(new Set(['id', 'product_id', 'state', 'product_uom_qty', ...candidateFields]));
     if (moveIds.length) {
-      const selectFields = Array.from(new Set(['id', 'product_id', 'state', 'product_uom_qty', ...candidateFields]));
       res.moves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', moveIds]]], { fields: selectFields });
+    }
+    if (finishedIds.length) {
+      res.finishedMoves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', finishedIds]]], { fields: selectFields });
     }
   } catch (e: any) {
     res.error = String(e?.message ?? e);
