@@ -63,15 +63,20 @@ export async function syncOdooAction(): Promise<{ ok?: boolean; createdImports?:
 // call comes from a logged-in station account, then use the service-role client, returning only
 // pre-aggregated, team-scoped numbers.
 export type StockLevel = { sku: string; name: string; qty: number; found: boolean };
+export type StockCategoryGroup = { category: string; items: StockLevel[] };
+export type CompletionProductDetail = { sku: string; name: string; expected: number; checked: number; gap: number };
 export type TeamAnalytics = {
-  completion: { expected: number; checked: number; rate: number };
-  stock: StockLevel[]; // empty for teams with no dedicated stock category (entremet, baker)
+  completion: { expected: number; checked: number; rate: number; products: CompletionProductDetail[] };
+  stock: StockCategoryGroup[]; // empty for teams with no dedicated stock category (entremet, baker)
 };
 
 // Which lab_fiche_meta.category values to show live Odoo stock for, per team (Axel, 2026-08-21:
 // "stocks Lab des tiramisu (baby_mama), macaron et biscuit voyage (team hung)"). Confirmed live:
-// category='Tiramisu' → 11 SKUs, team baby_mama; 'Macaron' → 35 SKUs + 'Biscuit Voyage' → 4 SKUs,
-// both team hung. Entremet/baker intentionally have no entry — completion-only, per Axel ("OUI").
+// category='Tiramisu' → 11 SKUs, all team baby_mama; 'Macaron' → 35 SKUs + 'Biscuit Voyage' → 22
+// SKUs, both team hung. Entremet/baker intentionally have no entry — completion-only (Axel "OUI").
+// IMPORTANT: 'Biscuit Voyage' is NOT exclusive to hung — 5 "Lady Finger" SKUs in that same
+// category belong to baby_mama (confirmed live). Filtering by category alone leaked baby_mama's
+// items into hung's stock card — must also filter lab_fiche_meta.teams @> [team] below.
 const TEAM_STOCK_CATEGORIES: Record<string, string[]> = {
   baby_mama: ['Tiramisu'],
   hung: ['Macaron', 'Biscuit Voyage'],
@@ -91,7 +96,7 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
 
   const [{ data: checkLines }, { data: excludedRows }] = await Promise.all([
     service.from('lab_delivery_check_lines')
-      .select('sku, qty_expected, qty_checked')
+      .select('sku, product_name_vi, qty_expected, qty_checked')
       .eq('team', team).eq('category', 'production').eq('delivery_date', todayStr),
     service.from('lab_excluded_skus').select('sku'),
   ]);
@@ -100,29 +105,51 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
   // category='production' (stale bucketing) shouldn't count against a chef's completion.
   const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
   let expected = 0, checked = 0;
+  const perProduct: Record<string, { name: string; expected: number; checked: number }> = {};
   for (const l of checkLines ?? []) {
     if (l.sku && excludedSkuSet.has(l.sku)) continue;
     expected += l.qty_expected ?? 0;
     checked += l.qty_checked ?? 0;
+    const key = l.sku || l.product_name_vi || '—';
+    (perProduct[key] ??= { name: l.product_name_vi || l.sku || '—', expected: 0, checked: 0 });
+    perProduct[key].expected += l.qty_expected ?? 0;
+    perProduct[key].checked += l.qty_checked ?? 0;
   }
-  const completion = { expected, checked, rate: expected ? Math.round(checked / expected * 100) : 0 };
+  // Detail (Axel, 2026-08-21: "je veux le detail aussi") — which products are actually behind,
+  // not just the aggregate rate. Only products with a real gap, worst first.
+  const products: CompletionProductDetail[] = Object.entries(perProduct)
+    .map(([sku, v]) => ({ sku, name: v.name, expected: v.expected, checked: v.checked, gap: v.expected - v.checked }))
+    .filter(p => p.gap > 0)
+    .sort((a, b) => b.gap - a.gap);
+  const completion = { expected, checked, rate: expected ? Math.round(checked / expected * 100) : 0, products };
 
   // Lab stock — read-only, live from Odoo (lib/odoo-inventory.ts, same LAB/Stock lookup as the
-  // finished-goods inventory-count feature). Swallow Odoo errors so a chef still sees today's
-  // completion even if Odoo is briefly unreachable.
-  let stock: StockLevel[] = [];
+  // finished-goods inventory-count feature). Grouped by category (Axel, 2026-08-21: "faut que ce
+  // soit ranger par categorie"), category order fixed by TEAM_STOCK_CATEGORIES above rather than
+  // alphabetical. Swallow Odoo errors so a chef still sees today's completion even if Odoo is
+  // briefly unreachable.
+  let stock: StockCategoryGroup[] = [];
   const categories = TEAM_STOCK_CATEGORIES[team];
   if (categories?.length) {
-    const { data: fiches } = await service.from('lab_fiche_meta').select('id').in('category', categories);
-    const ficheIds = (fiches ?? []).map((f: any) => f.id);
+    const { data: fiches } = await service.from('lab_fiche_meta')
+      .select('id, category').in('category', categories).contains('teams', [team]);
+    const categoryByFiche: Record<string, string> = {};
+    for (const f of fiches ?? []) categoryByFiche[f.id] = f.category;
+    const ficheIds = Object.keys(categoryByFiche);
     const { data: variants } = ficheIds.length
-      ? await service.from('lab_fiche_variants').select('sku').in('fiche_id', ficheIds)
+      ? await service.from('lab_fiche_variants').select('sku, fiche_id').in('fiche_id', ficheIds)
       : { data: [] as any[] };
-    const skus = Array.from(new Set((variants ?? []).map((v: any) => v.sku).filter(Boolean))) as string[];
+    const categoryBySku: Record<string, string> = {};
+    for (const v of variants ?? []) if (v.sku && v.fiche_id) categoryBySku[v.sku] = categoryByFiche[v.fiche_id] ?? '';
+    const skus = Array.from(new Set(Object.keys(categoryBySku)));
     if (skus.length) {
       try {
         const { getLabStockLevels } = await import('@/lib/odoo-inventory');
-        stock = (await getLabStockLevels(skus)).sort((a, b) => a.name.localeCompare(b.name));
+        const levels = await getLabStockLevels(skus);
+        const byCategory: Record<string, StockLevel[]> = {};
+        for (const l of levels) (byCategory[categoryBySku[l.sku] || ''] ??= []).push(l);
+        for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name));
+        stock = categories.filter(c => byCategory[c]?.length).map(c => ({ category: c, items: byCategory[c] }));
       } catch {
         stock = [];
       }

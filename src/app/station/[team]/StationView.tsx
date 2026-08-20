@@ -120,10 +120,14 @@ type DateSummary = {
 
 // Analytics tab — reworked 2026-08-21 (Axel: "Completion by team (delivery) du jour" + Lab stock
 // for the team's own products, everything else removed). Today only, no more 7j/30j range.
+// Stock grouped by category (Axel: "ranger par categorie"); completion includes a per-product
+// detail (Axel: "je veux le detail aussi").
 type StockLevel = { sku: string; name: string; qty: number; found: boolean };
+type StockCategoryGroup = { category: string; items: StockLevel[] };
+type CompletionProductDetail = { sku: string; name: string; expected: number; checked: number; gap: number };
 type TeamTodaySnapshot = {
-  completion: { expected: number; checked: number; rate: number };
-  stock: StockLevel[]; // empty for teams with no dedicated stock category (entremet, baker)
+  completion: { expected: number; checked: number; rate: number; products: CompletionProductDetail[] };
+  stock: StockCategoryGroup[]; // empty for teams with no dedicated stock category (entremet, baker)
 };
 
 type OrderDetail = {
@@ -1863,6 +1867,18 @@ export default function StationView({
                       {stats.completion.checked} / {stats.completion.expected} {lang === 'vi' ? 'đã check' : 'checked'}
                     </div>
                   </div>
+                  {stats.completion.products.length > 0 && (
+                    <div className="mt-3 pt-3 space-y-1.5 border-t overflow-y-auto" style={{ borderColor: '#F3EFDD', maxHeight: 260 }}>
+                      {stats.completion.products.map(p => (
+                        <div key={p.sku} className="flex justify-between items-center text-[12px]">
+                          <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
+                          <span className="shrink-0" style={{ color: '#6B6455' }}>
+                            {p.checked}/{p.expected} · <span className="font-bold" style={{ color: '#B45309' }}>-{p.gap}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {stats.stock.length > 0 && (
@@ -1875,13 +1891,22 @@ export default function StationView({
                         {lang === 'vi' ? 'Trực tiếp từ Odoo (kho LAB)' : 'Live from Odoo (LAB warehouse)'}
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      {stats.stock.map(s => (
-                        <div key={s.sku} className="flex justify-between items-center text-[13px]">
-                          <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
-                          <span className="font-bold shrink-0" style={{ color: s.found ? '#1A4731' : '#B45309' }}>
-                            {s.found ? s.qty : '—'}
-                          </span>
+                    <div className="space-y-4">
+                      {stats.stock.map(group => (
+                        <div key={group.category}>
+                          <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
+                            {group.category}
+                          </div>
+                          <div className="space-y-2">
+                            {group.items.map(s => (
+                              <div key={s.sku} className="flex justify-between items-center text-[13px]">
+                                <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
+                                <span className="font-bold shrink-0" style={{ color: s.found ? '#1A4731' : '#B45309' }}>
+                                  {s.found ? s.qty : '—'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       ))}
                     </div>
