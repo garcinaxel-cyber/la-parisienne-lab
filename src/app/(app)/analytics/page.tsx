@@ -34,77 +34,39 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const dateByImport: Record<string, string> = {};
   for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
 
-  const [{ data: assignments }, { data: rangeOrderLines }, { data: changeRows }, { data: excludedRows }] = await Promise.all([
+  // 2026-08-20 — Order-modification analysis removed (Axel: "plus interessant"). Production
+  // cards now also carry blocked_at/blocked_by_name (lab_v46) for traceability, and delivery-
+  // check lines are read for the two new team-level metrics below.
+  const [{ data: assignments }, { data: checkLines }] = await Promise.all([
     importIds.length
       ? supabase.from('lab_assignments')
-          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, cancelled')
+          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
           .in('import_id', importIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
-    importIds.length
-      ? supabase.from('lab_order_lines').select('order_ref, source_type').in('import_id', importIds).limit(20000)
+    // Only for the raw (≤60d) window — no daily-aggregate table exists yet for delivery-check
+    // data (unlike production, which has lab_daily_stats), so a wide aggregated range would mean
+    // an unbounded scan. Follow-up worth doing if these metrics prove useful long-range.
+    !aggregated
+      ? supabase.from('lab_delivery_check_lines')
+          .select('team, product_name_vi, status, qty_expected, qty_checked')
+          .eq('category', 'production').not('team', 'is', null)
+          .gte('delivery_date', fromStr).lte('delivery_date', toStr).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
-    // Odoo modifications detected in range (by detection time). One row = one detection event.
-    supabase.from('lab_odoo_changes')
-      .select('order_ref, cancelled, items, detected_at, status')
-      .gte('detected_at', fromStr).neq('status', 'dismissed').limit(5000),
-    supabase.from('lab_excluded_skus').select('sku'),
   ]);
-
-  // ── ORDER ANALYSIS ─────────────────────────────────────────────────────────
-  const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
-  const toLocalDate = (iso: string) => {
-    const d = new Date(iso); d.setHours(d.getHours() + 7); // Vietnam UTC+7
-    return d.toISOString().split('T')[0];
-  };
-  // Received orders in range (distinct refs across published imports)
-  const receivedRefs = new Set((rangeOrderLines ?? []).map((l: any) => l.order_ref).filter(Boolean));
-  const ordersReceived = receivedRefs.size;
-
-  // Clean each change: drop already-excluded SKUs (packaging noise); keep row if any item left OR cancelled
-  const cleanChanges = (changeRows ?? []).map((c: any) => ({
-    ...c,
-    items: (c.items ?? []).filter((it: any) => !excludedSet.has(it.sku)),
-  })).filter((c: any) => c.items.length > 0 || c.cancelled);
-
-  const modifiedRefs = new Set(cleanChanges.map((c: any) => c.order_ref));
-  const cancelledRefs = new Set(cleanChanges.filter((c: any) => c.cancelled).map((c: any) => c.order_ref));
-  let itemsAdded = 0, itemsRemoved = 0, itemsQtyChanged = 0;
-  const modsPerDayMap: Record<string, number> = {};
-  const modsPerOrder: Record<string, number> = {};
-  for (const c of cleanChanges) {
-    const day = toLocalDate(c.detected_at);
-    modsPerDayMap[day] = (modsPerDayMap[day] ?? 0) + 1;
-    modsPerOrder[c.order_ref] = (modsPerOrder[c.order_ref] ?? 0) + 1;
-    for (const it of c.items) {
-      const oq = it.old_qty ?? 0, nq = it.new_qty ?? 0;
-      if (oq === 0 && nq > 0) itemsAdded++;
-      else if (nq === 0 && oq > 0) itemsRemoved++;
-      else itemsQtyChanged++;
-    }
-  }
-  const modsPerDay = Object.entries(modsPerDayMap).map(([date, count]) => ({ date, count }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const mostModified = Object.entries(modsPerOrder).map(([ref, count]) => ({ ref, count }))
-    .sort((a, b) => b.count - a.count).slice(0, 6);
-  const orderKpis = {
-    received: ordersReceived,
-    modifiedOrders: modifiedRefs.size,
-    modificationEvents: cleanChanges.length,
-    cancelled: cancelledRefs.size,
-    modRate: ordersReceived ? Math.round(modifiedRefs.size / ordersReceived * 100) : 0,
-    perDayAvg: days ? Math.round(cleanChanges.length / days * 10) / 10 : 0,
-    added: itemsAdded, removed: itemsRemoved, qtyChanged: itemsQtyChanged,
-  };
 
   const rows = (assignments ?? []) as any[];
   const isDone = (s: string) => s === 'done' || s === 'skip';
 
   // KPIs
-  let unitsProduced = 0, unitsPlanned = 0, doneCards = 0, blockedCards = 0;
+  let unitsProduced = 0, unitsPlanned = 0, doneCards = 0, blockedCount = 0;
   const perTeam: Record<string, { total: number; done: number; units: number }> = {};
   const perProduct: Record<string, number> = {};
   const perReason: Record<string, number> = {};
   const perDay: Record<string, { units: number; total: number; done: number }> = {};
+  // Blocked-card traceability (Axel, 2026-08-20: "je veux les blocked reason avec la
+  // tracabilite pour pouvoir aller chercher le probleme") — one entry per blocked card, not
+  // just an aggregate count, so a reason in the UI can be traced to the actual card/date/team.
+  const blockedCards: { date: string; team: string; product: string; reason: string; blockedAt: string | null; blockedBy: string | null }[] = [];
 
   for (const a of rows) {
     if (a.cancelled) continue; // cancelled cards are out of every production metric
@@ -117,9 +79,10 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
       : 0;
     if (isDone(a.status)) doneCards++;
     if (a.status === 'blocked') {
-      blockedCards++;
+      blockedCount++;
       const r = a.blocked_reason || 'Autre';
       perReason[r] = (perReason[r] ?? 0) + 1;
+      blockedCards.push({ date, team: a.team || 'other', product: a.product_name_vi, reason: r, blockedAt: a.blocked_at ?? null, blockedBy: a.blocked_by_name ?? null });
     }
     const t = a.team || 'other';
     (perTeam[t] ??= { total: 0, done: 0, units: 0 });
@@ -133,13 +96,31 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     }
   }
 
+  // Blocking frequency over time + dominant reason per team (Axel, 2026-08-20). Trend uses
+  // blocked_at's own date (when the block actually happened), falling back to the card's
+  // delivery date for cards blocked before lab_v46 (blocked_at is null there).
+  const blockFreqByDay: Record<string, number> = {};
+  const blockByTeamReason: Record<string, Record<string, number>> = {};
+  for (const c of blockedCards) {
+    const d = c.blockedAt ? c.blockedAt.slice(0, 10) : c.date;
+    if (d) blockFreqByDay[d] = (blockFreqByDay[d] ?? 0) + 1;
+    (blockByTeamReason[c.team] ??= {});
+    blockByTeamReason[c.team][c.reason] = (blockByTeamReason[c.team][c.reason] ?? 0) + 1;
+  }
+  const blockTrend = Object.entries(blockFreqByDay).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+  const teamDominantReason = Object.entries(blockByTeamReason).map(([team, reasons]) => {
+    const sorted = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
+    const total = sorted.reduce((s, [, n]) => s + n, 0);
+    return { team, total, topReason: sorted[0]?.[0] ?? '—', topCount: sorted[0]?.[1] ?? 0 };
+  }).sort((a, b) => b.total - a.total);
+
   const totalCards = rows.length;
   const kpis = {
     unitsProduced,
     unitsPlanned,
     completion: totalCards ? Math.round(doneCards / totalCards * 100) : 0,
     orders: new Set(rows.map(a => a.import_id)).size, // published imports in range
-    blocked: blockedCards,
+    blocked: blockedCount,
   };
   const teams = Object.entries(perTeam).map(([team, v]) => ({
     team, completion: v.total ? Math.round(v.done / v.total * 100) : 0, units: v.units,
@@ -153,8 +134,38 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     completion: v.total ? Math.round(v.done / v.total * 100) : 0,
   })).sort((a, b) => a.date.localeCompare(b.date));
 
+  // Delivery-check based metrics (Axel, 2026-08-20): completion = qty actually checked by
+  // assistants vs. qty the client demanded (NOT the same as the cards-based "Completion by
+  // team" above, which only counts cards marked done — this one catches partial/short
+  // deliveries that never got flagged as blocked). Discrepancy rate = % of lines whose checked
+  // qty differed from expected (status='adjusted'), by team and by product.
+  const teamAgg: Record<string, { total: number; adjusted: number; expected: number; checked: number }> = {};
+  const productAgg: Record<string, { total: number; adjusted: number }> = {};
+  for (const l of (checkLines ?? []) as any[]) {
+    const t = l.team || 'other';
+    (teamAgg[t] ??= { total: 0, adjusted: 0, expected: 0, checked: 0 });
+    teamAgg[t].total++;
+    if (l.status === 'adjusted') teamAgg[t].adjusted++;
+    teamAgg[t].expected += l.qty_expected ?? 0;
+    teamAgg[t].checked += l.qty_checked ?? 0;
+    const p = l.product_name_vi || '—';
+    (productAgg[p] ??= { total: 0, adjusted: 0 });
+    productAgg[p].total++;
+    if (l.status === 'adjusted') productAgg[p].adjusted++;
+  }
+  const completionByTeamDelivery = Object.entries(teamAgg).map(([team, v]) => ({
+    team, expected: v.expected, checked: v.checked, rate: v.expected ? Math.round(v.checked / v.expected * 100) : 0,
+  })).sort((a, b) => b.expected - a.expected);
+  const discrepancyByTeam = Object.entries(teamAgg).map(([team, v]) => ({
+    team, total: v.total, adjusted: v.adjusted, rate: v.total ? Math.round(v.adjusted / v.total * 100) : 0,
+  })).sort((a, b) => b.rate - a.rate);
+  const discrepancyByProduct = Object.entries(productAgg).map(([name, v]) => ({
+    name, total: v.total, adjusted: v.adjusted, rate: v.total ? Math.round(v.adjusted / v.total * 100) : 0,
+  })).filter(p => p.adjusted > 0).sort((a, b) => b.adjusted - a.adjusted).slice(0, 8);
+
   // ── Aggregate ranges (6 months / 1 year): production stats from lab_daily_stats ──
   let kpisOut = kpis, teamsOut = teams, topOut = topProducts, reasonsOut = reasons, dailyOut = daily;
+  let blockedCardsOut = blockedCards, blockTrendOut = blockTrend, teamDominantReasonOut = teamDominantReason;
   if (aggregated) {
     const { data: stats } = await supabase.from('lab_daily_stats')
       .select('day, team, sku, product_name, qty_ordered, qty_produced, qty_extra, cards_total, cards_done, cards_blocked')
@@ -189,6 +200,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     topOut = Object.entries(sProduct).map(([name, qty]) => ({ name, qty }))
       .sort((a, b) => b.qty - a.qty).slice(0, 8);
     reasonsOut = []; // blocked reasons live in the raw detail only
+    blockedCardsOut = []; blockTrendOut = []; teamDominantReasonOut = [];
     dailyOut = Object.entries(sDay).map(([date, v]) => ({
       date, units: v.units, total: v.total, done: v.done,
       completion: v.total ? Math.round(v.done / v.total * 100) : 0,
@@ -196,6 +208,8 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   }
 
   return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
-    reasons={reasonsOut} daily={dailyOut} orderKpis={orderKpis} modsPerDay={modsPerDay} mostModified={mostModified}
+    reasons={reasonsOut} blockedCards={blockedCardsOut} blockTrend={blockTrendOut} teamDominantReason={teamDominantReasonOut}
+    daily={dailyOut} completionByTeamDelivery={completionByTeamDelivery}
+    discrepancyByTeam={discrepancyByTeam} discrepancyByProduct={discrepancyByProduct}
     aggregated={aggregated} />;
 }

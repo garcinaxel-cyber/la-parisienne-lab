@@ -58,6 +58,8 @@ type Assignment = {
   status: AssignmentStatus;
   notes: string;
   blocked_reason: string | null;
+  blocked_at?: string | null;
+  blocked_by_name?: string | null;
   sort_order: number;
   import_id: string;
   is_extra?: boolean;
@@ -601,7 +603,10 @@ export default function StationView({
     const reason = blockedReason === 'other' ? blockedCustom.trim() : (REASON_LABELS[blockedReason] ?? blockedReason);
     if (!reason) return;
     const supabase = createClient();
-    const update = { status: 'blocked' as AssignmentStatus, blocked_reason: reason, updated_at: new Date().toISOString() };
+    // blocked_at/blocked_by_name (lab_v46, 2026-08-20): traceability for the Analytics "blocked
+    // reasons" list, so a reason can be traced back to the actual card instead of just a count.
+    // Deliberately never cleared on unblock (see lab_v46_check_and_blocked_tracking.sql comment).
+    const update = { status: 'blocked' as AssignmentStatus, blocked_reason: reason, blocked_at: new Date().toISOString(), blocked_by_name: userName, updated_at: new Date().toISOString() };
     await supabase.from('lab_assignments').update(update).eq('id', blockedModal.id);
     setAssignments(prev => prev.map(x => x.id === blockedModal.id ? { ...x, ...update } : x));
     setBlockedModal(null);

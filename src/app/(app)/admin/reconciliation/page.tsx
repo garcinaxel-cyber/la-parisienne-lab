@@ -1,13 +1,16 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
-import ReconciliationView from './ReconciliationView';
+import CheckView from './CheckView';
 
 export const revalidate = 0;
 
 // Admin-only control tab (explicitly NOT lab_manager, per Axel — this is a control/audit
-// tool over everyone else's work, not an operational one). Shows the daily reconciliation
-// cron's run history + a manual "run now" button (actions.ts).
-export default async function ReconciliationPage() {
+// tool over everyone else's work, not an operational one). "Check" (renamed from
+// "Réconciliation", 2026-08-20): one button runs all 4 checks at once — reconciliation
+// (Odoo demand vs tracked cards), delivery-check coverage, production→stock, stock→Odoo.
+// 7-day history (lab_v46 purge cron) — table/route/URL kept as lab_reconciliation_runs /
+// /admin/reconciliation on purpose, zero cron or RLS churn for a rename that's UI-only.
+export default async function CheckPage() {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
@@ -16,9 +19,15 @@ export default async function ReconciliationPage() {
 
   const { data: runs } = await supabase
     .from('lab_reconciliation_runs')
-    .select('id, run_at, triggered_by, range_from, range_to, dates_checked, issue_count, issues, error')
+    .select(`
+      id, run_at, triggered_by, range_from, range_to, dates_checked, issue_count, issues, error,
+      check_range_from, check_range_to,
+      delivery_coverage_issues, delivery_coverage_count,
+      production_stock_issues, production_stock_count,
+      stock_odoo_issues, stock_odoo_count
+    `)
     .order('run_at', { ascending: false })
     .limit(20);
 
-  return <ReconciliationView runs={runs ?? []} />;
+  return <CheckView runs={runs ?? []} />;
 }

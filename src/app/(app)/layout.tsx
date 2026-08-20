@@ -34,12 +34,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
   ]);
 
-  // Reconciliation badge: admin-only table (RLS), so only fetched for admins.
+  // Check badge: admin-only table (RLS), so only fetched for admins. Sums all 4 checks
+  // (2026-08-20) — issue_count alone used to mean "reconciliation only".
   let reconciliationIssues = 0;
   if (profile.role === 'admin') {
     const { data: lastRun } = await supabase
-      .from('lab_reconciliation_runs').select('issue_count').order('run_at', { ascending: false }).limit(1).maybeSingle();
-    reconciliationIssues = lastRun?.issue_count ?? 0;
+      .from('lab_reconciliation_runs')
+      .select('issue_count, delivery_coverage_count, production_stock_count, stock_odoo_count')
+      .order('run_at', { ascending: false }).limit(1).maybeSingle();
+    reconciliationIssues = (lastRun?.issue_count ?? 0) + (lastRun?.delivery_coverage_count ?? 0)
+      + (lastRun?.production_stock_count ?? 0) + (lastRun?.stock_odoo_count ?? 0);
   }
 
   return (

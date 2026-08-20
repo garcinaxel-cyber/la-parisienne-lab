@@ -1,44 +1,49 @@
 'use client';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { Package, CheckCircle2, ClipboardList, AlertCircle, PenLine, Ban, TrendingUp } from 'lucide-react';
+import { Package, CheckCircle2, ClipboardList, AlertCircle, ChevronDown, ChevronUp, Clock, User } from 'lucide-react';
 
 type Kpis = { unitsProduced: number; unitsPlanned: number; completion: number; orders: number; blocked: number };
 type TeamStat = { team: string; completion: number; units: number };
 type Daily = { date: string; units: number; total: number; done: number; completion: number };
-type OrderKpis = {
-  received: number; modifiedOrders: number; modificationEvents: number; cancelled: number;
-  modRate: number; perDayAvg: number; added: number; removed: number; qtyChanged: number;
-};
+type BlockedCard = { date: string; team: string; product: string; reason: string; blockedAt: string | null; blockedBy: string | null };
+type BlockTrendDay = { date: string; count: number };
+type TeamDominantReason = { team: string; total: number; topReason: string; topCount: number };
+type DeliveryTeamStat = { team: string; expected: number; checked: number; rate: number };
+type DiscrepancyTeamStat = { team: string; total: number; adjusted: number; rate: number };
+type DiscrepancyProductStat = { name: string; total: number; adjusted: number; rate: number };
 
-export default function AnalyticsView({ range, days, kpis, teams, topProducts, reasons, daily, orderKpis, modsPerDay, mostModified, aggregated = false }: {
+export default function AnalyticsView({
+  range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
+  daily, completionByTeamDelivery, discrepancyByTeam, discrepancyByProduct, aggregated = false,
+}: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
   reasons: { reason: string; count: number }[];
+  blockedCards: BlockedCard[];
+  blockTrend: BlockTrendDay[];
+  teamDominantReason: TeamDominantReason[];
   daily: Daily[];
-  orderKpis: OrderKpis;
-  modsPerDay: { date: string; count: number }[];
-  mostModified: { ref: string; count: number }[];
+  completionByTeamDelivery: DeliveryTeamStat[];
+  discrepancyByTeam: DiscrepancyTeamStat[];
+  discrepancyByProduct: DiscrepancyProductStat[];
   aggregated?: boolean;
 }) {
   const { lang } = useI18n();
   const router = useRouter();
   const current = range;
   const vi = lang === 'vi';
+  const [openReason, setOpenReason] = useState<string | null>(null);
 
   const setRange = (r: string) => router.push(`/analytics?range=${r}`);
   const maxUnits = Math.max(1, ...daily.map(d => d.units));
-  const maxMods = Math.max(1, ...modsPerDay.map(d => d.count));
+  const maxBlocks = Math.max(1, ...blockTrend.map(d => d.count));
   const dateLabel = (d: string, opts: Intl.DateTimeFormatOptions) =>
     new Date(d + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', opts);
-
-  const orderCards = [
-    { label: vi ? 'Đơn nhận được' : 'Orders received', value: orderKpis.received.toLocaleString(), sub: '', icon: ClipboardList, color: 'text-navy' },
-    { label: vi ? 'Đơn bị sửa' : 'Orders modified', value: orderKpis.modifiedOrders, sub: `${orderKpis.modRate}%`, icon: PenLine, color: 'text-amber-600' },
-    { label: vi ? 'Lượt sửa đổi' : 'Modifications', value: orderKpis.modificationEvents, sub: vi ? `${orderKpis.perDayAvg}/ngày` : `${orderKpis.perDayAvg}/day`, icon: TrendingUp, color: 'text-navy' },
-    { label: vi ? 'Đơn đã hủy' : 'Orders cancelled', value: orderKpis.cancelled, sub: '', icon: Ban, color: orderKpis.cancelled > 0 ? 'text-red-600' : 'text-ink-light' },
-  ];
+  const teamLabel = (t: string) => TEAM_LABELS[t as Team] ? (vi ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en) : t;
+  const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleString(vi ? 'vi-VN' : 'en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
   const prodCards = [
     { label: vi ? 'Đã sản xuất' : 'Units produced', value: kpis.unitsProduced.toLocaleString(), icon: Package, color: 'text-navy' },
@@ -49,12 +54,8 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
     { label: vi ? 'Sản phẩm bị chặn' : 'Blocked products', value: kpis.blocked, icon: AlertCircle, color: kpis.blocked > 0 ? 'text-amber-600' : 'text-ink-light' },
   ];
 
-  const breakdown = [
-    { label: vi ? 'Thêm sản phẩm' : 'Products added', value: orderKpis.added, color: '#16A34A' },
-    { label: vi ? 'Đổi số lượng' : 'Quantity changed', value: orderKpis.qtyChanged, color: '#D97706' },
-    { label: vi ? 'Gỡ sản phẩm' : 'Products removed', value: orderKpis.removed, color: '#DC2626' },
-  ];
-  const breakdownTotal = orderKpis.added + orderKpis.qtyChanged + orderKpis.removed;
+  const blockedByReason = new Map<string, BlockedCard[]>();
+  for (const c of blockedCards) (blockedByReason.get(c.reason) ?? blockedByReason.set(c.reason, []).get(c.reason)!).push(c);
 
   return (
     <div className="space-y-6">
@@ -87,223 +88,230 @@ export default function AnalyticsView({ range, days, kpis, teams, topProducts, r
       {aggregated && (
         <p className="text-xs rounded-xl px-3 py-2" style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #BFDBFE' }}>
           {vi
-            ? 'Khoảng dài: số liệu sản xuất từ bảng tổng hợp hằng ngày. Phân tích đơn Odoo (sửa đổi, đơn nhận) chỉ có chi tiết 60 ngày gần nhất.'
-            : 'Long range: production figures come from the daily aggregates. Odoo order analysis (modifications, received) only has the last 60 days of detail.'}
+            ? 'Khoảng dài: số liệu sản xuất từ bảng tổng hợp hằng ngày. Lý do bị chặn, hoàn thành giao hàng và chênh lệch delivery-check chỉ có chi tiết 60 ngày gần nhất.'
+            : 'Long range: production figures come from the daily aggregates. Blocked reasons, delivery completion and discrepancy rate only have detail for the last 60 days.'}
         </p>
       )}
 
-      {/* ══════════ SECTION 1 — ORDER ANALYSIS ══════════ */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <ClipboardList size={18} className="text-navy" />
-          <h2 className="font-serif text-lg font-bold text-navy">{vi ? 'Phân tích đơn hàng' : 'Order analysis'}</h2>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {orderCards.map(({ label, value, sub, icon: Icon, color }) => (
-            <div key={label} className="card p-4 flex items-center gap-3">
-              <Icon size={20} className={color} />
-              <div>
-                <div className="text-xl font-bold text-navy leading-tight">
-                  {value}{sub && <span className="text-xs font-semibold text-ink-light ml-1">{sub}</span>}
-                </div>
-                <div className="text-[11px] text-ink-light">{label}</div>
-              </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {prodCards.map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="card p-4 flex items-center gap-3">
+            <Icon size={20} className={color} />
+            <div>
+              <div className="text-xl font-bold text-navy leading-tight">{value}</div>
+              <div className="text-[11px] text-ink-light">{label}</div>
             </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {/* Modifications per day */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Sửa đổi theo ngày' : 'Modifications per day'}</h3>
-            {modsPerDay.length === 0 ? (
-              <p className="text-xs text-ink-light">{vi ? 'Không có thay đổi nào 🎉' : 'No changes in this period 🎉'}</p>
-            ) : (
-              <div className="flex items-end gap-1 h-28">
-                {modsPerDay.slice(-14).map(d => (
-                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
-                    <span className="text-[10px] font-bold text-navy mb-0.5">{d.count}</span>
-                    <div className="w-full rounded-t transition-all"
-                      style={{ height: `${Math.max(6, d.count / maxMods * 100)}%`, backgroundColor: '#D97706' }} />
-                    <span className="text-[9px] text-ink-light mt-1 truncate w-full text-center">
-                      {dateLabel(d.date, { day: 'numeric', month: 'numeric' })}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
+        ))}
+      </div>
 
-          {/* Modification breakdown */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Loại sửa đổi' : 'Type of change'}</h3>
-            {breakdownTotal === 0 ? (
-              <p className="text-xs text-ink-light">—</p>
-            ) : (
-              <div className="space-y-2.5">
-                {breakdown.map(b => (
-                  <div key={b.label}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* Completion by team — cards done/total */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-0.5">{vi ? 'Hoàn thành theo đội (thẻ)' : 'Completion by team (cards)'}</h3>
+          <p className="text-[11px] text-ink-light mb-3">{vi ? '% thẻ sản xuất đã đánh dấu xong' : '% of production cards marked done'}</p>
+          {teams.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <div className="space-y-2.5">
+              {teams.map(t => {
+                const meta = TEAM_LABELS[t.team as Team];
+                return (
+                  <div key={t.team}>
                     <div className="flex justify-between text-xs mb-1">
-                      <span className="text-navy">{b.label}</span>
-                      <span className="text-ink-light">{b.value}</span>
+                      <span className="text-navy">{meta ? (vi ? meta.vi : meta.en) : t.team}</span>
+                      <span className="text-ink-light">{t.completion}% · {t.units.toLocaleString()} {vi ? 'cái' : 'units'}</span>
                     </div>
                     <div className="h-2 rounded-full bg-border-soft overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${b.value / breakdownTotal * 100}%`, backgroundColor: b.color }} />
+                      <div className="h-full rounded-full" style={{ width: `${t.completion}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* Most-modified orders */}
+        {/* Completion by team — delivery-check: demanded vs actually delivered */}
         <div className="card p-4">
-          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Đơn bị sửa nhiều nhất' : 'Most-modified orders'}</h3>
-          {mostModified.length === 0 ? (
-            <p className="text-xs text-ink-light">—</p>
+          <h3 className="font-semibold text-sm text-navy mb-0.5">{vi ? 'Hoàn thành theo đội (giao hàng)' : 'Completion by team (delivery)'}</h3>
+          <p className="text-[11px] text-ink-light mb-3">
+            {vi ? 'SL trợ lý đã check thực tế / SL khách đặt' : 'Qty actually checked by assistants / qty client ordered'}
+          </p>
+          {completionByTeamDelivery.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <div className="space-y-2.5">
+              {completionByTeamDelivery.map(t => {
+                const meta = TEAM_LABELS[t.team as Team];
+                return (
+                  <div key={t.team}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-navy">{teamLabel(t.team)}</span>
+                      <span className="text-ink-light">{t.rate}% · {t.checked.toLocaleString()}/{t.expected.toLocaleString()}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-border-soft overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.rate)}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Top products */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Sản phẩm nhiều nhất' : 'Top products made'}</h3>
+          {topProducts.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <div className="space-y-1.5">
+              {topProducts.map(p => (
+                <div key={p.name} className="flex justify-between text-[13px]">
+                  <span className="text-navy truncate pr-3">{p.name}</span>
+                  <span className="font-semibold text-navy shrink-0">{p.qty.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Blocked reasons — traceable: click a reason to see the actual cards */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Lý do bị chặn' : 'Blocked reasons'}</h3>
+          {reasons.length === 0 ? (
+            <p className="text-xs text-ink-light">{vi ? 'Không có sản phẩm bị chặn 🎉' : 'No blocked products 🎉'}</p>
+          ) : (
+            <div className="space-y-1">
+              {reasons.map(r => {
+                const cards = blockedByReason.get(r.reason) ?? [];
+                const isOpen = openReason === r.reason;
+                return (
+                  <div key={r.reason}>
+                    <button onClick={() => setOpenReason(isOpen ? null : r.reason)}
+                      className="w-full flex justify-between items-center text-[13px] py-1">
+                      <span className="text-navy truncate pr-3 flex items-center gap-1">
+                        {cards.length > 0 && (isOpen ? <ChevronUp size={12} className="text-ink-light shrink-0" /> : <ChevronDown size={12} className="text-ink-light shrink-0" />)}
+                        {r.reason}
+                      </span>
+                      <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 shrink-0" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>{r.count}</span>
+                    </button>
+                    {isOpen && cards.length > 0 && (
+                      <div className="ml-4 mb-2 space-y-1.5 border-l-2 pl-3" style={{ borderColor: '#F3F4F6' }}>
+                        {cards.map((c, i) => (
+                          <div key={i} className="text-[12px]">
+                            <div className="text-navy truncate">{c.product}</div>
+                            <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold px-1.5 py-0.5 rounded-full" style={{ color: TEAM_LABELS[c.team as Team]?.color, backgroundColor: TEAM_LABELS[c.team as Team]?.bg }}>{teamLabel(c.team)}</span>
+                              <span>{c.date}</span>
+                              {c.blockedAt && <span className="flex items-center gap-0.5"><Clock size={10} /> {fmtTime(c.blockedAt)}</span>}
+                              {c.blockedBy && <span className="flex items-center gap-0.5"><User size={10} /> {c.blockedBy}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Blocking frequency over time */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Tần suất chặn theo ngày' : 'Blocking frequency over time'}</h3>
+          {blockTrend.length === 0 ? (
+            <p className="text-xs text-ink-light">{vi ? 'Không có dữ liệu' : 'No data'}</p>
+          ) : (
+            <div className="flex items-end gap-1 h-28">
+              {blockTrend.slice(-14).map(d => (
+                <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+                  <span className="text-[10px] font-bold text-navy mb-0.5">{d.count}</span>
+                  <div className="w-full rounded-t transition-all" style={{ height: `${Math.max(6, d.count / maxBlocks * 100)}%`, backgroundColor: '#DC2626' }} />
+                  <span className="text-[9px] text-ink-light mt-1 truncate w-full text-center">{dateLabel(d.date, { day: 'numeric', month: 'numeric' })}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Dominant blocking reason per team */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Lý do chặn chủ yếu theo đội' : 'Dominant blocking reason by team'}</h3>
+          {teamDominantReason.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <div className="space-y-2">
+              {teamDominantReason.map(t => (
+                <div key={t.team} className="flex items-center justify-between text-[13px] gap-2">
+                  <span className="font-semibold px-1.5 py-0.5 rounded-full shrink-0" style={{ color: TEAM_LABELS[t.team as Team]?.color, backgroundColor: TEAM_LABELS[t.team as Team]?.bg }}>{teamLabel(t.team)}</span>
+                  <span className="text-navy truncate flex-1 text-right">{t.topReason} <span className="text-ink-light">×{t.topCount}</span></span>
+                  <span className="text-ink-light text-[11px] shrink-0">{vi ? `tổng ${t.total}` : `total ${t.total}`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Discrepancy rate by team */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-0.5">{vi ? 'Tỷ lệ lệch delivery-check theo đội' : 'Delivery-check discrepancy by team'}</h3>
+          <p className="text-[11px] text-ink-light mb-3">{vi ? '% dòng có SL check khác SL đặt' : '% of lines whose checked qty differed from expected'}</p>
+          {discrepancyByTeam.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <div className="space-y-2.5">
+              {discrepancyByTeam.map(t => (
+                <div key={t.team}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-navy">{teamLabel(t.team)}</span>
+                    <span className="text-ink-light">{t.rate}% · {t.adjusted}/{t.total}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-border-soft overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${t.rate}%`, backgroundColor: t.rate > 20 ? '#DC2626' : '#D97706' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Discrepancy — worst products */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-0.5">{vi ? 'Sản phẩm lệch nhiều nhất' : 'Most-discrepant products'}</h3>
+          <p className="text-[11px] text-ink-light mb-3">{vi ? 'Sản phẩm hay có vấn đề định kỳ' : 'Products with a recurring problem'}</p>
+          {discrepancyByProduct.length === 0 ? (
+            <p className="text-xs text-ink-light">{vi ? 'Không có lệch nào 🎉' : 'No discrepancies 🎉'}</p>
           ) : (
             <div className="space-y-1.5">
-              {mostModified.map(m => (
-                <div key={m.ref} className="flex justify-between items-center text-[13px]">
-                  <span className="font-mono text-xs text-navy truncate pr-3">{m.ref}</span>
+              {discrepancyByProduct.map(p => (
+                <div key={p.name} className="flex justify-between items-center text-[13px]">
+                  <span className="text-navy truncate pr-3">{p.name}</span>
                   <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 shrink-0" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-                    {m.count} {vi ? 'lần' : m.count > 1 ? 'changes' : 'change'}
+                    {p.adjusted}/{p.total} ({p.rate}%)
                   </span>
                 </div>
               ))}
             </div>
           )}
         </div>
-      </section>
 
-      {/* ══════════ SECTION 2 — PRODUCTION ANALYSIS ══════════ */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2 pt-1">
-          <Package size={18} className="text-navy" />
-          <h2 className="font-serif text-lg font-bold text-navy">{vi ? 'Phân tích sản xuất' : 'Production analysis'}</h2>
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {prodCards.map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="card p-4 flex items-center gap-3">
-              <Icon size={20} className={color} />
-              <div>
-                <div className="text-xl font-bold text-navy leading-tight">{value}</div>
-                <div className="text-[11px] text-ink-light">{label}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {/* Completion by team */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Hoàn thành theo đội' : 'Completion by team'}</h3>
-            {teams.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
-              <div className="space-y-2.5">
-                {teams.map(t => {
-                  const meta = TEAM_LABELS[t.team as Team];
-                  return (
-                    <div key={t.team}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-navy">{meta ? (vi ? meta.vi : meta.en) : t.team}</span>
-                        <span className="text-ink-light">{t.completion}% · {t.units.toLocaleString()} {vi ? 'cái' : 'units'}</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-border-soft overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${t.completion}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Top products */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Sản phẩm nhiều nhất' : 'Top products made'}</h3>
-            {topProducts.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
-              <div className="space-y-1.5">
-                {topProducts.map(p => (
-                  <div key={p.name} className="flex justify-between text-[13px]">
-                    <span className="text-navy truncate pr-3">{p.name}</span>
-                    <span className="font-semibold text-navy shrink-0">{p.qty.toLocaleString()}</span>
+        {/* Volume per day */}
+        <div className="card p-4">
+          <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Sản lượng theo ngày' : 'Volume per day'}</h3>
+          {daily.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+            <>
+              <div className="flex items-end gap-1 h-28">
+                {daily.slice(-14).map(d => (
+                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+                    <span className="text-[10px] font-bold text-navy mb-0.5">{d.units.toLocaleString()}</span>
+                    <div className="w-full rounded-t transition-all"
+                      style={{ height: `${Math.max(6, d.units / maxUnits * 100)}%`, backgroundColor: d.completion === 100 ? '#16A34A' : '#0369a1' }} />
+                    <span className="text-[9px] text-ink-light mt-1 truncate w-full text-center">
+                      {dateLabel(d.date, { day: 'numeric', month: 'numeric' })}
+                    </span>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-
-          {/* Blocked reasons */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Lý do bị chặn' : 'Blocked reasons'}</h3>
-            {reasons.length === 0 ? (
-              <p className="text-xs text-ink-light">{vi ? 'Không có sản phẩm bị chặn 🎉' : 'No blocked products 🎉'}</p>
-            ) : (
-              <div className="space-y-1.5">
-                {reasons.map(r => (
-                  <div key={r.reason} className="flex justify-between items-center text-[13px]">
-                    <span className="text-navy truncate pr-3">{r.reason}</span>
-                    <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 shrink-0" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>{r.count}</span>
-                  </div>
-                ))}
+              <div className="text-[10px] text-ink-light mt-1.5 text-center">
+                {vi ? '14 ngày gần nhất · xanh lá = hoàn thành 100%' : 'Last 14 days · green = 100% complete'}
               </div>
-            )}
-          </div>
-
-          {/* Volume per day */}
-          <div className="card p-4">
-            <h3 className="font-semibold text-sm text-navy mb-3">{vi ? 'Sản lượng theo ngày' : 'Volume per day'}</h3>
-            {daily.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
-              <>
-                <div className="flex items-end gap-1 h-28">
-                  {daily.slice(-14).map(d => (
-                    <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
-                      <span className="text-[10px] font-bold text-navy mb-0.5">{d.units.toLocaleString()}</span>
-                      <div className="w-full rounded-t transition-all"
-                        style={{ height: `${Math.max(6, d.units / maxUnits * 100)}%`, backgroundColor: d.completion === 100 ? '#16A34A' : '#0369a1' }} />
-                      <span className="text-[9px] text-ink-light mt-1 truncate w-full text-center">
-                        {dateLabel(d.date, { day: 'numeric', month: 'numeric' })}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-[10px] text-ink-light mt-1.5 text-center">
-                  {vi ? '14 ngày gần nhất · xanh lá = hoàn thành 100%' : 'Last 14 days · green = 100% complete'}
-                </div>
-              </>
-            )}
-          </div>
+            </>
+          )}
         </div>
-
-        {/* History table */}
-        <div className="card overflow-hidden">
-          <h3 className="font-semibold text-sm text-navy px-4 pt-4 pb-2">{vi ? 'Lịch sử theo ngày' : 'Day-by-day history'}</h3>
-          <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/50 border-t border-border-soft">
-            <div className="col-span-5">{vi ? 'Ngày' : 'Date'}</div>
-            <div className="col-span-2 text-center">{vi ? 'Thẻ' : 'Cards'}</div>
-            <div className="col-span-2 text-center">{vi ? 'Cái' : 'Units'}</div>
-            <div className="col-span-3 text-right">{vi ? 'Hoàn thành' : 'Completed'}</div>
-          </div>
-          <div className="divide-y divide-border-soft max-h-80 overflow-y-auto">
-            {daily.slice().reverse().map(d => (
-              <div key={d.date} className="grid grid-cols-12 px-4 py-2 text-sm items-center">
-                <div className="col-span-5 text-navy capitalize">
-                  {dateLabel(d.date, { weekday: 'short', day: 'numeric', month: 'short' })}
-                </div>
-                <div className="col-span-2 text-center text-ink-light">{d.total}</div>
-                <div className="col-span-2 text-center font-semibold text-navy">{d.units.toLocaleString()}</div>
-                <div className={`col-span-3 text-right font-semibold ${d.completion === 100 ? 'text-green-600' : 'text-amber-600'}`}>{d.completion}%</div>
-              </div>
-            ))}
-            {daily.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-ink-light">{vi ? 'Chưa có dữ liệu' : 'No data yet'}</div>
-            )}
-          </div>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

@@ -33,9 +33,11 @@ const ADMIN_NAV = [
   { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true },
   { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
   { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const },
-  // Control tool over everyone else's work (Odoo-vs-app reconciliation), not an operational
-  // page — admin only, deliberately excluded from lab_manager per Axel's explicit request.
-  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Đối chiếu Odoo', labelEn: 'Reconciliation', adminOnly: true },
+  // Control tool over everyone else's work (4 automated checks: Odoo reconciliation,
+  // delivery-check coverage, production→stock, stock→Odoo), not an operational page — admin
+  // only, deliberately excluded from lab_manager per Axel's explicit request. Renamed "Check"
+  // 2026-08-20 — URL kept as /admin/reconciliation on purpose (zero churn).
+  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true },
 ];
 
 export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {
