@@ -168,19 +168,37 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
     try {
       await odooExecuteWrite('mrp.production', 'write', [[mo.id], { qty_producing: mo.product_qty }]);
 
-      // 2026-08-21 (Axel, after the MO-38321 test corrupted stock — see below): do NOT
-      // force-write stock.move.quantity ourselves. That earlier "fix" looked correct
-      // (inspectMO showed the right numbers) but the mrp.consumption.warning wizard computes
-      // "consumed" from the components' real stock.move.line records, not from the move's
-      // quantity field — our override never reached those, so the wizard's own default still
-      // came back 0 consumed for every component. Blindly accepting that default via
-      // action_confirm then finalized the MO with the raw-material moves CANCELLED (quantity
-      // 0, on-hand pushed back UP) instead of consumed — the finished good was produced but its
-      // components were never actually deducted. Axel: "le code qui mettait sur le statut
-      // confirmed est parfait, il suffit juste de lancer produce all, y a pas de warning
-      // normalement" — on an MO nobody has manually poked, qty_producing alone should be
-      // enough and button_mark_done should go straight to "done" with no wizard, matching his
-      // manual UI test (WH/MO/38403: fill header Quantity, click Produce All, done immediately).
+      // 2026-08-21 — root cause confirmed via inspectMO on a genuinely untouched MO (38324,
+      // WH/MO/38405): the mrp.consumption.warning wizard computes "consumed" from each raw
+      // move's move_line_ids, and those stay completely EMPTY for a move that was never
+      // reserved (state stuck at "confirmed" instead of "assigned" — happens for every
+      // component with negative on-hand, which several semi-finished "SM-*" products here run
+      // by design, per Axel). Writing to stock.move.quantity directly (the earlier, reverted
+      // fix) never touches move_line_ids, so the wizard's own default still read 0 consumed no
+      // matter what — and blindly accepting that default cancelled the raw moves instead of
+      // consuming them (real stock corruption, caught on MO 38321). The actual fix: create the
+      // missing stock.move.line ourselves, with quantity = should_consume_qty, mirroring what a
+      // reservation would have produced had on-hand been positive — this is what the UI's
+      // onchange does silently when a human types into the header Quantity field (Axel's manual
+      // WH/MO/38403 test: components already showed "Consumed" ticked before he even clicked
+      // Produce All). Only touches moves that have zero move_line_ids — a move that already got
+      // reserved normally (positive on-hand) is left alone.
+      const moveIds: number[] = mo.move_raw_ids ?? [];
+      if (moveIds.length) {
+        const moves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', moveIds]]],
+          { fields: ['id', 'product_id', 'product_uom', 'location_id', 'location_dest_id', 'move_line_ids', 'should_consume_qty'] });
+        for (const mv of moves) {
+          if ((mv.move_line_ids ?? []).length) continue; // already reserved, don't touch
+          await odooExecuteWrite('stock.move.line', 'create', [{
+            move_id: mv.id,
+            product_id: mv.product_id[0],
+            product_uom_id: mv.product_uom[0],
+            quantity: mv.should_consume_qty,
+            location_id: mv.location_id[0],
+            location_dest_id: mv.location_dest_id[0],
+          }]);
+        }
+      }
 
       // button_mark_done returns `true` when it fully validates, or an ir.actions.act_window
       // dict (the mrp.consumption.warning wizard) when it wants a follow-up confirmation
