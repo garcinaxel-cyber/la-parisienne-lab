@@ -1,24 +1,21 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooConfigured, odooWriteConfigured, labDateOf } from '@/lib/odoo';
-import { confirmDoneMOs, produceMOs } from '@/lib/odoo-mo-confirm';
+import { confirmDoneMOs, produceMOs, inspectMO } from '@/lib/odoo-mo-confirm';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Daily confirmation + full validation of the lab-day's MOs (called by pg_cron with
+// Daily confirmation of the lab-day's remaining draft MOs (called by pg_cron with
 // ?secret=CRON_SECRET — see lab_v30_mo_confirm_cron.sql — once the hourly sync's active window
 // closes for the day). Also callable by hand with an explicit ?date=YYYY-MM-DD for catch-up.
 //
-// 2026-08-21 — produceMOs() added after confirmDoneMOs() (Axel: "si il est possible de produire
-// completement la prod", confirmed direct in the cron). Runs on whatever is in state='confirmed'
-// for the day's origin, so it also catches MOs confirmed by an earlier/manual run, not just ones
-// confirmDoneMOs just confirmed in this same call.
-//
-// ?mo=<id> and/or ?dryRun=1 (2026-08-21, Axel: "essayer sur 1 ligne pour voir si tout
-// fonctionne") — manual single-MO test path. Either param skips confirmDoneMOs entirely (a test
-// must not confirm the whole day's remaining drafts as a side effect) and scopes/limits
-// produceMOs instead. Omit both for the normal nightly cron call — unchanged full-batch behavior.
+// 2026-08-21 — produceMOs() (Axel: "si il est possible de produire completement la prod")
+// PAUSED from the automatic nightly path — see inline comment below. Only reachable today via
+// explicit ?mo=<id> and/or ?dryRun=1 for manual testing while the real mechanism is worked out
+// (a plain button_mark_done leaves components at 0 consumed and the MO stuck in "To Close" —
+// confirmed live on WH/MO/38401). Do not re-enable the automatic call until that's fixed and
+// re-verified.
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') ?? req.headers.get('authorization')?.replace('Bearer ', '');
@@ -34,11 +31,28 @@ export async function GET(req: Request) {
   const dryRun = url.searchParams.get('dryRun') === '1';
   const isTestMode = onlyMoId !== undefined || dryRun;
 
+  // Read-only diagnostic — ?inspect=<id> — introspects stock.move field names + move_raw_ids
+  // values for one MO, no writes. Used to figure out the right field to force-set consumption
+  // on before button_mark_done (Axel: "faut pas que tu te bases sur on hand quantity, on doit
+  // pouvoir produire quand meme" — negative on-hand on semi-finished components is normal here
+  // and must not block production).
+  const inspectParam = url.searchParams.get('inspect');
+  if (inspectParam) {
+    try {
+      return NextResponse.json(await inspectMO(parseInt(inspectParam, 10)));
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message ?? 'Inspect failed' }, { status: 502 });
+    }
+  }
+
   try {
     const confirmResult = isTestMode
       ? { date, origin: `Lab ${date}`, eligible: 0, bypassed: [], confirmed: [], errors: [] }
       : await confirmDoneMOs(date);
-    const produceResult = await produceMOs(date, isTestMode ? { onlyMoId, dryRun } : undefined);
+    // produceMOs() is currently ONLY called in test mode (?mo= / ?dryRun=) — see comment above.
+    const produceResult = isTestMode
+      ? await produceMOs(date, { onlyMoId, dryRun })
+      : { date, origin: `Lab ${date}`, eligible: 0, dryRun: false, produced: [], errors: [] };
     // Surface failures the same way the rest of the Odoo sync already does (odoo-auto-sync.ts,
     // stock-actions.ts) — a confirm/produce that silently fails must not just sit there with no
     // one told.
