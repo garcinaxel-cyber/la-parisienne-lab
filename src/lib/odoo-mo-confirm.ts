@@ -49,6 +49,26 @@ export async function inspectMO(moId: number): Promise<MoInspectResult> {
   return res;
 }
 
+// Read-only diagnostic (2026-08-21) — Axel confirmed via screen recording + screenshots that
+// typing into the header "Quantity" field in the Odoo UI is what cascades the correct amount
+// onto every component line (all matching "To Consume", "Consumed" ticked) — a plain write() on
+// qty_producing does NOT reproduce this (confirmed live: quantity stayed 0 on MO 38321/38324
+// after write() alone). That cascade is a client-side @api.onchange handler in Odoo, which never
+// runs on a plain ORM write — it only runs when the web client explicitly calls Odoo's generic
+// 'onchange' RPC method (this is how every Odoo form view keeps derived fields in sync as you
+// type, before you hit save). Testing that method here, read-only, before wiring it into
+// produceMOs — no writes happen in this function.
+export async function testOnchange(moId: number, qtyProducing: number): Promise<any> {
+  const mos = await odooExecute<any[]>('mrp.production', 'search_read',
+    [[['id', '=', moId]]], { fields: ['id', 'product_qty', 'qty_producing', 'move_raw_ids'] });
+  if (!mos.length) return { error: 'MO not found' };
+  const values = { ...mos[0], qty_producing: qtyProducing };
+  delete (values as any).id;
+  const result = await odooExecute<any>('mrp.production', 'onchange',
+    [[moId], values, 'qty_producing', { qty_producing: '1', move_raw_ids: '1' }]);
+  return result;
+}
+
 export interface MoConfirmResult {
   date: string;
   origin: string;

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooConfigured, odooWriteConfigured, labDateOf } from '@/lib/odoo';
-import { confirmDoneMOs, produceMOs, inspectMO } from '@/lib/odoo-mo-confirm';
+import { confirmDoneMOs, produceMOs, inspectMO, testOnchange } from '@/lib/odoo-mo-confirm';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -42,6 +42,22 @@ export async function GET(req: Request) {
       return NextResponse.json(await inspectMO(parseInt(inspectParam, 10)));
     } catch (e: any) {
       return NextResponse.json({ error: e?.message ?? 'Inspect failed' }, { status: 502 });
+    }
+  }
+
+  // Read-only diagnostic — ?onchangeTest=<id>&qty=<n> — calls Odoo's generic 'onchange' RPC
+  // method for mrp.production's qty_producing field, no writes. Axel confirmed via screen
+  // recording that typing into the header Quantity field in the UI cascades the correct amount
+  // onto every component (matching "To Consume", "Consumed" ticked) — that's a client-side
+  // @api.onchange handler, which a plain write() never triggers server-side. Testing whether
+  // calling Odoo's 'onchange' RPC method directly reproduces that cascade.
+  const onchangeTestParam = url.searchParams.get('onchangeTest');
+  if (onchangeTestParam) {
+    const qty = parseFloat(url.searchParams.get('qty') ?? '0');
+    try {
+      return NextResponse.json(await testOnchange(parseInt(onchangeTestParam, 10), qty));
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message ?? 'onchange test failed' }, { status: 502 });
     }
   }
 
