@@ -138,32 +138,34 @@ export interface MoProduceResult {
 // "Produce All" — fully validates the day's confirmed MOs, called right after confirmDoneMOs()
 // in the same nightly cron (Axel, 2026-08-21: "je voudrais... si il est possible de produire
 // completement la prod" — confirmed direct in the cron, no manual-review step first).
-// STILL PAUSED from the automatic path as of this revision — see /api/odoo/confirm-mos comment.
 //
 // Quantity: Axel confirmed the MO's own product_qty is already exactly "qty sent to stock" — set
 // by syncStockToOdoo()/odoo-mo-sync.ts when the MO was created/updated during the day. There is
 // no separate "how much was actually produced" figure to reconcile; validating for product_qty
 // as-is is correct by construction, so this never needs to read lab_assignments.
 //
-// Mechanism (rewritten after a failed live test, 2026-08-21): setting qty_producing on the MO
-// header alone is NOT enough — confirmed live that button_mark_done then leaves every raw-
-// material move's actual `quantity` (the field that really matters, found via fields_get) at 0,
-// landing the MO in "To Close" instead of "Done" and popping Odoo's own Consumption Warning
-// dialog when a human then clicks Produce All by hand. Fix: explicitly write `quantity` on every
-// move_raw_ids line to its `should_consume_qty` BEFORE calling button_mark_done — this is exactly
-// what Odoo's "Set Quantities & Validate" wizard button does, done here via API instead of the
-// interactive dialog. Axel confirmed this must happen unconditionally, ignoring on-hand/
-// reservation state: several BOM components here are semi-finished "SM-*" products that
-// deliberately run a large negative on-hand balance in this Odoo setup (never separately
-// produced/replenished) — "faut pas que tu te bases sur on hand quantity, on doit pouvoir
-// produire quand meme". Forcing quantity=should_consume_qty regardless of availability mirrors
-// that intent.
+// Mechanism (2026-08-21, round 3, after two failed rounds — see git history on this file for the
+// full trail): the field that actually needs re-writing post-confirm is `product_qty` itself,
+// NOT `qty_producing` as originally assumed. Axel confirmed this via Odoo's own dev-mode field
+// inspector on the exact box he types into by hand (label "Quantity To Produce" / field
+// product_qty) — that's what triggers Odoo's onchange cascade down onto every component move
+// (quantities + move lines + "Consumed" ticked), the same cascade the earlier rounds tried to
+// hand-roll via force-writing stock.move.quantity (wrong field, and once corrupted a real MO by
+// cancelling its raw moves instead of consuming them) and manually creating stock.move.line
+// records with picked=true (worked around the symptom but was unnecessary complexity). A plain
+// write({product_qty: mo.product_qty}) — same numeric value, but the write itself is what
+// matters — followed directly by button_mark_done, reaches state="done" cleanly: confirmed live
+// on MO 38328 (fresh) and MO 38324 (previously stuck at "to_close" from earlier failed rounds,
+// same fix recovered it too).
 //
 // Per-MO try/catch, same as confirmDoneMOs — an MO whose components are short on stock (or any
 // other Odoo-side validation error) must not block the rest of the day's MOs from being produced.
 // A failure here is NOT retried on a later day (same "never sweep other days" rule as
 // confirmDoneMOs above) — it just stays 'confirmed'/'to_close' and shows up in lab_odoo_changes
-// for an admin to handle by hand.
+// for an admin to handle by hand. If button_mark_done still returns an unresolved wizard action
+// (e.g. mrp.consumption.warning) on some MO, that's treated as a hard error rather than guessed
+// at — auto-resolving that wizard corrupted stock once already (MO 38321 incident) and should
+// never be attempted blindly again; a recurrence needs a human to look at the actual MO in Odoo.
 //
 // opts.onlyMoId / opts.dryRun (2026-08-21, Axel: "essayer sur 1 ligne pour voir si tout
 // fonctionne") — lets /api/odoo/confirm-mos test this in isolation on a single real MO (or just
@@ -180,86 +182,17 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
     ? [['id', '=', opts.onlyMoId]]
     : [['origin', '=', origin], ['state', '=', 'confirmed']];
   const mos = await odooExecute<any[]>('mrp.production', 'search_read',
-    [domain], { fields: ['id', 'name', 'product_qty', 'move_raw_ids'] });
+    [domain], { fields: ['id', 'name', 'product_qty'] });
   res.eligible = mos.length;
 
   for (const mo of mos) {
     if (dryRun) { res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty }); continue; }
     try {
-      // 2026-08-21, round 3 — Axel confirmed via Odoo's own field inspector that the box he
-      // actually types into (post-confirm, cascades every component correctly) is bound to
-      // `product_qty`, not `qty_producing` as assumed. Writing the wrong field this whole time
-      // is almost certainly why every earlier attempt needed manual workarounds. Testing this
-      // alone, on a genuinely untouched MO, before deciding whether the move-line/picked
-      // workaround below is even still needed.
       await odooExecuteWrite('mrp.production', 'write', [[mo.id], { product_qty: mo.product_qty }]);
 
-      // 2026-08-21 — root cause confirmed via inspectMO on a genuinely untouched MO (38324,
-      // WH/MO/38405): the mrp.consumption.warning wizard computes "consumed" from each raw
-      // move's move_line_ids, and those stay completely EMPTY for a move that was never
-      // reserved (state stuck at "confirmed" instead of "assigned" — happens for every
-      // component with negative on-hand, which several semi-finished "SM-*" products here run
-      // by design, per Axel). Writing to stock.move.quantity directly (the earlier, reverted
-      // fix) never touches move_line_ids, so the wizard's own default still read 0 consumed no
-      // matter what — and blindly accepting that default cancelled the raw moves instead of
-      // consuming them (real stock corruption, caught on MO 38321). The actual fix: create the
-      // missing stock.move.line ourselves, with quantity = should_consume_qty, mirroring what a
-      // reservation would have produced had on-hand been positive — this is what the UI's
-      // onchange does silently when a human types into the header Quantity field (Axel's manual
-      // WH/MO/38403 test: components already showed "Consumed" ticked before he even clicked
-      // Produce All). Only touches moves that have zero move_line_ids — a move that already got
-      // reserved normally (positive on-hand) is left alone.
-      // 2026-08-21, round 2: creating the move line alone still wasn't enough — a re-test on
-      // MO 38324 (move lines from the previous attempt, quantity already correctly matching
-      // should_consume_qty) still popped the exact same wizard with product_consumed_qty_uom: 0
-      // for every line. stock.move.line has a separate `picked` boolean (Odoo 17+) — the actual
-      // "this was physically picked/counted" flag, distinct from quantity — and our create()
-      // call never set it, so it defaulted to false. That's almost certainly what the wizard
-      // actually reads as "consumed". Setting it explicitly now, both on newly-created lines and
-      // on any pre-existing ones from earlier test attempts that are missing it.
-      const moveIds: number[] = mo.move_raw_ids ?? [];
-      if (moveIds.length) {
-        const moves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', moveIds]]],
-          { fields: ['id', 'product_id', 'product_uom', 'location_id', 'location_dest_id', 'move_line_ids', 'should_consume_qty'] });
-        for (const mv of moves) {
-          if ((mv.move_line_ids ?? []).length) {
-            // Pre-existing line (e.g. from an earlier test attempt on this same MO) — make sure
-            // it's marked picked, don't touch its quantity (already correct or reserved normally).
-            await odooExecuteWrite('stock.move.line', 'write', [mv.move_line_ids, { picked: true }]);
-            continue;
-          }
-          await odooExecuteWrite('stock.move.line', 'create', [{
-            move_id: mv.id,
-            product_id: mv.product_id[0],
-            product_uom_id: mv.product_uom[0],
-            quantity: mv.should_consume_qty,
-            location_id: mv.location_id[0],
-            location_dest_id: mv.location_dest_id[0],
-            picked: true,
-          }]);
-        }
-      }
-
-      // button_mark_done returns `true` when it fully validates, or an ir.actions.act_window
-      // dict (the mrp.consumption.warning wizard) when it wants a follow-up confirmation
-      // instead — an API write call doesn't raise for that, so a naive caller sees "no
-      // exception" and wrongly assumes success. Do NOT auto-resolve that wizard: the one time
-      // this was tried (2026-08-21, MO 38321/WH-MO-38402, back when the block above was still
-      // force-writing stock.move.quantity) it silently CANCELLED every raw-material move
-      // (quantity reset to 0, on-hand pushed back up) instead of consuming them — the MO
-      // reached "done" but its components were never actually deducted from stock, a real
-      // inventory corruption, not just a cosmetic stuck status. A wizard appearing here now
-      // (after dropping the force-write above) means this MO's consumption genuinely doesn't
-      // match its BOM for some other reason — treat that as a failure to review by hand, same
-      // as any other Odoo-side validation error, rather than guessing at a resolution again.
       const markDoneResult = await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
       if (markDoneResult && typeof markDoneResult === 'object' && markDoneResult.res_model) {
-        // Diagnostic (2026-08-21, round 2): the wizard still popped even after creating
-        // move_line_ids with quantity exactly equal to should_consume_qty — surfacing the full
-        // payload (not just res_model) since a plain quantity mismatch shouldn't be the cause
-        // anymore. Might be the negative-stock "consumption": "warning" classification itself,
-        // independent of whether the quantity matches.
-        throw new Error(`button_mark_done returned an unresolved wizard, full payload: ${JSON.stringify(markDoneResult)}`);
+        throw new Error(`button_mark_done returned an unresolved wizard (${markDoneResult.res_model}) instead of validating — needs manual review in Odoo`);
       }
       res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty, markDoneResult });
     } catch (e: any) {

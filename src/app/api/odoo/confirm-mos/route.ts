@@ -10,12 +10,11 @@ export const maxDuration = 60;
 // ?secret=CRON_SECRET — see lab_v30_mo_confirm_cron.sql — once the hourly sync's active window
 // closes for the day). Also callable by hand with an explicit ?date=YYYY-MM-DD for catch-up.
 //
-// 2026-08-21 — produceMOs() (Axel: "si il est possible de produire completement la prod")
-// PAUSED from the automatic nightly path — see inline comment below. Only reachable today via
-// explicit ?mo=<id> and/or ?dryRun=1 for manual testing while the real mechanism is worked out
-// (a plain button_mark_done leaves components at 0 consumed and the MO stuck in "To Close" —
-// confirmed live on WH/MO/38401). Do not re-enable the automatic call until that's fixed and
-// re-verified.
+// 2026-08-21 — produceMOs() (Axel: "si il est possible de produire completement la prod") is now
+// RE-ENABLED in the automatic nightly path. Was paused for several hours today while the real
+// mechanism was worked out (see odoo-mo-confirm.ts history) — root cause was writing the wrong
+// field (qty_producing instead of product_qty) post-confirm; fixed and confirmed live on two
+// separate MOs (38328 fresh, 38324 previously stuck) reaching state="done" cleanly.
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') ?? req.headers.get('authorization')?.replace('Bearer ', '');
@@ -65,10 +64,11 @@ export async function GET(req: Request) {
     const confirmResult = isTestMode
       ? { date, origin: `Lab ${date}`, eligible: 0, bypassed: [], confirmed: [], errors: [] }
       : await confirmDoneMOs(date);
-    // produceMOs() is currently ONLY called in test mode (?mo= / ?dryRun=) — see comment above.
+    // produceMOs() now runs in both test mode (?mo= / ?dryRun=, scoped to one MO or listing
+    // only) and the default automatic nightly path (full day's batch, right after confirm).
     const produceResult = isTestMode
       ? await produceMOs(date, { onlyMoId, dryRun })
-      : { date, origin: `Lab ${date}`, eligible: 0, dryRun: false, produced: [], errors: [] };
+      : await produceMOs(date);
     // Surface failures the same way the rest of the Odoo sync already does (odoo-auto-sync.ts,
     // stock-actions.ts) — a confirm/produce that silently fails must not just sit there with no
     // one told.
