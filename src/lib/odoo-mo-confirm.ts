@@ -41,7 +41,7 @@ export async function inspectMO(moId: number): Promise<MoInspectResult> {
     const allMoveLineIds: number[] = [...res.moves, ...res.finishedMoves].flatMap((m: any) => m.move_line_ids || []);
     if (allMoveLineIds.length) {
       res.moveLines = await odooExecute<any[]>('stock.move.line', 'search_read',
-        [[['id', 'in', allMoveLineIds]]], { fields: ['id', 'move_id', 'product_id', 'quantity', 'location_id', 'location_dest_id', 'lot_id'] });
+        [[['id', 'in', allMoveLineIds]]], { fields: ['id', 'move_id', 'product_id', 'quantity', 'location_id', 'location_dest_id', 'lot_id', 'picked', 'state'] });
     }
   } catch (e: any) {
     res.error = String(e?.message ?? e);
@@ -203,12 +203,25 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
       // WH/MO/38403 test: components already showed "Consumed" ticked before he even clicked
       // Produce All). Only touches moves that have zero move_line_ids — a move that already got
       // reserved normally (positive on-hand) is left alone.
+      // 2026-08-21, round 2: creating the move line alone still wasn't enough — a re-test on
+      // MO 38324 (move lines from the previous attempt, quantity already correctly matching
+      // should_consume_qty) still popped the exact same wizard with product_consumed_qty_uom: 0
+      // for every line. stock.move.line has a separate `picked` boolean (Odoo 17+) — the actual
+      // "this was physically picked/counted" flag, distinct from quantity — and our create()
+      // call never set it, so it defaulted to false. That's almost certainly what the wizard
+      // actually reads as "consumed". Setting it explicitly now, both on newly-created lines and
+      // on any pre-existing ones from earlier test attempts that are missing it.
       const moveIds: number[] = mo.move_raw_ids ?? [];
       if (moveIds.length) {
         const moves = await odooExecute<any[]>('stock.move', 'search_read', [[['id', 'in', moveIds]]],
           { fields: ['id', 'product_id', 'product_uom', 'location_id', 'location_dest_id', 'move_line_ids', 'should_consume_qty'] });
         for (const mv of moves) {
-          if ((mv.move_line_ids ?? []).length) continue; // already reserved, don't touch
+          if ((mv.move_line_ids ?? []).length) {
+            // Pre-existing line (e.g. from an earlier test attempt on this same MO) — make sure
+            // it's marked picked, don't touch its quantity (already correct or reserved normally).
+            await odooExecuteWrite('stock.move.line', 'write', [mv.move_line_ids, { picked: true }]);
+            continue;
+          }
           await odooExecuteWrite('stock.move.line', 'create', [{
             move_id: mv.id,
             product_id: mv.product_id[0],
@@ -216,6 +229,7 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
             quantity: mv.should_consume_qty,
             location_id: mv.location_id[0],
             location_dest_id: mv.location_dest_id[0],
+            picked: true,
           }]);
         }
       }
