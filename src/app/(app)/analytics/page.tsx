@@ -153,6 +153,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   // Completion by team (delivery) gets its own aggregate, filtered to actually-produced SKUs
   // only (Axel, 2026-08-20) — discrepancy stays on the full set below, unscoped from this ask.
   const teamAggProduced: Record<string, { expected: number; checked: number }> = {};
+  // Per-team, per-product breakdown of the gap (Axel, 2026-08-20: "je veux voir le detail des
+  // produits problematiques classe par ordre de grandeur") — same excluded-SKU filter, keyed
+  // by sku (falling back to name) so the same flavor across several orders/days aggregates
+  // into one line instead of fragmenting the ranking.
+  const teamProductAgg: Record<string, Record<string, { name: string; expected: number; checked: number }>> = {};
   for (const l of (checkLines ?? []) as any[]) {
     const t = l.team || 'other';
     (teamAgg[t] ??= { total: 0, adjusted: 0, expected: 0, checked: 0 });
@@ -168,11 +173,25 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
       (teamAggProduced[t] ??= { expected: 0, checked: 0 });
       teamAggProduced[t].expected += l.qty_expected ?? 0;
       teamAggProduced[t].checked += l.qty_checked ?? 0;
+      const key = l.sku ?? p;
+      (teamProductAgg[t] ??= {});
+      (teamProductAgg[t][key] ??= { name: p, expected: 0, checked: 0 });
+      teamProductAgg[t][key].expected += l.qty_expected ?? 0;
+      teamProductAgg[t][key].checked += l.qty_checked ?? 0;
     }
   }
   const completionByTeamDelivery = Object.entries(teamAggProduced).map(([team, v]) => ({
     team, expected: v.expected, checked: v.checked, rate: v.expected ? Math.round(v.checked / v.expected * 100) : 0,
   })).sort((a, b) => b.expected - a.expected);
+  // Top problem products per team — biggest missing quantity first, ties excluded (gap<=0).
+  const completionGapsByTeam: Record<string, { name: string; expected: number; checked: number; gap: number }[]> = {};
+  for (const [team, products] of Object.entries(teamProductAgg)) {
+    completionGapsByTeam[team] = Object.values(products)
+      .map(v => ({ name: v.name, expected: v.expected, checked: v.checked, gap: v.expected - v.checked }))
+      .filter(v => v.gap > 0)
+      .sort((a, b) => b.gap - a.gap)
+      .slice(0, 10);
+  }
   const discrepancyByTeam = Object.entries(teamAgg).map(([team, v]) => ({
     team, total: v.total, adjusted: v.adjusted, rate: v.total ? Math.round(v.adjusted / v.total * 100) : 0,
   })).sort((a, b) => b.rate - a.rate);
@@ -226,7 +245,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
 
   return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
     reasons={reasonsOut} blockedCards={blockedCardsOut} blockTrend={blockTrendOut} teamDominantReason={teamDominantReasonOut}
-    daily={dailyOut} completionByTeamDelivery={completionByTeamDelivery}
+    daily={dailyOut} completionByTeamDelivery={completionByTeamDelivery} completionGapsByTeam={completionGapsByTeam}
     discrepancyByTeam={discrepancyByTeam} discrepancyByProduct={discrepancyByProduct}
     aggregated={aggregated} />;
 }

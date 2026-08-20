@@ -14,10 +14,11 @@ type TeamDominantReason = { team: string; total: number; topReason: string; topC
 type DeliveryTeamStat = { team: string; expected: number; checked: number; rate: number };
 type DiscrepancyTeamStat = { team: string; total: number; adjusted: number; rate: number };
 type DiscrepancyProductStat = { name: string; total: number; adjusted: number; rate: number };
+type CompletionGapProduct = { name: string; expected: number; checked: number; gap: number };
 
 export default function AnalyticsView({
   range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
-  daily, completionByTeamDelivery, discrepancyByTeam, discrepancyByProduct, aggregated = false,
+  daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct, aggregated = false,
 }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
@@ -27,6 +28,7 @@ export default function AnalyticsView({
   teamDominantReason: TeamDominantReason[];
   daily: Daily[];
   completionByTeamDelivery: DeliveryTeamStat[];
+  completionGapsByTeam: Record<string, CompletionGapProduct[]>;
   discrepancyByTeam: DiscrepancyTeamStat[];
   discrepancyByProduct: DiscrepancyProductStat[];
   aggregated?: boolean;
@@ -36,6 +38,7 @@ export default function AnalyticsView({
   const current = range;
   const vi = lang === 'vi';
   const [openReason, setOpenReason] = useState<string | null>(null);
+  const [openGapTeam, setOpenGapTeam] = useState<string | null>(null);
 
   const setRange = (r: string) => router.push(`/analytics?range=${r}`);
   const maxUnits = Math.max(1, ...daily.map(d => d.units));
@@ -140,15 +143,36 @@ export default function AnalyticsView({
             <div className="space-y-2.5">
               {completionByTeamDelivery.map(t => {
                 const meta = TEAM_LABELS[t.team as Team];
+                const gapProducts = completionGapsByTeam[t.team] ?? [];
+                const isOpen = openGapTeam === t.team;
                 return (
                   <div key={t.team}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-navy">{teamLabel(t.team)}</span>
-                      <span className="text-ink-light">{t.rate}% · {t.checked.toLocaleString()}/{t.expected.toLocaleString()}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-border-soft overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.rate)}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
-                    </div>
+                    <button onClick={() => gapProducts.length > 0 && setOpenGapTeam(isOpen ? null : t.team)}
+                      className="w-full text-left" disabled={gapProducts.length === 0}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-navy flex items-center gap-1">
+                          {gapProducts.length > 0 && (isOpen ? <ChevronUp size={11} className="text-ink-light shrink-0" /> : <ChevronDown size={11} className="text-ink-light shrink-0" />)}
+                          {teamLabel(t.team)}
+                        </span>
+                        <span className="text-ink-light">{t.rate}% · {t.checked.toLocaleString()}/{t.expected.toLocaleString()}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-border-soft overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.rate)}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
+                      </div>
+                    </button>
+                    {isOpen && gapProducts.length > 0 && (
+                      <div className="mt-2 mb-1 space-y-1 border-l-2 pl-3" style={{ borderColor: '#F3F4F6' }}>
+                        {gapProducts.map(p => (
+                          <div key={p.name} className="flex justify-between items-center text-[12px]">
+                            <span className="text-navy truncate pr-3">{p.name}</span>
+                            <span className="text-ink-light shrink-0">
+                              {p.checked.toLocaleString()}/{p.expected.toLocaleString()} ·{' '}
+                              <span className="font-semibold" style={{ color: '#DC2626' }}>-{p.gap.toLocaleString()}</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
