@@ -102,47 +102,68 @@ export interface MoProduceResult {
 // "Produce All" — fully validates the day's confirmed MOs, called right after confirmDoneMOs()
 // in the same nightly cron (Axel, 2026-08-21: "je voudrais... si il est possible de produire
 // completement la prod" — confirmed direct in the cron, no manual-review step first).
+// STILL PAUSED from the automatic path as of this revision — see /api/odoo/confirm-mos comment.
 //
 // Quantity: Axel confirmed the MO's own product_qty is already exactly "qty sent to stock" — set
 // by syncStockToOdoo()/odoo-mo-sync.ts when the MO was created/updated during the day. There is
 // no separate "how much was actually produced" figure to reconcile; validating for product_qty
 // as-is is correct by construction, so this never needs to read lab_assignments.
 //
-// Mechanism: this mirrors exactly what a human does by hand on the MO form — edit the "Quantity
-// Producing" field, then click Validate/Mark as Done. `qty_producing` is set explicitly first
-// (Odoo's external API does not always default it from product_qty the way the UI wizard does),
-// then `button_mark_done` — the same core Odoo method the "Mark as Done" button calls, standard
-// across the mrp module for many versions. NOT independently tested against this Odoo instance
-// before shipping (no way to do so from outside the app) — the first nightly run is the real
-// test; check Odoo/lab_odoo_changes the next morning to confirm it behaved as expected.
+// Mechanism (rewritten after a failed live test, 2026-08-21): setting qty_producing on the MO
+// header alone is NOT enough — confirmed live that button_mark_done then leaves every raw-
+// material move's actual `quantity` (the field that really matters, found via fields_get) at 0,
+// landing the MO in "To Close" instead of "Done" and popping Odoo's own Consumption Warning
+// dialog when a human then clicks Produce All by hand. Fix: explicitly write `quantity` on every
+// move_raw_ids line to its `should_consume_qty` BEFORE calling button_mark_done — this is exactly
+// what Odoo's "Set Quantities & Validate" wizard button does, done here via API instead of the
+// interactive dialog. Axel confirmed this must happen unconditionally, ignoring on-hand/
+// reservation state: several BOM components here are semi-finished "SM-*" products that
+// deliberately run a large negative on-hand balance in this Odoo setup (never separately
+// produced/replenished) — "faut pas que tu te bases sur on hand quantity, on doit pouvoir
+// produire quand meme". Forcing quantity=should_consume_qty regardless of availability mirrors
+// that intent.
 //
 // Per-MO try/catch, same as confirmDoneMOs — an MO whose components are short on stock (or any
 // other Odoo-side validation error) must not block the rest of the day's MOs from being produced.
 // A failure here is NOT retried on a later day (same "never sweep other days" rule as
-// confirmDoneMOs above) — it just stays 'confirmed' and shows up in lab_odoo_changes for an
-// admin to handle by hand.
+// confirmDoneMOs above) — it just stays 'confirmed'/'to_close' and shows up in lab_odoo_changes
+// for an admin to handle by hand.
 //
 // opts.onlyMoId / opts.dryRun (2026-08-21, Axel: "essayer sur 1 ligne pour voir si tout
 // fonctionne") — lets /api/odoo/confirm-mos test this in isolation on a single real MO (or just
-// list what's eligible, writing nothing) before trusting it on the whole day's batch. Neither
-// option is used by the nightly cron call itself (no query params = unchanged full-batch
-// behavior).
+// list what's eligible, writing nothing) before trusting it on the whole day's batch. onlyMoId
+// drops the state filter entirely (matches by id alone) so a stuck 'to_close' test MO from a
+// previous incomplete attempt can be targeted directly, not just fresh 'confirmed' ones.
 export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRun?: boolean }): Promise<MoProduceResult> {
   const origin = `Lab ${date}`;
   const dryRun = !!opts?.dryRun;
   const res: MoProduceResult = { date, origin, eligible: 0, dryRun, produced: [], errors: [] };
   if (!odooWriteConfigured()) return res;
 
-  const domain: any[] = [['origin', '=', origin], ['state', '=', 'confirmed']];
-  if (opts?.onlyMoId) domain.push(['id', '=', opts.onlyMoId]);
+  const domain: any[] = opts?.onlyMoId
+    ? [['id', '=', opts.onlyMoId]]
+    : [['origin', '=', origin], ['state', '=', 'confirmed']];
   const mos = await odooExecute<any[]>('mrp.production', 'search_read',
-    [domain], { fields: ['id', 'name', 'product_qty'] });
+    [domain], { fields: ['id', 'name', 'product_qty', 'move_raw_ids'] });
   res.eligible = mos.length;
 
   for (const mo of mos) {
     if (dryRun) { res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty }); continue; }
     try {
       await odooExecuteWrite('mrp.production', 'write', [[mo.id], { qty_producing: mo.product_qty }]);
+
+      // Force every component's actual consumption to its full demand, regardless of on-hand
+      // availability (see function comment above — semi-finished components here intentionally
+      // run negative on-hand and must not block production). Mirrors "Set Quantities & Validate".
+      const moveIds: number[] = mo.move_raw_ids ?? [];
+      if (moveIds.length) {
+        const moves = await odooExecute<any[]>('stock.move', 'search_read',
+          [[['id', 'in', moveIds]]], { fields: ['id', 'should_consume_qty'] });
+        for (const mv of moves) {
+          await odooExecuteWrite('stock.move', 'write', [[mv.id], { quantity: mv.should_consume_qty }]);
+        }
+      }
+
       await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
       res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty });
     } catch (e: any) {
