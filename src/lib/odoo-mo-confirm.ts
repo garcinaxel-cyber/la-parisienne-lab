@@ -169,18 +169,30 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
         }
       }
 
-      // Diagnostic (2026-08-21): capture the raw return value instead of assuming success on
-      // "no exception". Axel manually reproduced this exact case in the Odoo UI (WH/MO/38403,
-      // header Quantity=4 then Produce All) and it went straight to Done — but MO 38321/WH-MO-
-      // 38402 stays stuck at "to_close" even with move_raw_ids quantities already correctly
-      // forced to should_consume_qty (confirmed via inspectMO) and button_mark_done called twice
-      // with no error surfaced either time. button_mark_done normally returns `true` when it
-      // fully validates, or an ir.actions.act_window dict (e.g. the mrp.consumption.warning
-      // wizard) when it needs a follow-up confirmation instead — which an API write call would
-      // silently swallow as "success" since Odoo doesn't raise for that. Surfacing the raw
-      // result here to see which case this actually is before writing any wizard-resolution
-      // logic blind.
-      const markDoneResult = await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
+      // button_mark_done returns `true` when it fully validates, or an ir.actions.act_window
+      // dict when it wants a follow-up confirmation instead of validating directly — an API
+      // write call doesn't raise for that, so a naive caller sees "no exception" and wrongly
+      // assumes success (confirmed live, 2026-08-21: MO 38321/WH-MO-38402 stayed stuck at
+      // "to_close" across two such calls). The dict here is Odoo's own mrp.consumption.warning
+      // wizard, popped because product_consumed_qty_uom in its default lines still reads 0 for
+      // every component — the wizard computes "consumed" from the components' actual
+      // stock.move.line records, not from stock.move.quantity itself, and none of those line
+      // records exist yet for components that were never reserved (negative on-hand). Resolve
+      // it exactly the way clicking "Confirm" on that dialog would: create the wizard with the
+      // same default_* values Odoo already computed and handed back in the action context, then
+      // call its own action_confirm — this is Odoo's standard "accept the consumption warning
+      // and validate anyway" path, which is exactly what Axel asked for ("faut pas que tu te
+      // bases sur on hand quantity, on doit pouvoir produire quand meme").
+      let markDoneResult = await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
+      if (markDoneResult && typeof markDoneResult === 'object' && markDoneResult.res_model === 'mrp.consumption.warning') {
+        const ctx = markDoneResult.context ?? {};
+        const vals: Record<string, any> = {};
+        for (const [k, v] of Object.entries(ctx)) {
+          if (k.startsWith('default_')) vals[k.slice('default_'.length)] = v;
+        }
+        const wizardId = await odooExecuteWrite('mrp.consumption.warning', 'create', [vals]);
+        markDoneResult = await odooExecuteWrite('mrp.consumption.warning', 'action_confirm', [[wizardId]]);
+      }
       res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty, markDoneResult });
     } catch (e: any) {
       res.errors.push({ id: mo.id, name: mo.name, error: String(e?.message ?? e) });
