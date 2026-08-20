@@ -214,7 +214,12 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
       // as any other Odoo-side validation error, rather than guessing at a resolution again.
       const markDoneResult = await odooExecuteWrite('mrp.production', 'button_mark_done', [[mo.id]]);
       if (markDoneResult && typeof markDoneResult === 'object' && markDoneResult.res_model) {
-        throw new Error(`button_mark_done returned an unresolved wizard (${markDoneResult.res_model}) instead of validating — needs manual review in Odoo`);
+        // Diagnostic (2026-08-21, round 2): the wizard still popped even after creating
+        // move_line_ids with quantity exactly equal to should_consume_qty — surfacing the full
+        // payload (not just res_model) since a plain quantity mismatch shouldn't be the cause
+        // anymore. Might be the negative-stock "consumption": "warning" classification itself,
+        // independent of whether the quantity matches.
+        throw new Error(`button_mark_done returned an unresolved wizard, full payload: ${JSON.stringify(markDoneResult)}`);
       }
       res.produced.push({ id: mo.id, name: mo.name, qty: mo.product_qty, markDoneResult });
     } catch (e: any) {
