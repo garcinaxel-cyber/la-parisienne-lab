@@ -37,7 +37,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   // 2026-08-20 — Order-modification analysis removed (Axel: "plus interessant"). Production
   // cards now also carry blocked_at/blocked_by_name (lab_v46) for traceability, and delivery-
   // check lines are read for the two new team-level metrics below.
-  const [{ data: assignments }, { data: checkLines }] = await Promise.all([
+  const [{ data: assignments }, { data: checkLines }, { data: excludedRows }] = await Promise.all([
     importIds.length
       ? supabase.from('lab_assignments')
           .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
@@ -48,11 +48,20 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     // an unbounded scan. Follow-up worth doing if these metrics prove useful long-range.
     !aggregated
       ? supabase.from('lab_delivery_check_lines')
-          .select('team, product_name_vi, status, qty_expected, qty_checked')
+          .select('sku, team, product_name_vi, status, qty_expected, qty_checked')
           .eq('category', 'production').not('team', 'is', null)
           .gte('delivery_date', fromStr).lte('delivery_date', toStr).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
+    // category='production' isn't a fully reliable "actually produced" filter on its own — a
+    // SKU added to lab_excluded_skus AFTER its check line already existed stays category=
+    // 'production' forever (ensureDeliveryOrderChecklist only re-buckets on next open — same
+    // staleness class as the qty_expected drift the Check tab now catches). Confirmed live
+    // 2026-08-20: drinks (Americano, Bạc Xỉu…), a raw material (Flour T65) and a packaging box
+    // still sitting as category='production' with team='' — Axel: "enlève les items non
+    // produit" from the delivery-based completion rate.
+    !aggregated ? supabase.from('lab_excluded_skus').select('sku') : Promise.resolve({ data: [] as any[] }),
   ]);
+  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
 
   const rows = (assignments ?? []) as any[];
   const isDone = (s: string) => s === 'done' || s === 'skip';
@@ -141,6 +150,9 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   // qty differed from expected (status='adjusted'), by team and by product.
   const teamAgg: Record<string, { total: number; adjusted: number; expected: number; checked: number }> = {};
   const productAgg: Record<string, { total: number; adjusted: number }> = {};
+  // Completion by team (delivery) gets its own aggregate, filtered to actually-produced SKUs
+  // only (Axel, 2026-08-20) — discrepancy stays on the full set below, unscoped from this ask.
+  const teamAggProduced: Record<string, { expected: number; checked: number }> = {};
   for (const l of (checkLines ?? []) as any[]) {
     const t = l.team || 'other';
     (teamAgg[t] ??= { total: 0, adjusted: 0, expected: 0, checked: 0 });
@@ -152,8 +164,13 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     (productAgg[p] ??= { total: 0, adjusted: 0 });
     productAgg[p].total++;
     if (l.status === 'adjusted') productAgg[p].adjusted++;
+    if (!l.sku || !excludedSkuSet.has(l.sku)) {
+      (teamAggProduced[t] ??= { expected: 0, checked: 0 });
+      teamAggProduced[t].expected += l.qty_expected ?? 0;
+      teamAggProduced[t].checked += l.qty_checked ?? 0;
+    }
   }
-  const completionByTeamDelivery = Object.entries(teamAgg).map(([team, v]) => ({
+  const completionByTeamDelivery = Object.entries(teamAggProduced).map(([team, v]) => ({
     team, expected: v.expected, checked: v.checked, rate: v.expected ? Math.round(v.checked / v.expected * 100) : 0,
   })).sort((a, b) => b.expected - a.expected);
   const discrepancyByTeam = Object.entries(teamAgg).map(([team, v]) => ({
