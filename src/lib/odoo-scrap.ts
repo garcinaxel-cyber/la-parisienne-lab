@@ -58,6 +58,16 @@ export async function inspectScrapFields(): Promise<{ fields: Record<string, any
   return { fields, sampleDefaults };
 }
 
+/** Read-only diagnostic — scrap_location_id is required on stock.scrap but has no default_get
+ * value (confirmed 2026-08-21). Odoo scrap locations are virtual (usage='inventory') and
+ * typically ONE per company (not per warehouse) unless a custom setup added more — listing every
+ * such location so the right one(s) can be identified before createShopScrap() sets it. */
+export async function inspectScrapLocations(): Promise<any[]> {
+  return tmo(odooExecute<any[]>('stock.location', 'search_read',
+    [[['scrap_location', '=', true]]], { fields: ['id', 'name', 'complete_name', 'usage', 'warehouse_id', 'company_id'], limit: 200 }),
+    15000, 'scrap locations');
+}
+
 /** Batch-resolve product.product ids by SKU (default_code) — same pattern as odoo-inventory.ts. */
 export async function resolveProductsBySku(skus: string[]): Promise<Record<string, { id: number; name: string; uom_id: number }>> {
   if (!skus.length) return {};

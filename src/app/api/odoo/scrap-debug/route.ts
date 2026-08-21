@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { odooConfigured } from '@/lib/odoo';
-import { inspectScrapFields, getScrapReasonTags } from '@/lib/odoo-scrap';
+import { inspectScrapFields, getScrapReasonTags, inspectScrapLocations } from '@/lib/odoo-scrap';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,11 @@ export async function GET(req: Request) {
   }
   // Run independently — the write account may lack Inventory group access to one model
   // (e.g. stock.scrap.reason.tag needs Inventory/User) without that blocking the other.
-  const out: { fields?: any; fieldsError?: string; reasonTags?: any; reasonTagsError?: string } = {};
+  const out: {
+    fields?: any; fieldsError?: string;
+    reasonTags?: any; reasonTagsError?: string;
+    scrapLocations?: any; scrapLocationsError?: string;
+  } = {};
   try {
     out.fields = await inspectScrapFields();
   } catch (e: any) {
@@ -28,6 +32,11 @@ export async function GET(req: Request) {
     out.reasonTags = await getScrapReasonTags();
   } catch (e: any) {
     out.reasonTagsError = String(e?.message ?? e);
+  }
+  try {
+    out.scrapLocations = await inspectScrapLocations();
+  } catch (e: any) {
+    out.scrapLocationsError = String(e?.message ?? e);
   }
   return NextResponse.json(out);
 }
