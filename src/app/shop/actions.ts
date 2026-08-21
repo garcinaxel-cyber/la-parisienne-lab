@@ -2,6 +2,9 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { ensureDeliveryOrderChecklist, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
+import {
+  getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
+} from '@/lib/odoo-scrap';
 
 // Shop portal data layer — two entry points into the same underlying reads:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles) — read/write,
@@ -199,4 +202,119 @@ export async function getShopCakesForStaffAction(shopName: string): Promise<{ ca
   const auth = await requireStaffSession();
   if ('error' in auth) return { error: auth.error };
   return { cakes: await fetchCakes(shopName) };
+}
+
+// ── Pertes (daily product loss / scrap) ─────────────────────────────────────
+// Axel, 2026-08-21: chaque boutique doit pouvoir enregistrer ses pertes de produits tous les
+// jours avec une raison — reads/writes local (lab_shop_losses, v48) same pattern as the receipt
+// confirmation above (defense-in-depth re-verification, service-role writes, requireShopSession
+// gate). The Odoo side (stock.scrap) is best-effort: a shop's loss report is never lost locally
+// just because the Odoo sync failed — the failure is recorded (odoo_sync_error) so an admin can
+// follow up, never silently swallowed and never blocking the local report.
+//
+// Moon Flower has no Odoo warehouse mapping (external client, not a La Paris warehouse — see
+// odoo-scrap.ts) — resolveShopWarehouseLocation() returns null for it, so createShopScrap()
+// fails gracefully with a clear message rather than ever falling back to LAB's own location.
+
+export type ShopLossReason = { id: number; name: string };
+
+export async function getShopLossReasonsAction(): Promise<{ reasons?: ShopLossReason[]; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  try {
+    return { reasons: await getScrapReasonTags() };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Odoo unavailable' };
+  }
+}
+
+export type ShopLoss = {
+  id: string; sku: string | null; productName: string; qty: number;
+  reasonTagName: string; note: string | null; odooScrapId: number | null; odooSyncError: string | null;
+  reportedByName: string; reportedAt: string;
+};
+
+export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_shop_losses')
+    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
+    .eq('shop_name', auth.shopName)
+    .order('reported_at', { ascending: false })
+    .limit(50);
+  if (error) return { error: error.message };
+  return {
+    losses: (data ?? []).map(r => ({
+      id: r.id, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
+      reasonTagName: r.reason_tag_name, note: r.note, odooScrapId: r.odoo_scrap_id, odooSyncError: r.odoo_sync_error,
+      reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+    })),
+  };
+}
+
+export async function recordShopLossAction(input: {
+  sku: string | null; productName: string; qty: number;
+  reasonTagId: number; reasonTagName: string; note: string | null; reportedByName: string;
+}): Promise<{ ok?: boolean; odooSynced?: boolean; odooError?: string; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const name = (input.reportedByName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Name required' };
+  const productName = (input.productName ?? '').trim().slice(0, 200);
+  if (!productName) return { error: 'Product required' };
+  const qty = Number(input.qty);
+  if (!(qty > 0)) return { error: 'Quantity must be > 0' };
+  if (!input.reasonTagId || !input.reasonTagName) return { error: 'Reason required' };
+
+  // Best-effort Odoo sync — never blocks or discards the local report.
+  let odooScrapId: number | null = null;
+  let odooSyncError: string | null = null;
+  try {
+    if (input.sku) {
+      const products = await resolveProductsBySku([input.sku]);
+      const product = products[input.sku];
+      if (!product) {
+        odooSyncError = `SKU "${input.sku}" introuvable sur Odoo`;
+      } else {
+        const result = await createShopScrap({
+          shopName: auth.shopName,
+          productId: product.id,
+          uomId: product.uom_id,
+          qty,
+          reasonTagIds: [input.reasonTagId],
+          origin: `Shop loss ${auth.shopName} ${new Date().toISOString().slice(0, 10)}`,
+        });
+        if (result.ok) odooScrapId = result.scrapId ?? null;
+        else odooSyncError = result.error ?? 'Odoo sync failed';
+      }
+    } else {
+      odooSyncError = 'Pas de SKU — non synchronisé sur Odoo';
+    }
+  } catch (e: any) {
+    odooSyncError = e?.message ?? 'Odoo sync failed';
+  }
+
+  const { error } = await supabase.from('lab_shop_losses').insert({
+    shop_name: auth.shopName, sku: input.sku, product_name: productName, qty,
+    reason_tag_id: input.reasonTagId, reason_tag_name: input.reasonTagName,
+    note: input.note ? input.note.slice(0, 300) : null,
+    odoo_scrap_id: odooScrapId, odoo_sync_error: odooSyncError,
+    reported_by_name: name, reported_at: new Date().toISOString(),
+  });
+  if (error) return { error: error.message };
+  return { ok: true, odooSynced: !!odooScrapId, odooError: odooSyncError ?? undefined };
+}
+
+// Used by the UI to decide whether to even show a warning about Odoo sync before the shop's
+// warehouse has been checked — cheap, cached lookup, read-only.
+export async function checkShopHasOdooWarehouseAction(): Promise<{ hasWarehouse?: boolean; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const loc = await resolveShopWarehouseLocation(auth.shopName);
+  return { hasWarehouse: !!loc };
 }
