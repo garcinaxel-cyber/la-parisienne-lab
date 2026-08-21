@@ -9,8 +9,17 @@
 // partner, not a La Paris warehouse) and has none, so it's deliberately NOT eligible for this
 // feature. resolveShopWarehouseLocation() returns null for any shop without a warehouseCode,
 // and callers must treat that as "not available for this shop", never fall back to LAB.
-import { odooExecute, odooExecuteWrite, odooWriteConfigured } from './odoo';
+import { odooExecuteWrite, odooWriteConfigured } from './odoo';
 import { SHOP_ODOO_MAP } from './odoo-shop-order-sync';
+
+// 2026-08-21 — every read in this file uses the WRITE-account client (odooExecuteWrite), not the
+// read-only account. Found the hard way: Axel granted Inventory/Administrator + a custom
+// "Report V2" access right for stock.scrap.reason.tag on the API-PRODUCTION user (the write
+// account), but getScrapReasonTags() below was still calling odooExecute() — the separate
+// read-only account — which never had those groups, so the permission error persisted across
+// several rounds of Axel re-checking Odoo groups that were never actually the problem. This
+// module exists entirely to support the write path (createShopScrap), so there's no reason for
+// any of its reads to use a different account than the writes.
 
 function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
@@ -25,7 +34,7 @@ export async function resolveShopWarehouseLocation(shopName: string): Promise<Sh
   if (shopLocationCache.has(shopName)) return shopLocationCache.get(shopName)!;
   const code = SHOP_ODOO_MAP[shopName]?.warehouseCode;
   if (!code) { shopLocationCache.set(shopName, null); return null; }
-  const whs = await tmo(odooExecute<any[]>('stock.warehouse', 'search_read',
+  const whs = await tmo(odooExecuteWrite<any[]>('stock.warehouse', 'search_read',
     [[['code', '=', code]]], { fields: ['lot_stock_id', 'name'], limit: 1 }), 15000, 'shop warehouse');
   const wh = whs[0];
   if (!wh?.lot_stock_id) { shopLocationCache.set(shopName, null); return null; }
@@ -47,7 +56,7 @@ let cachedDefaultScrapLocationId: number | null = null;
 
 export async function resolveDefaultScrapLocationId(): Promise<number | null> {
   if (cachedDefaultScrapLocationId !== null) return cachedDefaultScrapLocationId;
-  const rows = await tmo(odooExecute<any[]>('stock.location', 'search_read',
+  const rows = await tmo(odooExecuteWrite<any[]>('stock.location', 'search_read',
     [[['scrap_location', '=', true]]], { fields: ['id'], limit: 1 }), 15000, 'default scrap location');
   const id = rows[0]?.id ?? null;
   cachedDefaultScrapLocationId = id;
@@ -60,7 +69,7 @@ let cachedReasonTags: ScrapReasonTag[] | null = null;
 /** Read-only list of stock.scrap.reason.tag records for the shop's reason picker. */
 export async function getScrapReasonTags(): Promise<ScrapReasonTag[]> {
   if (cachedReasonTags) return cachedReasonTags;
-  const rows = await tmo(odooExecute<any[]>('stock.scrap.reason.tag', 'search_read',
+  const rows = await tmo(odooExecuteWrite<any[]>('stock.scrap.reason.tag', 'search_read',
     [[]], { fields: ['id', 'name'], limit: 200 }), 15000, 'scrap reason tags');
   cachedReasonTags = rows.map((r: any) => ({ id: r.id, name: r.name }));
   return cachedReasonTags;
@@ -68,9 +77,9 @@ export async function getScrapReasonTags(): Promise<ScrapReasonTag[]> {
 
 /** Read-only diagnostic — introspects stock.scrap's real fields before we rely on any of them. */
 export async function inspectScrapFields(): Promise<{ fields: Record<string, any>; sampleDefaults: any }> {
-  const fields = await tmo(odooExecute<Record<string, any>>('stock.scrap', 'fields_get',
+  const fields = await tmo(odooExecuteWrite<Record<string, any>>('stock.scrap', 'fields_get',
     [], { attributes: ['string', 'type', 'required', 'relation'] }), 15000, 'scrap fields_get');
-  const sampleDefaults = await tmo(odooExecute<any>('stock.scrap', 'default_get',
+  const sampleDefaults = await tmo(odooExecuteWrite<any>('stock.scrap', 'default_get',
     [Object.keys(fields)]), 15000, 'scrap default_get');
   return { fields, sampleDefaults };
 }
@@ -80,7 +89,7 @@ export async function inspectScrapFields(): Promise<{ fields: Record<string, any
  * typically ONE per company (not per warehouse) unless a custom setup added more — listing every
  * such location so the right one(s) can be identified before createShopScrap() sets it. */
 export async function inspectScrapLocations(): Promise<any[]> {
-  return tmo(odooExecute<any[]>('stock.location', 'search_read',
+  return tmo(odooExecuteWrite<any[]>('stock.location', 'search_read',
     [[['scrap_location', '=', true]]], { fields: ['id', 'name', 'complete_name', 'usage', 'warehouse_id', 'company_id'], limit: 200 }),
     15000, 'scrap locations');
 }
@@ -88,7 +97,7 @@ export async function inspectScrapLocations(): Promise<any[]> {
 /** Batch-resolve product.product ids by SKU (default_code) — same pattern as odoo-inventory.ts. */
 export async function resolveProductsBySku(skus: string[]): Promise<Record<string, { id: number; name: string; uom_id: number }>> {
   if (!skus.length) return {};
-  const rows = await tmo(odooExecute<any[]>('product.product', 'search_read',
+  const rows = await tmo(odooExecuteWrite<any[]>('product.product', 'search_read',
     [[['default_code', 'in', skus]]], { fields: ['id', 'name', 'default_code', 'uom_id'], limit: 2000 }), 20000, 'scrap products');
   const out: Record<string, { id: number; name: string; uom_id: number }> = {};
   for (const p of rows) if (p.default_code) out[p.default_code] = { id: p.id, name: p.name, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
