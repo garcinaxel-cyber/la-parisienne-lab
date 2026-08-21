@@ -16,10 +16,18 @@ export async function GET(req: Request) {
   if (!odooConfigured()) {
     return NextResponse.json({ error: 'ODOO_* not configured' }, { status: 503 });
   }
+  // Run independently — the write account may lack Inventory group access to one model
+  // (e.g. stock.scrap.reason.tag needs Inventory/User) without that blocking the other.
+  const out: { fields?: any; fieldsError?: string; reasonTags?: any; reasonTagsError?: string } = {};
   try {
-    const [fields, reasonTags] = await Promise.all([inspectScrapFields(), getScrapReasonTags()]);
-    return NextResponse.json({ fields, reasonTags });
+    out.fields = await inspectScrapFields();
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'inspect failed' }, { status: 502 });
+    out.fieldsError = String(e?.message ?? e);
   }
+  try {
+    out.reasonTags = await getScrapReasonTags();
+  } catch (e: any) {
+    out.reasonTagsError = String(e?.message ?? e);
+  }
+  return NextResponse.json(out);
 }
