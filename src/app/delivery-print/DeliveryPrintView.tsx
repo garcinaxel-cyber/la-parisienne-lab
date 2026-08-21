@@ -23,6 +23,11 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   const vi = lang === 'vi';
   const isSo = header.source_type === 'sales_order';
   const showPricing = isSo && !!pricing && Object.keys(pricing.bySku).length > 0;
+  // Axel, 2026-08-21: masquer par défaut la colonne "S.L Yêu cầu" (qté initialement demandée
+  // par le client) à l'impression — purement visuel, aucune donnée touchée. Une case à cocher
+  // permet de la réafficher au besoin (inverse du 1er brief : défaut = masquée).
+  const [showRequested, setShowRequested] = useState(false);
+  const hideRequested = !showRequested;
   // hidden_from_print (2026-08-14, Axel) — a checked line an assistant deliberately hid (e.g. a
   // wrong SKU checked to 0 after a mistake) is filtered out everywhere on this printout,
   // including the subtotal/tax sums below — a hidden row but a total that still silently
@@ -164,6 +169,10 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
           <span className="text-xs text-ink-light hidden sm:inline">
             {vi ? 'Nhiều sản phẩm → dùng "Vừa 1 trang" trong hộp thoại in nếu cần' : 'Beaucoup de lignes → cocher "Ajuster à la page" dans le dialogue d\'impression si besoin'}
           </span>
+          <label className="flex items-center gap-1.5 text-xs text-ink-light cursor-pointer select-none">
+            <input type="checkbox" checked={showRequested} onChange={e => setShowRequested(e.target.checked)} />
+            {vi ? 'Hiện S.L Yêu cầu (khách đặt)' : 'Afficher S.L Yêu cầu (demandé client)'}
+          </label>
           <button onClick={handlePrint}
             className="flex items-center gap-1.5 text-sm font-semibold text-white bg-navy rounded-xl px-4 py-2 hover:bg-navy/80 transition-colors">
             <Printer size={15} /> {vi ? 'In phiếu' : 'Imprimer'}
@@ -199,9 +208,9 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
           <thead>
             <tr style={{ textAlign: 'center' }}>
               <th style={{ width: '4%' }}>STT</th>
-              <th style={{ width: showPricing ? '28%' : '38%' }}>Mã hàng</th>
+              <th style={{ width: `${(showPricing ? 28 : 38) + (hideRequested ? 10 : 0)}%` }}>Mã hàng</th>
               <th style={{ width: '8%' }}>ĐVT</th>
-              <th style={{ width: '10%' }}>S.L Yêu cầu</th>
+              {!hideRequested && <th style={{ width: '10%' }}>S.L Yêu cầu</th>}
               <th style={{ width: '10%' }}>S.L Thực tế</th>
               {showPricing && <th style={{ width: '12%' }}>Đơn giá</th>}
               {showPricing && <th style={{ width: '13%' }}>Thành tiền</th>}
@@ -217,7 +226,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                   <td style={{ textAlign: 'center' }}>{i + 1}</td>
                   <td>{l.product_name_vi}</td>
                   <td style={{ textAlign: 'center' }}>Đơn vị</td>
-                  <td style={{ textAlign: 'center' }}>{l.qty_expected}</td>
+                  {!hideRequested && <td style={{ textAlign: 'center' }}>{l.qty_expected}</td>}
                   <td style={{ textAlign: 'center' }}>{delivered}</td>
                   {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit) : ''}</td>}
                   {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit * delivered) : ''}</td>}
@@ -226,25 +235,30 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
               );
             })}
           </tbody>
-          {showPricing && (
+          {showPricing && (() => {
+            // colSpan covers every column up to and including "Đơn giá" — one fewer when
+            // "S.L Yêu cầu" is hidden (the default).
+            const footColSpan = hideRequested ? 5 : 6;
+            return (
             <tfoot>
               <tr>
-                <td colSpan={6} style={{ textAlign: 'right' }}>Tổng tiền hàng ({pricing!.currency})</td>
+                <td colSpan={footColSpan} style={{ textAlign: 'right' }}>Tổng tiền hàng ({pricing!.currency})</td>
                 <td style={{ textAlign: 'right' }}>{fmtMoney(subtotal)}</td>
                 <td />
               </tr>
               <tr>
-                <td colSpan={6} style={{ textAlign: 'right' }}>Thuế GTGT ({vatPct}%)</td>
+                <td colSpan={footColSpan} style={{ textAlign: 'right' }}>Thuế GTGT ({vatPct}%)</td>
                 <td style={{ textAlign: 'right' }}>{fmtMoney(vatTotal)}</td>
                 <td />
               </tr>
               <tr>
-                <td colSpan={6} style={{ textAlign: 'right', fontWeight: 700 }}>Tổng cộng ({pricing!.currency})</td>
+                <td colSpan={footColSpan} style={{ textAlign: 'right', fontWeight: 700 }}>Tổng cộng ({pricing!.currency})</td>
                 <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmtMoney(grandTotal)}</td>
                 <td />
               </tr>
             </tfoot>
-          )}
+            );
+          })()}
         </table>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 28, fontSize: 13 }}>
