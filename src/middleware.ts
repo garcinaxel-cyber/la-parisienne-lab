@@ -23,6 +23,9 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/odoo/reconciliation-check')) return NextResponse.next();
   // Same treatment — J+1 order auto-lock cron (2026-08-13), called twice daily by pg_cron.
   if (pathname.startsWith('/api/odoo/lock-orders')) return NextResponse.next();
+  // Same treatment — read-only stock.scrap field diagnostic (2026-08-21), secret-gated itself,
+  // called by hand via curl (no session), not a cron but same "no auth cookie" situation.
+  if (pathname.startsWith('/api/odoo/scrap-debug')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
