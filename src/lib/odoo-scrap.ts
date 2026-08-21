@@ -37,6 +37,23 @@ export async function resolveShopWarehouseLocation(shopName: string): Promise<Sh
   return result;
 }
 
+// scrap_location_id is REQUIRED on stock.scrap but has no default_get value (confirmed
+// 2026-08-21 via the debug route). Odoo scrap locations are virtual (usage='inventory',
+// scrap_location=true) — this instance has exactly ONE, company-wide, not per-warehouse
+// (id 16, "Virtual Locations/Scrap"). This is just the write-off/destination sink, same one
+// LAB's own scrap (if any) would use — it does NOT compromise the "source must be the shop's
+// own warehouse, never LAB" rule, which is enforced by location_id (source), not this field.
+let cachedDefaultScrapLocationId: number | null = null;
+
+export async function resolveDefaultScrapLocationId(): Promise<number | null> {
+  if (cachedDefaultScrapLocationId !== null) return cachedDefaultScrapLocationId;
+  const rows = await tmo(odooExecute<any[]>('stock.location', 'search_read',
+    [[['scrap_location', '=', true]]], { fields: ['id'], limit: 1 }), 15000, 'default scrap location');
+  const id = rows[0]?.id ?? null;
+  cachedDefaultScrapLocationId = id;
+  return id;
+}
+
 export interface ScrapReasonTag { id: number; name: string; }
 let cachedReasonTags: ScrapReasonTag[] | null = null;
 
@@ -98,6 +115,8 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   const loc = await resolveShopWarehouseLocation(input.shopName);
   if (!loc) return { ok: false, error: `Aucun entrepôt Odoo configuré pour "${input.shopName}" — perte non enregistrée sur Odoo` };
+  const scrapLocationId = await resolveDefaultScrapLocationId();
+  if (!scrapLocationId) return { ok: false, error: 'Aucun emplacement de rebut (scrap) trouvé sur Odoo' };
 
   try {
     const scrapId = await odooExecuteWrite<number>('stock.scrap', 'create', [{
@@ -105,6 +124,7 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
       product_uom_id: input.uomId,
       scrap_qty: input.qty,
       location_id: loc.locationId,
+      scrap_location_id: scrapLocationId,
       scrap_reason_tag_ids: [[6, 0, input.reasonTagIds]],
       origin: input.origin,
     }]);
