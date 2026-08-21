@@ -15,10 +15,13 @@ type DeliveryTeamStat = { team: string; expected: number; checked: number; rate:
 type DiscrepancyTeamStat = { team: string; total: number; adjusted: number; rate: number };
 type DiscrepancyProductStat = { name: string; total: number; adjusted: number; rate: number };
 type CompletionGapProduct = { name: string; expected: number; checked: number; gap: number };
+type DemandCategory = { category: string; demand: number; produced: number; gapPct: number; status: 'under' | 'ok' | 'over' };
+type DemandTeam = { team: string; totalDemand: number; categories: DemandCategory[] };
 
 export default function AnalyticsView({
   range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
-  daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct, aggregated = false,
+  daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct,
+  demandVsProduction, aggregated = false,
 }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
@@ -31,6 +34,7 @@ export default function AnalyticsView({
   completionGapsByTeam: Record<string, CompletionGapProduct[]>;
   discrepancyByTeam: DiscrepancyTeamStat[];
   discrepancyByProduct: DiscrepancyProductStat[];
+  demandVsProduction: DemandTeam[];
   aggregated?: boolean;
 }) {
   const { lang } = useI18n();
@@ -107,6 +111,56 @@ export default function AnalyticsView({
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Demand vs production, by team then category — "je veux voir si on est en sous
+          capacité ou sur capacité" (Axel, 2026-08-21). Not a true capacity metric (no
+          standard-time data exists anywhere in this app) — this is demand (qty ordered) vs
+          actual output (qty produced), the closest reliable proxy. */}
+      <div className="card p-4">
+        <h3 className="font-semibold text-sm text-navy mb-0.5 flex items-center gap-1.5">
+          <Package size={15} className="text-navy" /> {vi ? 'Nhu cầu so với sản xuất' : 'Demand vs production'}
+        </h3>
+        <p className="text-[11px] text-ink-light mb-3">
+          {vi ? 'SL đặt hàng so với SL thực sản xuất, theo đội và danh mục sản phẩm' : 'Qty ordered vs qty actually produced, by team and product category'}
+        </p>
+        {demandVsProduction.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {demandVsProduction.map(t => (
+              <div key={t.team} className="rounded-xl p-3" style={{ border: '1px solid #F3F4F6' }}>
+                <div className="text-xs font-bold mb-2 px-1.5 py-0.5 rounded-full inline-block"
+                  style={{ color: TEAM_LABELS[t.team as Team]?.color, backgroundColor: TEAM_LABELS[t.team as Team]?.bg }}>
+                  {teamLabel(t.team)}
+                </div>
+                <div className="space-y-2">
+                  {t.categories.map(c => {
+                    const badge = c.status === 'under'
+                      ? { label: vi ? 'Thiếu' : 'Under', bg: '#FEE2E2', fg: '#DC2626' }
+                      : c.status === 'over'
+                      ? { label: vi ? 'Dư' : 'Over', bg: '#FEF3C7', fg: '#92600A' }
+                      : { label: vi ? 'Cân bằng' : 'Balanced', bg: '#DCFCE7', fg: '#166534' };
+                    const barPct = c.demand > 0 ? Math.min(150, Math.round(c.produced / c.demand * 100)) : 0;
+                    return (
+                      <div key={c.category}>
+                        <div className="flex justify-between items-center text-[12px] mb-1 gap-2">
+                          <span className="text-navy truncate">{c.category}</span>
+                          <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0" style={{ backgroundColor: badge.bg, color: badge.fg }}>{badge.label}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-ink-light mb-1">
+                          <span>{c.produced.toLocaleString()} / {c.demand.toLocaleString()} {vi ? 'cái' : 'units'}</span>
+                          <span>{c.gapPct > 0 ? '+' : ''}{c.gapPct}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-border-soft overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${Math.min(100, barPct)}%`, backgroundColor: badge.fg }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

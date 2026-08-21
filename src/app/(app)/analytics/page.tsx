@@ -23,6 +23,22 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const fromStr = from.toISOString().split('T')[0];
   const toStr = today.toISOString().split('T')[0];
 
+  // Demand vs production by team/category (Axel, 2026-08-21: "je voudrais savoir s'il est
+  // possible dans la partie analytique d'analyser la capacité de production de chaque team en
+  // fonction des catégorie de produit... je veux voir si on est en sous capacité ou sur
+  // capacité"). A true "capacity" figure isn't computable — no standard-production-time data
+  // exists anywhere in this app — so this is demand (qty ordered) vs actual output (qty
+  // produced) per team per category, which is the closest reliable proxy and works identically
+  // whichever window (raw assignments or lab_daily_stats) is active. category comes from
+  // lab_fiche_meta, matched by product name (assignments/lab_daily_stats don't carry sku
+  // reliably enough to join on it — lab_daily_stats does have a sku column but it's frequently
+  // null for older rows, per lab_v24's own comments) — name match is the same approach already
+  // used elsewhere on this page (perProduct, productAgg).
+  const { data: ficheMeta } = await supabase.from('lab_fiche_meta').select('name_vi, category');
+  const nameToCategory: Record<string, string> = {};
+  for (const f of ficheMeta ?? []) if (f.name_vi && f.category) nameToCategory[f.name_vi] = f.category;
+  const OTHER_CATEGORY = 'Khác / Other';
+
   // Published imports in range
   const { data: imports } = await supabase
     .from('lab_imports')
@@ -76,6 +92,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   // tracabilite pour pouvoir aller chercher le probleme") — one entry per blocked card, not
   // just an aggregate count, so a reason in the UI can be traced to the actual card/date/team.
   const blockedCards: { date: string; team: string; product: string; reason: string; blockedAt: string | null; blockedBy: string | null }[] = [];
+  const demandByTeamCategory: Record<string, Record<string, { demand: number; produced: number }>> = {};
 
   for (const a of rows) {
     if (a.cancelled) continue; // cancelled cards are out of every production metric
@@ -83,9 +100,18 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     unitsPlanned += a.total_qty ?? 0;
     // Units actually PRODUCED — in-stock (skip) was not made, so it counts 0.
     // 'done' = fully made; 'partial' = what was made so far.
-    unitsProduced += a.status === 'done' ? (a.qty_produced || a.total_qty || 0)
+    const producedQty = a.status === 'done' ? (a.qty_produced || a.total_qty || 0)
       : a.status === 'partial' ? (a.qty_produced ?? 0)
       : 0;
+    unitsProduced += producedQty;
+    {
+      const t = a.team || 'other';
+      const cat = nameToCategory[a.product_name_vi] || OTHER_CATEGORY;
+      (demandByTeamCategory[t] ??= {});
+      (demandByTeamCategory[t][cat] ??= { demand: 0, produced: 0 });
+      demandByTeamCategory[t][cat].demand += a.total_qty ?? 0;
+      demandByTeamCategory[t][cat].produced += producedQty;
+    }
     if (isDone(a.status)) doneCards++;
     if (a.status === 'blocked') {
       blockedCount++;
@@ -210,6 +236,9 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     const sTeam: Record<string, { total: number; done: number; units: number }> = {};
     const sProduct: Record<string, number> = {};
     const sDay: Record<string, { units: number; total: number; done: number }> = {};
+    // Reset — the raw-window loop above already populated this from `rows`, which is empty for
+    // an aggregated range anyway (no imports fetched for >60d windows), but be explicit.
+    for (const k of Object.keys(demandByTeamCategory)) delete demandByTeamCategory[k];
     for (const r of stats ?? []) {
       sUnitsProduced += r.qty_produced ?? 0;
       sUnitsPlanned += r.qty_ordered ?? 0;
@@ -222,6 +251,12 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
       sProduct[pname] = (sProduct[pname] ?? 0) + (r.qty_ordered ?? 0);
       (sDay[r.day] ??= { units: 0, total: 0, done: 0 });
       sDay[r.day].units += r.qty_ordered ?? 0; sDay[r.day].total += r.cards_total ?? 0; sDay[r.day].done += r.cards_done ?? 0;
+      const t = r.team || 'other';
+      const cat = nameToCategory[r.product_name ?? ''] || OTHER_CATEGORY;
+      (demandByTeamCategory[t] ??= {});
+      (demandByTeamCategory[t][cat] ??= { demand: 0, produced: 0 });
+      demandByTeamCategory[t][cat].demand += r.qty_ordered ?? 0;
+      demandByTeamCategory[t][cat].produced += r.qty_produced ?? 0;
     }
     kpisOut = {
       unitsProduced: sUnitsProduced,
@@ -243,9 +278,25 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     })).sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  // Demand vs production, by team then category — ~10% gap threshold for the
+  // under/équilibré/over badge (Axel's mockup): produced < 90% of demand = under-capacity,
+  // > 110% = over-capacity (making more than what's actually ordered — also worth flagging,
+  // e.g. wasted effort or stale forecasts), else balanced. Sorted by demand desc so the
+  // biggest-volume category surfaces first within each team; teams sorted by total demand desc.
+  const demandVsProduction = Object.entries(demandByTeamCategory).map(([team, cats]) => {
+    const categories = Object.entries(cats).map(([category, v]) => {
+      const gapPct = v.demand > 0 ? Math.round((v.produced - v.demand) / v.demand * 100) : 0;
+      const status: 'under' | 'ok' | 'over' = v.demand === 0 ? 'ok' : v.produced < v.demand * 0.9 ? 'under' : v.produced > v.demand * 1.1 ? 'over' : 'ok';
+      return { category, demand: v.demand, produced: v.produced, gapPct, status };
+    }).sort((a, b) => b.demand - a.demand);
+    const totalDemand = categories.reduce((s, c) => s + c.demand, 0);
+    return { team, totalDemand, categories };
+  }).sort((a, b) => b.totalDemand - a.totalDemand);
+
   return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
     reasons={reasonsOut} blockedCards={blockedCardsOut} blockTrend={blockTrendOut} teamDominantReason={teamDominantReasonOut}
     daily={dailyOut} completionByTeamDelivery={completionByTeamDelivery} completionGapsByTeam={completionGapsByTeam}
     discrepancyByTeam={discrepancyByTeam} discrepancyByProduct={discrepancyByProduct}
+    demandVsProduction={demandVsProduction}
     aggregated={aggregated} />;
 }
