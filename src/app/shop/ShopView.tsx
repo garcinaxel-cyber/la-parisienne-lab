@@ -1,9 +1,15 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
+
+const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
+
+// Same result shape as /api/lab/products-search (station/inventory product picker) — reused
+// as-is here rather than writing a second search endpoint.
+type ProductSearchResult = { id: string; name_vi: string; name_en: string | null; sku: string | null };
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 
@@ -17,9 +23,23 @@ function fmtDate(d: string) {
 // from the dashboard, without pretending to confirm receipts on the shop's behalf).
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses'>('deliveries');
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
+  // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
+  // read-only staff previews and the deliveries/cakes tabs never pay for it.
+  const [losses, setLosses] = useState<ShopLoss[] | null>(null);
+  const [lossReasons, setLossReasons] = useState<ShopLossReason[] | null>(null);
+  const [lossesLoading, setLossesLoading] = useState(false);
+  const [lossQuery, setLossQuery] = useState('');
+  const [lossResults, setLossResults] = useState<ProductSearchResult[]>([]);
+  const [lossSearching, setLossSearching] = useState(false);
+  const [lossProduct, setLossProduct] = useState<ProductSearchResult | null>(null);
+  const [lossQty, setLossQty] = useState('1');
+  const [lossReasonId, setLossReasonId] = useState<number | null>(null);
+  const [lossNote, setLossNote] = useState('');
+  const [lossSubmitting, setLossSubmitting] = useState(false);
+  const [lossMsg, setLossMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Axel, 2026-08-19: "ne met pas la possibilite de clicker recu pour une commande du
@@ -36,11 +56,73 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [draft, setDraft] = useState<Record<string, { qty: string; note: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
+  const [lossName, setLossName] = useState('');
+
   useEffect(() => {
-    if (!readOnly) { try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {} }
+    if (!readOnly) {
+      try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {}
+      try { setLossName(localStorage.getItem(LOSS_NAME_STORAGE_KEY) ?? ''); } catch {}
+    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'losses' || losses !== null) return;
+    loadLosses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  async function loadLosses() {
+    setLossesLoading(true);
+    const actions = await import('./actions');
+    const [lossesRes, reasonsRes] = await Promise.all([
+      actions.getMyShopLossesAction(),
+      lossReasons ? Promise.resolve({ reasons: lossReasons }) : actions.getShopLossReasonsAction(),
+    ]);
+    setLossesLoading(false);
+    if (lossesRes.losses) setLosses(lossesRes.losses);
+    if (reasonsRes.reasons) setLossReasons(reasonsRes.reasons);
+  }
+
+  useEffect(() => {
+    if (readOnly) return;
+    const q = lossQuery.trim();
+    if (q.length < 2) { setLossResults([]); return; }
+    const t = setTimeout(async () => {
+      setLossSearching(true);
+      try {
+        const res = await fetch(`/api/lab/products-search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setLossResults(Array.isArray(data) ? data : []);
+      } catch { setLossResults([]); }
+      setLossSearching(false);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [lossQuery, readOnly]);
+
+  async function submitLoss() {
+    const trimmedName = lossName.trim();
+    if (!trimmedName || !lossProduct || !lossReasonId) return;
+    const qtyNum = Number(lossQty);
+    if (!(qtyNum > 0)) return;
+    const reason = lossReasons?.find(r => r.id === lossReasonId);
+    if (!reason) return;
+    try { localStorage.setItem(LOSS_NAME_STORAGE_KEY, trimmedName); } catch {}
+    setLossSubmitting(true); setLossMsg(null);
+    const { recordShopLossAction } = await import('./actions');
+    const res = await recordShopLossAction({
+      sku: lossProduct.sku, productName: lossProduct.name_vi, qty: qtyNum,
+      reasonTagId: reason.id, reasonTagName: reason.name,
+      note: lossNote.trim() || null, reportedByName: trimmedName,
+    });
+    setLossSubmitting(false);
+    if (res.error) { setLossMsg(`Lỗi: ${res.error}`); return; }
+    setLossMsg(res.odooSynced ? 'Đã lưu và đồng bộ Odoo' : `Đã lưu (Odoo: ${res.odooError ?? 'chưa đồng bộ'})`);
+    setLossProduct(null); setLossQuery(''); setLossQty('1'); setLossNote(''); setLossReasonId(null);
+    setLosses(null);
+    loadLosses();
+  }
 
   async function load() {
     setLoading(true); setError(null);
@@ -135,6 +217,11 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'cakes' ? '#1f2937' : 'white', color: tab === 'cakes' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Cake size={16} /> Bánh sinh nhật
+          </button>
+          <button onClick={() => setTab('losses')}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            style={{ backgroundColor: tab === 'losses' ? '#1f2937' : 'white', color: tab === 'losses' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            <Trash2 size={16} /> Hao hụt
           </button>
         </div>
 
@@ -255,6 +342,96 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               </div>
               ))}
               </>
+            )}
+          </div>
+        ) : tab === 'losses' ? (
+          <div className="space-y-3">
+            {!readOnly && (
+              <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo hao hụt</div>
+                <div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                  <input type="text" value={lossName} onChange={e => setLossName(e.target.value)} placeholder="Tên của bạn"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                </div>
+                <div className="relative">
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Sản phẩm</div>
+                  {lossProduct ? (
+                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB', backgroundColor: '#F9FAFB' }}>
+                      <span className="font-semibold truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</span>
+                      <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>Đổi</button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
+                      <input type="text" value={lossQuery} onChange={e => setLossQuery(e.target.value)}
+                        placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                      {lossQuery.trim().length >= 2 && (
+                        <div className="mt-1 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                          {lossSearching ? (
+                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                          ) : !lossResults.length ? (
+                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                          ) : lossResults.slice(0, 8).map(p => (
+                            <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
+                              className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0" style={{ borderColor: '#F3F4F6' }}>
+                              {p.name_vi}{p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2.5">
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Số lượng</div>
+                    <input type="number" min={0} step="1" value={lossQty} onChange={e => setLossQty(e.target.value)}
+                      className="w-full rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                  </div>
+                  <div className="flex-[2]">
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Lý do</div>
+                    <select value={lossReasonId ?? ''} onChange={e => setLossReasonId(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }}>
+                      <option value="">Chọn lý do…</option>
+                      {(lossReasons ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <input type="text" value={lossNote} onChange={e => setLossNote(e.target.value)}
+                  placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                <button onClick={submitLoss}
+                  disabled={lossSubmitting || !lossName.trim() || !lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#DC2626' }}>
+                  {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Báo cáo hao hụt
+                </button>
+                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
+              </div>
+            )}
+            {lossesLoading && losses === null ? (
+              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+            ) : !losses?.length ? (
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                Chưa có báo cáo hao hụt nào
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {losses.map(l => (
+                  <div key={l.id} className="bg-white rounded-2xl p-3.5" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-bold text-navy truncate">{l.productName} ×{l.qty}</div>
+                      {l.odooScrapId ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#059669' }}><CheckCircle2 size={12} /> Odoo</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#D97706' }}><AlertTriangle size={12} /> Chưa đồng bộ</span>
+                      )}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{l.reasonTagName}{l.note ? ` · ${l.note}` : ''}</div>
+                    <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>{l.reportedByName} · {new Date(l.reportedAt).toLocaleString('vi-VN')}</div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         ) : (
