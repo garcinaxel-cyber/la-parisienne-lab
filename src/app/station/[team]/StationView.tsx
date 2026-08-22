@@ -90,12 +90,12 @@ type SearchProduct = {
   sku: string | null;
   variant_id: string | null;
   main_image_url: string | null;
-  variants?: { id: string; sku: string | null; label: string; image_url: string | null }[];
+  variants?: { id: string; sku: string | null; label: string; image_url: string | null; weight_g: number | null }[];
   is_lab_only: boolean;
   category_id: string | null;
   subcategory: string | null;
 };
-type ExtraVariant = { id: string; sku: string | null; label: string; image_url: string | null };
+type ExtraVariant = { id: string; sku: string | null; label: string; image_url: string | null; weight_g?: number | null };
 
 type Category = { id: string; name_vi: string; name_en: string };
 
@@ -281,6 +281,11 @@ export default function StationView({
   const [extraVariant, setExtraVariant] = useState<ExtraVariant | null>(null);
   const [extraQty, setExtraQty] = useState(1);
   const [extraQtyInput, setExtraQtyInput] = useState('1');
+  // Weight-based extra production (2026-08-22): Biscuit Voyage (incl. Lady Finger, per Axel —
+  // also weight-produced) is made in bulk by weight, then packaged into fixed-weight units. A
+  // chef can enter the produced weight in kg instead of a unit count; converted to a floored
+  // unit count (remainder deliberately discarded — no fractional boxes make sense in Odoo).
+  const [extraWeightKg, setExtraWeightKg] = useState('');
   const [savingExtra, setSavingExtra] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [extraCategories, setExtraCategories] = useState<Category[]>([]);
@@ -339,6 +344,24 @@ export default function StationView({
     }, 250);
     return () => clearTimeout(timer);
   }, [extraSearch, extraModal, extraProduct, team, selectedCategory]);
+
+  // Weight-based extra production — gate strictly on category (confirmed with Axel: this
+  // includes Lady Finger, which is also weight-produced despite living under Biscuit Voyage).
+  const isWeightCategory = extraProduct?.subcategory === 'Biscuit Voyage';
+  const extraVariantWeightG = extraVariant?.weight_g ?? null;
+  const canWeighExtra = isWeightCategory && !!extraVariantWeightG && extraVariantWeightG > 0;
+  const extraWeightKgNum = parseFloat(extraWeightKg.replace(',', '.'));
+  const extraWeightUnits = canWeighExtra && Number.isFinite(extraWeightKgNum) && extraWeightKgNum > 0 && extraVariantWeightG
+    ? Math.floor((extraWeightKgNum * 1000) / extraVariantWeightG)
+    : 0;
+
+  // Keep extraQty (what saveExtra actually writes) in sync with the weight conversion while in
+  // weight mode, so the rest of the save path needs zero changes.
+  useEffect(() => {
+    if (!canWeighExtra) return;
+    setExtraQty(extraWeightUnits);
+    setExtraQtyInput(String(extraWeightUnits));
+  }, [canWeighExtra, extraWeightUnits]);
 
   // Supabase Realtime — covers both today + tomorrow imports, updates whichever list holds the id
   useEffect(() => {
@@ -698,7 +721,7 @@ export default function StationView({
     const { data } = await supabase.from('lab_assignments').insert(row).select('id').single();
     if (data) {
       setAssignments(prev => [...prev, {
-        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraVariant?.sku ?? extraProduct.sku ?? null, weight_grams: null, category_name_vi: extraProduct.subcategory ?? null, category_name_en: extraProduct.subcategory ?? null,
+        ...row, id: data.id, notes: '', blocked_reason: null, sku: extraVariant?.sku ?? extraProduct.sku ?? null, weight_grams: extraVariant?.weight_g ?? null, category_name_vi: extraProduct.subcategory ?? null, category_name_en: extraProduct.subcategory ?? null,
         lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
       }]);
     }
@@ -736,6 +759,7 @@ export default function StationView({
     setExtraVariant(null);
     setExtraQty(1);
     setExtraQtyInput('1');
+    setExtraWeightKg('');
     setSelectedCategory('');
   }
 
@@ -2269,7 +2293,31 @@ export default function StationView({
                 </div>
               )}
 
-              {extraProduct && (
+              {extraProduct && canWeighExtra && (
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
+                    {lang === 'vi' ? 'Khối lượng sản xuất (kg)' : 'Poids produit (kg)'}
+                  </label>
+                  <div className="flex items-center gap-3 mt-2">
+                    <input
+                      type="text" inputMode="decimal"
+                      value={extraWeightKg}
+                      onChange={e => setExtraWeightKg(e.target.value)}
+                      placeholder="0"
+                      className="text-4xl font-black text-center rounded-xl border-2 outline-none w-32 py-1"
+                      style={{ color: '#1A4731', borderColor: '#1A4731' }}
+                    />
+                    <span className="text-xl font-bold text-ink-light">kg</span>
+                  </div>
+                  <p className="text-sm text-ink-light mt-2">
+                    {lang === 'vi'
+                      ? `≈ ${extraWeightUnits} đơn vị (${extraVariantWeightG} g/đơn vị)`
+                      : `≈ ${extraWeightUnits} unités (${extraVariantWeightG} g/unité)`}
+                  </p>
+                </div>
+              )}
+
+              {extraProduct && !canWeighExtra && (
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wider text-ink-light">
                     {lang === 'vi' ? 'Số lượng' : 'Quantity'}
@@ -2311,7 +2359,7 @@ export default function StationView({
                   className="flex-1 py-3 rounded-xl font-semibold border border-gray-200 text-gray-500">
                   {lang === 'vi' ? 'Hủy' : 'Cancel'}
                 </button>
-                <button onClick={saveExtra} disabled={!extraProduct || savingExtra}
+                <button onClick={saveExtra} disabled={!extraProduct || savingExtra || (canWeighExtra && extraQty < 1)}
                   className="flex-1 py-3 rounded-xl font-bold text-white disabled:opacity-40 transition-colors"
                   style={{ backgroundColor: '#1A4731' }}>
                   {savingExtra ? '…' : (lang === 'vi' ? 'Xác nhận' : 'Confirm')}

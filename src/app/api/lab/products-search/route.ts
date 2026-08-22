@@ -53,16 +53,20 @@ export async function GET(req: NextRequest) {
   const { data: variants } = ficheIds.length
     ? await supabase
         .from('lab_fiche_variants')
-        .select('id, fiche_id, sku, label, image_url, is_default, sort_order')
+        .select('id, fiche_id, sku, label, image_url, is_default, sort_order, weight_g')
         .in('fiche_id', ficheIds)
         .order('is_default', { ascending: false })
         .order('sort_order')
     : { data: [] as any[] };
 
-  const variantsByFiche: Record<string, { id: string; sku: string | null; label: string; image_url: string | null }[]> = {};
+  // weight_g (2026-08-21) — surfaced so the station "extra production" modal can let a chef
+  // enter a produced WEIGHT instead of a unit count for weight-based products (Biscuit Voyage),
+  // converting to a floored unit count client-side. Purely additive — every other caller of this
+  // route (inventory add-product, etc.) already ignores unknown fields.
+  const variantsByFiche: Record<string, { id: string; sku: string | null; label: string; image_url: string | null; weight_g: number | null }[]> = {};
   for (const v of variants ?? []) {
     (variantsByFiche[v.fiche_id] ??= []).push({
-      id: v.id, sku: v.sku ?? null, label: v.label ?? 'Standard', image_url: v.image_url ?? null,
+      id: v.id, sku: v.sku ?? null, label: v.label ?? 'Standard', image_url: v.image_url ?? null, weight_g: v.weight_g ?? null,
     });
   }
 
