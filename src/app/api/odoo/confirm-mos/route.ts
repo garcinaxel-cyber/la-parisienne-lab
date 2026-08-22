@@ -4,7 +4,15 @@ import { odooConfigured, odooWriteConfigured, labDateOf } from '@/lib/odoo';
 import { confirmDoneMOs, produceMOs, inspectMO, testOnchange } from '@/lib/odoo-mo-confirm';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// 2026-08-22 — bumped from 60s: at current volume (~70+ MOs/day), produceMOs() alone needs 2
+// sequential Odoo RPC calls per MO (write + button_mark_done), which no longer fits in 60s. Both
+// the once-nightly cron AND the new hourly cron were confirmed timing out (net._http_response,
+// error_msg "Timeout of 55000 ms reached") leaving MOs permanently stuck at "confirmed", never
+// reaching "done" — this is what Axel saw as "production d'hier pas en Done" / "je vois
+// seulement confirmed". Vercel plan is Pro (confirmed 2026-08-06), which allows well above 60s
+// for a standard serverless function — raised to 270s. The pg_net timeout_milliseconds on the
+// calling cron jobs (lab_v49b) is raised to match.
+export const maxDuration = 270;
 
 // Daily confirmation of the lab-day's remaining draft MOs (called by pg_cron with
 // ?secret=CRON_SECRET — see lab_v30_mo_confirm_cron.sql — once the hourly sync's active window
