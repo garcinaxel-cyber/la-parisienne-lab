@@ -42,17 +42,25 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
   const dayRows = rows.filter(r => r.delivery_date === (day === 'today' ? today : tomorrow));
 
   // Group by the ACTUAL delivery shop (delivered_by for a manual cake, else the order's own
-  // shop_name) — that's who physically needs to know this item is coming.
+  // shop_name) — that's who physically needs to know this item is coming. Grouped by a
+  // case/spacing-insensitive key: Odoo's own shop_name is often ALL CAPS ("MOON FLOWER") while
+  // the manual-cake shop pickers use title case ("Moon Flower") — same shop, was showing as two
+  // separate pills (2026-08-24, Axel). Display label prefers whichever casing isn't ALL CAPS.
+  const normShop = (s: string) => s.trim().toLowerCase();
+  const prettierLabel = (a: string, b: string) => (a === a.toUpperCase() && b !== b.toUpperCase()) ? b : a;
   type ShopStats = { total: number; done: number; mismatches: number };
   const shopCounts: Record<string, ShopStats> = {};
   const rowsByShop: Record<string, Row[]> = {};
+  const shopLabel: Record<string, string> = {};
   for (const r of dayRows) {
-    const shop = r.actual_shop || (vi ? 'Không rõ' : 'Inconnu');
-    const c = shopCounts[shop] ??= { total: 0, done: 0, mismatches: 0 };
+    const label = r.actual_shop || (vi ? 'Không rõ' : 'Inconnu');
+    const key = normShop(label);
+    shopLabel[key] = shopLabel[key] ? prettierLabel(shopLabel[key], label) : label;
+    const c = shopCounts[key] ??= { total: 0, done: 0, mismatches: 0 };
     c.total++; if (checked.has(r.id)) c.done++; if (r.mismatch) c.mismatches++;
-    (rowsByShop[shop] ??= []).push(r);
+    (rowsByShop[key] ??= []).push(r);
   }
-  const shops = Object.keys(shopCounts).sort((a, b) => a.localeCompare(b));
+  const shops = Object.keys(shopCounts).sort((a, b) => shopLabel[a].localeCompare(shopLabel[b]));
   const active = activeShop && shops.includes(activeShop) ? activeShop : shops[0] ?? null;
 
   return (
@@ -100,7 +108,7 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
                     backgroundColor: active === shop ? '#F3F4F6' : 'transparent',
                     color: full ? '#166534' : '#1f2937',
                   }}>
-                  {shop}
+                  {shopLabel[shop]}
                   {c.mismatches > 0 && <ArrowLeftRight size={11} style={{ color: '#DC2626' }} />}
                   <span style={{ color: '#9CA3AF' }}>{c.done}/{c.total}</span>
                 </button>

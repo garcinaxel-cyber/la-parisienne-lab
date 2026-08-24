@@ -13,6 +13,14 @@ function labTodayTomorrow(): [string, string] {
   return [today, tomorrow];
 }
 
+// Case/spacing-insensitive comparison — Odoo's own shop_name is often ALL CAPS ("MOON FLOWER")
+// while the manual-cake shop pickers use title case ("Moon Flower"); same shop, different
+// casing (2026-08-24, Axel: two separate pills showing for what's really one shop). Used for
+// mismatch detection here; the view groups rows the same way for the same reason.
+function normShop(s: string | null): string {
+  return (s ?? '').trim().toLowerCase();
+}
+
 // "Par lieu de livraison" (2026-08-24, Axel: "des commande manuel qui sont pour le shop x mais
 // livré au shop Y"). A plain Odoo order has exactly ONE shop field (lab_order_lines.shop_name) —
 // that mismatch structurally cannot happen for those, Odoo itself has one warehouse/partner per
@@ -88,7 +96,7 @@ export default async function DeliveryCheckByShopPage() {
         id: l.id, sku: l.sku, product_name_vi: l.product_name_vi, product_name_en: l.product_name_en,
         category: l.category, product_category: l.product_category, team: l.team,
         order_ref: r.header.order_ref, intended_shop: intended, actual_shop: actual,
-        mismatch: !!(intended && actual && intended !== actual),
+        mismatch: !!(intended && actual && normShop(intended) !== normShop(actual)),
         customer_name: null,
         delivery_date: r.header.delivery_date, qty_expected: l.qty_expected, qty_checked: l.qty_checked,
         status: l.status, discrepancy_reason: l.discrepancy_reason, discrepancy_note: l.discrepancy_note,
