@@ -27,13 +27,16 @@ export interface InventoryDateLine {
 }
 
 export async function inspectInventoryDateBatch(fromDate: string, toDate: string, opts?: { byLocation?: boolean }): Promise<InventoryDateLine[]> {
+  // "Inventory" filter in Odoo's Moves History = either side of the move is a virtual
+  // inventory-adjustment location (usage='inventory') — covers BOTH directions: increases
+  // (Virtual Locations/Inventory adjustment -> LAB/Stock) and decreases (LAB/Stock -> Virtual
+  // Locations/Inventory adjustment), not just the incoming half.
   const domain: any[] = opts?.byLocation
     ? [
         ['state', '=', 'done'],
         ['date', '>=', fromDate],
         ['date', '<=', toDate],
-        ['location_dest_id.complete_name', '=', 'LAB/Stock'],
-        ['location_id.usage', '=', 'inventory'],
+        '|', ['location_id.usage', '=', 'inventory'], ['location_dest_id.usage', '=', 'inventory'],
       ]
     : [
         ['state', '=', 'done'],
