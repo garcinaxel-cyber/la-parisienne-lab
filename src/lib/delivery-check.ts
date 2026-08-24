@@ -99,7 +99,7 @@ export async function ensureDeliveryOrderChecklist(
   }
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
-    .select('id, sku, category, product_category, note').eq('delivery_order_id', header.id);
+    .select('id, sku, category, product_category, note, qty_expected').eq('delivery_order_id', header.id);
   const existingKeys = new Set((existingLines ?? []).map((l: any) => `${l.category}||${l.sku}`));
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
@@ -142,11 +142,25 @@ export async function ensureDeliveryOrderChecklist(
   // instead of requiring a manual SQL fix each time (root cause of the 2026-08-08 "tout
   // passe en Autre" bug — confirmed every existing row had product_category null in DB).
   const packagingNoteBySku: Record<string, string> = {};
-  for (const p of packaging) if (p.note) packagingNoteBySku[p.sku] = p.note;
+  const packagingQtyBySku: Record<string, number> = {};
+  for (const p of packaging) {
+    if (p.note) packagingNoteBySku[p.sku] = p.note;
+    packagingQtyBySku[p.sku] = (packagingQtyBySku[p.sku] ?? 0) + p.qty;
+  }
+  // An excluded SKU's own lab_order_lines demand belongs in the SAME packaging bucket as its
+  // (possibly separate) lab_order_packaging_lines row for that sku — merged here so nothing
+  // downstream ever has to choose between the two sources. Previously these were pushed as two
+  // competing toInsert rows under the same (category, sku) key below, and the upsert's
+  // ignoreDuplicates silently dropped whichever landed second — undercounting the app total by
+  // the packaging-only share (2026-08-24, Axel: REP/2026/01154 152-MH.362 showing "2" in the app
+  // vs a true Odoo total of "3" = 2 production-side + 1 packaging-side).
+  for (const [sku, e] of Object.entries(bySku)) {
+    if (excludedSkuSet.has(sku)) packagingQtyBySku[sku] = (packagingQtyBySku[sku] ?? 0) + e.qty;
+  }
 
-  const toHeal: { id: string; patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null } }[] = [];
+  const toHeal: { id: string; patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number } }[] = [];
   for (const el of existingLines ?? []) {
-    const patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null } = {};
+    const patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number } = {};
     if (el.category === 'production') {
       const e = bySku[el.sku];
       // Re-check on every open, not just at creation — a SKU can get excluded AFTER its check
@@ -170,6 +184,21 @@ export async function ensureDeliveryOrderChecklist(
       // same re-sync pattern as production notes above (was backfill-on-null-only before).
       const computedPkgNote = packagingNoteBySku[el.sku] ?? null;
       if (computedPkgNote && computedPkgNote !== el.note) patch.note = computedPkgNote;
+      // Qty resync (2026-08-24, Axel: REP/2026/01154 VTTH950/VTTH069/152-MH.128 — Odoo's
+      // packaging qty dropped but the checklist stayed frozen at the old value forever, since
+      // qty_expected was never re-synced for packaging anywhere. Production lines get this via
+      // applyOdooChanges' explicit Odoo-delta detection (2026-08-13) — packaging has no
+      // equivalent delta mechanism at all: odoo-packaging-sync.ts always upserts the CURRENT
+      // Odoo qty into lab_order_packaging_lines on every cron tick (no old-vs-new comparison
+      // there), so re-deriving qty_expected here on every checklist reopen is the correct place
+      // to close the gap, not a workaround. Same safety property as the production-line fix:
+      // qty_checked (what staff already physically counted) is a separate column, left
+      // untouched — the UI's existing qty_checked vs qty_expected diff surfaces any mismatch on
+      // its own instead of silently erasing completed work.
+      if (el.sku) {
+        const computedQty = packagingQtyBySku[el.sku];
+        if (computedQty !== undefined && computedQty !== el.qty_expected) patch.qty_expected = computedQty;
+      }
     }
     if (Object.keys(patch).length) toHeal.push({ id: el.id, patch });
   }
@@ -181,26 +210,40 @@ export async function ensureDeliveryOrderChecklist(
 
   const toInsert: any[] = [];
   for (const [sku, e] of Object.entries(bySku)) {
+    if (excludedSkuSet.has(sku)) continue; // routed entirely through the packaging bucket below
     const key = `production||${sku}`;
     if (existingKeys.has(key)) continue;
-    const isExcluded = excludedSkuSet.has(sku);
     toInsert.push({
       delivery_order_id: header.id, delivery_date: date, sku,
       product_name_vi: e.name_vi, product_name_en: e.name_en,
-      category: isExcluded ? 'packaging' : 'production',
-      product_category: isExcluded ? 'Packaging' : (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
-      team: isExcluded ? null : e.team, qty_expected: e.qty,
+      category: 'production',
+      product_category: (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
+      team: e.team, qty_expected: e.qty,
       note: e.notes.size ? Array.from(e.notes).join('\n') : null,
     });
   }
-  for (const p of packaging) {
-    const key = `packaging||${p.sku}`;
+  // Packaging bucket — one row per sku, merging real lab_order_packaging_lines rows with any
+  // excluded-SKU lab_order_lines demand for that same sku (packagingQtyBySku above already sums
+  // both sources). 2026-08-24 fix: previously a sku that was BOTH excluded-production AND a real
+  // packaging row generated two competing toInsert entries under the identical (category, sku)
+  // upsert key — the ignoreDuplicates upsert silently kept only one, dropping the other's qty.
+  const packagingSkus = Array.from(new Set<string>([
+    ...packaging.map(p => p.sku),
+    ...Object.keys(bySku).filter(sku => excludedSkuSet.has(sku)),
+  ]));
+  for (const sku of packagingSkus) {
+    const key = `packaging||${sku}`;
     if (existingKeys.has(key)) continue;
+    const pkgRow = packaging.find(p => p.sku === sku);
+    const prodRow = bySku[sku];
+    const name = pkgRow?.name ?? prodRow?.name_vi ?? sku;
+    const note = pkgRow?.note ?? (prodRow?.notes.size ? Array.from(prodRow.notes).join('\n') : null);
     toInsert.push({
-      delivery_order_id: header.id, delivery_date: date, sku: p.sku,
-      product_name_vi: p.name, product_name_en: p.name,
-      category: 'packaging', product_category: 'Packaging', team: null, qty_expected: p.qty,
-      note: p.note ?? null,
+      delivery_order_id: header.id, delivery_date: date, sku,
+      product_name_vi: name, product_name_en: name,
+      category: 'packaging', product_category: 'Packaging', team: null,
+      qty_expected: packagingQtyBySku[sku] ?? 0,
+      note,
     });
   }
   if (toInsert.length) {

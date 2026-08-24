@@ -87,10 +87,15 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
       {
         const { data: doHeaders } = await supabase.from('lab_delivery_orders').select('id').eq('order_ref', ch.order_ref);
         if (doHeaders?.length) {
+          // 2026-08-24: scoped to category='production' — a packaging check-line can share the
+          // same SKU on the same order (see delivery-check.ts's packaging-merge fix), and this
+          // block only ever diffs lab_order_lines (production), never lab_order_packaging_lines —
+          // writing item.new_qty onto a packaging row here would be wrong data, not just stale.
           await supabase.from('lab_delivery_check_lines')
             .update({ qty_expected: item.new_qty })
             .in('delivery_order_id', doHeaders.map(h => h.id))
-            .eq('sku', item.sku);
+            .eq('sku', item.sku)
+            .eq('category', 'production');
         }
       }
 

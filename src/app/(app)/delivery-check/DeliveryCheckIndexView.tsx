@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin } from 'lucide-react';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
@@ -100,7 +100,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         <Link href="/delivery-check/category"
           className="flex items-center gap-3 rounded-xl px-4 py-3.5"
           style={{ backgroundColor: '#1f2937' }}>
@@ -109,6 +109,19 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             <div className="text-sm font-bold text-white">{vi ? 'Kiểm theo loại sản phẩm' : 'Check par catégorie'}</div>
             <div className="text-xs" style={{ color: '#D1D5DB' }}>
               {vi ? 'Macaron, Viennoiserie, Savory...' : 'Macaron, Viennoiserie, Savory...'}
+            </div>
+          </div>
+          <ChevronRight size={18} className="shrink-0" style={{ color: '#9CA3AF' }} />
+        </Link>
+
+        <Link href="/delivery-check/by-shop"
+          className="flex items-center gap-3 rounded-xl px-4 py-3.5"
+          style={{ backgroundColor: '#1f2937' }}>
+          <MapPin size={20} className="text-white shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-white">{vi ? 'Theo nơi giao hàng' : 'Par lieu de livraison'}</div>
+            <div className="text-xs" style={{ color: '#D1D5DB' }}>
+              {vi ? 'Phát hiện đơn ghi 1 shop, giao shop khác' : 'Repère les écarts shop prévu / shop livré'}
             </div>
           </div>
           <ChevronRight size={18} className="shrink-0" style={{ color: '#9CA3AF' }} />
