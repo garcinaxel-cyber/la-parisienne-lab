@@ -26,14 +26,23 @@ export interface InventoryDateLine {
   move_id: number | null;
 }
 
-export async function inspectInventoryDateBatch(fromDate: string, toDate: string): Promise<InventoryDateLine[]> {
+export async function inspectInventoryDateBatch(fromDate: string, toDate: string, opts?: { byLocation?: boolean }): Promise<InventoryDateLine[]> {
+  const domain: any[] = opts?.byLocation
+    ? [
+        ['state', '=', 'done'],
+        ['date', '>=', fromDate],
+        ['date', '<=', toDate],
+        ['location_dest_id.complete_name', '=', 'LAB/Stock'],
+        ['location_id.usage', '=', 'inventory'],
+      ]
+    : [
+        ['state', '=', 'done'],
+        ['reference', '=', 'Product Quantity Updated'],
+        ['date', '>=', fromDate],
+        ['date', '<=', toDate],
+      ];
   const rows = await odooExecute<any[]>('stock.move.line', 'search_read',
-    [[
-      ['state', '=', 'done'],
-      ['reference', '=', 'Product Quantity Updated'],
-      ['date', '>=', fromDate],
-      ['date', '<=', toDate],
-    ]],
+    [domain],
     {
       fields: ['id', 'date', 'create_date', 'write_date', 'reference', 'product_id', 'quantity', 'location_id', 'location_dest_id', 'move_id'],
       limit: 1000,
