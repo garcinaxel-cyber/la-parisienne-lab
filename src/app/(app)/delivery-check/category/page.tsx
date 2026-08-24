@@ -1,6 +1,6 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
-import { ensureDeliveryOrderChecklist } from '@/lib/delivery-check';
+import { ensureDeliveryOrderChecklist, ensureDeliveryOrderChecklistsBatch } from '@/lib/delivery-check';
 import DeliveryCheckCategoryView from './DeliveryCheckCategoryView';
 
 export const revalidate = 0;
@@ -43,12 +43,22 @@ export default async function DeliveryCheckCategoryPage() {
     ...(packagingOnlyLines ?? []).map((l: any) => `${l.delivery_date}||${l.order_ref}`),
   ])).map(k => { const [delivery_date, order_ref] = k.split('||'); return { delivery_date, order_ref }; });
 
-  // Materialize every order's check lines in parallel (same function the per-order screen
-  // uses — one source of truth, this view is just a different grouping of the same rows).
-  const results = await Promise.all(orderKeys.map(async o => {
-    try { return await ensureDeliveryOrderChecklist(supabase, o.delivery_date, o.order_ref); }
-    catch { return null; }
-  }));
+  // Materialize every order's check lines via the batched path (one set of queries for every
+  // order on the page, instead of one set PER order — 2026-08-24, Supabase read-volume
+  // optimization). Same underlying table/business logic as the per-order screen (ensureDeliveryOrderChecklist),
+  // just fetched in bulk. Falls back to the proven per-order path if the batch call throws for
+  // any reason, so a bug in the new batching logic degrades to the old (slower but safe)
+  // behaviour instead of breaking the page.
+  let results: ({ header: Awaited<ReturnType<typeof ensureDeliveryOrderChecklist>>['header']; lines: Awaited<ReturnType<typeof ensureDeliveryOrderChecklist>>['lines'] } | null)[];
+  try {
+    const batch = await ensureDeliveryOrderChecklistsBatch(supabase, orderKeys);
+    results = orderKeys.map(o => batch.get(`${o.delivery_date}||${o.order_ref}`) ?? null);
+  } catch {
+    results = await Promise.all(orderKeys.map(async o => {
+      try { return await ensureDeliveryOrderChecklist(supabase, o.delivery_date, o.order_ref); }
+      catch { return null; }
+    }));
+  }
 
   type Row = {
     sku: string | null; product_name_vi: string; product_name_en: string | null;

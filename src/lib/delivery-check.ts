@@ -265,6 +265,221 @@ export async function ensureDeliveryOrderChecklist(
   return { header, lines: (lines ?? []) as CheckLine[] };
 }
 
+// Batched sibling of ensureDeliveryOrderChecklist, for LIST pages (category, by-shop) that
+// otherwise call the single-order function once PER order in a Promise.all loop — each call
+// issuing ~7 separate Supabase queries, so a page showing 20-30 open orders was making
+// 150-200+ round trips (2026-08-24, Axel: reduce Supabase read volume on the free plan;
+// lab_delivery_check_lines/lab_order_lines/lab_fiche_meta/lab_excluded_skus were each seeing
+// 5,000-11,000 reads/day). This function fetches every table ONCE for the whole batch of orders
+// instead of once per order, then runs the EXACT SAME per-order computation as
+// ensureDeliveryOrderChecklist (self-heal, exclusion routing, packaging merge) on the
+// batch-fetched data sliced by order — the business logic is not changed, only where the raw
+// rows come from. Returns a Map keyed by "date||order_ref", one entry per input order (missing
+// only if that order's header/lines genuinely failed to resolve).
+export async function ensureDeliveryOrderChecklistsBatch(
+  supabase: SupabaseClient, orders: { delivery_date: string; order_ref: string }[],
+): Promise<Map<string, { header: DeliveryOrderHeader; lines: CheckLine[] }>> {
+  const result = new Map<string, { header: DeliveryOrderHeader; lines: CheckLine[] }>();
+  if (!orders.length) return result;
+
+  const refs = Array.from(new Set(orders.map(o => o.order_ref)));
+  const dates = Array.from(new Set(orders.map(o => o.delivery_date)));
+  const dateByRef: Record<string, string> = {};
+  for (const o of orders) dateByRef[o.order_ref] = o.delivery_date;
+
+  const { data: allOrderLines, error: orderLinesError } = await supabase.from('lab_order_lines')
+    .select('order_ref, source_type, shop_name, product_sku, product_name_vi, team, qty, fiche_id, note')
+    .in('order_ref', refs).in('delivery_date', dates).gt('qty', 0);
+  if (orderLinesError) throw orderLinesError;
+
+  const { data: allPackaging, error: packagingError } = await supabase.from('lab_order_packaging_lines')
+    .select('order_ref, sku, product_name_vi, qty, shop_name, source_type, note')
+    .in('order_ref', refs);
+  if (packagingError) throw packagingError;
+
+  const orderLinesByRef = new Map<string, any[]>();
+  for (const l of allOrderLines ?? []) (orderLinesByRef.get(l.order_ref) ?? orderLinesByRef.set(l.order_ref, []).get(l.order_ref)!).push(l);
+  const packagingByRef = new Map<string, { sku: string; name: string; qty: number; shop_name: string | null; source_type: string; note: string | null }[]>();
+  for (const p of allPackaging ?? []) {
+    const arr = packagingByRef.get(p.order_ref) ?? packagingByRef.set(p.order_ref, []).get(p.order_ref)!;
+    arr.push({ sku: p.sku, name: p.product_name_vi, qty: p.qty, shop_name: p.shop_name, source_type: p.source_type, note: p.note ?? null });
+  }
+
+  // Headers — batch-fetch existing ones; any missing (rare in steady state: created once, the
+  // first time anyone opens that order's checklist, then reused forever) are inserted one at a
+  // time exactly like the single-order path — low volume, not worth the complexity of a bulk
+  // insert with race-safe id mapping.
+  const { data: existingHeaders } = await supabase.from('lab_delivery_orders')
+    .select('*').in('order_ref', refs).in('delivery_date', dates);
+  const headerByRef = new Map<string, DeliveryOrderHeader>();
+  for (const h of existingHeaders ?? []) headerByRef.set((h as any).order_ref, h as DeliveryOrderHeader);
+
+  for (const ref of refs) {
+    if (headerByRef.has(ref)) continue;
+    const date = dateByRef[ref];
+    const orderLines = orderLinesByRef.get(ref) ?? [];
+    const packaging = packagingByRef.get(ref) ?? [];
+    const sourceType: SourceType =
+      (orderLines[0]?.source_type as SourceType) ?? (packaging[0]?.source_type as SourceType) ??
+      (ref.toUpperCase().startsWith('REP') ? 'replenishment' : 'sales_order');
+    const shopName = orderLines[0]?.shop_name ?? packaging[0]?.shop_name ?? null;
+    const { data: created, error } = await supabase.from('lab_delivery_orders')
+      .insert({ delivery_date: date, order_ref: ref, source_type: sourceType, shop_name: shopName })
+      .select('*').single();
+    if (error) throw error;
+    headerByRef.set(ref, created as DeliveryOrderHeader);
+  }
+
+  const headerIds = Array.from(headerByRef.values()).map(h => h.id);
+
+  const { data: allExistingLines } = headerIds.length
+    ? await supabase.from('lab_delivery_check_lines')
+        .select('id, delivery_order_id, sku, category, product_category, note, qty_expected')
+        .in('delivery_order_id', headerIds)
+    : { data: [] as any[] };
+  const existingLinesByHeader = new Map<string, any[]>();
+  for (const l of allExistingLines ?? []) {
+    const arr = existingLinesByHeader.get((l as any).delivery_order_id) ?? existingLinesByHeader.set((l as any).delivery_order_id, []).get((l as any).delivery_order_id)!;
+    arr.push(l);
+  }
+
+  // Shared lookups — fetched ONCE for every order on the page instead of once PER order. This is
+  // the single biggest source of redundant reads: neither table varies by order, only by which
+  // SKUs happen to be on this page's orders (lab_excluded_skus alone was ~5,000 reads/day, one
+  // per order per page view, for a 70-row table that changes maybe monthly).
+  const allFicheIds = Array.from(new Set((allOrderLines ?? []).map((l: any) => l.fiche_id).filter(Boolean))) as string[];
+  const { data: ficheRows } = allFicheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, category').in('id', allFicheIds)
+    : { data: [] as any[] };
+  const categoryByFiche: Record<string, string> = {};
+  for (const f of ficheRows ?? []) if (f.category) categoryByFiche[f.id] = f.category;
+
+  const allProducibleSkus = Array.from(new Set((allOrderLines ?? []).map((l: any) => l.product_sku).filter(Boolean)));
+  const { data: excludedRows } = allProducibleSkus.length
+    ? await supabase.from('lab_excluded_skus').select('sku').in('sku', allProducibleSkus)
+    : { data: [] as any[] };
+  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+
+  // Per-order computation — IDENTICAL logic to ensureDeliveryOrderChecklist (self-heal,
+  // exclusion routing, packaging merge), just sourced from the batch-fetched maps above instead
+  // of a fresh query per order. Keep in sync with that function if either changes.
+  const allToHeal: { id: string; patch: Record<string, any> }[] = [];
+  const allToInsert: any[] = [];
+
+  for (const ref of refs) {
+    const header = headerByRef.get(ref);
+    if (!header) continue;
+    const date = dateByRef[ref];
+    const orderLines = orderLinesByRef.get(ref) ?? [];
+    const packaging = packagingByRef.get(ref) ?? [];
+    const existingLines = existingLinesByHeader.get(header.id) ?? [];
+    const existingKeys = new Set(existingLines.map((l: any) => `${l.category}||${l.sku}`));
+
+    const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; ficheId: string | null; qty: number; notes: Set<string> }> = {};
+    for (const l of orderLines) {
+      const k = l.product_sku;
+      const e = bySku[k] ??= { name_vi: l.product_name_vi, name_en: null, team: l.team, ficheId: l.fiche_id, qty: 0, notes: new Set() };
+      e.qty += l.qty;
+      if (l.note) e.notes.add(l.note);
+    }
+
+    const packagingNoteBySku: Record<string, string> = {};
+    const packagingQtyBySku: Record<string, number> = {};
+    for (const p of packaging) {
+      if (p.note) packagingNoteBySku[p.sku] = p.note;
+      packagingQtyBySku[p.sku] = (packagingQtyBySku[p.sku] ?? 0) + p.qty;
+    }
+    for (const [sku, e] of Object.entries(bySku)) {
+      if (excludedSkuSet.has(sku)) packagingQtyBySku[sku] = (packagingQtyBySku[sku] ?? 0) + e.qty;
+    }
+
+    for (const el of existingLines) {
+      const patch: Record<string, any> = {};
+      if (el.category === 'production') {
+        const e = bySku[el.sku];
+        if (el.sku && excludedSkuSet.has(el.sku)) {
+          patch.category = 'packaging'; patch.product_category = 'Packaging'; patch.team = null;
+        } else if (!el.product_category) {
+          const resolved = e?.ficheId ? categoryByFiche[e.ficheId] : undefined;
+          if (resolved) patch.product_category = resolved;
+        }
+        const computedNote = e?.notes.size ? Array.from(e.notes).join('\n') : null;
+        if (computedNote && computedNote !== el.note) patch.note = computedNote;
+      } else if (el.category === 'packaging') {
+        const computedPkgNote = packagingNoteBySku[el.sku] ?? null;
+        if (computedPkgNote && computedPkgNote !== el.note) patch.note = computedPkgNote;
+        if (el.sku) {
+          const computedQty = packagingQtyBySku[el.sku];
+          if (computedQty !== undefined && computedQty !== el.qty_expected) patch.qty_expected = computedQty;
+        }
+      }
+      if (Object.keys(patch).length) allToHeal.push({ id: el.id, patch });
+    }
+
+    for (const [sku, e] of Object.entries(bySku)) {
+      if (excludedSkuSet.has(sku)) continue;
+      const key = `production||${sku}`;
+      if (existingKeys.has(key)) continue;
+      allToInsert.push({
+        delivery_order_id: header.id, delivery_date: date, sku,
+        product_name_vi: e.name_vi, product_name_en: e.name_en,
+        category: 'production',
+        product_category: (e.ficheId && categoryByFiche[e.ficheId]) || 'Autre',
+        team: e.team, qty_expected: e.qty,
+        note: e.notes.size ? Array.from(e.notes).join('\n') : null,
+      });
+    }
+    const packagingSkus = Array.from(new Set<string>([
+      ...packaging.map(p => p.sku),
+      ...Object.keys(bySku).filter(sku => excludedSkuSet.has(sku)),
+    ]));
+    for (const sku of packagingSkus) {
+      const key = `packaging||${sku}`;
+      if (existingKeys.has(key)) continue;
+      const pkgRow = packaging.find(p => p.sku === sku);
+      const prodRow = bySku[sku];
+      const name = pkgRow?.name ?? prodRow?.name_vi ?? sku;
+      const note = pkgRow?.note ?? (prodRow?.notes.size ? Array.from(prodRow.notes).join('\n') : null);
+      allToInsert.push({
+        delivery_order_id: header.id, delivery_date: date, sku,
+        product_name_vi: name, product_name_en: name,
+        category: 'packaging', product_category: 'Packaging', team: null,
+        qty_expected: packagingQtyBySku[sku] ?? 0,
+        note,
+      });
+    }
+  }
+
+  for (const h of allToHeal) {
+    const { error: healError } = await supabase.from('lab_delivery_check_lines').update(h.patch).eq('id', h.id);
+    if (healError) throw healError;
+  }
+  if (allToInsert.length) {
+    const { error: insertError } = await supabase.from('lab_delivery_check_lines')
+      .upsert(allToInsert, { onConflict: 'delivery_order_id,category,sku', ignoreDuplicates: true });
+    if (insertError) throw insertError;
+  }
+
+  const { data: allFinalLines, error: finalError } = headerIds.length
+    ? await supabase.from('lab_delivery_check_lines').select('*').in('delivery_order_id', headerIds)
+        .order('category', { ascending: true }).order('product_name_vi', { ascending: true })
+    : { data: [] as any[] };
+  if (finalError) throw finalError;
+  const finalLinesByHeader = new Map<string, CheckLine[]>();
+  for (const l of allFinalLines ?? []) {
+    const hid = (l as any).delivery_order_id;
+    const arr = finalLinesByHeader.get(hid) ?? finalLinesByHeader.set(hid, []).get(hid)!;
+    arr.push(l as CheckLine);
+  }
+
+  for (const o of orders) {
+    const header = headerByRef.get(o.order_ref);
+    if (!header) continue;
+    result.set(`${o.delivery_date}||${o.order_ref}`, { header, lines: finalLinesByHeader.get(header.id) ?? [] });
+  }
+  return result;
+}
+
 export interface UnreconciledLine extends CheckLine {
   manual_cake_id: string;
   customer_name: string | null;
