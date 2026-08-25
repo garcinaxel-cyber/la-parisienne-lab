@@ -117,15 +117,36 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   // Product photos — helps the shop visually confirm they're checking the right item (Axel,
   // 2026-08-25: "rajoute la photo des produits pour qu'ils check facilement"). Best-effort only:
   // a missing/unmatched image never blocks anything, the line just renders without a thumbnail.
-  // Looked up by SKU against the default-variant image on lab_fiche_variants — same source the
-  // lab-side product search already surfaces as main_image_url (see /api/lab/products-search).
-  // Purely additive read, no change to ensureDeliveryOrderChecklist / lab_delivery_check_lines.
+  // Looked up by SKU against lab_fiche_variants, but that table's own image_url is null for most
+  // products in practice (verified 2026-08-25 — first version of this only checked the variant
+  // and came back with zero photos) — the real image almost always lives on the FICHE
+  // (lab_fiche_meta.image_url), same fallback order /api/lab/products-search already uses
+  // (dv?.image_url ?? f.image_url). Purely additive reads, no change to
+  // ensureDeliveryOrderChecklist / lab_delivery_check_lines.
   const allSkus = Array.from(new Set(orders.flatMap(o => o.lines.map(l => l.sku).filter(Boolean)))) as string[];
   if (allSkus.length) {
     const { data: variantRows } = await supabase.from('lab_fiche_variants')
-      .select('sku, image_url').in('sku', allSkus).not('image_url', 'is', null);
+      .select('sku, image_url, fiche_id').in('sku', allSkus);
     const imageBySku: Record<string, string> = {};
-    for (const v of variantRows ?? []) if (v.sku && v.image_url && !imageBySku[v.sku]) imageBySku[v.sku] = v.image_url;
+    const ficheIdBySku: Record<string, string> = {};
+    for (const v of variantRows ?? []) {
+      if (v.sku && v.image_url && !imageBySku[v.sku]) imageBySku[v.sku] = v.image_url;
+      if (v.sku && v.fiche_id && !ficheIdBySku[v.sku]) ficheIdBySku[v.sku] = v.fiche_id;
+    }
+    const missingFicheIds = Array.from(new Set(
+      allSkus.filter(sku => !imageBySku[sku] && ficheIdBySku[sku]).map(sku => ficheIdBySku[sku]),
+    ));
+    if (missingFicheIds.length) {
+      const { data: ficheRows } = await supabase.from('lab_fiche_meta')
+        .select('id, image_url').in('id', missingFicheIds);
+      const imageByFiche: Record<string, string> = {};
+      for (const f of ficheRows ?? []) if (f.image_url) imageByFiche[f.id] = f.image_url;
+      for (const sku of allSkus) {
+        if (!imageBySku[sku] && ficheIdBySku[sku] && imageByFiche[ficheIdBySku[sku]]) {
+          imageBySku[sku] = imageByFiche[ficheIdBySku[sku]];
+        }
+      }
+    }
     for (const o of orders) for (const l of o.lines) if (l.sku && imageBySku[l.sku]) l.image_url = imageBySku[l.sku];
   }
 
