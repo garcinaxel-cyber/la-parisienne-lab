@@ -73,6 +73,8 @@ type Assignment = {
   bc_ready_time?: string | null;
   bc_design_notes?: string | null;
   bc_design_photo_url?: string | null;
+  bc_shop_name?: string | null; // manual/exceptional cake's own shop — breakdown is always [] for these
+  bc_order_ref?: string | null; // set once the manual cake is matched to a real Odoo order
   draft_odoo?: boolean;
   sku: string | null;
   weight_grams: number | null;
@@ -2669,8 +2671,18 @@ function ProductionCard({
           )}
 
           {/* Birthday cake: ready-by deadline (red) + message on the cake */}
-          {(a.bc_ready_time || a.bc_message || a.category_name_vi === 'Birthday cake') && (
+          {(a.bc_ready_time || a.bc_message || a.bc_shop_name || a.category_name_vi === 'Birthday cake') && (
             <div className="mt-1.5 flex flex-col gap-1 items-start">
+              {/* Manual/exceptional cake: shop (always) + linked Odoo order once matched — this
+                  card's own `breakdown` is always [] (see page.tsx), so without this the chef
+                  has no idea which shop/client it's for (2026-08-25, Axel). */}
+              {a.bc_shop_name && (
+                <span className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                  <Store size={12} /> {a.bc_shop_name}
+                  {a.bc_order_ref && <span className="text-[10px] font-mono font-bold">· {a.bc_order_ref}</span>}
+                </span>
+              )}
               {a.bc_ready_time && (
                 <span className="text-[11px] font-bold rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
                   style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>

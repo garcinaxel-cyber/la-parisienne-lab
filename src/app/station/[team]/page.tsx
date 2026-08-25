@@ -127,12 +127,21 @@ export default async function StationPage({ params }: { params: { team: string }
     }
 
     // Manual (app-created) cakes: their message / ready-time is linked to the card directly.
+    // shop_name + matched_order_ref (2026-08-25, Axel: manual cake cards have an empty
+    // `breakdown` — unlike normal Odoo-sourced cards — so the chef couldn't see WHICH shop a
+    // manual/exceptional cake belongs to, or which real order it ended up matched to once one
+    // exists. '__pending_create__' is the in-flight sentinel (see manual-cake-coverage.ts) —
+    // not a real order ref, so it's filtered out here rather than shown to the chef.
     const asgIds = (assignments ?? []).map((a: any) => a.id);
     const { data: manualCakes } = asgIds.length > 0
-      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time, design_notes, design_photo_url').in('assignment_id', asgIds)
+      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time, design_notes, design_photo_url, shop_name, matched_order_ref').in('assignment_id', asgIds)
       : { data: [] as any[] };
-    const manualByAsg: Record<string, { message: string | null; ready_time: string | null; design_notes: string | null; design_photo_url: string | null }> = {};
-    for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = { message: m.message, ready_time: m.ready_time, design_notes: m.design_notes, design_photo_url: m.design_photo_url };
+    const manualByAsg: Record<string, { message: string | null; ready_time: string | null; design_notes: string | null; design_photo_url: string | null; shop_name: string | null; order_ref: string | null }> = {};
+    for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = {
+      message: m.message, ready_time: m.ready_time, design_notes: m.design_notes, design_photo_url: m.design_photo_url,
+      shop_name: m.shop_name ?? null,
+      order_ref: (m.matched_order_ref && m.matched_order_ref !== '__pending_create__') ? m.matched_order_ref : null,
+    };
 
     // Which client orders of this day are published — chefs only see published portions.
     const { data: pubRows } = importIds.length > 0
@@ -154,6 +163,8 @@ export default async function StationPage({ params }: { params: { team: string }
         bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
         bc_design_notes: manualByAsg[a.id]?.design_notes || null,
         bc_design_photo_url: manualByAsg[a.id]?.design_photo_url || null,
+        bc_shop_name: manualByAsg[a.id]?.shop_name || null,
+        bc_order_ref: manualByAsg[a.id]?.order_ref || null,
         draft_odoo: isDraftOdoo(((breakdownMap[a.id] ?? []) as any[]).map((b: any) => b.order_ref)),
         breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
           ...b,
