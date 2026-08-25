@@ -40,6 +40,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [lossQty, setLossQty] = useState('1');
   const [lossReasonId, setLossReasonId] = useState<number | null>(null);
   const [lossNote, setLossNote] = useState('');
+  // Multiple products per report (Axel, 2026-08-25: "la possibilite de scrap plusieurs produit
+  // et non un par 1") — each "Thêm vào danh sách" tap snapshots the current product/qty/reason/
+  // note into this list and resets the picker for the next item; the actual submit sends every
+  // item in the list in one go, each still becoming its own lab_shop_losses row + stock.scrap
+  // (Odoo has no native "scrap several products at once" endpoint).
+  const [lossItems, setLossItems] = useState<{ id: string; product: ProductSearchResult; qty: number; reasonId: number; reasonName: string; note: string }[]>([]);
   const [lossSubmitting, setLossSubmitting] = useState(false);
   const [lossMsg, setLossMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,25 +117,48 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     return () => clearTimeout(t);
   }, [lossQuery, readOnly]);
 
-  async function submitLoss() {
-    const trimmedName = lossName.trim();
-    if (!trimmedName || !lossProduct || !lossReasonId) return;
+  // Snapshots the currently-filled product/qty/reason/note into the list, then clears the
+  // picker so the shop can immediately search the next product.
+  function addLossItem() {
+    if (!lossProduct || !lossReasonId) return;
     const qtyNum = Number(lossQty);
     if (!(qtyNum > 0)) return;
     const reason = lossReasons?.find(r => r.id === lossReasonId);
     if (!reason) return;
+    setLossItems(prev => [...prev, {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      product: lossProduct, qty: qtyNum, reasonId: reason.id, reasonName: reason.name, note: lossNote.trim(),
+    }]);
+    setLossProduct(null); setLossQuery(''); setLossQty('1'); setLossNote(''); setLossReasonId(null);
+  }
+
+  function removeLossItem(id: string) {
+    setLossItems(prev => prev.filter(i => i.id !== id));
+  }
+
+  // Sends every item in lossItems — sequentially (not Promise.all) so a slow/failing Odoo call
+  // for one item never races with another and the per-item ok/error count stays accurate.
+  async function submitLoss() {
+    const trimmedName = lossName.trim();
+    if (!trimmedName || lossItems.length === 0) return;
     try { localStorage.setItem(LOSS_NAME_STORAGE_KEY, trimmedName); } catch {}
     setLossSubmitting(true); setLossMsg(null);
     const { recordShopLossAction } = await import('./actions');
-    const res = await recordShopLossAction({
-      sku: lossProduct.sku, productName: lossProduct.name_vi, qty: qtyNum,
-      reasonTagId: reason.id, reasonTagName: reason.name,
-      note: lossNote.trim() || null, reportedByName: trimmedName,
-    });
+    let okCount = 0, errCount = 0, syncErrCount = 0;
+    for (const item of lossItems) {
+      const res = await recordShopLossAction({
+        sku: item.product.sku, productName: item.product.name_vi, qty: item.qty,
+        reasonTagId: item.reasonId, reasonTagName: item.reasonName,
+        note: item.note || null, reportedByName: trimmedName,
+      });
+      if (res.error) errCount++;
+      else { okCount++; if (!res.odooSynced) syncErrCount++; }
+    }
     setLossSubmitting(false);
-    if (res.error) { setLossMsg(`Lỗi: ${res.error}`); return; }
-    setLossMsg(res.odooSynced ? 'Đã lưu và đồng bộ Odoo' : `Đã lưu (Odoo: ${res.odooError ?? 'chưa đồng bộ'})`);
-    setLossProduct(null); setLossQuery(''); setLossQty('1'); setLossNote(''); setLossReasonId(null);
+    if (errCount > 0) setLossMsg(`Đã lưu ${okCount}/${lossItems.length} sản phẩm, ${errCount} lỗi`);
+    else if (syncErrCount > 0) setLossMsg(`Đã lưu ${okCount} sản phẩm (${syncErrCount} chưa đồng bộ Odoo)`);
+    else setLossMsg(`Đã lưu và đồng bộ Odoo (${okCount} sản phẩm)`);
+    setLossItems([]);
     setLosses(null);
     loadLosses();
   }
@@ -434,13 +463,41 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
                 <input type="text" value={lossNote} onChange={e => setLossNote(e.target.value)}
                   placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                <button onClick={addLossItem}
+                  disabled={!lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
+                  style={{ backgroundColor: '#F3F4F6', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                  + Thêm vào danh sách
+                </button>
+
+                {lossItems.length > 0 && (
+                  <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+                    <div className="text-xs font-bold uppercase tracking-wide pt-1.5" style={{ color: '#6B7280' }}>
+                      Danh sách ({lossItems.length})
+                    </div>
+                    {lossItems.map(item => (
+                      <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
+                        {item.product.main_image_url && (
+                          <img src={item.product.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold truncate">{item.product.name_vi} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>×{item.qty}</span></div>
+                          <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
+                        </div>
+                        <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: '#DC2626' }} aria-label="Xoá">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <button onClick={() => setPendingLoss(true)}
-                  disabled={lossSubmitting || !lossName.trim() || !lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
+                  disabled={lossSubmitting || !lossName.trim() || lossItems.length === 0}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                   style={{ backgroundColor: '#DC2626' }}>
-                  {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Báo cáo hao hụt
+                  {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  {lossItems.length > 1 ? `Báo cáo hao hụt (${lossItems.length} sản phẩm)` : 'Báo cáo hao hụt'}
                 </button>
-                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
+                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
               </div>
             )}
             {lossesLoading && losses === null ? (
@@ -563,27 +620,29 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
         </div>
       )}
 
-      {/* Double-check before a scrap report — this one goes straight to Odoo (stock.scrap), so
-          nothing fires until "Xác nhận" here (Axel, 2026-08-25). */}
-      {pendingLoss && lossProduct && (
+      {/* Double-check before a scrap report — this one goes straight to Odoo (stock.scrap per
+          item), so nothing fires until "Xác nhận" here (Axel, 2026-08-25). Lists every item
+          added to the batch, not just one product (Axel, 2026-08-25: "scrap plusieurs produit
+          et non un par 1"). */}
+      {pendingLoss && lossItems.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3">
-            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận báo cáo hao hụt</div>
-            <div className="flex items-center gap-3">
-              {lossProduct.main_image_url && (
-                <img src={lossProduct.main_image_url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
-              )}
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-navy truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</div>
-                <div className="text-xs" style={{ color: '#9CA3AF' }}>{lossReasons?.find(r => r.id === lossReasonId)?.name}</div>
-              </div>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+              Xác nhận báo cáo hao hụt ({lossItems.length} sản phẩm)
             </div>
-            <div className="rounded-xl p-3" style={{ backgroundColor: '#FEF2F2' }}>
-              <div className="flex items-center justify-between text-sm">
-                <span style={{ color: '#6B7280' }}>Số lượng</span>
-                <span className="font-bold" style={{ color: '#DC2626' }}>×{lossQty}</span>
-              </div>
-              {lossNote.trim() && <div className="text-xs mt-1.5" style={{ color: '#6B7280' }}>Ghi chú: {lossNote.trim()}</div>}
+            <div className="space-y-1.5">
+              {lossItems.map(item => (
+                <div key={item.id} className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#FEF2F2' }}>
+                  {item.product.main_image_url && (
+                    <img src={item.product.main_image_url} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold text-navy truncate">{item.product.name_vi}{item.product.sku ? ` (${item.product.sku})` : ''}</div>
+                    <div className="text-xs" style={{ color: '#6B7280' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
+                  </div>
+                  <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{item.qty}</span>
+                </div>
+              ))}
             </div>
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Thao tác này gửi thẳng lên Odoo và không thể huỷ.</div>
             <div className="flex gap-2">
