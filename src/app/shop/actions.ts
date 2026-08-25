@@ -72,7 +72,7 @@ function labTodayTomorrow(): [string, string] {
 
 export type ShopDeliveryOrder = {
   header: Pick<DeliveryOrderHeader, 'id' | 'order_ref' | 'delivery_date' | 'shop_name'>;
-  lines: (CheckLine & { receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string } | null })[];
+  lines: (CheckLine & { receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string } | null; image_url: string | null })[];
 };
 
 async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
@@ -110,9 +110,25 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
     for (const r of receipts ?? []) receiptByLine[r.check_line_id] = r;
     orders.push({
       header: { id: header.id, order_ref: header.order_ref, delivery_date: header.delivery_date, shop_name: header.shop_name },
-      lines: lines.map(l => ({ ...l, receipt: receiptByLine[l.id] ?? null })),
+      lines: lines.map(l => ({ ...l, receipt: receiptByLine[l.id] ?? null, image_url: null as string | null })),
     });
   }
+
+  // Product photos — helps the shop visually confirm they're checking the right item (Axel,
+  // 2026-08-25: "rajoute la photo des produits pour qu'ils check facilement"). Best-effort only:
+  // a missing/unmatched image never blocks anything, the line just renders without a thumbnail.
+  // Looked up by SKU against the default-variant image on lab_fiche_variants — same source the
+  // lab-side product search already surfaces as main_image_url (see /api/lab/products-search).
+  // Purely additive read, no change to ensureDeliveryOrderChecklist / lab_delivery_check_lines.
+  const allSkus = Array.from(new Set(orders.flatMap(o => o.lines.map(l => l.sku).filter(Boolean)))) as string[];
+  if (allSkus.length) {
+    const { data: variantRows } = await supabase.from('lab_fiche_variants')
+      .select('sku, image_url').in('sku', allSkus).not('image_url', 'is', null);
+    const imageBySku: Record<string, string> = {};
+    for (const v of variantRows ?? []) if (v.sku && v.image_url && !imageBySku[v.sku]) imageBySku[v.sku] = v.image_url;
+    for (const o of orders) for (const l of o.lines) if (l.sku && imageBySku[l.sku]) l.image_url = imageBySku[l.sku];
+  }
+
   orders.sort((a, b) => a.header.delivery_date.localeCompare(b.header.delivery_date) || a.header.order_ref.localeCompare(b.header.order_ref));
   return orders;
 }

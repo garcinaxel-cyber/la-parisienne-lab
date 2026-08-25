@@ -8,8 +8,10 @@ import type { CheckLine } from '@/lib/delivery-check';
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 
 // Same result shape as /api/lab/products-search (station/inventory product picker) — reused
-// as-is here rather than writing a second search endpoint.
-type ProductSearchResult = { id: string; name_vi: string; name_en: string | null; sku: string | null };
+// as-is here rather than writing a second search endpoint. main_image_url is already returned
+// by that route (dv?.image_url ?? f.image_url) — kept here too so the scrap picker can show a
+// thumbnail (helps confirm the right product before an Odoo-bound report, 2026-08-25).
+type ProductSearchResult = { id: string; name_vi: string; name_en: string | null; sku: string | null; main_image_url?: string | null };
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 
@@ -55,6 +57,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<Record<string, { qty: string; note: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  // Full-screen photo viewer, shared by the delivery-check thumbnails and the scrap picker.
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
+  // Double-check before an actual write: OK/Báo cáo hao hụt open a summary instead of saving
+  // immediately (Axel, 2026-08-25: "je voudrais une double verification par securite pour qu ils
+  // envoient pas sur odoo n importe quoi"). Snapshotting order/line/qty/note here means the
+  // confirm step shows exactly what will be sent even if the draft input keeps changing behind it.
+  const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string } | null>(null);
+  const [pendingLoss, setPendingLoss] = useState(false);
 
   const [lossName, setLossName] = useState('');
 
@@ -158,19 +168,25 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setEditing(p => { const n = new Set(p); n.add(l.id); return n; });
   }
 
-  async function submitLine(order: ShopDeliveryOrder, l: CheckLine) {
+  // Opens the confirm sheet with a snapshot of the current draft — does NOT save anything yet.
+  function requestConfirmLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number]) {
     const d = draft[l.id];
-    if (!d) return;
+    if (!d || !name.trim()) return;
+    const qtyNum = d.qty.trim() === '' ? null : Number(d.qty);
+    setPendingReceipt({ order, line: l, qty: qtyNum, note: d.note });
+  }
+
+  // The actual write — only ever called from the confirm sheet's "Xác nhận" button.
+  async function doSubmitLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number], qtyNum: number | null, note: string) {
     const trimmedName = name.trim();
     if (!trimmedName) return;
     try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
-    const qtyNum = d.qty.trim() === '' ? null : Number(d.qty);
     const status: 'ok' | 'issue' = qtyNum === null || qtyNum !== refQty(l) ? 'issue' : 'ok';
     setSaving(l.id);
     const { confirmReceiptAction } = await import('./actions');
     const res = await confirmReceiptAction({
       checkLineId: l.id, deliveryOrderId: order.header.id,
-      qtyReceived: qtyNum, status, note: d.note.trim() || null,
+      qtyReceived: qtyNum, status, note: note.trim() || null,
       confirmedByName: trimmedName,
     });
     setSaving(null);
@@ -276,9 +292,18 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     return (
                       <div key={l.id} className="px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-navy truncate">{l.product_name_vi}</div>
-                            <div className="text-xs" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
+                          <div className="min-w-0 flex-1 flex items-center gap-2.5">
+                            {l.image_url && (
+                              <button type="button" onClick={() => setZoomImage(l.image_url)}
+                                className="shrink-0 w-11 h-11 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}
+                                aria-label="Xem ảnh sản phẩm">
+                                <img src={l.image_url} alt="" className="w-full h-full object-cover" />
+                              </button>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-navy truncate">{l.product_name_vi}</div>
+                              <div className="text-xs" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 shrink-0">
                             {/* What the assistant already checked in the lab — the shop's real
@@ -303,7 +328,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                                   className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
                                   style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
                                 {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
-                                <button onClick={() => submitLine(o, l)} disabled={saving === l.id || !name.trim()}
+                                <button onClick={() => requestConfirmLine(o, l)} disabled={saving === l.id || !name.trim()}
                                   className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
                                   style={{ backgroundColor: '#16A34A' }}>
                                   {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'OK'}
@@ -358,7 +383,15 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Sản phẩm</div>
                   {lossProduct ? (
                     <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB', backgroundColor: '#F9FAFB' }}>
-                      <span className="font-semibold truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</span>
+                      <span className="flex items-center gap-2 min-w-0">
+                        {lossProduct.main_image_url && (
+                          <button type="button" onClick={() => setZoomImage(lossProduct.main_image_url!)}
+                            className="shrink-0 w-8 h-8 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                            <img src={lossProduct.main_image_url} alt="" className="w-full h-full object-cover" />
+                          </button>
+                        )}
+                        <span className="font-semibold truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</span>
+                      </span>
                       <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>Đổi</button>
                     </div>
                   ) : (
@@ -374,8 +407,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
                           ) : lossResults.slice(0, 8).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
-                              className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0" style={{ borderColor: '#F3F4F6' }}>
-                              {p.name_vi}{p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
+                              className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                              {p.main_image_url && <img src={p.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                              <span className="truncate">{p.name_vi}{p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}</span>
                             </button>
                           ))}
                         </div>
@@ -400,7 +434,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
                 <input type="text" value={lossNote} onChange={e => setLossNote(e.target.value)}
                   placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                <button onClick={submitLoss}
+                <button onClick={() => setPendingLoss(true)}
                   disabled={lossSubmitting || !lossName.trim() || !lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                   style={{ backgroundColor: '#DC2626' }}>
@@ -476,6 +510,95 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
           )
         )}
       </div>
+
+      {/* Full-screen photo viewer — tap any thumbnail (receipt line or scrap picker) to open. */}
+      {zoomImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setZoomImage(null)}>
+          <img src={zoomImage} alt="" className="max-w-full max-h-full rounded-xl" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
+
+      {/* Double-check before confirming a receipt — nothing is saved until "Xác nhận" here. */}
+      {pendingReceipt && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận nhận hàng</div>
+            <div className="flex items-center gap-3">
+              {pendingReceipt.line.image_url && (
+                <img src={pendingReceipt.line.image_url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
+              )}
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-navy truncate">{pendingReceipt.line.product_name_vi}</div>
+                <div className="text-xs" style={{ color: '#9CA3AF' }}>Đơn {pendingReceipt.order.header.order_ref}</div>
+              </div>
+            </div>
+            <div className="rounded-xl p-3 space-y-1.5" style={{ backgroundColor: '#F9FAFB' }}>
+              <div className="flex items-center justify-between text-sm">
+                <span style={{ color: '#6B7280' }}>Bếp giao</span>
+                <span className="font-bold">×{refQty(pendingReceipt.line)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span style={{ color: '#6B7280' }}>Bạn xác nhận</span>
+                <span className="font-bold" style={{ color: pendingReceipt.qty !== refQty(pendingReceipt.line) ? '#DC2626' : '#1f2937' }}>
+                  {pendingReceipt.qty === null ? '—' : `×${pendingReceipt.qty}`}
+                </span>
+              </div>
+              {pendingReceipt.note.trim() && (
+                <div className="text-xs pt-1" style={{ color: '#6B7280' }}>Ghi chú: {pendingReceipt.note.trim()}</div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setPendingReceipt(null)}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                Huỷ
+              </button>
+              <button
+                onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note); }}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#16A34A' }}>
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Double-check before a scrap report — this one goes straight to Odoo (stock.scrap), so
+          nothing fires until "Xác nhận" here (Axel, 2026-08-25). */}
+      {pendingLoss && lossProduct && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận báo cáo hao hụt</div>
+            <div className="flex items-center gap-3">
+              {lossProduct.main_image_url && (
+                <img src={lossProduct.main_image_url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
+              )}
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-navy truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</div>
+                <div className="text-xs" style={{ color: '#9CA3AF' }}>{lossReasons?.find(r => r.id === lossReasonId)?.name}</div>
+              </div>
+            </div>
+            <div className="rounded-xl p-3" style={{ backgroundColor: '#FEF2F2' }}>
+              <div className="flex items-center justify-between text-sm">
+                <span style={{ color: '#6B7280' }}>Số lượng</span>
+                <span className="font-bold" style={{ color: '#DC2626' }}>×{lossQty}</span>
+              </div>
+              {lossNote.trim() && <div className="text-xs mt-1.5" style={{ color: '#6B7280' }}>Ghi chú: {lossNote.trim()}</div>}
+            </div>
+            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Thao tác này gửi thẳng lên Odoo và không thể huỷ.</div>
+            <div className="flex gap-2">
+              <button onClick={() => setPendingLoss(false)}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                Huỷ
+              </button>
+              <button onClick={() => { setPendingLoss(false); submitLoss(); }}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#DC2626' }}>
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
