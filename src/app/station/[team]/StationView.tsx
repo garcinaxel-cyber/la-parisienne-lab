@@ -1508,6 +1508,20 @@ export default function StationView({
                           ))}
                         </div>
                       )}
+                      {/* Manual/exceptional cake — breakdown is always [] for these (see page.tsx),
+                          so without this fallback the shop/order info is invisible on this tab too
+                          (2026-08-25, Axel: reported after the Production-tab fix alone). */}
+                      {breakdown.length === 0 && a.bc_shop_name && (
+                        <div className="pb-3">
+                          <div className="px-5 py-1.5 text-sm">
+                            <div className="flex items-center gap-2 text-ink-light">
+                              <Store size={11} className="shrink-0" />
+                              <span>{a.bc_shop_name}</span>
+                              {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2966,6 +2980,15 @@ function TermineCard({
           </div>
         )}
       </div>
+      {/* Manual/exceptional cake — breakdown is always [] for these (see page.tsx). */}
+      {!isSkip && breakdown.length === 0 && a.bc_shop_name && (
+        <div className="border-t px-4 py-1.5 text-xs text-ink-light" style={{ borderColor: '#F5EFC8' }}>
+          <span className="flex items-center gap-1.5">
+            {a.bc_shop_name}
+            {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
+          </span>
+        </div>
+      )}
       {/* Breakdown for done items */}
       {!isSkip && breakdown.length > 0 && (
         <div className="border-t" style={{ borderColor: '#F5EFC8' }}>
