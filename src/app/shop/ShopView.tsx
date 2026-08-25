@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search } from 'lucide-react';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 
@@ -20,9 +20,14 @@ function fmtDate(d: string) {
   return `${day}/${m}`;
 }
 
-// Shared UI for both the shop's own portal (/shop, editable) and the staff preview
-// (/admin/shop-access/[shopName], readOnly — Axel wants staff to see exactly what a shop sees
-// from the dashboard, without pretending to confirm receipts on the shop's behalf).
+// Shared UI for both the shop's own portal (/shop) and staff testing AS a shop from the admin
+// dashboard (/admin/shop-access/[shopName]). `readOnly` originally meant a true read-only
+// mirror; Axel, 2026-08-25: "je veux exactement comme les QR code des chefs, dans l admin je
+// peux avoir access facilement a leur interface" — staff access is now fully interactive (same
+// confirm/scrap actions, same Odoo writes), just banner-flagged so it's never mistaken for the
+// shop's own login. The prop name stays `readOnly` for now (only the ONE caller in
+// admin/shop-access/[shopName]/page.tsx passes it) but it now means "acting on behalf of
+// `shopName` via a staff session" rather than "cannot write".
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses'>('deliveries');
@@ -93,7 +98,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setLossesLoading(true);
     const actions = await import('./actions');
     const [lossesRes, reasonsRes] = await Promise.all([
-      actions.getMyShopLossesAction(),
+      readOnly ? actions.getShopLossesForStaffAction(shopName) : actions.getMyShopLossesAction(),
       lossReasons ? Promise.resolve({ reasons: lossReasons }) : actions.getShopLossReasonsAction(),
     ]);
     setLossesLoading(false);
@@ -102,7 +107,6 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   }
 
   useEffect(() => {
-    if (readOnly) return;
     const q = lossQuery.trim();
     if (q.length < 2) { setLossResults([]); return; }
     const t = setTimeout(async () => {
@@ -115,7 +119,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       setLossSearching(false);
     }, 250);
     return () => clearTimeout(t);
-  }, [lossQuery, readOnly]);
+  }, [lossQuery]);
 
   // Snapshots the currently-filled product/qty/reason/note into the list, then clears the
   // picker so the shop can immediately search the next product.
@@ -150,6 +154,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
         sku: item.product.sku, productName: item.product.name_vi, qty: item.qty,
         reasonTagId: item.reasonId, reasonTagName: item.reasonName,
         note: item.note || null, reportedByName: trimmedName,
+        ...(readOnly ? { shopName } : {}),
       });
       if (res.error) errCount++;
       else { okCount++; if (!res.odooSynced) syncErrCount++; }
@@ -217,6 +222,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       checkLineId: l.id, deliveryOrderId: order.header.id,
       qtyReceived: qtyNum, status, note: note.trim() || null,
       confirmedByName: trimmedName,
+      ...(readOnly ? { shopName } : {}),
     });
     setSaving(null);
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load(); }
@@ -232,18 +238,24 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const filteredOrders = orders?.filter(o => o.header.delivery_date === dayDate) ?? null;
   // Only today's deliveries are confirmable — a tomorrow order hasn't been delivered yet, so
   // "received" wouldn't mean anything. Since the list is already filtered to one day at a time,
-  // this only needs to check which tab is active.
-  const canConfirm = !readOnly && day === 'today';
+  // this only needs to check which tab is active. Staff-test access (readOnly=true) is now just
+  // as interactive as the shop's own login (Axel, 2026-08-25) — the only remaining gate is the day.
+  const canConfirm = day === 'today';
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div>
-            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? ' · Xem trước' : ''}</div>
+            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? ' · Chế độ Admin' : ''}</div>
             <h1 className="text-white font-serif text-xl font-bold">{shopName}</h1>
           </div>
-          {!readOnly && (
+          {readOnly ? (
+            <button onClick={() => router.push('/admin/shop-access')}
+              className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại admin">
+              <ArrowLeft size={16} /> Admin
+            </button>
+          ) : (
             <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label="Đăng xuất">
               <LogOut size={18} />
             </button>
@@ -252,6 +264,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-4 space-y-4">
+        {readOnly && (
+          <div className="rounded-xl px-3.5 py-2.5 flex items-start gap-2" style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }}>
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#92400E' }} />
+            <div className="text-xs" style={{ color: '#92400E' }}>
+              <span className="font-bold">Chế độ Admin — thao tác thay cho {shopName}.</span> Mọi xác nhận/báo cáo hao hụt ở đây được ghi thật (kể cả gửi lên Odoo), giống hệt như boutique tự làm.
+            </div>
+          </div>
+        )}
         <div className="flex gap-1.5">
           <button onClick={() => setTab('deliveries')}
             className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
@@ -294,7 +314,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               </div>
             ) : (
               <>
-              {!readOnly && day === 'today' && (
+              {day === 'today' && (
                 <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: '1px solid #E5E7EB' }}>
                   <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
                   <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Tên của bạn"
@@ -400,7 +420,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
           </div>
         ) : tab === 'losses' ? (
           <div className="space-y-3">
-            {!readOnly && (
+            {(
               <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo hao hụt</div>
                 <div>

@@ -6,12 +6,15 @@ import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
 
-// Shop portal data layer — two entry points into the same underlying reads:
-//  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles) — read/write,
-//    including the receipt confirmation.
-//  - staff (admin/lab_manager/assistant) previewing any shop by name from the dashboard
-//    (Axel, 2026-08-19: "je veux pouvoir accéder à leur interface... via le dashboard") —
-//    READ-ONLY, no confirm action, so it's never ambiguous who actually confirmed a receipt.
+// Shop portal data layer — two entry points into the same underlying reads/writes:
+//  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
+//  - staff (admin/lab_manager/assistant) accessing any shop by name from the dashboard
+//    (Axel, 2026-08-19: "je veux pouvoir accéder à leur interface... via le dashboard"; then
+//    2026-08-25: "je veux exactement comme les QR code des chefs" — one click into the real,
+//    fully-interactive interface for testing, not just a read-only mirror). Writes made this way
+//    still go through the exact same tables/Odoo calls as a real shop confirmation — there's no
+//    separate "test" data path — so ShopView shows a clear banner in this mode and the person
+//    still types their own name into the same "Xác nhận bởi" field, same as a real shop user.
 // Cross-cutting reads use the service-role key (same precedent as /order/[token] and the
 // earlier /boutique/[token] iteration) but ONLY after the caller's session+role has been
 // verified server-side first — never trust a client-supplied shop name for the shop's own
@@ -44,6 +47,40 @@ async function requireStaffSession(): Promise<{ ok: true } | { error: string }> 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
   return { ok: true };
+}
+
+// Accepts either the shop's own session, OR a staff session testing AS a specific shop (Axel,
+// 2026-08-25: one-click access from admin, same convenience as the station QR codes — except
+// stations work by the tablet staying logged into a real per-team account, there's no token
+// trick to copy; shops use ONE shared account per shop, so the equivalent here is letting staff
+// act through their own already-authenticated admin session instead of switching accounts).
+// explicitShopName is only trusted when the caller is staff (role check happens first) — a shop
+// user's own shopName always comes from their OWN lab_profiles row, never from client input.
+async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean } | { error: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role === 'shop') {
+    const { data: labProfile } = await supabase.from('lab_profiles').select('shop_name').eq('id', session.user.id).maybeSingle();
+    if (!labProfile?.shop_name) return { error: 'Shop not configured' };
+    return { shopName: labProfile.shop_name, isStaffTest: false };
+  }
+  if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {
+    if (!explicitShopName) return { error: 'Shop name required' };
+    return { shopName: explicitShopName, isStaffTest: true };
+  }
+  return { error: 'Forbidden' };
+}
+
+// Same either/or check as above, for actions that aren't shop-scoped (e.g. the reason list).
+async function requireShopOrStaff(): Promise<{ ok: true } | { error: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role === 'shop' || ['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { ok: true };
+  return { error: 'Forbidden' };
 }
 
 // shop_name is stored inconsistently across sync sources — found live 2026-08-19 while
@@ -199,8 +236,9 @@ export async function getMyShopCakesAction(): Promise<{ cakes?: ShopCake[]; erro
 
 export async function confirmReceiptAction(input: {
   checkLineId: string; deliveryOrderId: string; qtyReceived: number | null; status: 'ok' | 'issue'; note: string | null; confirmedByName: string;
+  shopName?: string; // only used (and only trusted) when the caller is staff testing as this shop
 }): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireShopSession();
+  const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -241,6 +279,28 @@ export async function getShopCakesForStaffAction(shopName: string): Promise<{ ca
   return { cakes: await fetchCakes(shopName) };
 }
 
+// getMyShopLossesAction's staff-driven counterpart — same query, just scoped to an
+// explicit/staff-supplied shopName instead of the caller's own lab_profiles row.
+export async function getShopLossesForStaffAction(shopName: string): Promise<{ losses?: ShopLoss[]; error?: string }> {
+  const auth = await requireStaffSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_shop_losses')
+    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
+    .eq('shop_name', shopName)
+    .order('reported_at', { ascending: false })
+    .limit(50);
+  if (error) return { error: error.message };
+  return {
+    losses: (data ?? []).map(r => ({
+      id: r.id, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
+      reasonTagName: r.reason_tag_name, note: r.note, odooScrapId: r.odoo_scrap_id, odooSyncError: r.odoo_sync_error,
+      reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+    })),
+  };
+}
+
 // ── Pertes (daily product loss / scrap) ─────────────────────────────────────
 // Axel, 2026-08-21: chaque boutique doit pouvoir enregistrer ses pertes de produits tous les
 // jours avec une raison — reads/writes local (lab_shop_losses, v48) same pattern as the receipt
@@ -276,7 +336,7 @@ function reduceLossReasons(all: ShopLossReason[]): ShopLossReason[] {
 }
 
 export async function getShopLossReasonsAction(): Promise<{ reasons?: ShopLossReason[]; error?: string }> {
-  const auth = await requireShopSession();
+  const auth = await requireShopOrStaff();
   if ('error' in auth) return { error: auth.error };
   try {
     return { reasons: reduceLossReasons(await getScrapReasonTags()) };
@@ -314,8 +374,9 @@ export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; er
 export async function recordShopLossAction(input: {
   sku: string | null; productName: string; qty: number;
   reasonTagId: number; reasonTagName: string; note: string | null; reportedByName: string;
+  shopName?: string; // only used (and only trusted) when the caller is staff testing as this shop
 }): Promise<{ ok?: boolean; odooSynced?: boolean; odooError?: string; error?: string }> {
-  const auth = await requireShopSession();
+  const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
