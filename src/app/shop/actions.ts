@@ -255,11 +255,31 @@ export async function getShopCakesForStaffAction(shopName: string): Promise<{ ca
 
 export type ShopLossReason = { id: number; name: string };
 
+// Axel, 2026-08-25: "reduit le nombre de raison stp : casse, perime" — the picker used to list
+// every stock.scrap.reason.tag from Odoo; now trimmed down to just the "broken" and "expired"
+// family of reasons. Matched by keyword (diacritics-insensitive) against whatever the tags are
+// actually named in Odoo, NOT hardcoded ids — the write path still needs a real Odoo tag id, and
+// this way it keeps working even if the exact wording differs from what's guessed here. Safety
+// net: if nothing matches (tags renamed, or named entirely differently), falls back to the full
+// list instead of silently leaving the shop with an empty picker.
+function normalizeReasonName(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+const BROKEN_REASON_KEYWORDS = ['vo', 'hong', 'gay', 'be ', 'nut', 'casse', 'broken', 'damage'];
+const EXPIRED_REASON_KEYWORDS = ['het han', 'han su dung', 'perime', 'expired', 'expiry', 'qua han'];
+function reduceLossReasons(all: ShopLossReason[]): ShopLossReason[] {
+  const filtered = all.filter(r => {
+    const n = normalizeReasonName(r.name);
+    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k));
+  });
+  return filtered.length > 0 ? filtered : all;
+}
+
 export async function getShopLossReasonsAction(): Promise<{ reasons?: ShopLossReason[]; error?: string }> {
   const auth = await requireShopSession();
   if ('error' in auth) return { error: auth.error };
   try {
-    return { reasons: await getScrapReasonTags() };
+    return { reasons: reduceLossReasons(await getScrapReasonTags()) };
   } catch (e: any) {
     return { error: e?.message ?? 'Odoo unavailable' };
   }
