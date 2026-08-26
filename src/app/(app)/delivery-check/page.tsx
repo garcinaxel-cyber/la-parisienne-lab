@@ -39,10 +39,12 @@ export default async function DeliveryCheckPage() {
   const [today, tomorrow] = labTodayTomorrow();
   const dateWindow = labDateWindow(today, tomorrow);
 
-  const { data: imports } = await supabase.from('lab_imports')
+  const { data: imports, error: importsErr } = await supabase.from('lab_imports')
     .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published')
     .limit(5000);
   const importIds = (imports ?? []).map((i: any) => i.id);
+  // TEMP DEBUG 2026-08-26 (Axel: "je vois toujours pas les commandes") — remove once root-caused.
+  console.log('[delivery-check DEBUG]', JSON.stringify({ today, dateWindow, importsCount: imports?.length, importsErr: importsErr?.message }));
 
   // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
   // just zeroes its qty (odoo-apply.ts) and marks the production card cancelled — the row stays.
@@ -56,12 +58,18 @@ export default async function DeliveryCheckPage() {
   // seulement 4 commande de delivery check aujourd'hui" instead of the expected ~12-13. Explicit
   // .limit() well above any realistic volume fixes it; filtering directly on delivery_date
   // instead of via import_id also shrinks the actual row count fetched.
-  const { data: orderLines } = importIds.length
+  const { data: orderLines, error: orderLinesErr } = importIds.length
     ? await supabase.from('lab_order_lines')
         .select('order_ref, delivery_date, shop_name, qty')
         .in('import_id', importIds).in('delivery_date', dateWindow).gt('qty', 0)
         .limit(10000)
-    : { data: [] as any[] };
+    : { data: [] as any[], error: null as any };
+  console.log('[delivery-check DEBUG]', JSON.stringify({
+    importIdsCount: importIds.length,
+    orderLinesCount: orderLines?.length,
+    orderLinesErr: orderLinesErr?.message,
+    orderLinesTodayRefs: Array.from(new Set((orderLines ?? []).filter((l: any) => l.delivery_date === today).map((l: any) => l.order_ref))),
+  }));
 
   // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines
   // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
