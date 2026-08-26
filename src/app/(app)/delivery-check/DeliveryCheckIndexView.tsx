@@ -42,11 +42,21 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
   const setDay = (d: 'today' | 'tomorrow' | 'late') =>
     router.replace(d === 'today' ? '/delivery-check' : `/delivery-check?day=${d}`, { scroll: false });
   const activeDate = day === 'today' ? today : tomorrow;
-  // "Late" = anything strictly before today still surfaced by the widened sync window (2026-08-26,
-  // Axel: a manual/exceptional cake formalized into a real Odoo order a day+ after its own
-  // delivery_date) — kept in its own tab rather than merged into "Aujourd'hui" since mixing
-  // several different dates in one list would be confusing.
-  const lateOrders = orders.filter(o => o.delivery_date < today);
+  // Same "done" definition the row itself uses to pick its badge (odooDone > validated > full) —
+  // kept as one function so the "late" tab's filter can never silently drift from what a row
+  // actually displays.
+  const isOrderDone = (o: OrderRow) =>
+    o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done'
+    || o.status === 'validated'
+    || (o.total > 0 && o.checked === o.total);
+  // "Late" = still-pending orders (not fully checked/validated) from before today, surfaced by
+  // the widened sync window (2026-08-26, Axel: a manual/exceptional cake formalized into a real
+  // Odoo order a day+ after its own delivery_date). Excluding already-done orders is deliberate
+  // (2026-08-26, Axel: "82 en retard alors qu'il y a la plupart en 100%, c'est bizarre") — the
+  // window pulls in every order from the last 7 days for anti-duplicate safety, but the vast
+  // majority of those were already checked/delivered normally and aren't "late" in any actionable
+  // sense; this tab should only ever surface what still needs attention.
+  const lateOrders = orders.filter(o => o.delivery_date < today && !isOrderDone(o));
   const dayOrders = day === 'late' ? lateOrders : orders.filter(o => o.delivery_date === activeDate);
 
   return (
