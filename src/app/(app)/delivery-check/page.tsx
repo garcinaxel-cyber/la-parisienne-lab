@@ -40,24 +40,35 @@ export default async function DeliveryCheckPage() {
   const dateWindow = labDateWindow(today, tomorrow);
 
   const { data: imports } = await supabase.from('lab_imports')
-    .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published');
+    .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published')
+    .limit(5000);
   const importIds = (imports ?? []).map((i: any) => i.id);
 
   // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
   // just zeroes its qty (odoo-apply.ts) and marks the production card cancelled — the row stays.
   // Without this filter a cancelled order kept showing up here as a phantom bon to check, all
   // lines ×0 (2026-08-11, REP/2026/01012).
+  // BUG FIX 2026-08-26: widening dateWindow to 9 days (today+tomorrow+7 late-grace days) made
+  // this .in('import_id', importIds) fan-out return 2700+ rows on a normal day — well past
+  // PostgREST/supabase-js's default 1000-row response cap, which silently truncates in
+  // whatever order Postgres happens to return rows (not date-sorted), so TODAY's orders could
+  // be partly or entirely cut from the result depending on where they landed. Axel: "j'ai bien
+  // seulement 4 commande de delivery check aujourd'hui" instead of the expected ~12-13. Explicit
+  // .limit() well above any realistic volume fixes it; filtering directly on delivery_date
+  // instead of via import_id also shrinks the actual row count fetched.
   const { data: orderLines } = importIds.length
     ? await supabase.from('lab_order_lines')
         .select('order_ref, delivery_date, shop_name, qty')
-        .in('import_id', importIds).gt('qty', 0)
+        .in('import_id', importIds).in('delivery_date', dateWindow).gt('qty', 0)
+        .limit(10000)
     : { data: [] as any[] };
 
   // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines
   // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
   // still shows up as a bon to check, instead of being invisible (2026-08-10, REP/2026/01003).
   const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
-    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', dateWindow);
+    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', dateWindow)
+    .limit(5000);
 
   type Row = { order_ref: string; delivery_date: string; shop_name: string; lineCount: number };
   const byKey: Record<string, Row> = {};
@@ -77,6 +88,7 @@ export default async function DeliveryCheckPage() {
     ? await supabase.from('lab_delivery_orders')
         .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status')
         .in('delivery_date', dateWindow)
+        .limit(5000)
     : { data: [] as any[] };
   const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null }> = {};
   for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null };
@@ -84,7 +96,7 @@ export default async function DeliveryCheckPage() {
 
   // Lines checked so far, to show an "X/Y" progress badge without opening the order
   const { data: checkLines } = headerIds.length
-    ? await supabase.from('lab_delivery_check_lines').select('delivery_order_id, qty_checked').in('delivery_order_id', headerIds)
+    ? await supabase.from('lab_delivery_check_lines').select('delivery_order_id, qty_checked').in('delivery_order_id', headerIds).limit(20000)
     : { data: [] as any[] };
   const linesByHeader: Record<string, { total: number; checked: number }> = {};
   for (const l of checkLines ?? []) {
@@ -94,7 +106,8 @@ export default async function DeliveryCheckPage() {
 
   // Pending manual cakes (3rd panier) for the badge count
   const { data: pendingCakes } = await supabase.from('lab_manual_cakes')
-    .select('id').in('delivery_date', dateWindow).is('matched_order_ref', null).is('cancelled_at', null);
+    .select('id').in('delivery_date', dateWindow).is('matched_order_ref', null).is('cancelled_at', null)
+    .limit(2000);
 
   // Coverage check (see odoo-sync.ts's syncGaps doc comment): the 15-min cron already flags any
   // Odoo order that ended up with zero representation in the app — this is a plain read of that,
