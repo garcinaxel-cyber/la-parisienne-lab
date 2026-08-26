@@ -27,7 +27,10 @@ export default async function DeliveryCheckOrderPage({ params }: { params: { dat
   if (!date || !orderRef) notFound();
 
   const { header, lines } = await ensureDeliveryOrderChecklist(supabase, date, orderRef);
-  const backHref = date === labToday() ? '/delivery-check' : '/delivery-check?day=tomorrow';
+  const today = labToday();
+  // A past date (2026-08-26: late-created orders for a manual cake from a prior day) belongs on
+  // the "late" tab, not "tomorrow" — the old ternary only ever considered today vs. everything else.
+  const backHref = date === today ? '/delivery-check' : date > today ? '/delivery-check?day=tomorrow' : '/delivery-check?day=late';
 
   return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} />;
 }

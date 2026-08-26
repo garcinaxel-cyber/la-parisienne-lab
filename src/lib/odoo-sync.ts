@@ -49,8 +49,16 @@ export interface OdooSyncResult {
 
 // Shared Odoo sync core — used by the manual "Sync from Odoo" button (user session client)
 // and by the hourly cron (service-role client). Read-only towards Odoo.
+// A manual/exceptional cake formalized into a real Odoo order a day (or more) after its own
+// delivery_date already passed (2026-08-26, Axel: staff created the Odoo order for yesterday's
+// cakes today, "en retard") would otherwise NEVER sync — both Odoo's own fetch below and the
+// anti-duplicate lookback further down used to be pinned to "today". This grace window pulls in
+// anything up to N days in the past too; kept small since anything older is presumably long since
+// resolved by hand and a wider window only adds noise/read volume for no benefit.
+const SYNC_GRACE_DAYS = 3;
+
 export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncResult> {
-  const threshold = labTodayUtcThreshold();
+  const threshold = labTodayUtcThreshold(SYNC_GRACE_DAYS);
 
 // ── 1. Sales orders — everything entered except cancelled (draft quotations included:
 //     the lab produces from what is ENTERED, confirmation in Odoo comes later) ──
@@ -148,10 +156,14 @@ const replById: Record<number, any> = {};
 for (const r of repls) replById[r.id] = r;
 
 // ── 5. Anti-duplicate + change detection: refs already imported into the lab app ──
+// MUST use the same grace window as the Odoo fetch above (SYNC_GRACE_DAYS) — otherwise a
+// past-dated order already imported under the old regime would fall outside this lookback,
+// get misread as "not already imported", and re-created as a duplicate.
+const graceDateStr = new Date(Date.now() - SYNC_GRACE_DAYS * 24 * 3600 * 1000).toISOString().split('T')[0];
 const { data: existingLines } = await supabase
   .from('lab_order_lines')
   .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name, note')
-  .gte('delivery_date', new Date().toISOString().split('T')[0])
+  .gte('delivery_date', graceDateStr)
   .limit(5000);
 const alreadyImported = new Set((existingLines ?? []).map(r => r.order_ref).filter(Boolean));
 

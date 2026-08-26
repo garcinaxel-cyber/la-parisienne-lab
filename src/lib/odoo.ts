@@ -130,9 +130,14 @@ export function nowLabStamp(): string {
   return `${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
 
-/** UTC datetime string for "today 00:00 in lab timezone" — used as Odoo query threshold */
-export function labTodayUtcThreshold(): string {
-  const now = new Date();
+/** UTC datetime string for "today 00:00 in lab timezone" — used as Odoo query threshold.
+ *  `daysBack` shifts the threshold earlier (2026-08-26, Axel: a shop/assistant formalizing a
+ *  manual/exceptional cake into a real Odoo order a day or more after the fact — the order's own
+ *  delivery_date is already in the past by the time it's entered — was silently never picked up
+ *  by any sync, since both this threshold and odoo-sync.ts's anti-duplicate lookback were pinned
+ *  to "today". See runOdooSync's SYNC_GRACE_DAYS.) */
+export function labTodayUtcThreshold(daysBack: number = 0): string {
+  const now = new Date(Date.now() - daysBack * 24 * 3600 * 1000);
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
   const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
   // Midnight lab time = previous day 17:00 UTC (VN = UTC+7, no DST)

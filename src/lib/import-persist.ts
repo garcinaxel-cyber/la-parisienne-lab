@@ -51,8 +51,12 @@ export async function persistImportsFromLines(
   const allRefs = Array.from(new Set(consolidated.flatMap(l => l.breakdown.map((b: any) => b.order_ref)).filter(Boolean)));
   let alreadyRefs = new Set<string>();
   if (allRefs.length) {
+    // Same grace window as odoo-sync.ts's SYNC_GRACE_DAYS (2026-08-26): a past-dated order
+    // already imported must still be recognized as "already imported" here, scoped to `today`
+    // only would miss it and risk a duplicate re-import on an overlapping sync race.
+    const antiDupSince = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString().split('T')[0];
     const { data: exRows } = await supabase
-      .from('lab_order_lines').select('order_ref').in('order_ref', allRefs).gte('delivery_date', today);
+      .from('lab_order_lines').select('order_ref').in('order_ref', allRefs).gte('delivery_date', antiDupSince);
     alreadyRefs = new Set((exRows ?? []).map((r: any) => r.order_ref));
   }
   const toPersist = alreadyRefs.size

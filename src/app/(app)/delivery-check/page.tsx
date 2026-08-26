@@ -14,6 +14,21 @@ function labTodayTomorrow(): [string, string] {
   return [today, tomorrow];
 }
 
+// Same grace window as odoo-sync.ts's SYNC_GRACE_DAYS (2026-08-26, Axel: a manual/exceptional
+// cake formalized into a real Odoo order a day+ late, for a delivery_date already in the past —
+// without this the order could be synced-in but still invisible on this page, which only ever
+// looked at [today, tomorrow]). "Late" orders live in their own tab in the view, not merged into
+// today's list, since mixing dates in one list would be confusing.
+const LATE_GRACE_DAYS = 3;
+function labDateWindow(today: string, tomorrow: string): string[] {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const dates = [tomorrow, today];
+  for (let i = 1; i <= LATE_GRACE_DAYS; i++) {
+    dates.push(fmt.format(new Date(Date.now() - i * 24 * 3600 * 1000)));
+  }
+  return dates;
+}
+
 export default async function DeliveryCheckPage() {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
@@ -22,9 +37,10 @@ export default async function DeliveryCheckPage() {
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
 
   const [today, tomorrow] = labTodayTomorrow();
+  const dateWindow = labDateWindow(today, tomorrow);
 
   const { data: imports } = await supabase.from('lab_imports')
-    .select('id, delivery_date, status').in('delivery_date', [today, tomorrow]).eq('status', 'published');
+    .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published');
   const importIds = (imports ?? []).map((i: any) => i.id);
 
   // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
@@ -41,7 +57,7 @@ export default async function DeliveryCheckPage() {
   // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
   // still shows up as a bon to check, instead of being invisible (2026-08-10, REP/2026/01003).
   const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
-    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', [today, tomorrow]);
+    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', dateWindow);
 
   type Row = { order_ref: string; delivery_date: string; shop_name: string; lineCount: number };
   const byKey: Record<string, Row> = {};
@@ -60,7 +76,7 @@ export default async function DeliveryCheckPage() {
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
         .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status')
-        .in('delivery_date', [today, tomorrow])
+        .in('delivery_date', dateWindow)
     : { data: [] as any[] };
   const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null }> = {};
   for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null };
@@ -78,13 +94,13 @@ export default async function DeliveryCheckPage() {
 
   // Pending manual cakes (3rd panier) for the badge count
   const { data: pendingCakes } = await supabase.from('lab_manual_cakes')
-    .select('id').in('delivery_date', [today, tomorrow]).is('matched_order_ref', null).is('cancelled_at', null);
+    .select('id').in('delivery_date', dateWindow).is('matched_order_ref', null).is('cancelled_at', null);
 
   // Coverage check (see odoo-sync.ts's syncGaps doc comment): the 15-min cron already flags any
   // Odoo order that ended up with zero representation in the app — this is a plain read of that,
   // no Odoo call here. Axel asked for this after REP/2026/01006 turned out invisible with no warning.
   const { data: gapRows } = await supabase.from('lab_sync_gaps')
-    .select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${today},${tomorrow}),delivery_date.is.null`);
+    .select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${dateWindow.join(',')}),delivery_date.is.null`);
 
   // Date reassigned in Odoo after import (see odoo-sync.ts's OdooSyncResult.dateChanges doc
   // comment, 2026-08-12 S03188/KAFEBEAN) — flag-only banner, not filtered to today/tomorrow since

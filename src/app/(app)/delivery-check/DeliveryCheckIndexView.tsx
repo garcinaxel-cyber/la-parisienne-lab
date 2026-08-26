@@ -37,10 +37,17 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
   // page remounted with useState's default. Reading it from the URL means both a real browser
   // back-navigation and the order page's own "Retour" link (which sets ?day= explicitly) land
   // on the right tab (2026-08-10).
-  const day: 'today' | 'tomorrow' = searchParams.get('day') === 'tomorrow' ? 'tomorrow' : 'today';
-  const setDay = (d: 'today' | 'tomorrow') => router.replace(d === 'today' ? '/delivery-check' : '/delivery-check?day=tomorrow', { scroll: false });
+  const dayParam = searchParams.get('day');
+  const day: 'today' | 'tomorrow' | 'late' = dayParam === 'tomorrow' ? 'tomorrow' : dayParam === 'late' ? 'late' : 'today';
+  const setDay = (d: 'today' | 'tomorrow' | 'late') =>
+    router.replace(d === 'today' ? '/delivery-check' : `/delivery-check?day=${d}`, { scroll: false });
   const activeDate = day === 'today' ? today : tomorrow;
-  const dayOrders = orders.filter(o => o.delivery_date === activeDate);
+  // "Late" = anything strictly before today still surfaced by the widened sync window (2026-08-26,
+  // Axel: a manual/exceptional cake formalized into a real Odoo order a day+ after its own
+  // delivery_date) — kept in its own tab rather than merged into "Aujourd'hui" since mixing
+  // several different dates in one list would be confusing.
+  const lateOrders = orders.filter(o => o.delivery_date < today);
+  const dayOrders = day === 'late' ? lateOrders : orders.filter(o => o.delivery_date === activeDate);
 
   return (
     <div className="space-y-5">
@@ -157,6 +164,16 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
               {d === 'today' ? (vi ? 'Hôm nay' : "Aujourd'hui") : (vi ? 'Ngày mai' : 'Demain')}
             </button>
           ))}
+          {lateOrders.length > 0 && (
+            <button onClick={() => setDay('late')}
+              className="text-xs font-bold rounded-full px-3.5 py-1.5 inline-flex items-center gap-1"
+              style={{
+                border: '1px solid', borderColor: day === 'late' ? '#B45309' : '#FCD34D',
+                backgroundColor: day === 'late' ? '#FEF3C7' : '#FFFBEB', color: '#92400E',
+              }}>
+              <AlertTriangle size={12} /> {vi ? `Trễ (${lateOrders.length})` : `En retard (${lateOrders.length})`}
+            </button>
+          )}
         </div>
         <Link href="/delivery-check/history"
           className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 shrink-0"
@@ -201,7 +218,13 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
+                  <div className="text-xs text-ink-light truncate flex items-center gap-1.5">
+                    {o.shop_name}
+                    {/* Several different dates mixed in this tab — show which one per row */}
+                    {day === 'late' && (
+                      <span className="font-mono font-semibold shrink-0" style={{ color: '#B45309' }}>· {o.delivery_date}</span>
+                    )}
+                  </div>
                 </div>
                 {odooDone ? (
                   <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#92400E' }}>
