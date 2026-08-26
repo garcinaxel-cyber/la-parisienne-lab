@@ -62,9 +62,26 @@ export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncRes
 
 // ── 1. Sales orders — everything entered except cancelled (draft quotations included:
 //     the lab produces from what is ENTERED, confirmation in Odoo comes later) ──
-const orders: any[] = await odooExecute('sale.order', 'search_read',
+const ordersRaw: any[] = await odooExecute('sale.order', 'search_read',
   [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]],
   { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: 500 });
+
+// La Paris's own retail branches + Winmart never produce/deliver from their OWN sale.order —
+// that record is just the shop's retail sale, entered a day later (Axel, 2026-08-26), and has
+// nothing to do with production demand: what the lab actually makes/delivers for these shops
+// always goes through their stock.replenishment.request instead. Counting the sale.order too
+// would double-count demand already covered by the replenishment, and once SYNC_GRACE_DAYS
+// started looking further back, flooded delivery-check's "late" tab with ~80 irrelevant entries
+// that were never actionable to begin with (these shops' sale.orders are BY NATURE always
+// "in the past" by the time Odoo has them — before the grace window, the old today-only
+// threshold happened to filter them out for free; the grace window undid that side effect).
+// Exact list per Axel: La Paris Timecity/Tây Hồ/Long Biên/Bà Triệu, and any Winmart branch.
+const SALES_ORDER_EXCLUDED_SHOP_SUBSTRINGS = ['la paris', 'winmart'];
+const isExcludedRetailShopSale = (partnerName: string) => {
+  const n = partnerName.trim().toLowerCase();
+  return SALES_ORDER_EXCLUDED_SHOP_SUBSTRINGS.some(s => n.includes(s));
+};
+const orders = ordersRaw.filter(o => !isExcludedRetailShopSale(o.partner_id?.[1] ?? ''));
 
 const orderIds = orders.map(o => o.id);
 // Fetch every line, including note-only rows (display_type='line_note') — Odoo lets a
