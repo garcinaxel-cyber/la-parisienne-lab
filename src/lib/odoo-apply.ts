@@ -31,6 +31,21 @@ export type OdooApplyError = { order_ref: string; sku: string; name?: string; re
 
 export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooChange[]) {
   const today = new Date().toISOString().split('T')[0];
+  // BUG FIX 2026-08-26 (Axel: "34 sync errors" banner spam, S03453 — and, discovered while
+  // investigating, HUNDREDS of older REP/... refs silently re-logging the same "applied" row
+  // every ~15min cron tick for weeks, one as high as 425 duplicates): both existing-line lookups
+  // below used to require delivery_date >= today literally, so an order whose delivery_date had
+  // already passed (yesterday or older — e.g. a late Odoo correction on an order already
+  // delivered) was invisible to them even though it's genuinely already in lab_order_lines. Every
+  // tick then wrongly treated it as "product never seen before", failed to find import/shop
+  // context (createLineAndCard's own ctx lookup, same bug), logged a fresh 'error' AND a
+  // misleading 'applied' row — and since the real qty write never happened, lab's stored qty
+  // never converged with Odoo's, so the "change" kept re-firing forever. Same grace-window
+  // pattern as SYNC_GRACE_DAYS (odoo-sync.ts) / LATE_GRACE_DAYS (delivery-check/page.tsx) — kept
+  // as its own literal here (not imported) for the same reason import-persist.ts does: must stay
+  // in sync with those, not accidentally coupled to a different caller's window.
+  const APPLY_GRACE_DAYS = 7;
+  const dateFloor = new Date(Date.now() - APPLY_GRACE_DAYS * 24 * 3600 * 1000).toISOString().split('T')[0];
   const applied: string[] = [];
   const errors: OdooApplyError[] = [];
   const coverageCache = new Map<string, ReturnType<typeof getManualCakeCoverage>>();
@@ -54,12 +69,12 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         .select('id, qty, import_id, team, variant_label, product_name_vi, shop_name, delivery_date, delivery_time')
         .eq('order_ref', ch.order_ref)
         .eq('product_sku', item.sku)
-        .gte('delivery_date', today);
+        .gte('delivery_date', dateFloor);
 
       // ── New product added to an existing order ──
       if (!olRows?.length) {
         if (item.new_qty <= 0) continue;
-        const created = await createLineAndCard(supabase, ch.order_ref, item, today, coverageFor);
+        const created = await createLineAndCard(supabase, ch.order_ref, item, dateFloor, coverageFor);
         if (created.error) errors.push({ order_ref: ch.order_ref, sku: item.sku, name: item.name, reason: created.error });
         else applied.push(`${ch.order_ref}/${item.sku}: new +${item.new_qty}`);
         continue;
@@ -272,15 +287,18 @@ async function createLineAndCard(
   supabase: SupabaseClient,
   orderRef: string,
   item: { sku: string; name?: string; new_qty: number },
-  today: string,
+  dateFloor: string,
   coverageFor: (date: string) => ReturnType<typeof getManualCakeCoverage>,
 ): Promise<{ error?: string }> {
-  // Context (import, shop, dates) from an existing line of the same order
+  // Context (import, shop, dates) from an existing line of the same order — dateFloor is a
+  // grace-window lower bound (APPLY_GRACE_DAYS, see applyOdooChanges), not literally "today":
+  // an order dated yesterday or a few days back must still resolve its own context here, not be
+  // treated as unimportable (see the bug-fix comment above applyOdooChanges).
   const { data: ctxRows } = await supabase
     .from('lab_order_lines')
     .select('import_id, shop_name, delivery_date, delivery_time, source_type, published')
     .eq('order_ref', orderRef)
-    .gte('delivery_date', today)
+    .gte('delivery_date', dateFloor)
     .limit(1);
   const ctx = ctxRows?.[0];
   if (!ctx) return { error: 'order not found in lab — re-import it' };
