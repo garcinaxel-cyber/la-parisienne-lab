@@ -2,13 +2,25 @@ import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { BookOpen, Plus, Tag, Users } from 'lucide-react';
-import { TEAM_LABELS, type Team } from '@/lib/types';
+import { TEAMS, TEAM_LABELS, type Team } from '@/lib/types';
 
 const hasTeam = (f: any) => Array.isArray(f.teams) && f.teams.length > 0;
 
+// Builds a list URL preserving both filter axes (category + team) — used both for the filter
+// chips themselves and for the ?back= param on each fiche link, so returning from a fiche
+// (2026-08-26, Axel: "ça me remet à la page de début au lieu de la catégorie que j'avais
+// sélectionné") lands back on the exact same filtered view instead of the bare unfiltered list.
+function listHref(params: { cat?: string; team?: string }) {
+  const sp = new URLSearchParams();
+  if (params.cat) sp.set('cat', params.cat);
+  if (params.team) sp.set('team', params.team);
+  const qs = sp.toString();
+  return `/admin/fiches${qs ? `?${qs}` : ''}`;
+}
+
 export const revalidate = 0;
 
-async function createFiche() {
+async function createFiche(formData: FormData) {
   'use server';
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
@@ -18,10 +30,11 @@ async function createFiche() {
     .insert({ name_vi: 'Nouveau produit / New product', is_active: true })
     .select('id')
     .single();
-  if (data?.id) redirect(`/admin/fiches/${data.id}`);
+  const back = formData.get('back');
+  if (data?.id) redirect(`/admin/fiches/${data.id}${back ? `?back=${encodeURIComponent(String(back))}` : ''}`);
 }
 
-export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string; filter?: string } }) {
+export default async function FichesPage({ searchParams }: { searchParams?: { cat?: string; team?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
@@ -45,15 +58,25 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
 
   const allFiches = fiches ?? [];
   const selectedCat = searchParams?.cat ?? '';
-  const noTeamFilter = searchParams?.filter === 'no-team';
+  // 'team' is either a real Team value, the literal 'none' (no team assigned at all), or empty (all)
+  const selectedTeam = searchParams?.team ?? '';
   const noTeamCount = allFiches.filter((f: any) => !hasTeam(f)).length;
+  const teamCounts: Record<Team, number> = TEAMS.reduce((acc, t) => {
+    acc[t] = allFiches.filter((f: any) => (f.teams ?? []).includes(t)).length;
+    return acc;
+  }, {} as Record<Team, number>);
 
   // All unique categories for filter chips
   const allCats = Array.from(new Set(allFiches.map((f: any) => f.category ?? 'Khác'))).sort() as string[];
 
   // Filter then group
   let filtered = selectedCat ? allFiches.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : allFiches;
-  if (noTeamFilter) filtered = filtered.filter((f: any) => !hasTeam(f));
+  if (selectedTeam === 'none') filtered = filtered.filter((f: any) => !hasTeam(f));
+  else if (selectedTeam) filtered = filtered.filter((f: any) => (f.teams ?? []).includes(selectedTeam));
+
+  // Current filtered-list URL — passed as ?back= on every fiche link so coming back preserves it
+  const currentListUrl = listHref({ cat: selectedCat, team: selectedTeam });
+
   const catGroups = new Map<string, typeof allFiches>();
   for (const f of filtered) {
     const cat = (f as any).category ?? 'Khác';
@@ -71,35 +94,53 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
           </p>
         </div>
         <form action={createFiche}>
+          <input type="hidden" name="back" value={currentListUrl} />
           <button type="submit" className="btn-primary flex items-center gap-2 shrink-0">
             <Plus size={15} /> Tạo mới · New
           </button>
         </form>
       </div>
 
-      {/* "No team assigned" filter — surfaces fiches that won't dispatch to any station */}
-      {noTeamCount > 0 && (
-        <div className="pb-2">
-          <Link href={noTeamFilter ? '/admin/fiches' : '/admin/fiches?filter=no-team'}
+      {/* Team filter chips — filter by a specific team, or isolate fiches with no team at all
+          (2026-08-26, Axel: "filtrer by team et récupérer si y a pas des produits sans équipes") */}
+      <div className="flex gap-2 flex-wrap pb-2">
+        <Link href={listHref({ cat: selectedCat })}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${
+            !selectedTeam ? 'bg-navy text-white border-navy' : 'bg-cream text-ink-light border-border-soft hover:border-navy/30'
+          }`}>
+          <Users size={12} /> Tất cả đội · All teams
+        </Link>
+        {TEAMS.map(t => {
+          const meta = TEAM_LABELS[t];
+          const active = selectedTeam === t;
+          return (
+            <Link key={t} href={listHref({ cat: selectedCat, team: t })}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors border"
+              style={active ? { backgroundColor: meta.color, borderColor: meta.color, color: '#fff' } : { backgroundColor: meta.bg, borderColor: meta.bg, color: meta.color }}>
+              {meta.en} ({teamCounts[t]})
+            </Link>
+          );
+        })}
+        {noTeamCount > 0 && (
+          <Link href={listHref({ cat: selectedCat, team: 'none' })}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${
-              noTeamFilter ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400'
+              selectedTeam === 'none' ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400'
             }`}>
-            <Users size={12} />
-            {noTeamFilter ? 'Đang lọc: chưa gán đội · Filtering: no team' : `${noTeamCount} chưa gán đội · without a team`}
+            <Users size={12} /> Chưa gán đội · No team ({noTeamCount})
           </Link>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Category filter chips */}
-      {allCats.length > 1 && !noTeamFilter && (
+      {allCats.length > 1 && (
         <div className="flex gap-2 flex-wrap pb-2">
-          <Link href="/admin/fiches"
+          <Link href={listHref({ team: selectedTeam })}
             className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!selectedCat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
             Tất cả · All ({allFiches.length})
           </Link>
           {allCats.map(cat => (
             <Link key={cat}
-              href={`/admin/fiches?cat=${encodeURIComponent(cat)}`}
+              href={listHref({ cat, team: selectedTeam })}
               className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${selectedCat === cat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
               {cat} ({allFiches.filter((f: any) => (f.category ?? 'Khác') === cat).length})
             </Link>
@@ -116,7 +157,7 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {items.map((fiche: any) => (
-              <FicheCard key={fiche.id} fiche={fiche} steps={countByFiche[fiche.id] ?? 0} />
+              <FicheCard key={fiche.id} fiche={fiche} steps={countByFiche[fiche.id] ?? 0} backUrl={currentListUrl} />
             ))}
           </div>
         </section>
@@ -124,21 +165,23 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
 
       {filtered.length === 0 && (
         <div className="card p-12 text-center text-ink-light">
-          {selectedCat ? `Aucune fiche dans "${selectedCat}".` : 'Chưa có fiche nào. · No recipe cards yet.'}
+          {selectedTeam === 'none' ? 'Toutes les fiches ont une équipe assignée.'
+            : selectedCat ? `Aucune fiche dans "${selectedCat}".` : 'Chưa có fiche nào. · No recipe cards yet.'}
         </div>
       )}
     </div>
   );
 }
 
-function FicheCard({ fiche, steps }: {
+function FicheCard({ fiche, steps, backUrl }: {
   fiche: { id: string; name_vi: string; name_en?: string | null; image_url?: string | null; b2c_sku_ref?: string | null; teams?: string[] | null };
   steps: number;
+  backUrl: string;
 }) {
   const teams = Array.isArray(fiche.teams) ? fiche.teams : [];
   return (
     <Link
-      href={`/admin/fiches/${fiche.id}`}
+      href={`/admin/fiches/${fiche.id}?back=${encodeURIComponent(backUrl)}`}
       className="card p-4 flex items-center gap-4 hover:bg-cream/60 transition-colors group"
     >
       {fiche.image_url ? (

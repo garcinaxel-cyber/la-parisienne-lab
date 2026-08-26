@@ -243,7 +243,7 @@ export default function FicheEditor({
     setDeleting(true);
     const supabase = createClient();
     await supabase.from('lab_fiche_meta').update({ is_active: false }).eq('id', ficheId);
-    router.push('/admin/fiches');
+    router.push(backUrl ?? '/admin/fiches');
   }
 
   // ── Save ──
