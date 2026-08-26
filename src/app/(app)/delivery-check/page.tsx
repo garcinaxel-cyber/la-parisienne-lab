@@ -39,37 +39,36 @@ export default async function DeliveryCheckPage() {
   const [today, tomorrow] = labTodayTomorrow();
   const dateWindow = labDateWindow(today, tomorrow);
 
-  const { data: imports, error: importsErr } = await supabase.from('lab_imports')
+  const { data: imports } = await supabase.from('lab_imports')
     .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published')
     .limit(5000);
   const importIds = (imports ?? []).map((i: any) => i.id);
-  // TEMP DEBUG 2026-08-26 (Axel: "je vois toujours pas les commandes") — remove once root-caused.
-  console.log('[delivery-check DEBUG]', JSON.stringify({ today, dateWindow, importsCount: imports?.length, importsErr: importsErr?.message }));
 
   // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
   // just zeroes its qty (odoo-apply.ts) and marks the production card cancelled — the row stays.
   // Without this filter a cancelled order kept showing up here as a phantom bon to check, all
   // lines ×0 (2026-08-11, REP/2026/01012).
-  // BUG FIX 2026-08-26: widening dateWindow to 9 days (today+tomorrow+7 late-grace days) made
-  // this .in('import_id', importIds) fan-out return 2700+ rows on a normal day — well past
-  // PostgREST/supabase-js's default 1000-row response cap, which silently truncates in
-  // whatever order Postgres happens to return rows (not date-sorted), so TODAY's orders could
-  // be partly or entirely cut from the result depending on where they landed. Axel: "j'ai bien
-  // seulement 4 commande de delivery check aujourd'hui" instead of the expected ~12-13. Explicit
-  // .limit() well above any realistic volume fixes it; filtering directly on delivery_date
-  // instead of via import_id also shrinks the actual row count fetched.
-  const { data: orderLines, error: orderLinesErr } = importIds.length
-    ? await supabase.from('lab_order_lines')
+  // BUG FIX 2026-08-26: widening dateWindow to 9 days (today+tomorrow+7 late-grace days) makes
+  // this match 2700+ rows on a normal day. Supabase's PostgREST enforces its own server-side
+  // "Max Rows" cap (1000 here) that silently overrides ANY client-side .limit() above it — a
+  // first attempt at fixing this with .limit(10000) had ZERO effect (confirmed via a debug log:
+  // orderLinesCount was still exactly 1000), and Postgres doesn't return rows in date order, so
+  // most of TODAY's orders landed outside the first 1000 and never reached the page. Axel: "j'ai
+  // bien seulement 4 commande de delivery check aujourd'hui" instead of ~12-13. Real fix: page
+  // through with .range() until a page comes back short, so the true total is always fetched
+  // regardless of the server-side per-request cap.
+  const PAGE = 1000;
+  let orderLines: { order_ref: string; delivery_date: string; shop_name: string; qty: number }[] = [];
+  if (importIds.length) {
+    for (let offset = 0; ; offset += PAGE) {
+      const { data: page } = await supabase.from('lab_order_lines')
         .select('order_ref, delivery_date, shop_name, qty')
         .in('import_id', importIds).in('delivery_date', dateWindow).gt('qty', 0)
-        .limit(10000)
-    : { data: [] as any[], error: null as any };
-  console.log('[delivery-check DEBUG]', JSON.stringify({
-    importIdsCount: importIds.length,
-    orderLinesCount: orderLines?.length,
-    orderLinesErr: orderLinesErr?.message,
-    orderLinesTodayRefs: Array.from(new Set((orderLines ?? []).filter((l: any) => l.delivery_date === today).map((l: any) => l.order_ref))),
-  }));
+        .range(offset, offset + PAGE - 1);
+      orderLines = orderLines.concat(page ?? []);
+      if (!page || page.length < PAGE) break;
+    }
+  }
 
   // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines
   // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
