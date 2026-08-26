@@ -173,16 +173,52 @@ const replById: Record<number, any> = {};
 for (const r of repls) replById[r.id] = r;
 
 // ── 5. Anti-duplicate + change detection: refs already imported into the lab app ──
-// MUST use the same grace window as the Odoo fetch above (SYNC_GRACE_DAYS) — otherwise a
-// past-dated order already imported under the old regime would fall outside this lookback,
-// get misread as "not already imported", and re-created as a duplicate.
+// BUG FIX 2026-08-26 (Axel: "pourquoi y a eu un doublon de fiche", S03361/S03363/S03365/S03388,
+// and — older, same root cause — S02807/S02984 from mid-July): "already imported" used to be
+// computed from THIS SAME date-scoped query, which only proves an order_ref exists WITHIN the
+// current grace window — not that it was never imported. When Odoo reassigns an order's own
+// delivery_date well after it was first imported (a real, expected event — see dateChanges
+// below), the order's ORIGINAL row keeps its ORIGINAL (now stale) delivery_date in lab forever.
+// Once enough days pass that this stale date falls outside whatever grace window happens to be
+// in effect (an amount that has also changed over time — 0 -> 3 -> 7 days — independent of this
+// bug), a later sync stops seeing that ref in `existingLines`, concludes it was "never imported",
+// and creates a second, fully duplicate row set under Odoo's now-current date. A window-based
+// cutoff can NEVER be made wide enough to rule this out in general (Odoo's date can move
+// arbitrarily far from the original), so anti-duplicate must be based on "has this order_ref
+// EVER been imported (recently enough to matter)", kept apart from `existingLines` below (which
+// stays on the tighter SYNC_GRACE_DAYS window on purpose, for change-detection only: a months-old
+// order that's obviously long since resolved doesn't need its qty/note/shop diffed against Odoo
+// on every tick, and re-scanning the whole table for that would be wasteful).
+// 90 days, not unbounded: comfortably covers any realistic gap between an order's original
+// import and Odoo later reassigning its date (the observed cases were days to a few weeks), while
+// keeping this query from scaling forever as lab_order_lines accumulates months/years of history —
+// an order genuinely older than 90 days being "rediscovered" as if new isn't a real scenario.
+// Paginated (not a plain .limit()): Supabase/PostgREST enforces its own server-side "Max Rows"
+// cap (1000 on this project) that silently overrides any client .limit() above it — learned the
+// hard way earlier today on delivery-check's own order-lines fetch (a .limit(10000) had zero
+// effect, truncated at exactly 1000).
+const antiDupFloor = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().split('T')[0];
+const alreadyImported = new Set<string>();
+for (let offset = 0; ; offset += 1000) {
+  const { data: refPage } = await supabase.from('lab_order_lines').select('order_ref')
+    .gte('delivery_date', antiDupFloor).range(offset, offset + 999);
+  for (const r of refPage ?? []) if (r.order_ref) alreadyImported.add(r.order_ref);
+  if (!refPage || refPage.length < 1000) break;
+}
+
+// Paginated for the same reason as alreadyImported above — this can exceed 1000 rows on a busy
+// week and a plain .limit() above the server's Max Rows cap silently truncates instead of erroring.
 const graceDateStr = new Date(Date.now() - SYNC_GRACE_DAYS * 24 * 3600 * 1000).toISOString().split('T')[0];
-const { data: existingLines } = await supabase
-  .from('lab_order_lines')
-  .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name, note')
-  .gte('delivery_date', graceDateStr)
-  .limit(5000);
-const alreadyImported = new Set((existingLines ?? []).map(r => r.order_ref).filter(Boolean));
+let existingLines: { id: string; order_ref: string; product_sku: string; product_name_vi: string; qty: number; import_id: string; team: string; variant_label: string; delivery_date: string; shop_name: string | null; note: string | null }[] = [];
+for (let offset = 0; ; offset += 1000) {
+  const { data: page } = await supabase
+    .from('lab_order_lines')
+    .select('id, order_ref, product_sku, product_name_vi, qty, import_id, team, variant_label, delivery_date, shop_name, note')
+    .gte('delivery_date', graceDateStr)
+    .range(offset, offset + 999);
+  existingLines = existingLines.concat(page ?? []);
+  if (!page || page.length < 1000) break;
+}
 
 // Current lab shop_name per already-imported ref (first row wins — same value on every row of
 // a ref in practice) — used below to detect a warehouse/customer reassignment made in Odoo.

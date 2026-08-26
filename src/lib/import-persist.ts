@@ -51,10 +51,19 @@ export async function persistImportsFromLines(
   const allRefs = Array.from(new Set(consolidated.flatMap(l => l.breakdown.map((b: any) => b.order_ref)).filter(Boolean)));
   let alreadyRefs = new Set<string>();
   if (allRefs.length) {
-    // Same grace window as odoo-sync.ts's SYNC_GRACE_DAYS (2026-08-26, "7 jour de retard max"):
-    // a past-dated order already imported must still be recognized as "already imported" here,
-    // scoped to `today` only would miss it and risk a duplicate re-import on an overlapping sync race.
-    const antiDupSince = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    // BUG FIX 2026-08-26 (Axel: "pourquoi y a eu un doublon de fiche" — S03361/S03363/S03365/
+    // S03388, and older, same cause, S02807/S02984): this used to be scoped to a 7-day lookback
+    // matching odoo-sync.ts's SYNC_GRACE_DAYS, on the theory that "already imported" only needs
+    // to look back as far as the sync itself does. Wrong: this checks the EXISTING row's OWN
+    // (possibly long-stale) delivery_date, not how recently the sync ran. When Odoo reassigns an
+    // order's date well after it was first imported, the original row keeps its ORIGINAL date
+    // forever — once that's more than the lookback in the past, this stops recognizing the ref as
+    // already-imported and lets a full duplicate back in. Widened to 90 days (see odoo-sync.ts's
+    // matching fix for the full explanation) — bounded, not unbounded, so this doesn't scale
+    // forever as the table grows, but wide enough that no realistic date-reassignment gap trips
+    // it again. Still scoped to `allRefs` (this batch's own refs only), so row count stays small
+    // regardless — no pagination needed here unlike the two odoo-sync.ts queries this mirrors.
+    const antiDupSince = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().split('T')[0];
     const { data: exRows } = await supabase
       .from('lab_order_lines').select('order_ref').in('order_ref', allRefs).gte('delivery_date', antiDupSince);
     alreadyRefs = new Set((exRows ?? []).map((r: any) => r.order_ref));
