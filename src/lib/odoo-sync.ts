@@ -55,7 +55,7 @@ export interface OdooSyncResult {
 // anti-duplicate lookback further down used to be pinned to "today". This grace window pulls in
 // anything up to N days in the past too; kept small since anything older is presumably long since
 // resolved by hand and a wider window only adds noise/read volume for no benefit.
-const SYNC_GRACE_DAYS = 3;
+const SYNC_GRACE_DAYS = 7; // Axel, 2026-08-26: "met que 7 jour de retard max" — must match LATE_GRACE_DAYS in delivery-check/page.tsx and the literal grace window in import-persist.ts
 
 export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncResult> {
   const threshold = labTodayUtcThreshold(SYNC_GRACE_DAYS);

@@ -19,7 +19,7 @@ function labTodayTomorrow(): [string, string] {
 // without this the order could be synced-in but still invisible on this page, which only ever
 // looked at [today, tomorrow]). "Late" orders live in their own tab in the view, not merged into
 // today's list, since mixing dates in one list would be confusing.
-const LATE_GRACE_DAYS = 3;
+const LATE_GRACE_DAYS = 7; // Axel, 2026-08-26: "met que 7 jour de retard max" — must match SYNC_GRACE_DAYS in odoo-sync.ts, else a 6-day-late order would be widened-in here but never actually synced from Odoo in the first place
 function labDateWindow(today: string, tomorrow: string): string[] {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
   const dates = [tomorrow, today];

@@ -187,64 +187,82 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           <ClipboardCheck size={44} className="mx-auto mb-3 text-green-600" />
           <p className="font-semibold text-navy">{vi ? 'Không có đơn nào' : 'Aucune commande'}</p>
         </div>
+      ) : day === 'late' ? (
+        // Grouped by date (2026-08-26, Axel: "je veux que ça affiche par jour") — several
+        // different delivery dates can be mixed in this tab, a flat list made that confusing.
+        <div className="space-y-4">
+          {Array.from(
+            dayOrders.reduce((m, o) => {
+              (m.get(o.delivery_date) ?? m.set(o.delivery_date, []).get(o.delivery_date)!).push(o);
+              return m;
+            }, new Map<string, OrderRow[]>()),
+          )
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([date, group]) => (
+              <div key={date}>
+                <div className="text-xs font-bold uppercase tracking-wider px-1 mb-1.5" style={{ color: '#B45309' }}>
+                  {new Date(date + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </div>
+                <div className="space-y-2">
+                  {group.map(o => renderOrderRow(o))}
+                </div>
+              </div>
+            ))}
+        </div>
       ) : (
         <div className="space-y-2">
-          {dayOrders.map(o => {
-            const validated = o.status === 'validated';
-            const full = o.total > 0 && o.checked === o.total;
-            // Odoo delivery validation (Axel, 2026-08-17) — the strongest signal, takes priority
-            // over the checklist-only "validé": that one just means every line was checked in the
-            // app, this one means it's actually been written back to Odoo. Distinct gold tint so
-            // it's never confused with plain checklist-validated at a glance.
-            const odooDone = o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done';
-            const dotColor = odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
-            // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
-            // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
-            const bg = odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
-            const border = odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
-            return (
-              // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
-              // captures them as separate segments, so no encoding here.
-              <Link key={o.order_ref} href={`/delivery-check/${o.delivery_date}/${o.order_ref}`}
-                className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors"
-                style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-navy flex items-center gap-1.5">
-                    {o.order_ref}
-                    {o.printed_at && (
-                      <span title={vi ? 'Đã in' : 'Déjà imprimé'}>
-                        <Printer size={12} style={{ color: '#2563EB' }} />
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-ink-light truncate flex items-center gap-1.5">
-                    {o.shop_name}
-                    {/* Several different dates mixed in this tab — show which one per row */}
-                    {day === 'late' && (
-                      <span className="font-mono font-semibold shrink-0" style={{ color: '#B45309' }}>· {o.delivery_date}</span>
-                    )}
-                  </div>
-                </div>
-                {odooDone ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#92400E' }}>
-                    <CheckCheck size={15} /> {vi ? '100%' : '100%'}
-                  </span>
-                ) : validated ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#059669' }}>
-                    <CheckCircle2 size={15} /> {vi ? 'đã xác nhận' : 'validé'}
-                  </span>
-                ) : (
-                  <span className="text-xs font-semibold shrink-0" style={{ color: full ? '#166534' : '#6B7280' }}>
-                    {o.checked}/{o.total || '?'}
-                  </span>
-                )}
-                <ChevronRight size={18} className="text-ink-light shrink-0" />
-              </Link>
-            );
-          })}
+          {dayOrders.map(o => renderOrderRow(o))}
         </div>
       )}
     </div>
   );
+
+  function renderOrderRow(o: OrderRow) {
+    const validated = o.status === 'validated';
+    const full = o.total > 0 && o.checked === o.total;
+    // Odoo delivery validation (Axel, 2026-08-17) — the strongest signal, takes priority
+    // over the checklist-only "validé": that one just means every line was checked in the
+    // app, this one means it's actually been written back to Odoo. Distinct gold tint so
+    // it's never confused with plain checklist-validated at a glance.
+    const odooDone = o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done';
+    const dotColor = odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
+    // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
+    // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
+    const bg = odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+    const border = odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
+    return (
+      // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
+      // captures them as separate segments, so no encoding here.
+      <Link key={o.order_ref} href={`/delivery-check/${o.delivery_date}/${o.order_ref}`}
+        className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors"
+        style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-navy flex items-center gap-1.5">
+            {o.order_ref}
+            {o.printed_at && (
+              <span title={vi ? 'Đã in' : 'Déjà imprimé'}>
+                <Printer size={12} style={{ color: '#2563EB' }} />
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
+        </div>
+        {odooDone ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#92400E' }}>
+            <CheckCheck size={15} /> {vi ? '100%' : '100%'}
+          </span>
+        ) : validated ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#059669' }}>
+            <CheckCircle2 size={15} /> {vi ? 'đã xác nhận' : 'validé'}
+          </span>
+        ) : (
+          <span className="text-xs font-semibold shrink-0" style={{ color: full ? '#166534' : '#6B7280' }}>
+            {o.checked}/{o.total || '?'}
+          </span>
+        )}
+        <ChevronRight size={18} className="text-ink-light shrink-0" />
+      </Link>
+    );
+  }
 }
