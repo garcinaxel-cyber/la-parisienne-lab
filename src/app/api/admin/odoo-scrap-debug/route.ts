@@ -29,10 +29,31 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'fields') {
+      // Read-only introspection for Axel's request (2026-08-27): "prefill the reception quantity
+      // on the REP order when the shop finishes its receipt check" — need to know whether
+      // stock.replenishment.request(.line) has its OWN received-qty field (separate from the
+      // stock.move/picking flow odoo-delivery-validate.ts already writes), before designing
+      // anything.
+      const model = url.searchParams.get('model') ?? 'stock.replenishment.request.line';
+      const fields = await odooExecuteWrite<Record<string, any>>(model, 'fields_get', [], { attributes: ['string', 'type', 'help'] });
+      return NextResponse.json({ model, fields });
+    }
+    if (action === 'reporder') {
+      // Read-only: full field dump for one real REP order's lines, to see actual values in any
+      // received-qty-looking field once found via `fields`.
+      const ref = url.searchParams.get('ref') ?? '';
+      if (!ref) return NextResponse.json({ error: 'Missing ?ref=' }, { status: 400 });
+      const reqs = await odooExecuteWrite<any[]>('stock.replenishment.request', 'search_read', [[['name', '=', ref]]], { fields: ['id', 'name', 'state'] });
+      const req = reqs[0];
+      if (!req) return NextResponse.json({ error: 'not found' });
+      const lines = await odooExecuteWrite<any[]>('stock.replenishment.request.line', 'search_read', [[['request_id', '=', req.id]]], { fields: [] });
+      return NextResponse.json({ req, lines });
+    }
     if (action === 'productname') {
       // Read-only check for Axel's report (2026-08-27): "Bánh La Plume D14" shows on the app
       // without its flavor even though the product has variants in Odoo. Hypothesis: our sync
