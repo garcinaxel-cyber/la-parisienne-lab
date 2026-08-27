@@ -29,9 +29,24 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  if (!id) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
+  const idlessActions = new Set(['productname']);
+  if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'productname') {
+      // Read-only check for Axel's report (2026-08-27): "Bánh La Plume D14" shows on the app
+      // without its flavor even though the product has variants in Odoo. Hypothesis: our sync
+      // reads product.product's plain `name` field, which is related to the TEMPLATE name and
+      // does NOT include the variant's attribute values (e.g. flavor) — only `display_name`
+      // (Odoo's name_get, which appends "(Attribute: Value)") carries that. Confirming before
+      // touching odoo-sync.ts's skuByProductId build.
+      const q = url.searchParams.get('q') ?? '';
+      if (!q) return NextResponse.json({ error: 'Missing ?q= (name search or exact sku)' }, { status: 400 });
+      const rows = await odooExecuteWrite<any[]>('product.product', 'search_read', [
+        ['|', ['name', 'ilike', q], ['default_code', '=', q]],
+      ], { fields: ['default_code', 'name', 'display_name', 'product_template_attribute_value_ids'], limit: 20 });
+      return NextResponse.json({ rows });
+    }
     if (action === 'stock') {
       const sku = url.searchParams.get('sku') ?? '';
       const shop = url.searchParams.get('shop') ?? '';
