@@ -141,10 +141,19 @@ const productIds = Array.from(new Set([
   ...replLines.map(l => l.product_id?.[0]),
 ].filter(Boolean))) as number[];
 const products: any[] = productIds.length
-  ? await odooExecute('product.product', 'read', [productIds], { fields: ['default_code', 'name'] })
+  ? await odooExecute('product.product', 'read', [productIds], { fields: ['default_code', 'name', 'display_name'] })
   : [];
 const skuByProductId: Record<number, { sku: string; name: string }> = {};
-for (const p of products) skuByProductId[p.id] = { sku: p.default_code || '', name: p.name || '' };
+for (const p of products) {
+  // Axel, 2026-08-27: "Bánh La Plume D14" showed with no flavor even though the product has
+  // Odoo variants — confirmed live that product.product's plain `name` field is the shared
+  // TEMPLATE name (identical across every flavor of the same cake/size), while `display_name`
+  // (Odoo's name_get) is the only field that appends the variant's own attribute value, e.g.
+  // "[BLPD14C] Bánh La Plume D14 (Chocolate)". Stripping the leading "[SKU] " the same way
+  // l.name is already stripped elsewhere in this file.
+  const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+  skuByProductId[p.id] = { sku: p.default_code || '', name: variantName || p.name || '' };
+}
 
 // Permanently excluded SKUs (packaging, drinks, stickers…) — never imported
 const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');

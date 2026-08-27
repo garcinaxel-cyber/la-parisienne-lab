@@ -145,9 +145,15 @@ async function mapExcludedLines(
   const productIds = Array.from(new Set(lines.map(l => l.product_id?.[0]).filter(Boolean)));
   if (!productIds.length) return [];
   const products = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['id', 'in', productIds]]], { fields: ['id', 'name', 'default_code'] }), 15000, 'products');
+    [[['id', 'in', productIds]]], { fields: ['id', 'name', 'default_code', 'display_name'] }), 15000, 'products');
   const bySku: Record<number, { sku: string; name: string }> = {};
-  for (const p of products) bySku[p.id] = { sku: p.default_code || '', name: p.name || '' };
+  // Same fix as odoo-sync.ts (2026-08-27): plain `name` is the shared template name (no flavor
+  // for variant products) — `display_name` is the only field carrying the variant's own
+  // attribute value, e.g. "[SKU] Bánh La Plume D14 (Chocolate)".
+  for (const p of products) {
+    const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+    bySku[p.id] = { sku: p.default_code || '', name: variantName || p.name || '' };
+  }
   const orderByRef: Record<string, { delivery_date: string; shop_name: string | null }> = {};
   for (const o of orders) orderByRef[o.order_ref] = { delivery_date: o.delivery_date, shop_name: o.shop_name };
 
