@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecuteWrite } from '@/lib/odoo';
+import { resolveShopWarehouseLocation, resolveProductsBySku } from '@/lib/odoo-scrap';
 
 // Staff-only diagnostic/fix tool for stock.scrap records created via the shop portal.
 // Axel, 2026-08-27: reported a scrap he created through the shop loss-report flow shows as
@@ -31,6 +32,22 @@ export async function GET(req: Request) {
   if (!id) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'stock') {
+      const sku = url.searchParams.get('sku') ?? '';
+      const shop = url.searchParams.get('shop') ?? '';
+      if (!sku || !shop) return NextResponse.json({ error: 'Missing ?sku= or ?shop=' }, { status: 400 });
+      const loc = await resolveShopWarehouseLocation(shop);
+      const products = await resolveProductsBySku([sku]);
+      const product = products[sku];
+      if (!loc || !product) return NextResponse.json({ error: 'shop or sku not resolved', loc, product });
+      // qty_available scoped to the shop's OWN location — this is what action_validate's
+      // insufficient-quantity check actually reads (company-wide qty_available would look fine
+      // even when the shop's own location has 0).
+      const rows = await odooExecuteWrite<any[]>('product.product', 'read', [[product.id]], {
+        fields: ['qty_available', 'virtual_available'], context: { location: loc.locationId },
+      });
+      return NextResponse.json({ shopLocation: loc, product, qtyAtShopLocation: rows[0] });
+    }
     if (action === 'recent') {
       const rows = await odooExecuteWrite<any[]>('stock.scrap', 'search_read', [[]], {
         fields: ['state', 'product_id', 'scrap_qty', 'location_id', 'origin', 'create_date'],
