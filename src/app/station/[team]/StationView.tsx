@@ -70,6 +70,7 @@ type Assignment = {
   transferred?: boolean;
   qty_sent_total?: number;
   bc_message?: string | null;
+  bc_notes?: string | null; // generic free-text note (entremets etc. — see page.tsx, 2026-08-27)
   bc_ready_time?: string | null;
   bc_design_notes?: string | null;
   bc_design_photo_url?: string | null;
@@ -139,7 +140,7 @@ type OrderDetail = {
   isManual?: boolean; // exceptional/manual cake not yet linked to an Odoo order
   items: {
     product_name_vi: string; variant_label: string; qty: number;
-    message?: string | null; designNotes?: string | null; designPhotoUrl?: string | null;
+    message?: string | null; notes?: string | null; designNotes?: string | null; designPhotoUrl?: string | null;
   }[];
 };
 
@@ -534,7 +535,7 @@ export default function StationView({
       // lab_order_lines. Matched by team+date so both Odoo-linked AND still-unlinked
       // exceptional orders show their design here (not just once they hit an Odoo doc).
       supabase.from('lab_manual_cakes')
-        .select('id, product_sku, product_name_vi, qty, shop_name, message, design_notes, design_photo_url, matched_order_ref, cancelled_at')
+        .select('id, product_sku, product_name_vi, qty, shop_name, message, notes, design_notes, design_photo_url, matched_order_ref, cancelled_at')
         .eq('team', team).eq('delivery_date', delivery_date),
     ]);
     const lineIds = (lines ?? []).map((l: any) => l.id);
@@ -561,6 +562,7 @@ export default function StationView({
         variant_label: line.variant_label,
         qty: line.qty,
         message: messageByLineId[line.id] ?? mc?.message ?? null,
+        notes: mc?.notes ?? null,
         designNotes: mc?.design_notes ?? null,
         designPhotoUrl: mc?.design_photo_url ?? null,
       });
@@ -577,7 +579,7 @@ export default function StationView({
         isManual: true,
         items: [{
           product_name_vi: m.product_name_vi, variant_label: 'Standard', qty: m.qty,
-          message: m.message ?? null, designNotes: m.design_notes ?? null, designPhotoUrl: m.design_photo_url ?? null,
+          message: m.message ?? null, notes: m.notes ?? null, designNotes: m.design_notes ?? null, designPhotoUrl: m.design_photo_url ?? null,
         }],
       });
     }
@@ -1210,9 +1212,14 @@ export default function StationView({
                 </button>
                 {showRecap && (
                   <div className="grid grid-cols-2 bg-white">
+                    {/* Category subtotal (Axel, 2026-08-27) — this header used to show only the
+                        category name with no rolled-up quantity for it. */}
                     {cats.flatMap(cat => [
-                      <div key={`c-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
-                        style={{ backgroundColor: '#FBF6E3', color: '#92600A', borderTop: '1px solid #F0EAD0' }}>{cat}</div>,
+                      <div key={`c-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider flex items-center justify-between"
+                        style={{ backgroundColor: '#FBF6E3', color: '#92600A', borderTop: '1px solid #F0EAD0' }}>
+                        <span>{cat}</span>
+                        <span>×{items.filter(r => r.cat === cat).reduce((s, r) => s + r.qty, 0)}</span>
+                      </div>,
                       ...items.filter(r => r.cat === cat).map((r, i) => (
                         <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                           style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
@@ -1399,9 +1406,13 @@ export default function StationView({
                     </button>
                     {showOrderRecap && (
                       <div className="grid grid-cols-2 bg-white">
+                        {/* Category subtotal (Axel, 2026-08-27) — same fix as the Production tab. */}
                         {orderCats.flatMap(cat => [
-                          <div key={`oc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
-                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>{cat}</div>,
+                          <div key={`oc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider flex items-center justify-between"
+                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>
+                            <span>{cat}</span>
+                            <span>×{orderItems.filter(r => r.cat === cat).reduce((s, r) => s + r.qty, 0)}</span>
+                          </div>,
                           ...orderItems.filter(r => r.cat === cat).map((r, i) => (
                             <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                               style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
@@ -1511,14 +1522,25 @@ export default function StationView({
                       {/* Manual/exceptional cake — breakdown is always [] for these (see page.tsx),
                           so without this fallback the shop/order info is invisible on this tab too
                           (2026-08-25, Axel: reported after the Production-tab fix alone). */}
-                      {breakdown.length === 0 && a.bc_shop_name && (
+                      {breakdown.length === 0 && (a.bc_shop_name || a.bc_message || a.bc_notes) && (
                         <div className="pb-3">
-                          <div className="px-5 py-1.5 text-sm">
-                            <div className="flex items-center gap-2 text-ink-light">
-                              <Store size={11} className="shrink-0" />
-                              <span>{a.bc_shop_name}</span>
-                              {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
-                            </div>
+                          <div className="px-5 py-1.5 text-sm space-y-1">
+                            {a.bc_shop_name && (
+                              <div className="flex items-center gap-2 text-ink-light">
+                                <Store size={11} className="shrink-0" />
+                                <span>{a.bc_shop_name}</span>
+                                {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
+                              </div>
+                            )}
+                            {/* Message ("chữ trên bánh") + generic note — same fields the
+                                Production tab shows, added here 2026-08-27 (staff reported these
+                                never appeared on this tab at all, for any category). */}
+                            {a.bc_message && (
+                              <div className="font-semibold" style={{ color: '#92600A' }}>🎂 {a.bc_message}</div>
+                            )}
+                            {a.bc_notes && (
+                              <div className="font-semibold" style={{ color: '#92600A' }}>📝 {a.bc_notes}</div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1582,9 +1604,13 @@ export default function StationView({
                     </button>
                     {showDoneRecap && (
                       <div className="grid grid-cols-2 bg-white">
+                        {/* Category subtotal (Axel, 2026-08-27) — same fix as the other two tabs. */}
                         {doneCats.flatMap(cat => [
-                          <div key={`dc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider"
-                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>{cat}</div>,
+                          <div key={`dc-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider flex items-center justify-between"
+                            style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E0D49A' }}>
+                            <span>{cat}</span>
+                            <span>×{doneItems.filter(r => r.cat === cat).reduce((s, r) => s + r.qty, 0)}</span>
+                          </div>,
                           ...doneItems.filter(r => r.cat === cat).map((r, i) => (
                             <div key={r.sku ?? r.name} className="flex items-center gap-2 px-3 py-1.5 text-[13px]"
                               style={{ borderTop: '1px solid #F0EAD0', borderRight: i % 2 === 0 ? '1px solid #F0EAD0' : undefined }}>
@@ -1744,6 +1770,9 @@ export default function StationView({
                               </div>
                               {item.message && (
                                 <div className="text-[11px] mt-0.5" style={{ color: '#92600A' }}>🎂 {item.message}</div>
+                              )}
+                              {item.notes && (
+                                <div className="text-[11px] mt-0.5" style={{ color: '#92600A' }}>📝 {item.notes}</div>
                               )}
                               {(item.designNotes || item.designPhotoUrl) && (
                                 <div className="text-[11px] font-medium rounded-lg px-2 py-1 mt-1 flex items-start gap-1.5"
@@ -2685,7 +2714,7 @@ function ProductionCard({
           )}
 
           {/* Birthday cake: ready-by deadline (red) + message on the cake */}
-          {(a.bc_ready_time || a.bc_message || a.bc_shop_name || a.category_name_vi === 'Birthday cake') && (
+          {(a.bc_ready_time || a.bc_message || a.bc_notes || a.bc_shop_name || a.category_name_vi === 'Birthday cake') && (
             <div className="mt-1.5 flex flex-col gap-1 items-start">
               {/* Manual/exceptional cake: shop (always) + linked Odoo order once matched — this
                   card's own `breakdown` is always [] (see page.tsx), so without this the chef
@@ -2726,6 +2755,14 @@ function ProductionCard({
                   )}
                   {a.bc_design_notes && <span>🎨 {a.bc_design_notes}</span>}
                 </div>
+              )}
+              {/* Generic assistant note — every category (not just cakes), 2026-08-27 fix: this
+                  used to be captured on manual/exceptional orders but never surfaced anywhere. */}
+              {a.bc_notes && (
+                <span className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-start gap-1.5"
+                  style={{ backgroundColor: '#FFFBEB', color: '#92600A' }}>
+                  📝 <span>{a.bc_notes}</span>
+                </span>
               )}
             </div>
           )}
@@ -2981,12 +3018,18 @@ function TermineCard({
         )}
       </div>
       {/* Manual/exceptional cake — breakdown is always [] for these (see page.tsx). */}
-      {!isSkip && breakdown.length === 0 && a.bc_shop_name && (
-        <div className="border-t px-4 py-1.5 text-xs text-ink-light" style={{ borderColor: '#F5EFC8' }}>
-          <span className="flex items-center gap-1.5">
-            {a.bc_shop_name}
-            {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
-          </span>
+      {!isSkip && breakdown.length === 0 && (a.bc_shop_name || a.bc_message || a.bc_notes) && (
+        <div className="border-t px-4 py-1.5 text-xs space-y-0.5" style={{ borderColor: '#F5EFC8' }}>
+          {a.bc_shop_name && (
+            <span className="flex items-center gap-1.5 text-ink-light">
+              {a.bc_shop_name}
+              {a.bc_order_ref && <span className="text-[10px] font-mono">{a.bc_order_ref}</span>}
+            </span>
+          )}
+          {/* Same message/notes fields shown on Production + Commande, added here 2026-08-27
+              (staff reported these never appeared on Terminé either). */}
+          {a.bc_message && <div className="font-semibold" style={{ color: '#92600A' }}>🎂 {a.bc_message}</div>}
+          {a.bc_notes && <div className="font-semibold" style={{ color: '#92600A' }}>📝 {a.bc_notes}</div>}
         </div>
       )}
       {/* Breakdown for done items */}

@@ -428,6 +428,70 @@ export async function recordShopLossAction(input: {
   return { ok: true, odooSynced: !!odooScrapId, odooError: odooSyncError ?? undefined };
 }
 
+// ── Staff roster (per-shop list of names, so staff pick instead of typing) ──────────────
+// Axel, 2026-08-27: "un petit bouton pour configurer les noms des staff pour qu'ils
+// selectionnent direct leur nom : possibilité d'éditer". One shared list per shop, used
+// wherever a name is currently typed freehand (delivery confirm + loss reports) — same
+// dual shop-or-staff-session pattern as everything else in this file.
+export type ShopStaffName = { id: string; name: string };
+
+async function fetchStaffNames(shopName: string): Promise<ShopStaffName[]> {
+  const supabase = service();
+  if (!supabase) return [];
+  const { data } = await supabase.from('lab_shop_staff_names').select('id, name').eq('shop_name', shopName).order('name');
+  return (data ?? []).map(r => ({ id: r.id, name: r.name }));
+}
+
+export async function getShopStaffNamesAction(shopName?: string): Promise<{ names?: ShopStaffName[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  return { names: await fetchStaffNames(auth.shopName) };
+}
+
+export async function addShopStaffNameAction(name: string, shopName?: string): Promise<{ staffName?: ShopStaffName; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const clean = name.trim().slice(0, 80);
+  if (!clean) return { error: 'Name required' };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_shop_staff_names')
+    .insert({ shop_name: auth.shopName, name: clean })
+    .select('id, name').single();
+  if (error) {
+    if (/duplicate|unique/i.test(error.message)) return { error: 'Tên này đã có trong danh sách' };
+    return { error: error.message };
+  }
+  return { staffName: { id: data.id, name: data.name } };
+}
+
+export async function renameShopStaffNameAction(id: string, newName: string, shopName?: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const clean = newName.trim().slice(0, 80);
+  if (!clean) return { error: 'Name required' };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  // Defense in depth: only ever touch a row that actually belongs to this shop.
+  const { data: row } = await supabase.from('lab_shop_staff_names').select('id').eq('id', id).eq('shop_name', auth.shopName).maybeSingle();
+  if (!row) return { error: 'Not found' };
+  const { error } = await supabase.from('lab_shop_staff_names').update({ name: clean }).eq('id', id);
+  if (error) return { error: /duplicate|unique/i.test(error.message) ? 'Tên này đã có trong danh sách' : error.message };
+  return { ok: true };
+}
+
+export async function removeShopStaffNameAction(id: string, shopName?: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: row } = await supabase.from('lab_shop_staff_names').select('id').eq('id', id).eq('shop_name', auth.shopName).maybeSingle();
+  if (!row) return { error: 'Not found' };
+  const { error } = await supabase.from('lab_shop_staff_names').delete().eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
 // Used by the UI to decide whether to even show a warning about Odoo sync before the shop's
 // warehouse has been checked — cheap, cached lookup, read-only.
 export async function checkShopHasOdooWarehouseAction(): Promise<{ hasWarehouse?: boolean; error?: string }> {

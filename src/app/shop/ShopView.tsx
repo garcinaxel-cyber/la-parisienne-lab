@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
@@ -18,6 +18,32 @@ const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 function fmtDate(d: string) {
   const [y, m, day] = d.split('-');
   return `${day}/${m}`;
+}
+
+// Staff roster picker (Axel, 2026-08-27) — a <select> over the shop's managed name list plus a
+// small gear button opening the manage modal, used in both the delivery-confirm name field and
+// the loss-report name field so there's exactly one roster shared everywhere a name is needed.
+// Falls back to showing the current value as its own option if it isn't in the list yet (e.g. a
+// name remembered from localStorage from before this picker existed) so nothing gets silently
+// blanked out for someone who already had a name saved.
+function NamePicker({ value, onChange, names, onManage }: {
+  value: string; onChange: (v: string) => void; names: ShopStaffName[] | null; onManage: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+      <select value={value} onChange={e => onChange(e.target.value)}
+        className="flex-1 min-w-0 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }}>
+        <option value="">Chọn tên…</option>
+        {(names ?? []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+        {value.trim() && !(names ?? []).some(s => s.name === value) && <option value={value}>{value}</option>}
+      </select>
+      <button type="button" onClick={onManage}
+        className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+        aria-label="Quản lý danh sách tên" title="Quản lý danh sách tên">
+        <Settings size={14} style={{ color: '#6B7280' }} />
+      </button>
+    </div>
+  );
 }
 
 // Shared UI for both the shop's own portal (/shop) and staff testing AS a shop from the admin
@@ -79,12 +105,64 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
 
   const [lossName, setLossName] = useState('');
 
+  // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
+  // name instead of typing it everywhere. Shared between the delivery-confirm name and the
+  // loss-report name — one roster, two places it's used. Loaded once at startup; the manage
+  // modal (add/rename/delete) is reachable from a small gear button next to either picker.
+  const [staffNames, setStaffNames] = useState<ShopStaffName[] | null>(null);
+  const [showStaffModal, setShowStaffModal] = useState(false);
+  const [newStaffInput, setNewStaffInput] = useState('');
+  const [staffBusy, setStaffBusy] = useState<string | null>(null);
+  const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
+  const [editStaffDraft, setEditStaffDraft] = useState('');
+
+  async function loadStaffNames() {
+    const { getShopStaffNamesAction } = await import('./actions');
+    const res = await getShopStaffNamesAction(readOnly ? shopName : undefined);
+    if (res.names) setStaffNames(res.names);
+  }
+
+  async function addStaffName() {
+    const clean = newStaffInput.trim();
+    if (!clean) return;
+    setStaffBusy('add');
+    const { addShopStaffNameAction } = await import('./actions');
+    const res = await addShopStaffNameAction(clean, readOnly ? shopName : undefined);
+    setStaffBusy(null);
+    if (res.staffName) {
+      setStaffNames(prev => [...(prev ?? []), res.staffName!].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewStaffInput('');
+    }
+  }
+
+  async function saveStaffRename(id: string) {
+    const clean = editStaffDraft.trim();
+    if (!clean) return;
+    setStaffBusy(id);
+    const { renameShopStaffNameAction } = await import('./actions');
+    const res = await renameShopStaffNameAction(id, clean, readOnly ? shopName : undefined);
+    setStaffBusy(null);
+    if (res.ok) {
+      setStaffNames(prev => (prev ?? []).map(s => s.id === id ? { ...s, name: clean } : s).sort((a, b) => a.name.localeCompare(b.name)));
+      setEditingStaffId(null);
+    }
+  }
+
+  async function deleteStaffName(id: string) {
+    setStaffBusy(id);
+    const { removeShopStaffNameAction } = await import('./actions');
+    const res = await removeShopStaffNameAction(id, readOnly ? shopName : undefined);
+    setStaffBusy(null);
+    if (res.ok) setStaffNames(prev => (prev ?? []).filter(s => s.id !== id));
+  }
+
   useEffect(() => {
     if (!readOnly) {
       try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {}
       try { setLossName(localStorage.getItem(LOSS_NAME_STORAGE_KEY) ?? ''); } catch {}
     }
     load();
+    loadStaffNames();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -317,8 +395,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               {day === 'today' && (
                 <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: '1px solid #E5E7EB' }}>
                   <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
-                  <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Tên của bạn"
-                    className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                  <NamePicker value={name} onChange={setName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
               )}
               {filteredOrders.map(o => (
@@ -351,51 +428,61 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             )}
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-navy truncate">{l.product_name_vi}</div>
-                              <div className="text-xs" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {/* What the assistant already checked in the lab — the shop's real
-                                reference point, not the original order qty. */}
+                          {/* 3 explicit columns (Axel, 2026-08-27): what the client originally
+                              ordered, what the assistant physically checked in the lab (the
+                              shop's real reference point for a diff, not the original order qty),
+                              and what the shop itself received/confirms — kept as 3 separate
+                              labeled stats instead of qty_expected being a buried subtext, so
+                              none of the 3 numbers get mistaken for another. */}
+                          <div className="flex items-center gap-2.5 shrink-0">
+                            <div className="text-center">
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Đặt</div>
+                              <div className="text-sm font-bold" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
+                            </div>
                             <div className="text-center">
                               <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Bếp</div>
                               <div className="text-sm font-bold" style={{ color: l.qty_checked != null ? '#1f2937' : '#D1D5DB' }}>
                                 {l.qty_checked != null ? `×${l.qty_checked}` : '—'}
                               </div>
                             </div>
-                            {!canConfirm ? (
-                              l.receipt ? (
-                                <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
-                                  {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
-                                </span>
+                            <div className="text-center">
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Nhận</div>
+                              {!canConfirm ? (
+                                l.receipt ? (
+                                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                    {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
+                                )
+                              ) : isEditing ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input type="number" value={d.qty} onChange={e => updDraft(l, { qty: e.target.value })}
+                                    className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
+                                    style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
+                                  {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
+                                  <button onClick={() => requestConfirmLine(o, l)} disabled={saving === l.id || !name.trim()}
+                                    className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
+                                    style={{ backgroundColor: '#16A34A' }}>
+                                    {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'OK'}
+                                  </button>
+                                </div>
                               ) : (
-                                <span className="text-xs" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
-                              )
-                            ) : isEditing ? (
-                              <div className="flex items-center gap-1.5">
-                                <input type="number" value={d.qty} onChange={e => updDraft(l, { qty: e.target.value })}
-                                  className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
-                                  style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
-                                {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
-                                <button onClick={() => requestConfirmLine(o, l)} disabled={saving === l.id || !name.trim()}
-                                  className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
-                                  style={{ backgroundColor: '#16A34A' }}>
-                                  {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'OK'}
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5">
-                                <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: l.receipt!.status === 'ok' ? '#059669' : '#DC2626' }}>
-                                  <CheckCircle2 size={16} /> ×{l.receipt!.qty_received ?? '?'}
-                                  {savedDiff !== 0 && <span style={{ color: '#DC2626' }}> ({savedDiff > 0 ? '+' : ''}{savedDiff})</span>}
-                                </span>
-                                <button onClick={() => startEdit(l)}
-                                  className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
-                                  title="Sửa" aria-label="Sửa">
-                                  <Pencil size={12} />
-                                </button>
-                              </div>
-                            )}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: l.receipt!.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                    <CheckCircle2 size={16} /> ×{l.receipt!.qty_received ?? '?'}
+                                    {savedDiff !== 0 && <span style={{ color: '#DC2626' }}> ({savedDiff > 0 ? '+' : ''}{savedDiff})</span>}
+                                  </span>
+                                  <button onClick={() => startEdit(l)}
+                                    className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                                    title="Sửa" aria-label="Sửa">
+                                    <Pencil size={12} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                         {isEditing && canConfirm && isDiff && (
@@ -425,8 +512,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo hao hụt</div>
                 <div>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
-                  <input type="text" value={lossName} onChange={e => setLossName(e.target.value)} placeholder="Tên của bạn"
-                    className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                  <NamePicker value={lossName} onChange={setLossName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
                 <div className="relative">
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Sản phẩm</div>
@@ -510,13 +596,27 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   </div>
                 )}
 
-                <button onClick={() => setPendingLoss(true)}
-                  disabled={lossSubmitting || !lossName.trim() || lossItems.length === 0}
+                {/* Bug found 2026-08-27 (Axel: "je voulais faire un test de perte produit mais pas
+                    possible") — this button stayed disabled whenever lossItems was still empty,
+                    which is exactly the state right after filling product/qty/reason but before
+                    tapping "+ Thêm vào danh sách": nothing on screen explained why the button
+                    wouldn't light up. It now folds the currently-filled picker into the list for
+                    you on tap (same as pressing "+ Thêm vào danh sách" first) when there's
+                    something valid to add — the explicit add-to-list button is still there for
+                    the multi-product case, this just stops a single-product report from silently
+                    requiring an extra, unexplained tap. */}
+                <button onClick={() => { if (lossItems.length === 0) addLossItem(); setPendingLoss(true); }}
+                  disabled={lossSubmitting || !lossName.trim() || (lossItems.length === 0 && !(lossProduct && lossReasonId && Number(lossQty) > 0))}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                   style={{ backgroundColor: '#DC2626' }}>
                   {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                   {lossItems.length > 1 ? `Báo cáo hao hụt (${lossItems.length} sản phẩm)` : 'Báo cáo hao hụt'}
                 </button>
+                {lossName.trim() && lossProduct && lossReasonId && Number(lossQty) > 0 && lossItems.length === 0 && (
+                  <div className="text-[11px]" style={{ color: '#9CA3AF' }}>
+                    Sẵn sàng báo cáo — hoặc nhấn "+ Thêm vào danh sách" để thêm sản phẩm khác trước.
+                  </div>
+                )}
                 {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
               </div>
             )}
@@ -675,6 +775,70 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 Xác nhận
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage staff roster — reachable from the gear button next to either name picker
+          (Axel, 2026-08-27). Add / rename / delete; shared by both usages since it's one
+          roster per shop. */}
+      {showStaffModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setShowStaffModal(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Danh sách nhân viên</div>
+            <div className="flex items-center gap-1.5">
+              <input type="text" value={newStaffInput} onChange={e => setNewStaffInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addStaffName(); }}
+                placeholder="Tên nhân viên mới…" className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+              <button onClick={addStaffName} disabled={staffBusy === 'add' || !newStaffInput.trim()}
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
+                style={{ backgroundColor: '#16A34A' }} aria-label="Thêm">
+                {staffBusy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={16} />}
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {!staffNames?.length ? (
+                <div className="text-xs text-center py-3" style={{ color: '#9CA3AF' }}>Chưa có nhân viên nào</div>
+              ) : staffNames.map(s => (
+                <div key={s.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
+                  {editingStaffId === s.id ? (
+                    <>
+                      <input type="text" value={editStaffDraft} onChange={e => setEditStaffDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveStaffRename(s.id); }} autoFocus
+                        className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                      <button onClick={() => saveStaffRename(s.id)} disabled={staffBusy === s.id || !editStaffDraft.trim()}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
+                        style={{ backgroundColor: '#16A34A' }} aria-label="Lưu">
+                        {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />}
+                      </button>
+                      <button onClick={() => setEditingStaffId(null)}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }} aria-label="Huỷ">
+                        <X size={13} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 min-w-0 text-sm font-medium truncate">{s.name}</span>
+                      <button onClick={() => { setEditingStaffId(s.id); setEditStaffDraft(s.name); }}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                        aria-label="Sửa" title="Sửa">
+                        <Pencil size={12} />
+                      </button>
+                      <button onClick={() => deleteStaffName(s.id)} disabled={staffBusy === s.id}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0 disabled:opacity-40"
+                        style={{ border: '1px solid #FCA5A5', color: '#DC2626' }} aria-label="Xoá" title="Xoá">
+                        {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowStaffModal(false)}
+              className="w-full text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+              Đóng
+            </button>
           </div>
         </div>
       )}

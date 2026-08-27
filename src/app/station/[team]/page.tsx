@@ -133,12 +133,19 @@ export default async function StationPage({ params }: { params: { team: string }
     // exists. '__pending_create__' is the in-flight sentinel (see manual-cake-coverage.ts) —
     // not a real order ref, so it's filtered out here rather than shown to the chef.
     const asgIds = (assignments ?? []).map((a: any) => a.id);
+    // notes (generic free-text, distinct from `message` which is cake-only "chữ trên bánh")
+    // added 2026-08-27 (Axel: staff reported entremets never show their notes on the chef's
+    // card) — this generic field was captured on every manual/exceptional order regardless of
+    // category (see exceptional-orders form) but was never selected here, so it never reached
+    // the chef for ANY category. Most noticeable on entremets because those never get a
+    // `message` either (message is gated to Birthday cake / Bento cake), so notes was their
+    // only channel for special instructions — and it was silently dropped.
     const { data: manualCakes } = asgIds.length > 0
-      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, ready_time, design_notes, design_photo_url, shop_name, matched_order_ref').in('assignment_id', asgIds)
+      ? await supabase.from('lab_manual_cakes').select('assignment_id, message, notes, ready_time, design_notes, design_photo_url, shop_name, matched_order_ref').in('assignment_id', asgIds)
       : { data: [] as any[] };
-    const manualByAsg: Record<string, { message: string | null; ready_time: string | null; design_notes: string | null; design_photo_url: string | null; shop_name: string | null; order_ref: string | null }> = {};
+    const manualByAsg: Record<string, { message: string | null; notes: string | null; ready_time: string | null; design_notes: string | null; design_photo_url: string | null; shop_name: string | null; order_ref: string | null }> = {};
     for (const m of manualCakes ?? []) if (m.assignment_id) manualByAsg[m.assignment_id] = {
-      message: m.message, ready_time: m.ready_time, design_notes: m.design_notes, design_photo_url: m.design_photo_url,
+      message: m.message, notes: m.notes ?? null, ready_time: m.ready_time, design_notes: m.design_notes, design_photo_url: m.design_photo_url,
       shop_name: m.shop_name ?? null,
       order_ref: (m.matched_order_ref && m.matched_order_ref !== '__pending_create__') ? m.matched_order_ref : null,
     };
@@ -161,6 +168,7 @@ export default async function StationPage({ params }: { params: { team: string }
         category_name_en: fiche?.category ?? null,
         bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
         bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
+        bc_notes: manualByAsg[a.id]?.notes || null,
         bc_design_notes: manualByAsg[a.id]?.design_notes || null,
         bc_design_photo_url: manualByAsg[a.id]?.design_photo_url || null,
         bc_shop_name: manualByAsg[a.id]?.shop_name || null,
