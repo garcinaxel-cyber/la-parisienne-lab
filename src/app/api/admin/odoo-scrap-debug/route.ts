@@ -31,6 +31,13 @@ export async function GET(req: Request) {
   if (!id) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'recent') {
+      const rows = await odooExecuteWrite<any[]>('stock.scrap', 'search_read', [[]], {
+        fields: ['state', 'product_id', 'scrap_qty', 'location_id', 'origin', 'create_date'],
+        order: 'id desc', limit: 10,
+      });
+      return NextResponse.json({ rows });
+    }
     if (action === 'inspect') {
       const rows = await odooExecuteWrite<any[]>('stock.scrap', 'read', [[id]], {
         fields: ['state', 'product_id', 'scrap_qty', 'location_id', 'scrap_location_id', 'origin'],
