@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecuteWrite } from '@/lib/odoo';
 import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId } from '@/lib/odoo-scrap';
+import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 
 // Staff-only diagnostic/fix tool for stock.scrap records created via the shop portal.
 // Axel, 2026-08-27: reported a scrap he created through the shop loss-report flow shows as
@@ -29,10 +30,32 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'testprefill') {
+      // End-to-end test of prefillReplenishmentReceivedQty against a REAL REP order/line, using
+      // a value equal to the line's own quantity_requested so the test is realistic, then reverts
+      // quantity_received back to its original value afterward — no permanent data change, unlike
+      // the scrap-wizard test (that one couldn't be undone once 'done'; a plain float field write
+      // can always be reverted).
+      const ref = url.searchParams.get('ref') ?? '';
+      const sku = url.searchParams.get('sku') ?? '';
+      if (!ref || !sku) return NextResponse.json({ error: 'Missing ?ref= or ?sku=' }, { status: 400 });
+      const before = await odooExecuteWrite<any[]>('stock.replenishment.request.line', 'search_read',
+        [[['request_id.name', '=', ref]]], { fields: ['id', 'product_id', 'quantity_requested', 'quantity_received'] });
+      const targetLine = before.find((l: any) => Array.isArray(l.product_id) && String(l.product_id[1]).includes(`[${sku}]`));
+      if (!targetLine) return NextResponse.json({ error: `No REP line found for ${sku} on ${ref}`, before });
+      const originalReceived = targetLine.quantity_received;
+      const testQty = targetLine.quantity_requested;
+      const result = await prefillReplenishmentReceivedQty(ref, [{ sku, qtyReceived: testQty }]);
+      const after = await odooExecuteWrite<any[]>('stock.replenishment.request.line', 'read', [[targetLine.id]], { fields: ['quantity_received'] });
+      // Revert
+      await odooExecuteWrite('stock.replenishment.request.line', 'write', [[targetLine.id], { quantity_received: originalReceived }]);
+      const reverted = await odooExecuteWrite<any[]>('stock.replenishment.request.line', 'read', [[targetLine.id]], { fields: ['quantity_received'] });
+      return NextResponse.json({ result, before: { id: targetLine.id, originalReceived, testQty }, afterWrite: after[0], afterRevert: reverted[0] });
+    }
     if (action === 'fields') {
       // Read-only introspection for Axel's request (2026-08-27): "prefill the reception quantity
       // on the REP order when the shop finishes its receipt check" — need to know whether
