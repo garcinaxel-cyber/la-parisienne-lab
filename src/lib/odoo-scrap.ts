@@ -119,11 +119,14 @@ export interface CreateShopScrapResult {
   error?: string;
 }
 
-/** Creates AND validates a stock.scrap at the shop's own warehouse — never LAB. */
-export async function createShopScrap(input: CreateShopScrapInput): Promise<CreateShopScrapResult> {
-  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
-  const loc = await resolveShopWarehouseLocation(input.shopName);
-  if (!loc) return { ok: false, error: `Aucun entrepôt Odoo configuré pour "${input.shopName}" — perte non enregistrée sur Odoo` };
+// Shared by createShopScrap (shop's own warehouse) and createLabScrap (LAB's own warehouse,
+// 2026-08-27) — everything past "which location_id" is identical, including the insufficient-qty
+// wizard handling (see the 2026-08-27 fix note below), so this is the one place either caller
+// hits, never duplicated.
+async function createScrapAtLocation(
+  locationId: number,
+  input: { productId: number; uomId: number; qty: number; reasonTagIds: number[]; origin: string },
+): Promise<CreateShopScrapResult> {
   const scrapLocationId = await resolveDefaultScrapLocationId();
   if (!scrapLocationId) return { ok: false, error: 'Aucun emplacement de rebut (scrap) trouvé sur Odoo' };
 
@@ -132,24 +135,24 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
       product_id: input.productId,
       product_uom_id: input.uomId,
       scrap_qty: input.qty,
-      location_id: loc.locationId,
+      location_id: locationId,
       scrap_location_id: scrapLocationId,
       scrap_reason_tag_ids: [[6, 0, input.reasonTagIds]],
       origin: input.origin,
     }]);
     // Bug found 2026-08-27 (Axel: "ça crée le scrap mais en draft"). action_validate() does NOT
-    // throw when the shop's OWN warehouse location has less qty_available than scrap_qty for
-    // that product (confirmed live: BMCR16BG was 0 at Bà Triệu's location) — instead it RETURNS
-    // an ir.actions.act_window dict opening a confirmation wizard
+    // throw when the source location has less qty_available than scrap_qty for that product
+    // (confirmed live: BMCR16BG was 0 at Bà Triệu's location) — instead it RETURNS an
+    // ir.actions.act_window dict opening a confirmation wizard
     // (res_model: 'stock.warn.insufficient.qty.scrap'), and the scrap is left in 'draft'. We
     // were only checking for a thrown exception, so this silently reported success every time,
-    // for every shop, whenever their Odoo book stock for that SKU didn't cover the scrap qty —
-    // which is expected/normal for these shops (they don't track every SKU's stock as precisely
-    // as a real warehouse), so this wasn't a rare edge case.
+    // whenever the Odoo book stock for that SKU didn't cover the scrap qty — which is
+    // expected/normal (stock isn't tracked as precisely as a real warehouse count), not a rare
+    // edge case.
     // Fix: detect the wizard action and drive it through exactly like a person clicking
     // "Confirmer" would — create the wizard record from the context Odoo itself provided
-    // (product/location/scrap/quantity), then call its action_done(), which finishes the scrap
-    // (allowing the resulting negative on-hand, same as a human confirming the dialog would).
+    // (product/location/scrap/quantity/uom), then call its action_done(), which finishes the
+    // scrap (allowing the resulting negative on-hand, same as a human confirming the dialog would).
     const validateResult = await odooExecuteWrite<any>('stock.scrap', 'action_validate', [[scrapId]]);
     if (validateResult && typeof validateResult === 'object' && validateResult.res_model === 'stock.warn.insufficient.qty.scrap') {
       const ctx = validateResult.context ?? {};
@@ -164,4 +167,48 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e) };
   }
+}
+
+/** Creates AND validates a stock.scrap at the shop's own warehouse — never LAB. */
+export async function createShopScrap(input: CreateShopScrapInput): Promise<CreateShopScrapResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
+  const loc = await resolveShopWarehouseLocation(input.shopName);
+  if (!loc) return { ok: false, error: `Aucun entrepôt Odoo configuré pour "${input.shopName}" — perte non enregistrée sur Odoo` };
+  return createScrapAtLocation(loc.locationId, input);
+}
+
+// ── LAB's own scrap (2026-08-27) ────────────────────────────────────────────
+// Axel: "une fonction de scrap similaire aux shops mais pour les produits casse du lab" — same
+// mechanism as the shop portal's loss report, but against LAB's OWN warehouse location instead of
+// a shop's, for admin/assistant use (not the shop portal). Location resolved via the 'LAB'
+// warehouse code, same pattern odoo-inventory.ts already uses for its finished-goods count.
+let cachedLabLocation: ShopWarehouseLocation | null = null;
+
+export async function resolveLabWarehouseLocation(): Promise<ShopWarehouseLocation | null> {
+  if (cachedLabLocation) return cachedLabLocation;
+  const whs = await tmo(odooExecuteWrite<any[]>('stock.warehouse', 'search_read',
+    [[['code', '=', 'LAB']]], { fields: ['lot_stock_id', 'name'], limit: 1 }), 15000, 'lab warehouse');
+  const wh = whs[0];
+  if (!wh?.lot_stock_id) return null;
+  cachedLabLocation = {
+    locationId: Array.isArray(wh.lot_stock_id) ? wh.lot_stock_id[0] : wh.lot_stock_id,
+    warehouseName: wh.name,
+  };
+  return cachedLabLocation;
+}
+
+export interface CreateLabScrapInput {
+  productId: number;
+  uomId: number;
+  qty: number;
+  reasonTagIds: number[];
+  origin: string;
+}
+
+/** Creates AND validates a stock.scrap at LAB's own warehouse. */
+export async function createLabScrap(input: CreateLabScrapInput): Promise<CreateShopScrapResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
+  const loc = await resolveLabWarehouseLocation();
+  if (!loc) return { ok: false, error: 'Entrepôt LAB introuvable sur Odoo (code "LAB")' };
+  return createScrapAtLocation(loc.locationId, input);
 }
