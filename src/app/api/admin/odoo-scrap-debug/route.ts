@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecuteWrite } from '@/lib/odoo';
-import { resolveShopWarehouseLocation, resolveProductsBySku } from '@/lib/odoo-scrap';
+import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId } from '@/lib/odoo-scrap';
 
 // Staff-only diagnostic/fix tool for stock.scrap records created via the shop portal.
 // Axel, 2026-08-27: reported a scrap he created through the shop loss-report flow shows as
@@ -47,6 +47,32 @@ export async function GET(req: Request) {
         fields: ['qty_available', 'virtual_available'], context: { location: loc.locationId },
       });
       return NextResponse.json({ shopLocation: loc, product, qtyAtShopLocation: rows[0] });
+    }
+    if (action === 'testvalidate') {
+      // Creates a real (tiny) scrap the same way createShopScrap() does, then calls
+      // action_validate and returns its RAW result untouched — this is the only way to see the
+      // actual wizard payload Odoo returns for insufficient qty, instead of guessing model/field
+      // names. Cleans itself up (unlink) if it's still draft afterward.
+      const sku = url.searchParams.get('sku') ?? '';
+      const shop = url.searchParams.get('shop') ?? '';
+      if (!sku || !shop) return NextResponse.json({ error: 'Missing ?sku= or ?shop=' }, { status: 400 });
+      const loc = await resolveShopWarehouseLocation(shop);
+      const products = await resolveProductsBySku([sku]);
+      const product = products[sku];
+      const scrapLocationId = await resolveDefaultScrapLocationId();
+      if (!loc || !product || !scrapLocationId) return NextResponse.json({ error: 'setup not resolved', loc, product, scrapLocationId });
+      const scrapId = await odooExecuteWrite<number>('stock.scrap', 'create', [{
+        product_id: product.id, product_uom_id: product.uom_id, scrap_qty: 1,
+        location_id: loc.locationId, scrap_location_id: scrapLocationId,
+        origin: 'DEBUG_TEST_DELETE_ME',
+      }]);
+      const validateResult = await odooExecuteWrite<any>('stock.scrap', 'action_validate', [[scrapId]]);
+      const after = await odooExecuteWrite<any[]>('stock.scrap', 'read', [[scrapId]], { fields: ['state'] });
+      let cleaned = false;
+      if (after[0]?.state !== 'done') {
+        try { await odooExecuteWrite('stock.scrap', 'unlink', [[scrapId]]); cleaned = true; } catch {}
+      }
+      return NextResponse.json({ scrapId, validateResult, stateAfter: after[0]?.state ?? null, cleaned });
     }
     if (action === 'recent') {
       const rows = await odooExecuteWrite<any[]>('stock.scrap', 'search_read', [[]], {
