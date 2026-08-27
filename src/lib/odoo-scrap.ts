@@ -156,6 +156,7 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
       const wizardId = await odooExecuteWrite<number>('stock.warn.insufficient.qty.scrap', 'create', [{
         product_id: ctx.default_product_id, location_id: ctx.default_location_id,
         scrap_id: ctx.default_scrap_id, quantity: ctx.default_quantity,
+        product_uom_name: ctx.default_product_uom_name,
       }]);
       await odooExecuteWrite('stock.warn.insufficient.qty.scrap', 'action_done', [[wizardId]]);
     }
