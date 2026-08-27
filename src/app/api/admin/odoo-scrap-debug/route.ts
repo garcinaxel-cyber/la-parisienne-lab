@@ -74,6 +74,38 @@ export async function GET(req: Request) {
       }
       return NextResponse.json({ scrapId, validateResult, stateAfter: after[0]?.state ?? null, cleaned });
     }
+    if (action === 'testwizard') {
+      // End-to-end test of the actual fix now in odoo-scrap.ts's createShopScrap(): create a
+      // real tiny scrap, hit the insufficient-qty wizard, confirm it via action_done, and report
+      // the final state. NOT cleaned up automatically if it ends up 'done' (a done stock.scrap
+      // can't be safely unlinked) — caller is expected to compensate manually if this was purely
+      // a test, same as any other real scrap.
+      const sku = url.searchParams.get('sku') ?? '';
+      const shop = url.searchParams.get('shop') ?? '';
+      if (!sku || !shop) return NextResponse.json({ error: 'Missing ?sku= or ?shop=' }, { status: 400 });
+      const loc = await resolveShopWarehouseLocation(shop);
+      const products = await resolveProductsBySku([sku]);
+      const product = products[sku];
+      const scrapLocationId = await resolveDefaultScrapLocationId();
+      if (!loc || !product || !scrapLocationId) return NextResponse.json({ error: 'setup not resolved', loc, product, scrapLocationId });
+      const scrapId = await odooExecuteWrite<number>('stock.scrap', 'create', [{
+        product_id: product.id, product_uom_id: product.uom_id, scrap_qty: 1,
+        location_id: loc.locationId, scrap_location_id: scrapLocationId,
+        origin: 'DEBUG_TESTWIZARD_DELETE_ME',
+      }]);
+      const validateResult = await odooExecuteWrite<any>('stock.scrap', 'action_validate', [[scrapId]]);
+      let wizardResult: any = null;
+      if (validateResult?.res_model === 'stock.warn.insufficient.qty.scrap') {
+        const ctx = validateResult.context ?? {};
+        const wizardId = await odooExecuteWrite<number>('stock.warn.insufficient.qty.scrap', 'create', [{
+          product_id: ctx.default_product_id, location_id: ctx.default_location_id,
+          scrap_id: ctx.default_scrap_id, quantity: ctx.default_quantity,
+        }]);
+        wizardResult = await odooExecuteWrite<any>('stock.warn.insufficient.qty.scrap', 'action_done', [[wizardId]]);
+      }
+      const after = await odooExecuteWrite<any[]>('stock.scrap', 'read', [[scrapId]], { fields: ['state'] });
+      return NextResponse.json({ scrapId, validateResult, wizardResult, stateAfter: after[0]?.state ?? null });
+    }
     if (action === 'recent') {
       const rows = await odooExecuteWrite<any[]>('stock.scrap', 'search_read', [[]], {
         fields: ['state', 'product_id', 'scrap_qty', 'location_id', 'origin', 'create_date'],

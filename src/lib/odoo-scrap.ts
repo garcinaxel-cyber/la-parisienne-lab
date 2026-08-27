@@ -137,7 +137,28 @@ export async function createShopScrap(input: CreateShopScrapInput): Promise<Crea
       scrap_reason_tag_ids: [[6, 0, input.reasonTagIds]],
       origin: input.origin,
     }]);
-    await odooExecuteWrite('stock.scrap', 'action_validate', [[scrapId]]);
+    // Bug found 2026-08-27 (Axel: "ça crée le scrap mais en draft"). action_validate() does NOT
+    // throw when the shop's OWN warehouse location has less qty_available than scrap_qty for
+    // that product (confirmed live: BMCR16BG was 0 at Bà Triệu's location) — instead it RETURNS
+    // an ir.actions.act_window dict opening a confirmation wizard
+    // (res_model: 'stock.warn.insufficient.qty.scrap'), and the scrap is left in 'draft'. We
+    // were only checking for a thrown exception, so this silently reported success every time,
+    // for every shop, whenever their Odoo book stock for that SKU didn't cover the scrap qty —
+    // which is expected/normal for these shops (they don't track every SKU's stock as precisely
+    // as a real warehouse), so this wasn't a rare edge case.
+    // Fix: detect the wizard action and drive it through exactly like a person clicking
+    // "Confirmer" would — create the wizard record from the context Odoo itself provided
+    // (product/location/scrap/quantity), then call its action_done(), which finishes the scrap
+    // (allowing the resulting negative on-hand, same as a human confirming the dialog would).
+    const validateResult = await odooExecuteWrite<any>('stock.scrap', 'action_validate', [[scrapId]]);
+    if (validateResult && typeof validateResult === 'object' && validateResult.res_model === 'stock.warn.insufficient.qty.scrap') {
+      const ctx = validateResult.context ?? {};
+      const wizardId = await odooExecuteWrite<number>('stock.warn.insufficient.qty.scrap', 'create', [{
+        product_id: ctx.default_product_id, location_id: ctx.default_location_id,
+        scrap_id: ctx.default_scrap_id, quantity: ctx.default_quantity,
+      }]);
+      await odooExecuteWrite('stock.warn.insufficient.qty.scrap', 'action_done', [[wizardId]]);
+    }
     return { ok: true, scrapId };
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e) };
