@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecuteWrite } from '@/lib/odoo';
-import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId } from '@/lib/odoo-scrap';
+import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId, resolveLabWarehouseLocation } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 
 // Staff-only diagnostic/fix tool for stock.scrap records created via the shop portal.
@@ -30,10 +30,16 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'lablocation') {
+      // Read-only check for the new LAB scrap feature (2026-08-27): confirms resolveLabWarehouseLocation
+      // actually resolves a real Odoo location via warehouse code 'LAB', before trusting the UI.
+      const loc = await resolveLabWarehouseLocation();
+      return NextResponse.json({ loc });
+    }
     if (action === 'testprefill') {
       // End-to-end test of prefillReplenishmentReceivedQty against a REAL REP order/line, using
       // a value equal to the line's own quantity_requested so the test is realistic, then reverts
