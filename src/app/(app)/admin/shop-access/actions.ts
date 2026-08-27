@@ -62,6 +62,48 @@ export async function createShopAccountAction(shopName: string, email: string): 
   return { link };
 }
 
+// Added 2026-08-27 (Axel: mismatched/duplicated emails across shop portal accounts, wanted
+// exact email+password set directly instead of the recovery-link flow). Mirrors
+// createShopAccountAction's user+profile+lab_profiles wiring but (a) accepts an explicit
+// password via the Admin API's `password` field instead of generating a recovery link, and
+// (b) updates the existing auth user (email+password) when one is already linked to the shop,
+// instead of only supporting brand-new accounts.
+export async function setShopCredentialsAction(shopName: string, email: string, password: string): Promise<{ ok?: true; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireStaff(supabase);
+  if ('error' in auth) return { error: auth.error };
+  if (!SHOP_NAMES.includes(shopName)) return { error: 'Unknown shop' };
+  const cleanEmail = email.trim().toLowerCase();
+  if (!/^[\x00-\x7F]+$/.test(cleanEmail)) return { error: 'Email sans accents (lettres/chiffres standards uniquement)' };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return { error: 'Invalid email' };
+  if (password.length < 8) return { error: 'Mot de passe trop court (8 caractères min)' };
+
+  const svc = admin();
+  if (!svc) return { error: 'Server not configured' };
+
+  const { data: lp } = await svc.from('lab_profiles').select('id').eq('shop_name', shopName).maybeSingle();
+  let userId = lp?.id as string | undefined;
+
+  if (userId) {
+    const { error: updErr } = await svc.auth.admin.updateUserById(userId, { email: cleanEmail, password, email_confirm: true });
+    if (updErr) return { error: updErr.message };
+  } else {
+    const { data: authData, error: authErr } = await svc.auth.admin.createUser({
+      email: cleanEmail, password, email_confirm: true, user_metadata: { full_name: shopName },
+    });
+    userId = authData?.user?.id;
+    if (authErr || !userId) return { error: authErr?.message ?? 'Failed to create user' };
+  }
+
+  const { error: profileErr } = await svc.from('profiles').upsert({ id: userId, full_name: shopName, role: 'shop' }, { onConflict: 'id' });
+  if (profileErr) return { error: profileErr.message };
+  const { error: lpErr } = await svc.from('lab_profiles').upsert({ id: userId, shop_name: shopName }, { onConflict: 'id' });
+  if (lpErr) return { error: lpErr.message };
+
+  revalidatePath('/admin/shop-access');
+  return { ok: true };
+}
+
 export async function generateShopResetLinkAction(shopName: string): Promise<{ link?: string; error?: string }> {
   const supabase = createClient();
   const auth = await requireStaff(supabase);
