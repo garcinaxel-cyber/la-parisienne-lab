@@ -5,6 +5,7 @@ import { ensureDeliveryOrderChecklist, type CheckLine, type DeliveryOrderHeader 
 import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
+import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -249,7 +250,7 @@ export async function confirmReceiptAction(input: {
   // Defense in depth: re-verify this check line really belongs to an order for THIS shop
   // before writing — never trust the client-supplied deliveryOrderId pairing blindly.
   const { data: header } = await supabase.from('lab_delivery_orders')
-    .select('id, shop_name').eq('id', input.deliveryOrderId).maybeSingle();
+    .select('id, shop_name, order_ref, source_type').eq('id', input.deliveryOrderId).maybeSingle();
   // Normalized compare — same shop_name inconsistency as fetchDeliveries above.
   if (!header || normalizeShopName(header.shop_name) !== normalizeShopName(auth.shopName)) return { error: 'Order not found for this shop' };
   const { data: line } = await supabase.from('lab_delivery_check_lines')
@@ -262,7 +263,44 @@ export async function confirmReceiptAction(input: {
     confirmed_by_name: name, confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }, { onConflict: 'check_line_id' });
   if (error) return { error: error.message };
+
+  // Axel, 2026-08-27: once the shop has confirmed EVERY line of a REPLENISHMENT order's receipt
+  // check, prefill Odoo's own quantity_received per line (see odoo-shop-receipt-sync.ts) — never
+  // for sales_order (Moon Flower), which has no equivalent field. Re-checked (and re-pushed,
+  // harmlessly idempotent) on every subsequent confirm call too, so a shop correcting a qty after
+  // "finishing" still reaches Odoo. Best-effort only: never blocks or surfaces an error back to
+  // the shop's own confirm click — a push failure here just means someone checks Odoo manually.
+  if (header.source_type === 'replenishment') {
+    void prefillReceivedQtyIfComplete(supabase, input.deliveryOrderId, header.order_ref);
+  }
+
   return { ok: true };
+}
+
+async function prefillReceivedQtyIfComplete(
+  supabase: ReturnType<typeof service>, deliveryOrderId: string, orderRef: string,
+): Promise<void> {
+  try {
+    if (!supabase) return;
+    const { data: checkLines } = await supabase.from('lab_delivery_check_lines')
+      .select('id, sku').eq('delivery_order_id', deliveryOrderId);
+    if (!checkLines?.length) return;
+    const lineIds = checkLines.map(l => l.id);
+    const { data: receipts } = await supabase.from('lab_shop_receipt_lines')
+      .select('check_line_id, qty_received').in('check_line_id', lineIds);
+    const receiptByLine = new Map((receipts ?? []).map(r => [r.check_line_id, r.qty_received as number | null]));
+    // Every check line must have a receipt row before this order counts as "finished" —
+    // an in-progress order (some lines not yet touched by the shop) is never pushed.
+    if (!checkLines.every(l => receiptByLine.has(l.id))) return;
+
+    const toPush = checkLines
+      .filter(l => l.sku && receiptByLine.get(l.id) != null)
+      .map(l => ({ sku: l.sku as string, qtyReceived: receiptByLine.get(l.id) as number }));
+    if (!toPush.length) return;
+    await prefillReplenishmentReceivedQty(orderRef, toPush);
+  } catch (e) {
+    console.error(`prefillReceivedQtyIfComplete failed for ${orderRef}:`, e);
+  }
 }
 
 // ── Staff preview (read-only, any shop by name) ─────────────────────────────
