@@ -688,9 +688,10 @@ export async function GET(req: Request) {
       const catIds = cats.map((c: any) => c.id);
       const loc = await resolveLabWarehouseLocation();
       if (!loc) return NextResponse.json({ error: 'LAB location not resolved' }, { status: 500 });
+      // child_of (not plain 'in') so any subcategories under "Saleable Products" are included too.
       const products = await odooExecuteWrite<any[]>('product.product', 'search_read', [
-        [['categ_id', 'in', catIds]],
-      ], { fields: ['default_code', 'name', 'active'], limit: 500 });
+        [['categ_id', 'child_of', catIds]],
+      ], { fields: ['default_code', 'name', 'active'], limit: 2000, context: { active_test: false } });
       const productIds = products.map((p: any) => p.id);
       const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read', [
         [['location_id', '=', loc.locationId], ['product_id', 'in', productIds]],
