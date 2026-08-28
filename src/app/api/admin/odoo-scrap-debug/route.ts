@@ -726,12 +726,18 @@ export async function GET(req: Request) {
       // there may never have had one). Returns before/after `quantity` (theoretical on-hand) so
       // the effect is directly visible.
       const sku = url.searchParams.get('sku') ?? '';
+      const productIdParam = url.searchParams.get('productId');
       const qtyParam = url.searchParams.get('qty');
-      if (!sku || qtyParam === null) return NextResponse.json({ error: 'Missing ?sku= or ?qty=' }, { status: 400 });
+      if ((!sku && !productIdParam) || qtyParam === null) return NextResponse.json({ error: 'Missing ?sku= (or ?productId=) or ?qty=' }, { status: 400 });
       const qty = Number(qtyParam);
       const loc = await resolveLabWarehouseLocation();
-      const products = await resolveProductsBySku([sku]);
-      const product = products[sku];
+      let product: { id: number } | undefined;
+      if (productIdParam) {
+        product = { id: Number(productIdParam) };
+      } else {
+        const products = await resolveProductsBySku([sku]);
+        product = products[sku];
+      }
       if (!loc || !product) return NextResponse.json({ error: 'lab location or sku not resolved', loc, product });
       const existing = await odooExecuteWrite<any[]>('stock.quant', 'search_read', [
         [['product_id', '=', product.id], ['location_id', '=', loc.locationId]],
