@@ -208,10 +208,23 @@ for (const r of repls) replById[r.id] = r;
 // effect, truncated at exactly 1000).
 const antiDupFloor = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().split('T')[0];
 const alreadyImported = new Set<string>();
+// Same 90-day scan also builds "has this exact (order_ref, sku) EVER been imported" — needed
+// below (2026-08-28, S03361/S03363: "32 sync errors... order not found in lab") to fix a sibling
+// of the 2026-08-26 bug above. The "new SKU added" direction (odooQtyByRefSku loop further down)
+// only checked the narrow SYNC_GRACE_DAYS-scoped labQtyByRefSku to decide "is this SKU new?" — so
+// once an order's delivery_date aged past 7 days while Odoo still returned it (order not yet
+// resolved/closed in Odoo), EVERY one of its lines looked "never seen" and got pushed as a fake
+// "add", which then failed downstream in odoo-apply.ts's createLineAndCard (its own ctx lookup is
+// also narrow-windowed) with "order not found in lab" — and would have silently created DUPLICATE
+// lines/cards if that ctx lookup were simply widened instead of fixing the real bug here.
+const everKnownRefSku = new Set<string>();
 for (let offset = 0; ; offset += 1000) {
-  const { data: refPage } = await supabase.from('lab_order_lines').select('order_ref')
+  const { data: refPage } = await supabase.from('lab_order_lines').select('order_ref, product_sku')
     .gte('delivery_date', antiDupFloor).range(offset, offset + 999);
-  for (const r of refPage ?? []) if (r.order_ref) alreadyImported.add(r.order_ref);
+  for (const r of refPage ?? []) {
+    if (r.order_ref) alreadyImported.add(r.order_ref);
+    if (r.order_ref && r.product_sku) everKnownRefSku.add(`${r.order_ref}||${r.product_sku}`);
+  }
   if (!refPage || refPage.length < 1000) break;
 }
 
@@ -386,7 +399,13 @@ for (const [k, lab] of Object.entries(labQtyByRefSku)) {
 for (const [k, odoo] of Object.entries(odooQtyByRefSku)) {
   const [ref, sku] = k.split('||');
   if (excludedSet.has(sku)) continue; // packaging/drinks — never produced, don't flag as "added"
-  if (!labQtyByRefSku[k]) pushChange(ref, { sku, name: odoo.name, old_qty: 0, new_qty: odoo.qty });
+  if (labQtyByRefSku[k]) continue;
+  // Genuinely unseen (order_ref+sku never in the 90-day-wide anti-dup scan either) → real "new
+  // SKU added to an order" case, push it. Seen there but not in the narrow labQtyByRefSku → the
+  // line already exists, it just aged out of the SYNC_GRACE_DAYS window; per Axel's "7 jours de
+  // retard max" policy this is out of scope, not a real add — skip it rather than misreport.
+  if (everKnownRefSku.has(k)) continue;
+  pushChange(ref, { sku, name: odoo.name, old_qty: 0, new_qty: odoo.qty });
 }
 const changes = Object.entries(changesByRef)
   // Drop no-op items (old == new, e.g. a line long ago zeroed that Odoo no longer has) —
