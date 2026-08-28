@@ -535,12 +535,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       <input type="text" value={lossQuery} onChange={e => setLossQuery(e.target.value)}
                         placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                       {lossQuery.trim().length >= 2 && (
-                        <div className="mt-1 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                        <div className="mt-1 rounded-lg overflow-y-auto max-h-64" style={{ border: '1px solid #E5E7EB' }}>
                           {lossSearching ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                           ) : !lossResults.length ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
-                          ) : lossResults.slice(0, 8).map(p => (
+                          ) : lossResults.map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
                               {p.main_image_url && <img src={p.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
