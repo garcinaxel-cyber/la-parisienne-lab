@@ -451,7 +451,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
@@ -653,6 +653,26 @@ export async function GET(req: Request) {
       // Draft scraps can just be unlinked outright.
       await odooExecuteWrite('stock.scrap', 'unlink', [[id]]);
       return NextResponse.json({ ok: true, unlinked: id });
+    }
+    if (action === 'labquants') {
+      // Read-only audit (2026-08-28, Axel spotted Socola/Chocolate SKUs with nonzero LAB stock
+      // that the 31/08 pre-adjustment batch never touched): list EVERY stock.quant Odoo actually
+      // holds at the LAB location, regardless of whether it's in our app's own product catalogs.
+      // Used to find the true gap between "what Odoo tracks at LAB" and "what INVENTORY_TARGETS
+      // covered" (which was sourced from lab_fiche_meta only, not the full products table, and
+      // definitely not Odoo's raw product.product universe).
+      const loc = await resolveLabWarehouseLocation();
+      if (!loc) return NextResponse.json({ error: 'LAB location not resolved' }, { status: 500 });
+      const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read', [
+        [['location_id', '=', loc.locationId]],
+      ], { fields: ['product_id', 'quantity', 'inventory_quantity'], limit: 2000 });
+      const productIds = Array.from(new Set(quants.map((q: any) => q.product_id[0])));
+      const products = await odooExecuteWrite<any[]>('product.product', 'read', [productIds], { fields: ['default_code', 'name', 'active'] });
+      const bySkuRow = quants.map((q: any) => {
+        const p = products.find((pp: any) => pp.id === q.product_id[0]);
+        return { productId: q.product_id[0], sku: p?.default_code ?? null, name: p?.name ?? q.product_id[1], active: p?.active ?? null, quantity: q.quantity };
+      });
+      return NextResponse.json({ loc, total: bySkuRow.length, rows: bySkuRow });
     }
     if (action === 'invcheck') {
       // Read-only (2026-08-28, Axel: prep for the 31/08 LAB inventory — pre-adjust finished-goods
