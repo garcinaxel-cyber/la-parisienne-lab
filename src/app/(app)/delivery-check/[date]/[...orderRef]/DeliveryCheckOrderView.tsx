@@ -68,9 +68,15 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
               // REP/2026/01021) → amber instead of green, so the mismatch is visible at a glance
               // instead of only in the small "(±X)" text next to the checked value.
               style={{ backgroundColor: isChecked ? (isDiff ? '#FFFBEB' : '#F0FDF4') : isDiff ? '#FEF2F2' : undefined }}>
-              <div className="grid grid-cols-12 items-center gap-2">
-                <div className="col-span-5 min-w-0">
-                  <div className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
+              {/* Mobile: stacked (full-width, larger, wrapping name on its own row, qty+check
+                  below) — the old single-row 12-col grid squeezed the name into ~5/12 of a phone
+                  screen width, truncating it with "…" (2026-08-28, Axel: "améliorer la visibilité
+                  des... noms des produits" on the delivery-check phone view). sm:contents on the
+                  qty+check wrapper makes it transparent to the grid from tablet/desktop up, so
+                  that layout is untouched — only phones (<640px) get the stacked version. */}
+              <div className="flex flex-col gap-2 sm:grid sm:grid-cols-12 sm:items-center sm:gap-2">
+                <div className="sm:col-span-5 min-w-0">
+                  <div className="text-base font-semibold text-navy leading-snug sm:text-sm sm:font-normal sm:truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
                   {l.sku && <div className="text-[11px] text-ink-light font-mono">{l.sku}</div>}
                   {l.note && (
                     <div className="text-[11px] font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
@@ -78,8 +84,9 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                     </div>
                   )}
                 </div>
-                <div className="col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
-                <div className="col-span-5 flex items-center justify-center gap-2">
+                <div className="flex items-center justify-between gap-2 sm:contents">
+                <div className="sm:col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
+                <div className="sm:col-span-5 flex items-center justify-center gap-2">
                   {isChecked ? (
                     <>
                       <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
@@ -117,6 +124,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                       </button>
                     </>
                   )}
+                </div>
                 </div>
               </div>
               {needsReason && !isChecked && (
