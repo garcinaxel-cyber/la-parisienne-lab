@@ -704,14 +704,23 @@ export async function GET(req: Request) {
     }
     if (action === 'invbatch') {
       // The real 31/08 prep run: sets every SKU in INVENTORY_TARGETS to its target counted
-      // quantity at the LAB location, in one pass. Same mechanism as invset, just looped —
-      // proven on a single SKU first via invset before this was ever called for real.
+      // quantity at the LAB location. Same mechanism as invset, just looped — proven on a
+      // single SKU first via invset before this was ever called for real.
+      // Sliced via ?start=&limit= because a full 411-SKU pass exceeds Vercel's 300s function
+      // limit (confirmed live: full run timed out with no result). Each write is idempotent
+      // (search-or-create then set inventory_quantity then apply), so slices can safely
+      // overlap or be re-run without side effects.
+      const startParam = Number(url.searchParams.get('start') ?? '0');
+      const limitParam = url.searchParams.get('limit');
+      const start = Number.isFinite(startParam) && startParam >= 0 ? startParam : 0;
+      const end = limitParam ? start + Number(limitParam) : INVENTORY_TARGETS.length;
+      const slice = INVENTORY_TARGETS.slice(start, end);
       const results: { sku: string; ok: boolean; before?: number; after?: number; error?: string }[] = [];
       const loc = await resolveLabWarehouseLocation();
       if (!loc) return NextResponse.json({ error: 'LAB location not resolved' }, { status: 500 });
-      const skus = INVENTORY_TARGETS.map(t => t.sku);
+      const skus = slice.map(t => t.sku);
       const products = await resolveProductsBySku(skus);
-      for (const t of INVENTORY_TARGETS) {
+      for (const t of slice) {
         const product = products[t.sku];
         if (!product) { results.push({ sku: t.sku, ok: false, error: 'sku not resolved in Odoo' }); continue; }
         try {
@@ -736,7 +745,10 @@ export async function GET(req: Request) {
         }
       }
       const failed = results.filter(r => !r.ok);
-      return NextResponse.json({ total: results.length, succeeded: results.length - failed.length, failed, results });
+      return NextResponse.json({
+        start, end, sliceSize: slice.length, grandTotal: INVENTORY_TARGETS.length,
+        total: results.length, succeeded: results.length - failed.length, failed, results,
+      });
     }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e: any) {
