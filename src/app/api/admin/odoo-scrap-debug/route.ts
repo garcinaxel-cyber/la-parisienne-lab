@@ -451,7 +451,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
@@ -673,6 +673,33 @@ export async function GET(req: Request) {
         return { productId: q.product_id[0], sku: p?.default_code ?? null, name: p?.name ?? q.product_id[1], active: p?.active ?? null, quantity: q.quantity };
       });
       return NextResponse.json({ loc, total: bySkuRow.length, rows: bySkuRow });
+    }
+    if (action === 'saleablecat') {
+      // Read-only (2026-08-28, Axel's own screenshot): Odoo has an authoritative category
+      // "All / Saleable Products" (sản phẩm bán được) with exactly 103 members. This is a much
+      // better source of truth than our app's own catalog tables (lab_fiche_meta/products/
+      // product_variants), which the 08-28 audit proved have real gaps. List every product in
+      // this category with its current LAB-location quantity, so we can decide 0-vs-keep per SKU
+      // against what was actually sent to stock this afternoon.
+      const cats = await odooExecuteWrite<any[]>('product.category', 'search_read', [
+        [['complete_name', 'ilike', 'Saleable']],
+      ], { fields: ['id', 'complete_name'] });
+      if (!cats.length) return NextResponse.json({ error: 'category not found' });
+      const catIds = cats.map((c: any) => c.id);
+      const loc = await resolveLabWarehouseLocation();
+      if (!loc) return NextResponse.json({ error: 'LAB location not resolved' }, { status: 500 });
+      const products = await odooExecuteWrite<any[]>('product.product', 'search_read', [
+        [['categ_id', 'in', catIds]],
+      ], { fields: ['default_code', 'name', 'active'], limit: 500 });
+      const productIds = products.map((p: any) => p.id);
+      const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read', [
+        [['location_id', '=', loc.locationId], ['product_id', 'in', productIds]],
+      ], { fields: ['product_id', 'quantity'] });
+      const rows = products.map((p: any) => {
+        const q = quants.find((qq: any) => qq.product_id[0] === p.id);
+        return { productId: p.id, sku: p.default_code, name: p.name, active: p.active, quantityAtLab: q?.quantity ?? 0 };
+      });
+      return NextResponse.json({ categories: cats, loc, total: rows.length, rows });
     }
     if (action === 'invcheck') {
       // Read-only (2026-08-28, Axel: prep for the 31/08 LAB inventory — pre-adjust finished-goods
