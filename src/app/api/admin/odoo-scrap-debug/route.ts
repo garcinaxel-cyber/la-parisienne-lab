@@ -30,10 +30,38 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'modulecheck') {
+      // Read-only diagnosis (2026-08-27, Axel: purchase workflow redesign with Miss Flavor —
+      // "option 2" = the OCA purchase_request module family). Checks install state of every
+      // module in that suite, and if the core one is installed, introspects its model/workflow
+      // before any decision is made. Zero writes.
+      const names = [
+        'purchase_request', 'purchase_request_to_po', 'purchase_request_line_procurement',
+        'purchase_request_department', 'purchase_request_tier_validation', 'purchase_request_budget',
+      ];
+      const modules = await odooExecuteWrite<any[]>('ir.module.module', 'search_read',
+        [[['name', 'in', names]]], { fields: ['name', 'state', 'shortdesc', 'installed_version'] });
+      let modelInfo: any = null;
+      let sampleCount: number | null = null;
+      let lineFields: string[] | null = null;
+      let groups: any[] | null = null;
+      const coreInstalled = modules.some(m => m.name === 'purchase_request' && m.state === 'installed');
+      if (coreInstalled) {
+        modelInfo = await odooExecuteWrite<Record<string, any>>('purchase.request', 'fields_get',
+          [], { attributes: ['string', 'type', 'selection', 'required', 'help'] });
+        sampleCount = await odooExecuteWrite<number>('purchase.request', 'search_count', [[]]);
+        const lineFieldsObj = await odooExecuteWrite<Record<string, any>>('purchase.request.line', 'fields_get',
+          [], { attributes: ['string', 'type'] });
+        lineFields = Object.keys(lineFieldsObj);
+        groups = await odooExecuteWrite<any[]>('res.groups', 'search_read',
+          [[['category_id.name', '=', 'Purchase Request']]], { fields: ['name', 'full_name'] });
+      }
+      return NextResponse.json({ modules, coreInstalled, sampleCount, groups, purchaseRequestStateOptions: modelInfo?.state?.selection ?? null, purchaseRequestKeyFields: modelInfo ? Object.keys(modelInfo) : null, lineFields });
+    }
     if (action === 'lablocation') {
       // Read-only check for the new LAB scrap feature (2026-08-27): confirms resolveLabWarehouseLocation
       // actually resolves a real Odoo location via warehouse code 'LAB', before trusting the UI.
