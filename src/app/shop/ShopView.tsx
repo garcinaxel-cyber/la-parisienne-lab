@@ -280,14 +280,23 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     loadLosses();
   }
 
-  async function load() {
-    setLoading(true); setError(null);
+  // `silent` (Axel, 2026-08-29: shop staff report "everytime we click ok its loaded again")
+  // skips the `loading` flag entirely. The whole tab body — including whichever order a shop
+  // is mid-way through checking off line by line — is gated behind `{loading ? <Đang tải…> :
+  // ...}` below, so every single-line confirm (which calls load() to pick up the freshly-
+  // checked qty) was blanking the ENTIRE screen back to a bare loading state and only
+  // reappearing once the refetch resolved — jarring on every tap, and worse on a slow connection
+  // (exactly what a shop tablet on wifi would see). The initial mount load (useEffect below)
+  // still wants the real spinner, since there's nothing to show yet.
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
+    setError(null);
     const actions = await import('./actions');
     const [delRes, cakeRes] = await Promise.all([
       readOnly ? actions.getShopDeliveriesForStaffAction(shopName) : actions.getMyShopDeliveriesAction(),
       readOnly ? actions.getShopCakesForStaffAction(shopName) : actions.getMyShopCakesAction(),
     ]);
-    setLoading(false);
+    if (!opts?.silent) setLoading(false);
     if (delRes.error) { setError(delRes.error); return; }
     setOrders(delRes.orders ?? []);
     setTodayDate(delRes.today ?? null);
@@ -337,7 +346,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       ...(readOnly ? { shopName } : {}),
     });
     setSaving(null);
-    if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load(); }
+    if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
   }
 
   async function logout() {
