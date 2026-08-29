@@ -545,3 +545,48 @@ export async function checkShopHasOdooWarehouseAction(): Promise<{ hasWarehouse?
   const loc = await resolveShopWarehouseLocation(auth.shopName);
   return { hasWarehouse: !!loc };
 }
+
+export type ShopLossDailyRecap = { date: string; totalQty: number; reportCount: number };
+
+// Axel, 2026-08-29: "je veux que dans l'onglet des shops on voit dans un tableau le recap des
+// pertes par jour, on garde que 7j glissant de data" — daily total (not per-line) over a
+// rolling 7-day window, grouped by Vietnam calendar day (not UTC) for consistency with every
+// other date bucket in this app (see labTodayTomorrow above). Display-only window — reads from
+// the same lab_shop_losses rows kept indefinitely, nothing here deletes old data.
+function vnLossDateStr(iso: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+
+async function fetchDailyLossRecap(shopName: string): Promise<ShopLossDailyRecap[]> {
+  const supabase = service();
+  if (!supabase) return [];
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data } = await supabase.from('lab_shop_losses')
+    .select('qty, reported_at')
+    .eq('shop_name', shopName)
+    .gte('reported_at', since);
+  const byDate = new Map<string, { totalQty: number; reportCount: number }>();
+  for (const r of data ?? []) {
+    const d = vnLossDateStr(r.reported_at);
+    const cur = byDate.get(d) ?? { totalQty: 0, reportCount: 0 };
+    cur.totalQty += Number(r.qty);
+    cur.reportCount += 1;
+    byDate.set(d, cur);
+  }
+  return Array.from(byDate.entries())
+    .map(([date, v]) => ({ date, ...v }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export async function getMyShopLossesDailyRecapAction(): Promise<{ recap?: ShopLossDailyRecap[]; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  return { recap: await fetchDailyLossRecap(auth.shopName) };
+}
+
+export async function getShopLossesDailyRecapForStaffAction(shopName: string): Promise<{ recap?: ShopLossDailyRecap[]; error?: string }> {
+  const auth = await requireStaffSession();
+  if ('error' in auth) return { error: auth.error };
+  return { recap: await fetchDailyLossRecap(shopName) };
+}
+
