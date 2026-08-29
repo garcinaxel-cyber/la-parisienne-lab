@@ -209,13 +209,15 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const completionByTeamDelivery = Object.entries(teamAggProduced).map(([team, v]) => ({
     team, expected: v.expected, checked: v.checked, rate: v.expected ? Math.round(v.checked / v.expected * 100) : 0,
   })).sort((a, b) => b.expected - a.expected);
-  // Top problem products per team — biggest missing quantity first, ties excluded (gap<=0).
+  // Top problem products per team — biggest mismatch first, in either direction (Axel,
+  // 2026-08-29: afficher aussi les quantités livrées en supplément, pas juste les manques).
+  // gap > 0 = manque (livré en moins), gap < 0 = surplus (livré en plus). Exact matches excluded.
   const completionGapsByTeam: Record<string, { name: string; expected: number; checked: number; gap: number }[]> = {};
   for (const [team, products] of Object.entries(teamProductAgg)) {
     completionGapsByTeam[team] = Object.values(products)
       .map(v => ({ name: v.name, expected: v.expected, checked: v.checked, gap: v.expected - v.checked }))
-      .filter(v => v.gap > 0)
-      .sort((a, b) => b.gap - a.gap)
+      .filter(v => v.gap !== 0)
+      .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))
       .slice(0, 10);
   }
   const discrepancyByTeam = Object.entries(teamAgg).map(([team, v]) => ({

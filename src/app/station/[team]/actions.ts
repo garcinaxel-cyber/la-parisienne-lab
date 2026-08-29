@@ -116,11 +116,12 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
     perProduct[key].checked += l.qty_checked ?? 0;
   }
   // Detail (Axel, 2026-08-21: "je veux le detail aussi") — which products are actually behind,
-  // not just the aggregate rate. Only products with a real gap, worst first.
+  // not just the aggregate rate. Any real mismatch, worst first in either direction (Axel,
+  // 2026-08-29: afficher aussi le supplément livré, pas juste les manques — gap<0 = surplus).
   const products: CompletionProductDetail[] = Object.entries(perProduct)
     .map(([sku, v]) => ({ sku, name: v.name, expected: v.expected, checked: v.checked, gap: v.expected - v.checked }))
-    .filter(p => p.gap > 0)
-    .sort((a, b) => b.gap - a.gap);
+    .filter(p => p.gap !== 0)
+    .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
   const completion = { expected, checked, rate: expected ? Math.round(checked / expected * 100) : 0, products };
 
   // Lab stock — read-only, live from Odoo (lib/odoo-inventory.ts, same LAB/Stock lookup as the

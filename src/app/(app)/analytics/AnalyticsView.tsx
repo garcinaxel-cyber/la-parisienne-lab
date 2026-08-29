@@ -231,7 +231,9 @@ export default function AnalyticsView({
                             <span className="text-navy truncate pr-3">{p.name}</span>
                             <span className="text-ink-light shrink-0">
                               {p.checked.toLocaleString()}/{p.expected.toLocaleString()} ·{' '}
-                              <span className="font-semibold" style={{ color: '#DC2626' }}>-{p.gap.toLocaleString()}</span>
+                              <span className="font-semibold" style={{ color: p.gap > 0 ? '#DC2626' : '#16A34A' }}>
+                                {p.gap > 0 ? '-' : '+'}{Math.abs(p.gap).toLocaleString()}
+                              </span>
                             </span>
                           </div>
                         ))}

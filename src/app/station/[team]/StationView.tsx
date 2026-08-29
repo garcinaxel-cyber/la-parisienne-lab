@@ -1962,7 +1962,10 @@ export default function StationView({
                         <div key={p.sku} className="flex justify-between items-center text-[12px]">
                           <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
                           <span className="shrink-0" style={{ color: '#6B6455' }}>
-                            {p.checked}/{p.expected} · <span className="font-bold" style={{ color: '#B45309' }}>-{p.gap}</span>
+                            {p.checked}/{p.expected} ·{' '}
+                            <span className="font-bold" style={{ color: p.gap > 0 ? '#B45309' : '#2D6A4F' }}>
+                              {p.gap > 0 ? '-' : '+'}{Math.abs(p.gap)}
+                            </span>
                           </span>
                         </div>
                       ))}
