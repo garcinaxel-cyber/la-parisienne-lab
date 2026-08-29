@@ -11,7 +11,39 @@ const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 // as-is here rather than writing a second search endpoint. main_image_url is already returned
 // by that route (dv?.image_url ?? f.image_url) — kept here too so the scrap picker can show a
 // thumbnail (helps confirm the right product before an Odoo-bound report, 2026-08-25).
-type ProductSearchResult = { id: string; name_vi: string; name_en: string | null; sku: string | null; main_image_url?: string | null };
+type ProductVariantOption = { id: string; sku: string | null; label: string; image_url: string | null };
+type ProductSearchResult = {
+  id: string; name_vi: string; name_en: string | null; sku: string | null; main_image_url?: string | null;
+  variants?: ProductVariantOption[];
+};
+// Flattened, selectable row for the loss-report picker: one fiche can have several variants
+// (flavor/size), and each needs its own SKU picked explicitly — Axel, 2026-08-29: "ils voient
+// pas les variantes". Before this, the dropdown only ever showed/used the fiche's default
+// variant sku, so a shop reporting a loss of a non-default flavor/size silently scrapped the
+// wrong SKU in Odoo (or, for fiches without a default, an arbitrary one).
+type LossPickOption = ProductSearchResult & { variantLabel: string | null };
+
+function flattenForPicker(results: ProductSearchResult[]): LossPickOption[] {
+  const out: LossPickOption[] = [];
+  for (const p of results) {
+    const variants = p.variants ?? [];
+    if (variants.length <= 1) {
+      out.push({ ...p, variantLabel: null });
+      continue;
+    }
+    for (const v of variants) {
+      out.push({
+        id: `${p.id}:${v.id}`,
+        name_vi: p.name_vi,
+        name_en: p.name_en,
+        sku: v.sku,
+        main_image_url: v.image_url ?? p.main_image_url ?? null,
+        variantLabel: v.label && v.label !== 'Standard' ? v.label : null,
+      });
+    }
+  }
+  return out;
+}
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 
@@ -67,7 +99,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [lossQuery, setLossQuery] = useState('');
   const [lossResults, setLossResults] = useState<ProductSearchResult[]>([]);
   const [lossSearching, setLossSearching] = useState(false);
-  const [lossProduct, setLossProduct] = useState<ProductSearchResult | null>(null);
+  const [lossProduct, setLossProduct] = useState<LossPickOption | null>(null);
   const [lossQty, setLossQty] = useState('1');
   const [lossReasonId, setLossReasonId] = useState<number | null>(null);
   const [lossNote, setLossNote] = useState('');
@@ -76,7 +108,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // note into this list and resets the picker for the next item; the actual submit sends every
   // item in the list in one go, each still becoming its own lab_shop_losses row + stock.scrap
   // (Odoo has no native "scrap several products at once" endpoint).
-  const [lossItems, setLossItems] = useState<{ id: string; product: ProductSearchResult; qty: number; reasonId: number; reasonName: string; note: string }[]>([]);
+  const [lossItems, setLossItems] = useState<{ id: string; product: LossPickOption; qty: number; reasonId: number; reasonName: string; note: string }[]>([]);
   const [lossSubmitting, setLossSubmitting] = useState(false);
   const [lossMsg, setLossMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -229,7 +261,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     let okCount = 0, errCount = 0, syncErrCount = 0;
     for (const item of lossItems) {
       const res = await recordShopLossAction({
-        sku: item.product.sku, productName: item.product.name_vi, qty: item.qty,
+        sku: item.product.sku,
+        productName: item.product.variantLabel ? `${item.product.name_vi} — ${item.product.variantLabel}` : item.product.name_vi,
+        qty: item.qty,
         reasonTagId: item.reasonId, reasonTagName: item.reasonName,
         note: item.note || null, reportedByName: trimmedName,
         ...(readOnly ? { shopName } : {}),
@@ -525,7 +559,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             <img src={lossProduct.main_image_url} alt="" className="w-full h-full object-cover" />
                           </button>
                         )}
-                        <span className="font-semibold truncate">{lossProduct.name_vi}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}</span>
+                        <span className="font-semibold truncate">
+                          {lossProduct.name_vi}{lossProduct.variantLabel ? ` — ${lossProduct.variantLabel}` : ''}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}
+                        </span>
                       </span>
                       <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>Đổi</button>
                     </div>
@@ -541,11 +577,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                           ) : !lossResults.length ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
-                          ) : lossResults.map(p => (
+                          ) : flattenForPicker(lossResults).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
                               {p.main_image_url && <img src={p.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
-                              <span className="truncate">{p.name_vi}{p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}</span>
+                              <span className="truncate">
+                                {p.name_vi}{p.variantLabel ? <span style={{ color: '#6B7280' }}> — {p.variantLabel}</span> : null}
+                                {p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -588,7 +627,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                           <img src={item.product.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold truncate">{item.product.name_vi} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>×{item.qty}</span></div>
+                          <div className="text-sm font-semibold truncate">
+                            {item.product.name_vi}{item.product.variantLabel ? ` — ${item.product.variantLabel}` : ''} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>×{item.qty}</span>
+                          </div>
                           <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
                         </div>
                         <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: '#DC2626' }} aria-label="Xoá">✕</button>
@@ -758,7 +799,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     <img src={item.product.main_image_url} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-navy truncate">{item.product.name_vi}{item.product.sku ? ` (${item.product.sku})` : ''}</div>
+                    <div className="text-sm font-bold text-navy truncate">
+                      {item.product.name_vi}{item.product.variantLabel ? ` — ${item.product.variantLabel}` : ''}{item.product.sku ? ` (${item.product.sku})` : ''}
+                    </div>
                     <div className="text-xs" style={{ color: '#6B7280' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
                   </div>
                   <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{item.qty}</span>
