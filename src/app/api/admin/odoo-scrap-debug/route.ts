@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecuteWrite } from '@/lib/odoo';
-import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId, resolveLabWarehouseLocation } from '@/lib/odoo-scrap';
+import { resolveShopWarehouseLocation, resolveProductsBySku, resolveDefaultScrapLocationId, resolveLabWarehouseLocation, getScrapReasonTags } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 
 // 2026-08-28 LAB inventory prep (Axel): finished-goods stock targets computed from the app's own
@@ -451,10 +451,25 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat']);
+  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat', 'reasontags', 'reasontagcreate']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'reasontags') {
+      // Read-only (2026-08-29, Axel: manager wants more scrap reasons -- "Test", "out of
+      // date"). Raw, UNFILTERED list of stock.scrap.reason.tag from Odoo, to see what already
+      // exists before deciding whether to add new tags or just widen the app's own keyword
+      // filter (odoo-scrap.ts reduceLossReasons in shop/actions.ts + lab-scrap/actions.ts).
+      const tags = await getScrapReasonTags();
+      return NextResponse.json({ tags });
+    }
+    if (action === 'reasontagcreate') {
+      // Write (2026-08-29): create a new stock.scrap.reason.tag. ?name= required.
+      const name = url.searchParams.get('name') ?? '';
+      if (!name) return NextResponse.json({ error: 'Missing ?name=' }, { status: 400 });
+      const newId = await odooExecuteWrite<number>('stock.scrap.reason.tag', 'create', [{ name }]);
+      return NextResponse.json({ ok: true, id: newId, name });
+    }
     if (action === 'modulecheck') {
       // Read-only diagnosis (2026-08-27, Axel: purchase workflow redesign with Miss Flavor —
       // "option 2" = the OCA purchase_request module family). Checks install state of every
