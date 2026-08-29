@@ -288,7 +288,14 @@ export async function upsertProductionCard(supabase: SupabaseClient, args: {
       .eq('team', team).eq('variant_label', variantLabel).eq('product_name_vi', name)
       .eq('cancelled', true).gt('qty_produced', 0).gte('updated_at', warnFloor)
       .order('updated_at', { ascending: false }).limit(3);
-    let notes: string | null = null;
+    // lab_assignments.notes is NOT NULL (no default) -- must stay '' when there's nothing to
+    // say, never JS null (2026-08-29 hotfix: an explicit `notes: null` on insert -- as opposed
+    // to omitting the key, which lets the column's own default apply -- broke card creation
+    // outright for every product on an order that DIDN'T trip this guardrail, e.g. 6 of
+    // REP/2026/01230's 10 newly-added lines silently got zero production card while the other 4
+    // (which DID have a warning string) inserted fine. Caught within ~7 minutes via the
+    // Odoo-reconciliation dashboard.
+    let notes = '';
     if (recentCancelled?.length) {
       const totalProduced = recentCancelled.reduce((sum, r) => sum + (r.qty_produced ?? 0), 0);
       notes = `⚠ ${totalProduced} unité(s) déjà produite(s) pour une commande annulée récemment sur ce même produit (${nowLabStamp()}) — vérifier avant de reproduire, stock peut-être déjà disponible.`;
