@@ -364,11 +364,18 @@ function normalizeReasonName(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 const BROKEN_REASON_KEYWORDS = ['vo', 'hong', 'gay', 'be ', 'nut', 'casse', 'broken', 'damage'];
-const EXPIRED_REASON_KEYWORDS = ['het han', 'han su dung', 'perime', 'expired', 'expiry', 'qua han'];
+const EXPIRED_REASON_KEYWORDS = ['het han', 'han su dung', 'perime', 'expired', 'expiry', 'qua han', 'het date'];
+// Axel, 2026-08-29: manager asked to add "Test" and "out of date" as reasons. Both already exist
+// as real Odoo tags -- confirmed live via stock.scrap.reason.tag: id 9 "test" and id 6 "hết date"
+// ("out of date", diacritics stripped by normalizeReasonName below to "het date" -- added above,
+// doesn't match the existing "het han"/"qua han" expired phrasing so it fell through unseen).
+// "test" alone was invisible too since it matches neither the broken nor expired family. "làm
+// hàng thử" (id 3, "made trial product") is the same family as "test" -- included here too.
+const TEST_REASON_KEYWORDS = ['test', 'hang thu'];
 function reduceLossReasons(all: ShopLossReason[]): ShopLossReason[] {
   const filtered = all.filter(r => {
     const n = normalizeReasonName(r.name);
-    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k));
+    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k)) || TEST_REASON_KEYWORDS.some(k => n.includes(k));
   });
   return filtered.length > 0 ? filtered : all;
 }
