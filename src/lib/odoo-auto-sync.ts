@@ -207,6 +207,16 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
       await supabase.from('lab_order_packaging_lines').delete().in('order_ref', cancelledRefsThisTick);
     }
   }
+  // Sibling gap for PURE-packaging orders (2026-08-29, REP/2026/01226 reject+recreate at a
+  // corrected delivery date: the rejected original's 2 packaging rows sat forever under the wrong
+  // date — see [[rep-reject-recreate-transition-diagnostic]]). These never appear in `result.changes`
+  // above at all (that list is built from lab_order_lines diffs, and a pure-packaging order never
+  // has a single lab_order_lines row — that's the whole reason packagingOnly/this table exist), so
+  // cancelledRefsThisTick above can never catch them. odoo-sync.ts now tracks this separately as
+  // packagingCancelledRefs, resolved the same way (state check on refs that dropped out of scope).
+  if (result.packagingCancelledRefs.length) {
+    await supabase.from('lab_order_packaging_lines').delete().in('order_ref', result.packagingCancelledRefs);
+  }
 
   // Auto-cleanup: DRAFT imports whose order(s) were HARD-DELETED in Odoo are orphans
   // (never published, order gone). Remove them so they stop showing in the review list.

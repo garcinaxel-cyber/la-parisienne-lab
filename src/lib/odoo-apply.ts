@@ -269,11 +269,35 @@ export async function upsertProductionCard(supabase: SupabaseClient, args: {
     const { error } = await supabase.from('lab_assignments').update(update).eq('id', asg.id);
     if (error) return { error: `update card ${asg.id}: ${error.message}` };
   } else {
+    // Guardrail (Axel, 2026-08-29, REP/2026/01225 rejected+recreated as REP/2026/01228 at a
+    // corrected delivery date: 4 products already physically produced under 01225 got a brand
+    // new blank card here for 01228, since the match key above is `import_id` and a
+    // reject+recreate always lands on a fresh import — the old cancelled card's qty_produced was
+    // silently invisible to this new one, and only caught by hand — see
+    // [[rep-reject-recreate-transition-diagnostic]]). Odoo exposes no link between a rejected
+    // order and its replacement, so this can't be resolved automatically without risking the
+    // opposite, worse mistake (marking genuinely new demand as already fulfilled and
+    // under-producing) — instead, surface a warning note on the new card so a chef/admin makes
+    // the call themselves. Matches on team+product+variant only (not sku/order_ref — a reject
+    // +recreate always changes the ref, sometimes the exact sku/variant too), scoped to the last
+    // 48h so it doesn't flag ordinary same-day repeat orders from weeks apart.
+    const warnFloor = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    const { data: recentCancelled } = await supabase
+      .from('lab_assignments')
+      .select('id, qty_produced, updated_at')
+      .eq('team', team).eq('variant_label', variantLabel).eq('product_name_vi', name)
+      .eq('cancelled', true).gt('qty_produced', 0).gte('updated_at', warnFloor)
+      .order('updated_at', { ascending: false }).limit(3);
+    let notes: string | null = null;
+    if (recentCancelled?.length) {
+      const totalProduced = recentCancelled.reduce((sum, r) => sum + (r.qty_produced ?? 0), 0);
+      notes = `⚠ ${totalProduced} unité(s) déjà produite(s) pour une commande annulée récemment sur ce même produit (${nowLabStamp()}) — vérifier avant de reproduire, stock peut-être déjà disponible.`;
+    }
     const { error } = await supabase.from('lab_assignments').insert({
       import_id: importId, team, fiche_id: ficheId, variant_id: variantId,
       product_name_vi: name, product_name_en: nameEn, image_url: image,
       variant_label: variantLabel, total_qty: qty, qty_to_produce: qty, qty_produced: 0,
-      status: 'pending', sort_order: 6000, breakdown: [bEntry],
+      status: 'pending', sort_order: 6000, breakdown: [bEntry], notes,
     });
     if (error) return { error: `create card: ${error.message}` };
   }

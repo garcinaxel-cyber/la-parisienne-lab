@@ -13,6 +13,14 @@ export interface OdooSyncResult {
   // bag"). The caller upserts these straight into lab_order_packaging_lines so they still show
   // up in delivery-check (which already unions that table independently of lab_imports status).
   packagingOnly: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[];
+  // Order refs already sitting in lab_order_packaging_lines (pure-packaging orders, e.g. box/bag
+  // restocks) that have since been rejected/cancelled/hard-deleted in Odoo (Axel, 2026-08-29:
+  // REP/2026/01226 rejected+recreated at a corrected delivery date — the replacement,
+  // REP/2026/01227, synced in fine, but the rejected original's 2 packaging rows just sat there
+  // forever under the wrong date, since lab_order_packaging_lines is written by a separate upsert
+  // path in odoo-auto-sync.ts that never re-checks Odoo state — see [[rep-reject-recreate-transition-diagnostic]]).
+  // Caller deletes these rows (and their delivery-check materialization, if not yet checked).
+  packagingCancelledRefs: string[];
   // Coverage check (Axel, 2026-08-11, after REP/2026/01006 turned out invisible): every Odoo
   // order currently open (same state+date window as this whole sync) that ends up with ZERO
   // representation anywhere in the app by the end of this function — not already imported, not
@@ -228,6 +236,18 @@ for (let offset = 0; ; offset += 1000) {
   if (!refPage || refPage.length < 1000) break;
 }
 
+// Same idea, for pure-packaging orders — these never get a lab_order_lines row (that's the whole
+// point of packagingOnly, see the interface comment above), so they're invisible to
+// `alreadyImported` above. Without this separate set, a rejected/cancelled packaging-only order
+// can never be noticed as missing (2026-08-29 bug, see packagingCancelledRefs comment).
+const alreadyImportedPackaging = new Set<string>();
+for (let offset = 0; ; offset += 1000) {
+  const { data: pkgPage } = await supabase.from('lab_order_packaging_lines').select('order_ref')
+    .gte('delivery_date', antiDupFloor).range(offset, offset + 999);
+  for (const r of pkgPage ?? []) if (r.order_ref) alreadyImportedPackaging.add(r.order_ref);
+  if (!pkgPage || pkgPage.length < 1000) break;
+}
+
 // Paginated for the same reason as alreadyImported above — this can exceed 1000 rows on a busy
 // week and a plain .limit() above the server's Max Rows cap silently truncates instead of erroring.
 const graceDateStr = new Date(Date.now() - SYNC_GRACE_DAYS * 24 * 3600 * 1000).toISOString().split('T')[0];
@@ -374,6 +394,27 @@ if (missingRefs.length > 0) {
   // exactly like a cancellation so the order drops out of production.
   deletedRefs = missingRefs.filter(r => !foundMissing.has(r));
   for (const r of deletedRefs) if (!cancelledRefs.includes(r)) cancelledRefs.push(r);
+}
+// Same check, for packaging-only refs (see packagingCancelledRefs above) — a separate list
+// since these must never touch lab_order_lines/lab_assignments (they were never in there), only
+// lab_order_packaging_lines. Refs already covered by missingRefs above are skipped (impossible in
+// practice — a ref can't be in both alreadyImported and alreadyImportedPackaging, packagingOnly
+// construction below excludes anything with a real production line — but kept defensive).
+const missingPackagingRefs = Array.from(alreadyImportedPackaging)
+  .filter(r => !refsSeenInOdoo.has(r) && !missingRefs.includes(r));
+const packagingCancelledRefs: string[] = [];
+if (missingPackagingRefs.length > 0) {
+  const soMissingPkg: any[] = await odooExecute('sale.order', 'search_read',
+    [[['name', 'in', missingPackagingRefs]]], { fields: ['name', 'state'], limit: 200 });
+  const rrMissingPkg: any[] = await odooExecute('stock.replenishment.request', 'search_read',
+    [[['name', 'in', missingPackagingRefs]]], { fields: ['name', 'state'], limit: 200 });
+  const foundMissingPkg = new Set<string>([...soMissingPkg, ...rrMissingPkg].map((o: any) => o.name));
+  for (const o of [...soMissingPkg, ...rrMissingPkg]) {
+    if (['cancel', 'cancelled', 'rejected'].includes(o.state)) packagingCancelledRefs.push(o.name);
+  }
+  for (const r of missingPackagingRefs) {
+    if (!foundMissingPkg.has(r) && !packagingCancelledRefs.includes(r)) packagingCancelledRefs.push(r); // hard-deleted
+  }
 }
 // Build the change list: lab vs Odoo, per (order_ref, sku)
 const labQtyByRefSku: Record<string, { qty: number; name: string }> = {};
@@ -586,6 +627,7 @@ for (const r of repls) {
     changes,
     deletedRefs,
     packagingOnly,
+    packagingCancelledRefs,
     syncGaps,
     shopNameChanges,
     noteChanges,
