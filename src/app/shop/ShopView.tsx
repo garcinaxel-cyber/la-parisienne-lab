@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName } from './actions';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
@@ -94,6 +94,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
   // read-only staff previews and the deliveries/cakes tabs never pay for it.
   const [losses, setLosses] = useState<ShopLoss[] | null>(null);
+  const [dailyRecap, setDailyRecap] = useState<ShopLossDailyRecap[] | null>(null);
   const [lossReasons, setLossReasons] = useState<ShopLossReason[] | null>(null);
   const [lossesLoading, setLossesLoading] = useState(false);
   const [lossQuery, setLossQuery] = useState('');
@@ -214,6 +215,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setLossesLoading(false);
     if (lossesRes.losses) setLosses(lossesRes.losses);
     if (reasonsRes.reasons) setLossReasons(reasonsRes.reasons);
+    const recapRes = readOnly ? await actions.getShopLossesDailyRecapForStaffAction(shopName) : await actions.getMyShopLossesDailyRecapAction();
+    if (recapRes.recap) setDailyRecap(recapRes.recap);
   }
 
   useEffect(() => {
@@ -671,6 +674,31 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
               </div>
             )}
+          {dailyRecap && dailyRecap.length > 0 && (
+            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+              <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng hao hụt 7 ngày qua</div>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="text-left px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Ngày</th>
+                    <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Số lượng</th>
+                    <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Báo cáo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyRecap.map(r => (
+                    <tr key={r.date} style={{ borderTop: '1px solid #F3F4F6' }}>
+                      <td className="px-4 py-2 font-semibold text-navy">{fmtDate(r.date)}</td>
+                      <td className="px-4 py-2 text-right font-bold">{r.totalQty}</td>
+                      <td className="px-4 py-2 text-right" style={{ color: '#6B7280' }}>{r.reportCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
             {lossesLoading && losses === null ? (
               <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
             ) : !losses?.length ? (
