@@ -546,13 +546,17 @@ export async function checkShopHasOdooWarehouseAction(): Promise<{ hasWarehouse?
   return { hasWarehouse: !!loc };
 }
 
-export type ShopLossDailyRecap = { date: string; totalQty: number; reportCount: number };
+export type ShopLossDailyRecapProduct = { productName: string; qty: number };
+export type ShopLossDailyRecap = { date: string; totalQty: number; reportCount: number; products: ShopLossDailyRecapProduct[] };
 
 // Axel, 2026-08-29: "je veux que dans l'onglet des shops on voit dans un tableau le recap des
 // pertes par jour, on garde que 7j glissant de data" — daily total (not per-line) over a
 // rolling 7-day window, grouped by Vietnam calendar day (not UTC) for consistency with every
 // other date bucket in this app (see labTodayTomorrow above). Display-only window — reads from
 // the same lab_shop_losses rows kept indefinitely, nothing here deletes old data.
+// Axel, 2026-08-29 (follow-up): "je veux que dans ce tableau il y ait le detail des produits par
+// jours" — each day now also carries a per-product qty breakdown (summed across that day's
+// reports), not just the daily total.
 function vnLossDateStr(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
@@ -562,19 +566,25 @@ async function fetchDailyLossRecap(shopName: string): Promise<ShopLossDailyRecap
   if (!supabase) return [];
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data } = await supabase.from('lab_shop_losses')
-    .select('qty, reported_at')
+    .select('qty, reported_at, product_name')
     .eq('shop_name', shopName)
     .gte('reported_at', since);
-  const byDate = new Map<string, { totalQty: number; reportCount: number }>();
+  const byDate = new Map<string, { totalQty: number; reportCount: number; productsByName: Map<string, number> }>();
   for (const r of data ?? []) {
     const d = vnLossDateStr(r.reported_at);
-    const cur = byDate.get(d) ?? { totalQty: 0, reportCount: 0 };
+    const cur = byDate.get(d) ?? { totalQty: 0, reportCount: 0, productsByName: new Map<string, number>() };
     cur.totalQty += Number(r.qty);
     cur.reportCount += 1;
+    cur.productsByName.set(r.product_name, (cur.productsByName.get(r.product_name) ?? 0) + Number(r.qty));
     byDate.set(d, cur);
   }
   return Array.from(byDate.entries())
-    .map(([date, v]) => ({ date, ...v }))
+    .map(([date, v]) => ({
+      date, totalQty: v.totalQty, reportCount: v.reportCount,
+      products: Array.from(v.productsByName.entries())
+        .map(([productName, qty]) => ({ productName, qty }))
+        .sort((a, b) => b.qty - a.qty),
+    }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
