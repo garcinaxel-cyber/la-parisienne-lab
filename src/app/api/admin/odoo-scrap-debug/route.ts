@@ -451,10 +451,41 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat', 'reasontags', 'reasontagcreate']);
+  const idlessActions = new Set(['sopicking', 'productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat', 'reasontags', 'reasontagcreate']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
+    if (action === 'sopicking') {
+      // Read-only (2026-08-29, Axel: "j'arrive pas a creer la livraison sur l'app" for S03486 --
+      // odoo-delivery-validate.ts's validateSalesOrder threw "Produits coches introuvables sur
+      // le picking Odoo : VTTH086" even though the app's own delivery-check data has VTTH086
+      // fully checked. Dumps exactly what that function itself reads -- the SO's picking(s),
+      // every stock.move on the picking with its resolved product default_code, and the sale
+      // order's own lines -- so a mismatch (product added to the SO after the picking was
+      // generated, no matching stock.move ever created, etc) is visible directly instead of
+      // guessed at.
+      const ref = url.searchParams.get('ref') ?? '';
+      if (!ref) return NextResponse.json({ error: 'Missing ?ref=' }, { status: 400 });
+      const orders = await odooExecuteWrite<any[]>('sale.order', 'search_read',
+        [[['name', '=', ref]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status'] });
+      const so = orders[0];
+      if (!so) return NextResponse.json({ error: 'Commande ' + ref + ' introuvable dans Odoo' });
+      const pickingIds: number[] = so.picking_ids ?? [];
+      const pickings = pickingIds.length
+        ? await odooExecuteWrite<any[]>('stock.picking', 'search_read', [[['id', 'in', pickingIds]]], { fields: ['id', 'name', 'state', 'scheduled_date'] })
+        : [];
+      const moves = pickingIds.length
+        ? await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', 'in', pickingIds]]],
+            { fields: ['id', 'picking_id', 'product_id', 'product_uom_qty', 'quantity', 'state', 'sale_line_id'] })
+        : [];
+      const productIds = Array.from(new Set(moves.map((m: any) => m.product_id?.[0]).filter(Boolean)));
+      const products = productIds.length
+        ? await odooExecuteWrite<any[]>('product.product', 'read', [productIds], { fields: ['id', 'default_code', 'name', 'display_name'] })
+        : [];
+      const soLines = await odooExecuteWrite<any[]>('sale.order.line', 'search_read',
+        [[['order_id', '=', so.id]]], { fields: ['id', 'product_id', 'product_uom_qty', 'display_type', 'sequence'] });
+      return NextResponse.json({ so, pickings, moves, products, soLines });
+    }
     if (action === 'reasontags') {
       // Read-only (2026-08-29, Axel: manager wants more scrap reasons -- "Test", "out of
       // date"). Raw, UNFILTERED list of stock.scrap.reason.tag from Odoo, to see what already
