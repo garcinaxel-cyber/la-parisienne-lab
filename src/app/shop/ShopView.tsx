@@ -535,7 +535,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       <input type="text" value={lossQuery} onChange={e => setLossQuery(e.target.value)}
                         placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                       {lossQuery.trim().length >= 2 && (
-                        <div className="mt-1 rounded-lg overflow-y-auto max-h-64" style={{ border: '1px solid #E5E7EB' }}>
+                        <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
+                          style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
                           {lossSearching ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                           ) : !lossResults.length ? (
