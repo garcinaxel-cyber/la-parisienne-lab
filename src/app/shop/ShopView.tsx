@@ -674,29 +674,34 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
               </div>
             )}
-          {dailyRecap && dailyRecap.length > 0 && (
+{dailyRecap && dailyRecap.length > 0 && (
             <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
               <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng hao hụt 7 ngày qua</div>
               </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="text-left px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Ngày</th>
-                    <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Số lượng</th>
-                    <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: '#9CA3AF' }}>Báo cáo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dailyRecap.map(r => (
-                    <tr key={r.date} style={{ borderTop: '1px solid #F3F4F6' }}>
-                      <td className="px-4 py-2 font-semibold text-navy">{fmtDate(r.date)}</td>
-                      <td className="px-4 py-2 text-right font-bold">{r.totalQty}</td>
-                      <td className="px-4 py-2 text-right" style={{ color: '#6B7280' }}>{r.reportCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                {dailyRecap.map(r => (
+                  <div key={r.date} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-navy">{fmtDate(r.date)}</span>
+                      <span className="text-sm">
+                        <span className="font-bold">{r.totalQty}</span>
+                        <span className="ml-1.5" style={{ color: '#9CA3AF' }}>· {r.reportCount} báo cáo</span>
+                      </span>
+                    </div>
+                    {r.products.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {r.products.map(p => (
+                          <div key={p.productName} className="flex items-center justify-between gap-2 text-xs" style={{ color: '#6B7280' }}>
+                            <span className="truncate">{p.productName}</span>
+                            <span className="font-semibold shrink-0" style={{ color: '#374151' }}>×{p.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
             {lossesLoading && losses === null ? (
