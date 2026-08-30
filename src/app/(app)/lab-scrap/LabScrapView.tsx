@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Trash2, Search, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import type { LabLoss, LabLossReason } from './actions';
+import { thumb } from '@/lib/img-thumb';
 
 // LAB's own scrap/loss report — admin + assistant space. Axel, 2026-08-27: "une fonction de
 // scrap similaire aux shops mais pour les produits casse du lab". Same shape as the shop
@@ -124,7 +125,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
                 {product.main_image_url && (
                   <button type="button" onClick={() => setZoomImage(product.main_image_url!)}
                     className="shrink-0 w-8 h-8 rounded overflow-hidden" aria-label={vi ? 'Xem ảnh' : 'View photo'}>
-                    <img src={product.main_image_url} alt="" className="w-full h-full object-cover" />
+                    <img src={thumb(product.main_image_url, 80)} alt="" className="w-full h-full object-cover" />
                   </button>
                 )}
                 <span className="font-semibold truncate">{vi ? product.name_vi : (product.name_en || product.name_vi)}{product.sku ? ` (${product.sku})` : ''}</span>
@@ -147,7 +148,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
                   ) : results.slice(0, 8).map(p => (
                     <button key={p.id} onClick={() => { setProduct(p); setResults([]); }}
                       className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
-                      {p.main_image_url && <img src={p.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                      {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
                       <span className="truncate">{vi ? p.name_vi : (p.name_en || p.name_vi)}{p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}</span>
                     </button>
                   ))}
@@ -189,7 +190,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
             {items.map(item => (
               <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
                 {item.product.main_image_url && (
-                  <img src={item.product.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                  <img src={thumb(item.product.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold truncate">{item.product.name_vi} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>×{item.qty}</span></div>
@@ -252,7 +253,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
       {zoomImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
           onClick={() => setZoomImage(null)}>
-          <img src={zoomImage} alt="" className="max-w-full max-h-full rounded-xl" onClick={e => e.stopPropagation()} />
+          <img src={thumb(zoomImage, 1200)} alt="" className="max-w-full max-h-full rounded-xl" onClick={e => e.stopPropagation()} />
         </div>
       )}
 
@@ -266,7 +267,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
               {items.map(item => (
                 <div key={item.id} className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#FEF2F2' }}>
                   {item.product.main_image_url && (
-                    <img src={item.product.main_image_url} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
+                    <img src={thumb(item.product.main_image_url, 112)} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy truncate">{item.product.name_vi}{item.product.sku ? ` (${item.product.sku})` : ''}</div>
