@@ -139,7 +139,7 @@ type OrderDetail = {
   shop_name: string;
   isManual?: boolean; // exceptional/manual cake not yet linked to an Odoo order
   items: {
-    product_name_vi: string; variant_label: string; qty: number;
+    product_name_vi: string; variant_label: string; qty: number; sku: string | null;
     message?: string | null; notes?: string | null; designNotes?: string | null; designPhotoUrl?: string | null;
   }[];
 };
@@ -561,6 +561,7 @@ export default function StationView({
         product_name_vi: line.product_name_vi,
         variant_label: line.variant_label,
         qty: line.qty,
+        sku: line.product_sku ?? null,
         message: messageByLineId[line.id] ?? mc?.message ?? null,
         notes: mc?.notes ?? null,
         designNotes: mc?.design_notes ?? null,
@@ -578,7 +579,7 @@ export default function StationView({
         shop_name: m.shop_name ?? '',
         isManual: true,
         items: [{
-          product_name_vi: m.product_name_vi, variant_label: 'Standard', qty: m.qty,
+          product_name_vi: m.product_name_vi, variant_label: 'Standard', qty: m.qty, sku: m.product_sku ?? null,
           message: m.message ?? null, notes: m.notes ?? null, designNotes: m.design_notes ?? null, designPhotoUrl: m.design_photo_url ?? null,
         }],
       });
@@ -1727,24 +1728,27 @@ export default function StationView({
                     )}
                     {/* Consolidated per-product totals — what this day actually requires */}
                     {details && details.length > 0 && (() => {
-                      const totals = new Map<string, number>();
+                      const totals = new Map<string, { name: string; qty: number }>();
                       for (const order of details) {
                         for (const item of order.items) {
-                          const key = `${item.product_name_vi}${item.variant_label && item.variant_label !== 'Standard' ? ` · ${item.variant_label}` : ''}`;
-                          totals.set(key, (totals.get(key) ?? 0) + item.qty);
+                          const displayName = `${item.product_name_vi}${item.variant_label && item.variant_label !== 'Standard' ? ` · ${item.variant_label}` : ''}`;
+                          const key = item.sku || displayName;
+                          const cur = totals.get(key);
+                          if (cur) cur.qty += item.qty;
+                          else totals.set(key, { name: displayName, qty: item.qty });
                         }
                       }
-                      const rows = Array.from(totals.entries()).sort((x, y) => y[1] - x[1]);
+                      const rows = Array.from(totals.entries()).sort((a, b) => b[1].qty - a[1].qty);
                       return (
                         <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F0F9F4', border: '1px solid #A7D4B8' }}>
                           <div className="text-xs font-bold mb-1.5" style={{ color: '#1A4731' }}>
                             {lang === 'vi' ? 'Tổng cần sản xuất' : 'Total to produce'}
                           </div>
                           <div className="space-y-0.5">
-                            {rows.map(([name, qty]) => (
-                              <div key={name} className="flex items-center justify-between text-xs">
-                                <span style={{ color: '#374151' }}>{name}</span>
-                                <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{qty}</span>
+                            {rows.map(([key, v]) => (
+                          <div key={key} className="flex items-center justify-between text-xs">
+                          <span style={{ color: '#374151' }}>{v.name}</span>
+                          <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{v.qty}</span>
                               </div>
                             ))}
                           </div>
