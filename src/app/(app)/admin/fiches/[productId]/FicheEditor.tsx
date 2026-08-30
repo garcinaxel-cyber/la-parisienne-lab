@@ -5,6 +5,7 @@ import { ArrowLeft, Plus, Trash2, Save, Thermometer, Timer, Eye, Upload } from '
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
+import { thumb } from '@/lib/img-thumb';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -398,7 +399,7 @@ export default function FicheEditor({
         <div className="flex-1 min-w-0 flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
             {identity.image_url && (
-              <img src={identity.image_url} alt="" className="w-14 h-14 rounded-xl object-cover shrink-0" />
+              <img src={thumb(identity.image_url, 112)} alt="" className="w-14 h-14 rounded-xl object-cover shrink-0" />
             )}
             <div>
               <h1 className="font-serif text-2xl font-bold text-navy">{identity.name_vi || '…'}</h1>
@@ -472,7 +473,7 @@ export default function FicheEditor({
                 >
                   {identity.image_url ? (
                     <>
-                      <img src={identity.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                      <img src={thumb(identity.image_url, 400)} alt="" className="absolute inset-0 w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                         <span className="text-white text-xs font-medium flex items-center gap-1.5">
                           <Upload size={12} /> {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
@@ -596,7 +597,7 @@ export default function FicheEditor({
                       >
                         {v.image_url ? (
                           <>
-                            <img src={v.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                            <img src={thumb(v.image_url, 96)} alt="" className="absolute inset-0 w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                               <Upload size={10} className="text-white" />
                             </div>
