@@ -11,6 +11,7 @@ import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
+import { thumb } from '@/lib/img-thumb';
 
 function SearchIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
   return (
@@ -1305,7 +1306,7 @@ export default function StationView({
                   {inStock.map(a => (
                     <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 bg-white">
                       {a.image_url
-                        ? <img src={a.image_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
+                        ? <img src={thumb(a.image_url, 96)} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
                         : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>
@@ -1447,7 +1448,7 @@ export default function StationView({
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
-                          <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+                          <img src={thumb(a.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
                             style={{ border: '1px solid #E0D49A' }} />
                         ) : (
                           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
@@ -1784,7 +1785,7 @@ export default function StationView({
                                   {item.designPhotoUrl && (
                                     <button type="button" onClick={() => setDesignPhotoModal(item.designPhotoUrl!)}
                                       className="shrink-0" title={lang === 'vi' ? 'Xem ảnh mẫu' : 'Voir la photo'}>
-                                      <img src={item.designPhotoUrl} alt="" className="w-8 h-8 rounded-md object-cover" />
+                                      <img src={thumb(item.designPhotoUrl, 80)} alt="" className="w-8 h-8 rounded-md object-cover" />
                                     </button>
                                   )}
                                   {item.designNotes && <span>🎨 {item.designNotes}</span>}
@@ -2144,7 +2145,7 @@ export default function StationView({
             className="absolute top-4 right-4 p-2 rounded-full text-white" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
             <X size={22} />
           </button>
-          <img src={designPhotoModal} alt="" className="max-w-full max-h-full rounded-lg object-contain" onClick={e => e.stopPropagation()} />
+          <img src={thumb(designPhotoModal, 1200)} alt="" className="max-w-full max-h-full rounded-lg object-contain" onClick={e => e.stopPropagation()} />
         </div>
       )}
 
@@ -2251,7 +2252,7 @@ export default function StationView({
               {extraProduct ? (
                 <div className="flex items-center gap-3 rounded-xl p-3" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                   {(extraVariant?.image_url ?? extraProduct.main_image_url) ? (
-                    <img src={extraVariant?.image_url ?? extraProduct.main_image_url ?? undefined} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                    <img src={thumb(extraVariant?.image_url ?? extraProduct.main_image_url ?? undefined, 96)} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                   ) : (
                     <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                   )}
@@ -2294,7 +2295,7 @@ export default function StationView({
                           className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-green-50 active:bg-green-100"
                           style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
                           {p.main_image_url ? (
-                            <img src={p.main_image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                            <img src={thumb(p.main_image_url, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                           ) : (
                             <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                           )}
@@ -2638,7 +2639,7 @@ function ProductionCard({
       <div className="flex flex-wrap items-start p-3 sm:p-4 gap-3">
         {/* Image */}
         {a.image_url ? (
-          <img src={a.image_url} alt="" className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl object-cover shrink-0"
+          <img src={thumb(a.image_url, 144)} alt="" className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl object-cover shrink-0"
             style={{ border: '1px solid #E0D49A' }} loading="lazy" />
         ) : (
           <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl shrink-0 flex items-center justify-center text-2xl"
@@ -2757,7 +2758,7 @@ function ProductionCard({
                   {a.bc_design_photo_url && (
                     <button type="button" onClick={() => onOpenDesignPhoto(a.bc_design_photo_url!)}
                       className="shrink-0" title={lang === 'vi' ? 'Xem ảnh mẫu' : 'Voir la photo'}>
-                      <img src={a.bc_design_photo_url} alt="" className="w-9 h-9 rounded-md object-cover" />
+                      <img src={thumb(a.bc_design_photo_url, 96)} alt="" className="w-9 h-9 rounded-md object-cover" />
                     </button>
                   )}
                   {a.bc_design_notes && <span>🎨 {a.bc_design_notes}</span>}
@@ -2935,7 +2936,7 @@ function TermineCard({
       }}>
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
-          <img src={a.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+          <img src={thumb(a.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
             style={{ border: '1px solid #E0D49A' }} />
         ) : (
           <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
