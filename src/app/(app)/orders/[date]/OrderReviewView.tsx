@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, TEAMS, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
+import { thumb } from '@/lib/img-thumb';
 import { publishImportAction } from './actions';
 
 type OrderLine = { import_id: string; team: string; variant_label: string; shop_name: string; qty: number; order_ref?: string };
@@ -267,7 +268,7 @@ export default function OrderReviewView({
                     <div className="flex md:grid md:grid-cols-12 items-center px-4 py-3 gap-3">
                       <div className="flex-1 md:col-span-4 min-w-0 flex items-center gap-2">
                         {a.image_url ? (
-                          <img src={a.image_url} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
+                          <img src={thumb(a.image_url, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" loading="lazy" />
                         ) : (
                           <div className="w-9 h-9 rounded-lg bg-cream shrink-0" />
                         )}
