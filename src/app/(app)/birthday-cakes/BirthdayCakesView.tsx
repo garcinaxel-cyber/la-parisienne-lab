@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { Store, Clock, Truck, Save, CheckCircle2, FileText, MapPin, Plus, X, Trash2, Search } from 'lucide-react';
+import { thumb } from '@/lib/img-thumb';
 
 type Cake = {
   id: string; source: 'odoo' | 'manual'; manualId: string | null; needsOdoo: boolean;
@@ -347,7 +348,7 @@ Link anyway?`;
             {chosen ? (
               <div className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                 {chosen.imageUrl
-                  ? <img src={chosen.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                  ? <img src={thumb(chosen.imageUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                   : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🎂</div>}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>{chosen.nameVi}</div>
@@ -369,7 +370,7 @@ Link anyway?`;
                       <button key={p.variantId ?? p.ficheId} onClick={() => setChosen(p)}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-green-50" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                         {p.imageUrl
-                          ? <img src={p.imageUrl} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                          ? <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
                           : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🎂</div>}
                         <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi || p.nameEn || p.sku || '—'}</span>
                         {p.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{p.sku}</span>}
