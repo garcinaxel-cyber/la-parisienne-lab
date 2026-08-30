@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Plus, Package2, Tag, FlaskConical, X, Save, Trash2, PenLine } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
+import { thumb } from '@/lib/img-thumb';
 
 type Fiche = {
   id: string;
@@ -255,7 +256,7 @@ export default function LabProductsView({ products: initial, categories }: {
             <div key={p.id} className="flex items-center gap-4 px-5 py-4"
               style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
               {p.image_url ? (
-                <img src={p.image_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+                <img src={thumb(p.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
                   style={{ border: '1px solid #E0D49A' }} />
               ) : (
                 <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
