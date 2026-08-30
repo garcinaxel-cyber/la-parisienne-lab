@@ -8,6 +8,7 @@ import {
   Zap, Plus, X, Search, Store, Phone, User, StickyNote, Truck, MapPin, Clock,
   FileText, CheckCircle2, Trash2, PenLine, Link2, Send, Square, CheckSquare,
 } from 'lucide-react';
+import { thumb } from '@/lib/img-thumb';
 
 type Order = {
   id: string; name: string; sku: string | null; imageUrl: string | null; team: string | null;
@@ -353,7 +354,7 @@ Link anyway?`;
                       </button>
                     )}
                     {o.imageUrl
-                      ? <img src={o.imageUrl} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
+                      ? <img src={thumb(o.imageUrl, 112)} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
                       : <div className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-navy flex items-center gap-2 flex-wrap">
@@ -392,7 +393,7 @@ Link anyway?`;
 
                   {(o.designNotes || o.designPhotoUrl) && (
                     <div className="mt-2 rounded-xl px-3 py-2 flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #E9D5FF' }}>
-                      {o.designPhotoUrl && <img src={o.designPhotoUrl} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
+                      {o.designPhotoUrl && <img src={thumb(o.designPhotoUrl, 112)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
                       {o.designNotes && <span className="text-xs" style={{ color: '#6D28D9' }}>🎨 {o.designNotes}</span>}
                     </div>
                   )}
@@ -541,7 +542,7 @@ Link anyway?`;
             {chosen ? (
               <div className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
                 {chosen.imageUrl
-                  ? <img src={chosen.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                  ? <img src={thumb(chosen.imageUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                   : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>{chosen.nameVi}</div>
@@ -566,7 +567,7 @@ Link anyway?`;
                       <button key={p.variantId ?? p.ficheId} onClick={() => setChosen(p)}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-green-50" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                         {p.imageUrl
-                          ? <img src={p.imageUrl} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                          ? <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
                           : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                         <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi || p.nameEn || p.sku || '—'}</span>
                         {p.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{p.sku}</span>}
