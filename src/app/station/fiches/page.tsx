@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BookOpen, ChevronRight, AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
+import { thumb } from '@/lib/img-thumb';
 
 type Fiche = {
   id: string;
@@ -177,7 +178,7 @@ export default function StationFichesPage() {
                   style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}
                 >
                   {fiche.image_url ? (
-                    <img src={fiche.image_url} alt=""
+                    <img src={thumb(fiche.image_url, 112)} alt=""
                       className="w-12 h-12 rounded-xl object-cover shrink-0"
                       style={{ border: '1px solid #E0D49A' }} loading="lazy" />
                   ) : (
