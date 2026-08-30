@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { BookOpen, Plus, Tag, Users } from 'lucide-react';
 import { TEAMS, TEAM_LABELS, type Team } from '@/lib/types';
+import { thumb } from '@/lib/img-thumb';
 
 const hasTeam = (f: any) => Array.isArray(f.teams) && f.teams.length > 0;
 
@@ -185,7 +186,7 @@ function FicheCard({ fiche, steps, backUrl }: {
       className="card p-4 flex items-center gap-4 hover:bg-cream/60 transition-colors group"
     >
       {fiche.image_url ? (
-        <img src={fiche.image_url} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+        <img src={thumb(fiche.image_url, 112)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
       ) : (
         <div className="w-12 h-12 rounded-lg bg-border-soft flex items-center justify-center shrink-0">
           <BookOpen size={20} className="text-ink-light" />
