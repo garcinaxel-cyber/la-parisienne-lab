@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, CalendarDays } from 'lucide-react';
+import { thumb } from '@/lib/img-thumb';
 
 type RecapRow = { team: string; name: string; sku: string | null; variant: string | null; sent: number; received: number; pending: number };
 type Recap = { date: string; totalSent: number; totalReceived: number; totalPending: number; notesCount: number; rows: RecapRow[] };
@@ -255,7 +256,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
                       <div className="grid grid-cols-12 items-center gap-2">
                         <div className="col-span-5 flex items-center gap-2 min-w-0">
                           {l.image_url
-                            ? <img src={l.image_url} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                            ? <img src={thumb(l.image_url, 80)} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
                             : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                           <span className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</span>
                         </div>
