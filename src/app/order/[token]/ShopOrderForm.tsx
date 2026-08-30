@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Search, Plus, Minus, X, CheckCircle2, Send, Upload, Loader2 } from 'lucide-react';
 import { searchShopProductsAction, submitShopOrderAction, uploadDesignPhotoAction, getShopOrdersAction, type ShopProduct, type ShopOrderStatus } from './actions';
+import { thumb } from '@/lib/img-thumb';
 
 // Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts (server-only file,
 // not imported here to avoid pulling Odoo client code into the client bundle).
@@ -237,7 +238,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                 <div key={i.key} className="rounded-xl p-3 bg-white" style={{ border: '1.5px solid #2D6A4F' }}>
                   <div className="flex items-center gap-3">
                     {i.product.imageUrl
-                      ? <img src={i.product.imageUrl} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      ? <img src={thumb(i.product.imageUrl, 96)} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                       : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold" style={{ color: '#1A4731' }}>{i.product.nameVi}</div>
@@ -277,7 +278,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                         </label>
                         {i.designPhotoUrl && (
                           <div className="relative">
-                            <img src={i.designPhotoUrl} alt="" className="w-9 h-9 rounded-lg object-cover" />
+                            <img src={thumb(i.designPhotoUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover" />
                             <button onClick={() => setItems(prev => prev.map(x => x.key === i.key ? { ...x, designPhotoUrl: null } : x))}
                               className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#DC2626' }} aria-label="Xóa ảnh">
                               <X size={10} />
@@ -306,7 +307,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-left active:bg-green-50"
                   style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined }}>
                   {p.imageUrl
-                    ? <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                    ? <img src={thumb(p.imageUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                     : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                   <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi}</span>
                   <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold" style={{ color: '#2D6A4F' }}><Plus size={13} /> {p.sku && <span className="font-mono font-normal" style={{ color: '#9CA3AF' }}>{p.sku}</span>}</span>
