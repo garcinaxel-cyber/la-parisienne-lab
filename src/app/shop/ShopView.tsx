@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
+import { thumb } from '@/lib/img-thumb';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 
@@ -469,7 +470,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                               <button type="button" onClick={() => setZoomImage(l.image_url)}
                                 className="shrink-0 w-11 h-11 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}
                                 aria-label="Xem ảnh sản phẩm">
-                                <img src={l.image_url} alt="" className="w-full h-full object-cover" />
+                                <img src={thumb(l.image_url, 112)} alt="" className="w-full h-full object-cover" />
                               </button>
                             )}
                             <div className="min-w-0">
@@ -568,7 +569,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                         {lossProduct.main_image_url && (
                           <button type="button" onClick={() => setZoomImage(lossProduct.main_image_url!)}
                             className="shrink-0 w-8 h-8 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
-                            <img src={lossProduct.main_image_url} alt="" className="w-full h-full object-cover" />
+                            <img src={thumb(lossProduct.main_image_url, 80)} alt="" className="w-full h-full object-cover" />
                           </button>
                         )}
                         <span className="font-semibold truncate">
@@ -592,7 +593,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                           ) : flattenForPicker(lossResults).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
-                              {p.main_image_url && <img src={p.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                              {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
                               <span className="truncate">
                                 {p.name_vi}{p.variantLabel ? <span style={{ color: '#6B7280' }}> — {p.variantLabel}</span> : null}
                                 {p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
@@ -636,7 +637,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     {lossItems.map(item => (
                       <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
                         {item.product.main_image_url && (
-                          <img src={item.product.main_image_url} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                          <img src={thumb(item.product.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                         )}
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold truncate">
@@ -776,7 +777,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       {zoomImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
           onClick={() => setZoomImage(null)}>
-          <img src={zoomImage} alt="" className="max-w-full max-h-full rounded-xl" onClick={e => e.stopPropagation()} />
+          <img src={thumb(zoomImage, 1200)} alt="" className="max-w-full max-h-full rounded-xl" onClick={e => e.stopPropagation()} />
         </div>
       )}
 
@@ -787,7 +788,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận nhận hàng</div>
             <div className="flex items-center gap-3">
               {pendingReceipt.line.image_url && (
-                <img src={pendingReceipt.line.image_url} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
+                <img src={thumb(pendingReceipt.line.image_url, 128)} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
               )}
               <div className="min-w-0">
                 <div className="text-sm font-bold text-navy truncate">{pendingReceipt.line.product_name_vi}</div>
@@ -838,7 +839,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               {lossItems.map(item => (
                 <div key={item.id} className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#FEF2F2' }}>
                   {item.product.main_image_url && (
-                    <img src={item.product.main_image_url} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
+                    <img src={thumb(item.product.main_image_url, 112)} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy truncate">
