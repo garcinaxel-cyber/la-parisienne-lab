@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
+import { thumb } from '@/lib/img-thumb';
 
 interface FicheMeta {
   doc_code: string | null;
@@ -274,7 +275,7 @@ export default function FicheView({
             </div>
             <div style={{ border: '1.5px solid #ddd', borderRadius: '6px', overflow: 'hidden', minHeight: '160px', backgroundColor: '#f9f9f9', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {(selectedVariant?.image_url ?? product.main_image_url) ? (
-                <img src={selectedVariant?.image_url ?? product.main_image_url ?? undefined} alt={product.name_vi} style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} />
+                <img src={thumb(selectedVariant?.image_url ?? product.main_image_url ?? undefined, 800)} alt={product.name_vi} style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} />
               ) : (
                 <div style={{ fontSize: '11px', color: '#aaa', fontFamily: 'Arial, sans-serif', textAlign: 'center', padding: '20px' }}>
                   [ {lang === 'vi' ? 'Không gian dán ảnh chuẩn' : 'Reference photo placeholder'} ]
