@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 import { nowLabStamp } from '@/lib/odoo';
+import { ensureDeliveryOrderChecklist } from '@/lib/delivery-check';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -366,5 +367,26 @@ async function createLineAndCard(
       if (cardErr.error) return { error: cardErr.error };
     }
   }
+
+  // Keep an ALREADY-opened delivery-check in sync with this new line. ensureDeliveryOrderChecklist
+  // self-heals any SKU missing from lab_delivery_check_lines, but only when something calls it --
+  // normally a human opening that specific order's check page. A product Odoo adds AFTER the
+  // check was first opened otherwise sits invisible until someone happens to reopen it (2026-09-01,
+  // Axel: REP/2026/01273 BCP flagged "Qty drift: Odoo 4 != app 0" on the nightly Check -- the
+  // production card was created correctly, only the checklist was stale). Only touch an order
+  // whose checklist ALREADY exists -- never create one here, so an order nobody has opened yet
+  // still correctly shows as not-yet-materialized to the Check (see checks.ts), same signal a
+  // pure-packaging REP with no lab_order_lines relies on (REP/2026/01272). Deliberately does NOT
+  // link back to lab_assignments -- production cards and delivery-check stay independent by
+  // design (Axel, 2026-09-01). Best-effort: never let a resync hiccup block the line/card writes
+  // above, which already succeeded.
+  const { data: existingCheckHeader } = await supabase
+    .from('lab_delivery_orders').select('id')
+    .eq('delivery_date', ctx.delivery_date).eq('order_ref', orderRef).maybeSingle();
+  if (existingCheckHeader) {
+    try { await ensureDeliveryOrderChecklist(supabase, ctx.delivery_date, orderRef); }
+    catch { /* best-effort resync only -- line + card above are already saved either way */ }
+  }
+
   return {};
 }
