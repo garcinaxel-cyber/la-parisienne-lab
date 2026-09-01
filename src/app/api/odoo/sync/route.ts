@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooConfigured } from '@/lib/odoo';
 import { runOdooSync } from '@/lib/odoo-sync';
 import { applyOdooChanges } from '@/lib/odoo-apply';
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 // Teams are resolved from the LAB FICHES (SKU → variant → fiche.teams[0]) — never from Odoo tags.
 export async function GET() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
@@ -40,7 +40,7 @@ export async function GET() {
 // (total_qty / qty_to_produce ± delta, breakdown entry updated, note appended).
 export async function POST(req: Request) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {

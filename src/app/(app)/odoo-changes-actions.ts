@@ -1,11 +1,11 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { applyOdooChanges } from '@/lib/odoo-apply';
 import { revalidatePath } from 'next/cache';
 
 async function guard() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { supabase, ok: false };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   return { supabase, ok: ['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? ''), userId: session.user.id };

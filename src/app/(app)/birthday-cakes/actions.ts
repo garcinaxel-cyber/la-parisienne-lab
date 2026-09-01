@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 
 // Upsert the complementary info attached to ONE birthday-cake order line.
@@ -9,7 +9,7 @@ export async function saveBirthdayDetailAction(
   fields: { message?: string | null; readyTime?: string | null; deliveredBy?: string | null; deliveryAddress?: string | null },
 ): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -43,7 +43,7 @@ export async function createManualCakeAction(input: {
   customerName: string | null; customerPhone: string | null; notes?: string | null;
 }): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -102,7 +102,7 @@ export async function updateManualCakeAction(
   },
 ): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -124,7 +124,7 @@ export async function updateManualCakeAction(
 // Mark a manual cake as entered in Odoo (Phase 1 manual clear; Phase 2 will auto-match)
 export async function markManualCakeEnteredAction(id: string, entered: boolean): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -141,7 +141,7 @@ export async function markManualCakeEnteredAction(id: string, entered: boolean):
 // manual cake's info is copied onto the Odoo order line so nothing is lost.
 export async function confirmMatchAction(manualCakeId: string, orderRef: string, targetSku?: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -239,7 +239,7 @@ export async function confirmMatchAction(manualCakeId: string, orderRef: string,
 // we stop suggesting it, and create the Odoo order's own production card (the pipeline had skipped it).
 export async function rejectMatchAction(manualCakeId: string, orderRef: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -305,7 +305,7 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
 // the delete button for matched orders — never trust the client alone).
 export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -328,7 +328,7 @@ export async function deleteManualCakeAction(id: string): Promise<{ ok?: boolean
 // Odoo still expects the cake.
 export async function cancelMatchedCakeAction(manualCakeId: string, reason: string | null): Promise<{ ok?: boolean; warning?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };

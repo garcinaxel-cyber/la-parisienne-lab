@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 
 export async function saveNotificationSetting(
@@ -7,7 +7,7 @@ export async function saveNotificationSetting(
   webhookUrl: string,
 ): Promise<{ error?: string; success?: true }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   const { data: profile } = await supabase

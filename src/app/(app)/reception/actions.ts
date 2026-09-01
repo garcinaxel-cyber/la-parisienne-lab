@@ -1,10 +1,10 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 
 async function guard() {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { supabase, ok: false, userId: null as string | null, name: null as string | null };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   return {

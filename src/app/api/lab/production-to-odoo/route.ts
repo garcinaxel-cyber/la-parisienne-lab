@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooConfigured, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 
@@ -13,7 +13,7 @@ export const maxDuration = 120;
 // manual catch-up. Dry-run by default; ?commit=1 writes. Admin only.
 export async function GET(req: Request) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'auth' }, { status: 401 });
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) return NextResponse.json({ error: 'forbidden' }, { status: 403 });

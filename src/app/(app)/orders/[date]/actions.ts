@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { sendZaloWebhook } from '@/lib/zalo';
 import { TEAM_LABELS } from '@/lib/types';
@@ -10,7 +10,7 @@ export async function publishImportAction(
   date: string,
 ): Promise<{ error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   const { data: profile } = await supabase
@@ -65,7 +65,7 @@ export async function publishImportAction(
 // is flagged published as soon as one of its orders is. Read-only towards Odoo.
 export async function publishOrderAction(orderRef: string, date: string): Promise<{ error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase
     .from('profiles').select('role, full_name').eq('id', session.user.id).single();
@@ -96,7 +96,7 @@ export async function publishOrderAction(orderRef: string, date: string): Promis
 // quantities drop back). If the import has no published order left, it returns to draft.
 export async function unpublishOrderAction(orderRef: string, date: string): Promise<{ error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase
     .from('profiles').select('role').eq('id', session.user.id).single();
@@ -130,7 +130,7 @@ export async function generateMissingCardsAction(
   date: string,
 ): Promise<{ created?: number; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase
     .from('profiles').select('role').eq('id', session.user.id).single();

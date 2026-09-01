@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 
 // Search LAB FICHES only — the B2C catalogue is never read.
 // Result shape kept compatible with the station "extra product" modal:
 // id = fiche_id, variant_id = default variant, main_image_url = fiche image.
 export async function GET(req: NextRequest) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const q        = req.nextUrl.searchParams.get('q')?.trim() ?? '';

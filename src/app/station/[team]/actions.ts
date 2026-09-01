@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { sendZaloWebhook } from '@/lib/zalo';
 import { TEAM_LABELS } from '@/lib/types';
@@ -11,7 +11,7 @@ export async function sendProductionReadyNotification(
   date: string,
 ): Promise<{ error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   const { data: setting } = await supabase
@@ -39,7 +39,7 @@ export async function sendProductionReadyNotification(
 // user session is only checked to confirm the click came from a logged-in station account.
 export async function syncOdooAction(): Promise<{ ok?: boolean; createdImports?: number; changesApplied?: number; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   if (!odooConfigured() || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -84,7 +84,7 @@ const TEAM_STOCK_CATEGORIES: Record<string, string[]> = {
 
 export async function getTeamAnalyticsAction(team: string): Promise<{ data?: TeamAnalytics; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Service role not configured' };
@@ -177,7 +177,7 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
 // profile lookup.
 export async function setStockThresholdAction(sku: string, threshold: number, userName: string | null): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   if (!Number.isFinite(threshold) || threshold < 0) return { error: 'Invalid threshold' };
 

@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { labDateOf, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 
@@ -22,7 +22,7 @@ export async function submitStockTransferAction(
   lines: TransferLineInput[],
 ): Promise<{ ok?: boolean; transferId?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const clean = (lines ?? []).filter(l => l.assignmentId && l.qtySent > 0);
   if (!clean.length) return { error: 'No products selected' };

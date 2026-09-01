@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { labDayUtcRange } from '@/lib/odoo';
 
 // Consolidated reception recap for one SEND day (lab-local calendar day of the transfer note's
@@ -7,7 +7,7 @@ import { labDayUtcRange } from '@/lib/odoo';
 // highlighted. Read-only. Admin / lab_manager / assistant only.
 export async function GET(req: NextRequest) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {

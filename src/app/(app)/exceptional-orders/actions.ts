@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { randomUUID } from 'crypto';
 import { createOdooOrderForSelection, addManualCakesToExistingOrder } from '@/lib/odoo-shop-order-sync';
@@ -8,7 +8,7 @@ import { createOdooOrderForSelection, addManualCakesToExistingOrder } from '@/li
 // hand the new one to the shops. Managers only (also enforced by RLS).
 export async function regenerateShopLinkAction(): Promise<{ ok?: boolean; token?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -37,7 +37,7 @@ export async function regenerateShopLinkAction(): Promise<{ ok?: boolean; token?
 // sees the result (order ref or error) immediately, no background queue/cron involved.
 export async function createOdooOrderAction(manualCakeIds: string[]): Promise<{ ok?: boolean; orderRef?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
@@ -54,7 +54,7 @@ export async function createOdooOrderAction(manualCakeIds: string[]): Promise<{ 
 // back to match it by hand).
 export async function addToExistingOdooOrderAction(manualCakeIds: string[], orderRef: string): Promise<{ ok?: boolean; orderRef?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };

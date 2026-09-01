@@ -1,5 +1,5 @@
 'use server';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 
 export async function createFicheFromSku(
@@ -7,7 +7,7 @@ export async function createFicheFromSku(
   nameVi: string,
 ): Promise<{ ficheId?: string; error?: string }> {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
 
   const { data: profile } = await supabase

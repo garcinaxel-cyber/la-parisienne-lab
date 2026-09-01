@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { fetchDoneForProdDate, aggregateBySku } from '@/lib/production-days';
 
@@ -15,7 +15,7 @@ import { fetchDoneForProdDate, aggregateBySku } from '@/lib/production-days';
 // embedded in its display name). READ-ONLY — this route never writes to Odoo.
 export async function GET(req: NextRequest) {
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await getSafeSession(supabase);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const today = new Date().toISOString().split('T')[0];
