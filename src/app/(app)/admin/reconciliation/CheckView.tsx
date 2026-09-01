@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { ShieldCheck, AlertTriangle, RefreshCw, TrendingUp, TrendingDown, Truck, Package, Box } from 'lucide-react';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { runCheckNowAction } from './actions';
+import { runCheckNowAction, fixStockOdooIssueAction } from './actions';
 
 type ReconciliationIssue = { date: string; team: string; variantLabel: string; name: string; needed: number; tracked: number; gap: number };
 type DeliveryCoverageIssue = { kind: 'not_materialized' | 'qty_drift'; date: string; order_ref: string; sku?: string; expected_odoo?: number; expected_app?: number };
@@ -31,6 +31,8 @@ export default function CheckView({ runs }: { runs: Run[] }) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
+  const [fixErr, setFixErr] = useState<Record<string, string>>({});
 
   const latest = runs[0] ?? null;
   const history = runs.slice(1);
@@ -41,6 +43,22 @@ export default function CheckView({ runs }: { runs: Run[] }) {
     const res = await runCheckNowAction();
     if (res?.error) setErr(res.error);
     setRunning(false);
+    router.refresh();
+  }
+
+  async function fixIssue(date: string, sku?: string) {
+    if (!sku) return;
+    const key = `${date}:${sku}`;
+    setFixing(key);
+    setFixErr(prev => { const { [key]: _drop, ...rest } = prev; return rest; });
+    const res = await fixStockOdooIssueAction(date, sku);
+    if (res?.error) {
+      setFixErr(prev => ({ ...prev, [key]: res.error! }));
+      setFixing(null);
+      return;
+    }
+    await runCheckNowAction();
+    setFixing(null);
     router.refresh();
   }
 
@@ -205,20 +223,38 @@ export default function CheckView({ runs }: { runs: Run[] }) {
             count={latest.stock_odoo_count} vi={vi}>
             {latest.stock_odoo_issues.length > 0 && (
               <div className="divide-y divide-border-soft">
-                {latest.stock_odoo_issues.map((iss, i) => (
-                  <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
-                    <div className="text-navy min-w-0 truncate">
-                      {iss.date} · {iss.product ?? iss.sku ?? '—'}{iss.qty != null ? ` ×${iss.qty}` : ''}
+                {latest.stock_odoo_issues.map((iss, i) => {
+                  const fixable = (iss.kind === 'not_synced' || iss.kind === 'drifted') && !!iss.sku;
+                  const key = `${iss.date}:${iss.sku}`;
+                  return (
+                    <div key={i} className="px-4 py-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-navy min-w-0 truncate">
+                          {iss.date} · {iss.product ?? iss.sku ?? '—'}{iss.qty != null ? ` ×${iss.qty}` : ''}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                            {iss.kind === 'not_synced' && (vi ? 'Chưa lên Odoo' : 'Not synced to Odoo')}
+                            {iss.kind === 'drifted' && `${vi ? 'Lệch MO' : 'MO drift'}: ${iss.from} → ${iss.to}`}
+                            {iss.kind === 'no_odoo_product' && (vi ? 'Không thấy SP trên Odoo' : 'No matching Odoo product')}
+                            {iss.kind === 'missing_sku' && (vi ? 'Gửi kho không có SKU' : 'Sent to stock with no SKU')}
+                            {iss.kind === 'error' && (iss.detail ?? (vi ? 'Lỗi' : 'Error'))}
+                          </span>
+                          {fixable && (
+                            <button onClick={() => fixIssue(iss.date, iss.sku)} disabled={fixing === key}
+                              className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full text-white bg-navy hover:bg-navy/90 disabled:opacity-60 transition-colors">
+                              <RefreshCw size={11} className={fixing === key ? 'animate-spin' : ''} />
+                              {fixing === key ? (vi ? 'Đang tạo…' : 'Fixing…') : (vi ? 'Tạo MO' : 'Create MO')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {fixErr[key] && (
+                        <div className="text-xs mt-1" style={{ color: '#B42318' }}>{fixErr[key]}</div>
+                      )}
                     </div>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
-                      {iss.kind === 'not_synced' && (vi ? 'Chưa lên Odoo' : 'Not synced to Odoo')}
-                      {iss.kind === 'drifted' && `${vi ? 'Lệch MO' : 'MO drift'}: ${iss.from} → ${iss.to}`}
-                      {iss.kind === 'no_odoo_product' && (vi ? 'Không thấy SP trên Odoo' : 'No matching Odoo product')}
-                      {iss.kind === 'missing_sku' && (vi ? 'Gửi kho không có SKU' : 'Sent to stock with no SKU')}
-                      {iss.kind === 'error' && (iss.detail ?? (vi ? 'Lỗi' : 'Error'))}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Section>

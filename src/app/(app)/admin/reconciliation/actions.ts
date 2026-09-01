@@ -2,6 +2,8 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { runAllChecks } from '@/lib/checks';
+import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
+import { odooWriteConfigured } from '@/lib/odoo';
 
 // Single "Check" button — admin only (enforced here again, not just in the page's redirect,
 // since this is a server action reachable independently of the page render). Runs all 4 checks
@@ -39,5 +41,29 @@ export async function runCheckNowAction() {
     return { ok: true, issueCount: totalIssues };
   } catch (e: any) {
     return { error: e?.message ?? 'Check failed' };
+  }
+}
+
+// "Create MO" button on a Stock -> Odoo check issue (CheckView.tsx) -- reuses the exact same
+// sync engine as the real-time trigger (stock-actions.ts) and the old production-history manual
+// resync, scoped to just the one SKU/day the admin clicked on. Admin only, same as the rest of
+// this page. (Axel, 2026-09-01: the real-time sync can fail with zero trace anywhere -- see
+// BMCRDT/BMCRS on 2026-09-01, no lab_odoo_changes row, no Vercel error, MO just never created --
+// so a manual one-click fix now lives on the page that actually surfaces the gap, replacing the
+// old production-history tab's version of this same button.)
+export async function fixStockOdooIssueAction(date: string, sku: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role !== 'admin') return { error: 'Admin only' };
+  if (!odooWriteConfigured()) return { error: 'ODOO_WRITE_* not configured -- cannot create MOs' };
+
+  try {
+    const r = await syncStockToOdoo(supabase, date, { commit: true, skus: [sku] });
+    if (r.errors?.length) return { error: r.errors.map(e => e.error).join('; ') };
+    return { ok: true };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Sync failed' };
   }
 }
