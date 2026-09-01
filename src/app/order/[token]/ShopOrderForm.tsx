@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react';
 import { Search, Plus, Minus, X, CheckCircle2, Send, Upload, Loader2 } from 'lucide-react';
 import { searchShopProductsAction, submitShopOrderAction, uploadDesignPhotoAction, getShopOrdersAction, type ShopProduct, type ShopOrderStatus } from './actions';
 import { thumb } from '@/lib/img-thumb';
+import { SHOP_NAMES_ALL } from '@/lib/shops';
 
-// Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts (server-only file,
-// not imported here to avoid pulling Odoo client code into the client bundle).
-const SHOPS = ['Moon Flower', 'Lab', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
+// Single source of truth: src/lib/shops.ts (pure data, safe to import in this client
+// component -- unlike odoo-shop-order-sync.ts, which would drag Odoo client code into the bundle).
+const SHOPS = SHOP_NAMES_ALL;
 const DELIVERERS = SHOPS;
 
 type CartItem = {

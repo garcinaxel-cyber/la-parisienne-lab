@@ -2,7 +2,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
-import { SHOP_NAMES } from './page';
+import { PORTAL_SHOP_NAMES as SHOP_NAMES } from '@/lib/shops';
 
 // Isolated from /admin/users/actions.ts on purpose — same createUser pattern (proven, already
 // in production for chef/assistant/lab_manager accounts) but kept in its own file so this new

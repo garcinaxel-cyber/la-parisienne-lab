@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooExecuteWrite, odooWriteConfigured, labLocalToOdooUtc } from '@/lib/odoo';
+import { SHOP_CONFIG } from '@/lib/shops';
 
 function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
@@ -9,14 +10,10 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
 // Replenishment (stock.replenishment.request) for the 4 La Paris shops (their own warehouse).
 // B2B is intentionally absent for now — the urgent-order form only offers these 6 shops until
 // Axel gives the B2B list.
-export const SHOP_ODOO_MAP: Record<string, { docType: 'quotation' | 'replenishment'; partnerName?: string; warehouseCode?: string }> = {
-  'Moon Flower': { docType: 'quotation', partnerName: 'MOON FLOWER' },
-  'Lab': { docType: 'quotation', partnerName: 'LAB' },
-  'La Paris Tây Hồ': { docType: 'replenishment', warehouseCode: 'LP' },
-  'La Paris Long Biên': { docType: 'replenishment', warehouseCode: 'PARIS' },
-  'La Paris Bà Triệu': { docType: 'replenishment', warehouseCode: 'LPBT' },
-  'La Paris Timecity': { docType: 'replenishment', warehouseCode: 'LPTC' },
-};
+// 2026-09-01: the list itself now lives in src/lib/shops.ts (single source of truth, shared
+// with the client-side dropdowns and the shop-access allowlist). Same name kept here so the
+// existing importers (order/[token]/actions.ts, odoo-scrap.ts) are untouched.
+export const SHOP_ODOO_MAP: Record<string, { docType: 'quotation' | 'replenishment'; partnerName?: string; warehouseCode?: string }> = SHOP_CONFIG;
 
 export interface CreateOrderResult {
   ok: boolean;

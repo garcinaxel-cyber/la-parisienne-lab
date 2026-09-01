@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import ShopView from '@/app/shop/ShopView';
-import { SHOP_NAMES } from '../page';
+import { PORTAL_SHOP_NAMES as SHOP_NAMES } from '@/lib/shops';
 
 export const dynamic = 'force-dynamic';
 

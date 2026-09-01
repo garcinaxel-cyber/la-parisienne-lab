@@ -2,14 +2,15 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import ShopAccessView from './ShopAccessView';
+import { PORTAL_SHOP_NAMES } from '@/lib/shops';
 
 export const dynamic = 'force-dynamic';
 
-// Exactly 5 shops get a portal account — matches SHOP_ODOO_MAP's keys (odoo-shop-order-sync.ts)
-// minus "Lab" itself, and Axel's explicit list, 2026-08-19. Not derived from delivery history:
-// a shop showing up once in an old order (Winmart, HAPPY TRUE MARKET, etc.) should NOT get a
-// login — only these named partner shops.
-export const SHOP_NAMES = ['Moon Flower', 'La Paris Bà Triệu', 'La Paris Long Biên', 'La Paris Tây Hồ', 'La Paris Timecity'];
+// Exactly the shops flagged portalAccount in src/lib/shops.ts (single source of truth) — i.e.
+// SHOP_CONFIG minus "Lab" itself, per Axel's explicit list, 2026-08-19. Not derived from
+// delivery history: a shop showing up once in an old order (Winmart, HAPPY TRUE MARKET, etc.)
+// should NOT get a login — only these named partner shops.
+const SHOP_NAMES = PORTAL_SHOP_NAMES;
 
 export default async function ShopAccessPage() {
   const supabase = createClient();

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
 import { useI18n } from '@/lib/i18n';
@@ -27,8 +28,9 @@ type ProductChoice = {
   imageUrl: string | null; team: string; category: string | null; isCake: boolean;
 };
 
-// Keep in sync with SHOP_ODOO_MAP in src/lib/odoo-shop-order-sync.ts
-const DELIVERERS = ['Lab', 'Moon Flower', 'La Paris Tây Hồ', 'La Paris Long Biên', 'La Paris Bà Triệu', 'La Paris Timecity'];
+// Single source of truth: src/lib/shops.ts. Lab is kept first here (it's the usual deliverer
+// for an exceptional order) -- same dropdown order as before the consolidation.
+const DELIVERERS = ['Lab', ...SHOP_NAMES_ALL.filter(s => s !== 'Lab')];
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
 export default function ExceptionalOrdersView({ orders, candidates, productChoices, today, shopLinkToken = null }: {
