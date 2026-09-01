@@ -68,10 +68,17 @@ export async function GET(req: Request) {
     }
   }
 
+  // Timing (2026-09-01): this route already had to go 60s -> 270s at ~70 MOs/day and both
+  // phases are strictly sequential (2 Odoo RPCs per MO). Before deciding whether to batch /
+  // parallelise it for the 4-shop rollout, measure: total and per-phase wall time, and the
+  // resulting ms-per-MO, returned in the JSON (visible in net._http_response for a few hours)
+  // and logged (Vercel runtime logs) so a day of real runs can be read off without guessing.
+  const t0 = Date.now();
   try {
     const confirmResult = isTestMode
       ? { date, origin: `Lab ${date}`, eligible: 0, bypassed: [], confirmed: [], errors: [] }
       : await confirmDoneMOs(date);
+    const tConfirm = Date.now();
     // produceMOs() now runs in both test mode (?mo= / ?dryRun=, scoped to one MO or listing
     // only) and the default automatic nightly path (full day's batch, right after confirm).
     const produceResult = isTestMode
@@ -94,8 +101,19 @@ export async function GET(req: Request) {
         status: 'error',
       });
     }
-    return NextResponse.json({ confirm: confirmResult, produce: produceResult });
+    const tEnd = Date.now();
+    const handled = confirmResult.eligible + produceResult.eligible;
+    const timing = {
+      total_ms: tEnd - t0,
+      confirm_ms: tConfirm - t0, confirm_eligible: confirmResult.eligible,
+      produce_ms: tEnd - tConfirm, produce_eligible: produceResult.eligible,
+      ms_per_mo: handled ? Math.round((tEnd - t0) / handled) : null,
+      max_duration_s: maxDuration,
+    };
+    console.log(`[confirm-mos] ${date} timing ${JSON.stringify(timing)}`);
+    return NextResponse.json({ confirm: confirmResult, produce: produceResult, timing });
   } catch (e: any) {
+    console.error(`[confirm-mos] ${date} failed after ${Date.now() - t0}ms: ${e?.message ?? e}`);
     return NextResponse.json({ error: e?.message ?? 'MO confirm/produce failed' }, { status: 502 });
   }
 }
