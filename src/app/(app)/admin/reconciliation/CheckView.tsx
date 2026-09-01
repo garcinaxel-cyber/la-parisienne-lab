@@ -84,8 +84,10 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
   }
 
   const teamLabel = (t: string) => TEAM_LABELS[t as Team] ? (vi ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en) : t;
+  // Explicit lab timezone: without it the server render (UTC) and the browser (UTC+7) disagree,
+  // so the page shows UTC times until a client re-render -- "17:16" for a 00:16 sync.
   const fmtDateTime = (iso: string) => new Date(iso).toLocaleString(vi ? 'vi-VN' : 'en-GB', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh',
   });
 
   const total = latest ? totalOf(latest) : 0;
