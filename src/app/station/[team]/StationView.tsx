@@ -439,8 +439,12 @@ export default function StationView({
             return;
           }
           // allImports is already ordered by delivery_date, so this keeps the nearest/most
-          // recent 30 distinct days in order.
-          const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
+          // recent days in order. History is capped at 7 (rolling week) rather than 30 --
+          // Axel, 2026-09-01: keep DB load light now that this query pages through everything
+          // instead of silently truncating (see the lab_assignments pagination just below) --
+          // old history isn't actionable day-to-day anyway. Upcoming keeps the full 30 (future
+          // days are far fewer rows, never near the row-cap problem this was about).
+          const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, isUpcoming ? 30 : 7));
           const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
           const importIds = imports.map((i: any) => i.id);
           // PostgREST silently caps any query with no explicit limit at 1000 rows (no error --
