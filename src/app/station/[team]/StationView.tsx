@@ -443,11 +443,34 @@ export default function StationView({
           const keepDates = new Set(Array.from(new Set(allImports.map((i: any) => i.delivery_date))).slice(0, 30));
           const imports = allImports.filter((i: any) => keepDates.has(i.delivery_date));
           const importIds = imports.map((i: any) => i.id);
-          const { data: asgns, error: asgnsErr } = await supabase
-            .from('lab_assignments')
-            .select('import_id, qty_to_produce, status, product_name_vi, variant_label, transferred, cancelled')
-            .in('import_id', importIds)
-            .eq('team', team);
+          // PostgREST silently caps any query with no explicit limit at 1000 rows (no error --
+          // asgnsErr stays null, you just get fewer rows than exist). A 30-day window can hold
+          // more than that for a busy team (baby_mama alone was already at 1184 rows on
+          // 2026-09-01), and with no .order() here WHICH rows got dropped was arbitrary -- could
+          // land on any date/status, changing from load to load. That under/over-counted the
+          // "sản phẩm / cái" badge shown per day, while the per-day detail view (loadHistoryDetails,
+          // one day's imports at a time, always far under 1000) stayed correct -- exactly the
+          // mismatch Axel flagged on 09-01 (history badge 27·96 vs detail total 136 for 31/08).
+          // Fix: page through with .range() on a stable order until a page comes back short.
+          let asgns: any[] = [];
+          let asgnsErr: any = null;
+          {
+            const PAGE_SIZE = 1000;
+            let from = 0;
+            for (let page = 0; page < 20; page++) { // 20 * 1000 = safety ceiling, never expected to hit
+              const { data, error } = await supabase
+                .from('lab_assignments')
+                .select('import_id, qty_to_produce, status, product_name_vi, variant_label, transferred, cancelled')
+                .in('import_id', importIds)
+                .eq('team', team)
+                .order('id', { ascending: true })
+                .range(from, from + PAGE_SIZE - 1);
+              if (error) { asgnsErr = error; break; }
+              asgns = asgns.concat(data ?? []);
+              if (!data || data.length < PAGE_SIZE) break;
+              from += PAGE_SIZE;
+            }
+          }
           if (asgnsErr) {
             console.error('lab_assignments fetch failed', asgnsErr);
             if (/jwt/i.test(asgnsErr.message ?? '') || asgnsErr.code === 'PGRST301' || asgnsErr.code === 'PGRST303') {
