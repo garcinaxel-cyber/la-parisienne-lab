@@ -19,7 +19,12 @@ type Run = {
   delivery_coverage_issues: DeliveryCoverageIssue[]; delivery_coverage_count: number;
   production_stock_issues: ProductionStockIssue[]; production_stock_count: number;
   stock_odoo_issues: StockOdooIssue[]; stock_odoo_count: number;
+  odoo_volume?: OdooVolume | null;
 };
+type OdooVolumeGauge = { count: number; cap: number };
+type OdooVolume =
+  | { sales: OdooVolumeGauge; sales_lines: OdooVolumeGauge; repl: OdooVolumeGauge; repl_lines: OdooVolumeGauge; measured_at: string }
+  | { error: string; measured_at: string };
 
 function totalOf(r: Run): number {
   return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0);
@@ -185,6 +190,48 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
           {latest.error && (
             <div className="card p-3 text-sm border" style={{ borderColor: '#F0B4B4', backgroundColor: '#FDF2F2', color: '#B42318' }}>{latest.error}</div>
           )}
+
+          {/* 0. Odoo fetch volume vs sync caps (lab_v53) -- warn before a cap silently truncates */}
+          {latest.odoo_volume && (() => {
+            const v = latest.odoo_volume;
+            if ('error' in v) {
+              return (
+                <div className="card px-4 py-3 text-sm flex items-center justify-between gap-3">
+                  <span className="text-navy font-medium">{vi ? 'Khối lượng Odoo / giới hạn sync' : 'Odoo volume vs sync caps'}</span>
+                  <span className="text-xs" style={{ color: '#B42318' }}>{v.error}</span>
+                </div>
+              );
+            }
+            const gauges: { key: string; label: string; g: OdooVolumeGauge }[] = [
+              { key: 'sales', label: vi ? 'Đơn bán' : 'Sales orders', g: v.sales },
+              { key: 'sales_lines', label: vi ? 'Dòng đơn bán' : 'Sales lines', g: v.sales_lines },
+              { key: 'repl', label: vi ? 'Yêu cầu bổ sung' : 'Replenishments', g: v.repl },
+              { key: 'repl_lines', label: vi ? 'Dòng bổ sung' : 'Replenishment lines', g: v.repl_lines },
+            ];
+            const worst = Math.max(...gauges.map(x => x.g.count / x.g.cap));
+            const tone = (r: number) => r >= 0.8 ? { color: '#B42318', backgroundColor: '#FDF2F2' } : r >= 0.6 ? { color: '#B45309', backgroundColor: '#FFFBEB' } : { color: '#047857', backgroundColor: '#ECFDF5' };
+            return (
+              <div className="card px-4 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="text-sm text-navy font-medium">{vi ? 'Khối lượng Odoo / giới hạn sync (7 ngày)' : 'Odoo volume vs sync caps (7-day window)'}</div>
+                    <div className="text-xs text-ink-light">{vi ? 'Trên 80% = cần phân trang đọc Odoo trước khi mất đơn' : 'Above 80% = paginate the Odoo read before orders silently drop'}</div>
+                  </div>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={tone(worst)}>
+                    {worst >= 0.8 ? (vi ? 'Gần giới hạn' : 'Near cap') : `${Math.round(worst * 100)}%`}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {gauges.map(x => (
+                    <div key={x.key} className="rounded-lg px-2.5 py-1.5 text-xs" style={tone(x.g.count / x.g.cap)}>
+                      <div className="font-semibold">{x.label}</div>
+                      <div>{x.g.count} / {x.g.cap} · {Math.round(100 * x.g.count / x.g.cap)}%</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 1. Reconciliation */}
           <Section

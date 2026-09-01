@@ -36,6 +36,7 @@ export async function runCheckNowAction() {
       production_stock_count: r.productionStock.length,
       stock_odoo_issues: r.stockOdoo,
       stock_odoo_count: r.stockOdoo.length,
+      odoo_volume: r.odooVolume,
     });
     revalidatePath('/admin/reconciliation');
     return { ok: true, issueCount: totalIssues };

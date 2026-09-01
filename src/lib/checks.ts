@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runReconciliationCheck, type ReconciliationResult } from '@/lib/reconciliation';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
+import { odooExecute, odooConfigured, labTodayUtcThreshold } from '@/lib/odoo';
+import { SYNC_GRACE_DAYS, ODOO_FETCH_CAPS } from '@/lib/odoo-sync';
 
 // "Check" — Axel, 2026-08-20: one button, everything checks automatically, 7-day run-history
 // (see lab_v46_check_and_blocked_tracking.sql). Reconciliation (lib/reconciliation.ts) already
@@ -183,6 +185,42 @@ export async function checkStockToOdoo(supabase: SupabaseClient, from: string, t
   return issues;
 }
 
+// ── 5. Odoo fetch volume vs the sync's hardcoded caps ────────────────────────
+// runOdooSync (odoo-sync.ts) reads Odoo with fixed search_read limits (ODOO_FETCH_CAPS). Past a
+// cap Odoo silently returns a partial page -- orders would vanish from the sync with no error,
+// exactly the PostgREST 1000-row story again but on the source of truth. Measured here with
+// the SAME domains/threshold as the sync, via `search` (ids only, no limit) + `search_count`,
+// so every Check run records the fill level and the UI can warn before the cliff.
+export type OdooVolumeGauge = { count: number; cap: number };
+export type OdooVolume =
+  | { sales: OdooVolumeGauge; sales_lines: OdooVolumeGauge; repl: OdooVolumeGauge; repl_lines: OdooVolumeGauge; measured_at: string }
+  | { error: string; measured_at: string };
+
+export async function measureOdooFetchVolume(): Promise<OdooVolume> {
+  const measured_at = new Date().toISOString();
+  if (!odooConfigured()) return { error: 'odoo not configured', measured_at };
+  try {
+    const threshold = labTodayUtcThreshold(SYNC_GRACE_DAYS);
+    const salesIds: number[] = await odooExecute('sale.order', 'search',
+      [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]]);
+    const replIds: number[] = await odooExecute('stock.replenishment.request', 'search',
+      [[['state', 'in', ['draft', 'submitted', 'approved']], ['delivery_date', '>=', threshold]]]);
+    const [salesLines, replLines] = await Promise.all([
+      salesIds.length ? odooExecute<number>('sale.order.line', 'search_count', [[['order_id', 'in', salesIds]]]) : Promise.resolve(0),
+      replIds.length ? odooExecute<number>('stock.replenishment.request.line', 'search_count', [[['request_id', 'in', replIds]]]) : Promise.resolve(0),
+    ]);
+    return {
+      sales: { count: salesIds.length, cap: ODOO_FETCH_CAPS.sales },
+      sales_lines: { count: salesLines, cap: ODOO_FETCH_CAPS.sales_lines },
+      repl: { count: replIds.length, cap: ODOO_FETCH_CAPS.repl },
+      repl_lines: { count: replLines, cap: ODOO_FETCH_CAPS.repl_lines },
+      measured_at,
+    };
+  } catch (e: any) {
+    return { error: String(e?.message ?? e), measured_at };
+  }
+}
+
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export interface AllChecksResult {
   reconciliation: ReconciliationResult;
@@ -191,15 +229,17 @@ export interface AllChecksResult {
   deliveryCoverage: DeliveryCoverageIssue[];
   productionStock: ProductionStockIssue[];
   stockOdoo: StockOdooIssue[];
+  odooVolume: OdooVolume;
 }
 
 export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksResult> {
   const { from, to } = checkWindow();
-  const [reconciliation, deliveryCoverage, productionStock, stockOdoo] = await Promise.all([
+  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume] = await Promise.all([
     runReconciliationCheck(supabase),
     checkDeliveryCoverage(supabase, from, to),
     checkProductionToStock(supabase, from, to),
     checkStockToOdoo(supabase, from, to),
+    measureOdooFetchVolume(),
   ]);
-  return { reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo };
+  return { reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo, odooVolume };
 }

@@ -40,6 +40,7 @@ export async function GET(req: Request) {
       production_stock_count: r.productionStock.length,
       stock_odoo_issues: r.stockOdoo,
       stock_odoo_count: r.stockOdoo.length,
+      odoo_volume: r.odooVolume,
     });
     return NextResponse.json({ ok: true, issue_count: totalIssues });
   } catch (e: any) {

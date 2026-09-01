@@ -63,7 +63,13 @@ export interface OdooSyncResult {
 // anti-duplicate lookback further down used to be pinned to "today". This grace window pulls in
 // anything up to N days in the past too; kept small since anything older is presumably long since
 // resolved by hand and a wider window only adds noise/read volume for no benefit.
-const SYNC_GRACE_DAYS = 7; // Axel, 2026-08-26: "met que 7 jour de retard max" — must match LATE_GRACE_DAYS in delivery-check/page.tsx and the literal grace window in import-persist.ts
+export const SYNC_GRACE_DAYS = 7; // Axel, 2026-08-26: "met que 7 jour de retard max" — must match LATE_GRACE_DAYS in delivery-check/page.tsx and the literal grace window in import-persist.ts
+
+// Hardcoded search_read caps below. Odoo returns at most `limit` rows and NO error past that --
+// the same silent-truncation failure mode as PostgREST's 1000-row cap, on the source of truth.
+// Exported so checks.ts can measure the fill level on every Check run (lab_v53, 2026-09-01) and
+// warn before any of them is hit; if one ever gets close, paginate the corresponding read.
+export const ODOO_FETCH_CAPS = { sales: 500, sales_lines: 6000, repl: 200, repl_lines: 2000 } as const;
 
 export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncResult> {
   const threshold = labTodayUtcThreshold(SYNC_GRACE_DAYS);
@@ -72,7 +78,7 @@ export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncRes
 //     the lab produces from what is ENTERED, confirmation in Odoo comes later) ──
 const ordersRaw: any[] = await odooExecute('sale.order', 'search_read',
   [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]],
-  { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: 500 });
+  { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: ODOO_FETCH_CAPS.sales });
 
 // La Paris's own retail branches + Winmart never produce/deliver from their OWN sale.order —
 // that record is just the shop's retail sale, entered a day later (Axel, 2026-08-26), and has
@@ -102,7 +108,7 @@ const orderIds = orders.map(o => o.id);
 const allSoLines: any[] = orderIds.length
   ? await odooExecute('sale.order.line', 'search_read',
       [[['order_id', 'in', orderIds]]],
-      { fields: ['order_id', 'product_id', 'product_uom_qty', 'name', 'sequence', 'display_type'], limit: 6000 })
+      { fields: ['order_id', 'product_id', 'product_uom_qty', 'name', 'sequence', 'display_type'], limit: ODOO_FETCH_CAPS.sales_lines })
   : [];
 allSoLines.sort((a, b) => (a.order_id?.[0] ?? 0) - (b.order_id?.[0] ?? 0) || (a.sequence ?? 0) - (b.sequence ?? 0));
 const attachedNoteByLineId: Record<number, string> = {};
@@ -134,13 +140,13 @@ const extractNote = (raw: unknown): string | null => {
 // ── 2. Replenishment requests — draft/submitted/approved (everything entered, not yet shipped) ──
 const repls: any[] = await odooExecute('stock.replenishment.request', 'search_read',
   [[['state', 'in', ['draft', 'submitted', 'approved']], ['delivery_date', '>=', threshold]]],
-  { fields: ['name', 'warehouse_id', 'delivery_date', 'state'], limit: 200 });
+  { fields: ['name', 'warehouse_id', 'delivery_date', 'state'], limit: ODOO_FETCH_CAPS.repl });
 
 const replIds = repls.map(r => r.id);
 const replLines: any[] = replIds.length
   ? await odooExecute('stock.replenishment.request.line', 'search_read',
       [[['request_id', 'in', replIds]]],
-      { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: 2000 })
+      { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: ODOO_FETCH_CAPS.repl_lines })
   : [];
 
 // ── 3. SKUs for all products involved ──
