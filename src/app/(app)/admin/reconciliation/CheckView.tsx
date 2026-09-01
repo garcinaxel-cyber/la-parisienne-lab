@@ -25,7 +25,28 @@ function totalOf(r: Run): number {
   return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0);
 }
 
-export default function CheckView({ runs }: { runs: Run[] }) {
+type Heartbeat = { last_success_at: string | null; last_error_at: string | null; last_error: string | null };
+
+// pg_cron schedule for /api/odoo/cron (cron.job, 2026-09-01): every 15 min 00-09 UTC (peak),
+// every 30 min 22-23 + 10-14 UTC (off-peak), nothing 15-21 UTC (22:00-04:59 Vietnam). So a
+// success older than 45 min is only a problem INSIDE that window, and only once the window has
+// been open for 45 min (the first tick after the night gap is still pending until then).
+const CRON_ACTIVE_UTC_HOURS = new Set([22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+const STALE_AFTER_MS = 45 * 60 * 1000;
+function heartbeatStatus(hb: Heartbeat | null, now = new Date()): { kind: 'ok' | 'stale' | 'night' | 'unknown'; ageMin: number | null } {
+  const last = hb?.last_success_at ? new Date(hb.last_success_at) : null;
+  const ageMin = last ? Math.round((now.getTime() - last.getTime()) / 60000) : null;
+  if (!CRON_ACTIVE_UTC_HOURS.has(now.getUTCHours())) return { kind: 'night', ageMin };
+  if (!last) return { kind: 'unknown', ageMin };
+  // Window (re)opens at 22:00 UTC; measure staleness from whichever is later: last success or
+  // that reopening -- otherwise 22:00-22:45 UTC would always alarm on the ~7h night gap.
+  const windowStart = new Date(now); windowStart.setUTCHours(22, 0, 0, 0);
+  if (windowStart > now) windowStart.setUTCDate(windowStart.getUTCDate() - 1);
+  const ref = Math.max(last.getTime(), windowStart.getTime());
+  return { kind: now.getTime() - ref > STALE_AFTER_MS ? 'stale' : 'ok', ageMin };
+}
+
+export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat: Heartbeat | null }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -92,6 +113,42 @@ export default function CheckView({ runs }: { runs: Run[] }) {
       {err && (
         <div className="card p-3 text-sm border" style={{ borderColor: '#F0B4B4', backgroundColor: '#FDF2F2', color: '#B42318' }}>{err}</div>
       )}
+
+      {/* Odoo sync heartbeat (lab_v52) -- live, independent of the stored runs below */}
+      {(() => {
+        const st = heartbeatStatus(heartbeat);
+        const errIsRecent = !!heartbeat?.last_error_at && (!heartbeat?.last_success_at || heartbeat.last_error_at > heartbeat.last_success_at);
+        const style = st.kind === 'stale' ? { backgroundColor: '#FDF2F2', color: '#B42318' }
+          : st.kind === 'ok' ? { backgroundColor: '#ECFDF5', color: '#047857' }
+          : { backgroundColor: '#F3F4F6', color: '#4B5563' };
+        const label = st.kind === 'stale' ? (vi ? 'Không đồng bộ' : 'Sync late')
+          : st.kind === 'ok' ? 'OK'
+          : st.kind === 'night' ? (vi ? 'Ngoài giờ cron' : 'Outside cron hours')
+          : (vi ? 'Chưa có dữ liệu' : 'No data yet');
+        return (
+          <div className="card p-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-xs uppercase tracking-wider text-ink-light font-semibold mb-1">
+                {vi ? 'Đồng bộ Odoo (cron 15 phút)' : 'Odoo sync (15-min cron)'}
+              </div>
+              <div className="text-sm text-navy font-medium">
+                {heartbeat?.last_success_at
+                  ? `${vi ? 'Lần thành công gần nhất' : 'Last success'}: ${fmtDateTime(heartbeat.last_success_at)}${st.ageMin != null ? ` · ${st.ageMin} min` : ''}`
+                  : (vi ? 'Chưa ghi nhận lần đồng bộ nào' : 'No sync recorded yet')}
+              </div>
+              {errIsRecent && (
+                <div className="text-xs mt-0.5 truncate" style={{ color: '#B42318' }}>
+                  {vi ? 'Lỗi gần nhất' : 'Last error'}: {fmtDateTime(heartbeat!.last_error_at!)} — {heartbeat!.last_error}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold shrink-0" style={style}>
+              {st.kind === 'stale' ? <AlertTriangle size={16} /> : st.kind === 'ok' ? <ShieldCheck size={16} /> : <RefreshCw size={16} />}
+              {label}
+            </div>
+          </div>
+        );
+      })()}
 
       {!latest ? (
         <div className="card px-4 py-10 text-center text-sm text-ink-light">

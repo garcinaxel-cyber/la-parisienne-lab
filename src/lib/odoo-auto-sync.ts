@@ -46,6 +46,21 @@ async function releaseSyncLock(supabase: SupabaseClient): Promise<void> {
   await supabase.from('lab_sync_lock').update({ locked_until: null }).eq('id', SYNC_LOCK_ID);
 }
 
+// Heartbeat (lab_v52, 2026-09-01): stamp every completed sync on the same single row, so the
+// Check tab can flag "no successful Odoo sync for > 45 min" -- including the failure mode that
+// leaves NO trace otherwise (a function killed by Vercel's timeout: no exception, no log,
+// just a bare 502 on the cron -- 3 in a row on 2026-09-01 08:15-08:45 UTC, noticed by nobody).
+// Best-effort: a heartbeat write must never fail or slow down the sync itself.
+async function recordSyncHeartbeat(supabase: SupabaseClient, outcome: { ok: true } | { error: string }): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const patch = 'error' in outcome
+      ? { last_error_at: now, last_error: outcome.error.slice(0, 500) }
+      : { last_success_at: now };
+    await supabase.from('lab_sync_lock').update(patch).eq('id', SYNC_LOCK_ID);
+  } catch { /* never block the sync on telemetry */ }
+}
+
 // SHARED "auto" sync: pulls Odoo, publishes new orders straight away (no manual review step),
 // auto-applies modifications/cancellations, and cleans up orphaned drafts. Used by BOTH the
 // hourly pg_cron job (/api/odoo/cron) and the on-demand "Sync Odoo" button on the station pages
@@ -61,7 +76,12 @@ export async function runAutoOdooSync(supabase: SupabaseClient): Promise<AutoSyn
     };
   }
   try {
-    return await runAutoOdooSyncLocked(supabase);
+    const r = await runAutoOdooSyncLocked(supabase);
+    await recordSyncHeartbeat(supabase, r.error ? { error: r.error } : { ok: true });
+    return r;
+  } catch (e: any) {
+    await recordSyncHeartbeat(supabase, { error: String(e?.message ?? e) });
+    throw e;
   } finally {
     await releaseSyncLock(supabase);
   }

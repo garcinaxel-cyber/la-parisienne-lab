@@ -29,5 +29,13 @@ export default async function CheckPage() {
     .order('run_at', { ascending: false })
     .limit(20);
 
-  return <CheckView runs={runs ?? []} />;
+  // Odoo sync heartbeat (lab_v52) -- single row, admin SELECT policy. Live state, not part of
+  // the stored runs: "is the cron alive right now?" rather than "what did the last run find?".
+  const { data: hb } = await supabase
+    .from('lab_sync_lock')
+    .select('last_success_at, last_error_at, last_error')
+    .eq('id', true)
+    .maybeSingle();
+
+  return <CheckView runs={runs ?? []} heartbeat={hb ?? null} />;
 }
