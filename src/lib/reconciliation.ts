@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { TEAMS } from '@/lib/types';
 import { getManualCakeCoverage } from '@/lib/manual-cake-coverage';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 // Daily reconciliation — a second, independent check on top of the sync's own change
 // detection (odoo-sync.ts / odoo-apply.ts). Where the sync only reacts to a DIFF it just
@@ -63,13 +64,18 @@ async function checkOneDate(supabase: SupabaseClient, date: string): Promise<Rec
   const importIds = (imports ?? []).map((i: any) => i.id);
   if (!importIds.length) return [];
 
-  const [{ data: orderLines }, { data: assignments }] = await Promise.all([
-    supabase.from('lab_order_lines')
+  // Paginated (2026-09-01): these are the same two tables/shapes that already hit the silent
+  // 1000-row PostgREST cap in checks.ts (2026-08-20) and the station History badge (2026-09-01).
+  // A single busy delivery date is already at ~380 order lines and growing; one large day would
+  // have silently dropped rows here and reported phantom "manque" gaps. Ordered by id so the
+  // pages are stable under concurrent writes.
+  const [orderLines, assignments] = await Promise.all([
+    fetchAllPages<any>((f, t) => supabase.from('lab_order_lines')
       .select('import_id, product_sku, product_name_vi, qty, order_ref')
-      .in('import_id', importIds),
-    supabase.from('lab_assignments')
+      .in('import_id', importIds).order('id').range(f, t)),
+    fetchAllPages<any>((f, t) => supabase.from('lab_assignments')
       .select('id, team, variant_label, product_name_vi, total_qty, cancelled, is_extra')
-      .in('import_id', importIds),
+      .in('import_id', importIds).order('id').range(f, t)),
   ]);
 
   const orderLineSkus = Array.from(new Set((orderLines ?? []).map((l: any) => l.product_sku).filter(Boolean))) as string[];

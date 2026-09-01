@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runReconciliationCheck, type ReconciliationResult } from '@/lib/reconciliation';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 // "Check" — Axel, 2026-08-20: one button, everything checks automatically, 7-day run-history
 // (see lab_v46_check_and_blocked_tracking.sql). Reconciliation (lib/reconciliation.ts) already
@@ -32,21 +33,9 @@ function checkWindow(): { from: string; to: string } {
 // REP/2026/01085 had a correct qty_expected=36 for BMCRCXBH in the DB, yet checkDeliveryCoverage
 // reported expected_app=0, purely because that row didn't fit in the first page (1140 check-lines
 // in a window sized for 1000). The narrower 2-day window above makes this unlikely to recur, but
-// paginate anyway so a busy day can't silently reintroduce it.
-async function fetchAllPages<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
-  const PAGE = 1000;
-  const out: T[] = [];
-  let offset = 0;
-  for (;;) {
-    const { data, error } = await build(offset, offset + PAGE - 1);
-    if (error) throw error;
-    const batch = data ?? [];
-    out.push(...batch);
-    if (batch.length < PAGE) break;
-    offset += PAGE;
-  }
-  return out;
-}
+// paginate anyway so a busy day can't silently reintroduce it. The helper now lives in
+// lib/fetch-all-pages.ts (2026-09-01) so reconciliation.ts can share it instead of carrying its
+// own unpaginated copy of the same two queries.
 
 // ── 1. Delivery-check coverage ──────────────────────────────────────────────
 // Does every (order_ref, delivery_date, sku) that Odoo actually sent us have a matching,
