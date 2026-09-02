@@ -271,6 +271,14 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   // à stock ≠ 0. Petites requêtes Supabase, jamais d'Odoo.
   const traceSkus = (stockSnapshot?.items ?? []).filter(i => i.qty !== 0).map(i => i.sku);
   const stockTrace = await collectStockTrace(supabase as any, traceSkus).catch(() => ({}));
+  // Valorisation (Axel, 2026-09-03 : "quantité × prix de vente, juste une colonne en plus") —
+  // prix B2C du catalogue par SKU, uniquement pour les 3 catégories stockées.
+  const valSkus = (stockSnapshot?.items ?? []).filter(i => i.category && STOCK_CATEGORIES.includes(i.category)).map(i => i.sku);
+  const { data: priceRows } = valSkus.length
+    ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', valSkus)
+    : { data: [] as any[] };
+  const stockPrices: Record<string, number> = {};
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) stockPrices[r.sku] = Number(r.price_b2c);
 
   return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
     reasons={reasonsOut} blockedCards={blockedCardsOut} blockTrend={blockTrendOut} teamDominantReason={teamDominantReasonOut}
@@ -278,6 +286,6 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     discrepancyByTeam={discrepancyByTeam} discrepancyByProduct={discrepancyByProduct}
     stockRunAt={lastStockRun?.run_at ?? null} stockSnapshot={stockSnapshot}
     stockThresholds={stockThresholds} stockSent={mtoExpl.sent} stockUpcoming={mtoExpl.upcoming}
-    stockTrace={stockTrace}
+    stockTrace={stockTrace} stockPrices={stockPrices}
     aggregated={aggregated} />;
 }

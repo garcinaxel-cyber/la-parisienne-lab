@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export interface StockTraceEntry {
   team: string | null;
   lastSend: { date: string; team: string | null; by: string | null; qty: number } | null;
+  sent7: { qty: number; count: number } | null; // total envoyé en stock sur 7 j (bilan entrées)
   deliv7: { qty: number; count: number; lastRef: string | null; lastDate: string | null; lastBy: string | null } | null;
 }
 export type StockTrace = Record<string, StockTraceEntry>;
@@ -17,7 +18,7 @@ export type StockTrace = Record<string, StockTraceEntry>;
 export async function collectStockTrace(supabase: SupabaseClient, skus: string[]): Promise<StockTrace> {
   const trace: StockTrace = {};
   if (!skus.length) return trace;
-  for (const s of skus) trace[s] = { team: null, lastSend: null, deliv7: null };
+  for (const s of skus) trace[s] = { team: null, lastSend: null, sent7: null, deliv7: null };
 
   const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
   const since7 = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
@@ -51,9 +52,15 @@ export async function collectStockTrace(supabase: SupabaseClient, skus: string[]
   if (tids.length) {
     const { data: tlines } = await supabase.from('lab_stock_transfer_lines')
       .select('sku, qty_sent, transfer_id').in('transfer_id', tids).in('sku', skus).limit(5000);
+    const since7iso = new Date(Date.now() - 7 * 86400000).toISOString();
     for (const l of tlines ?? []) {
       const t = tById[l.transfer_id];
       if (!l.sku || !t || !trace[l.sku]) continue;
+      if (t.created_at >= since7iso) {
+        let s7 = trace[l.sku].sent7;
+        if (!s7) { s7 = { qty: 0, count: 0 }; trace[l.sku].sent7 = s7; }
+        s7.qty += Number(l.qty_sent ?? 0); s7.count += 1;
+      }
       const cur = trace[l.sku].lastSend;
       if (!cur || t.created_at > cur.date) {
         trace[l.sku].lastSend = { date: t.created_at, team: t.team ?? null, by: t.created_by_name ?? null, qty: Number(l.qty_sent ?? 0) };

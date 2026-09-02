@@ -10,7 +10,7 @@ type ReconciliationIssue = { date: string; team: string; variantLabel: string; n
 type DeliveryCoverageIssue = { kind: 'not_materialized' | 'qty_drift'; date: string; order_ref: string; sku?: string; expected_odoo?: number; expected_app?: number };
 type ProductionStockIssue = { date: string; team: string; product: string; produced: number; sent: number; gap: number; is_extra: boolean; card_id: string };
 type StockOdooIssue = { date: string; kind: 'not_synced' | 'drifted' | 'no_odoo_product' | 'missing_sku' | 'error'; sku?: string; product?: string; qty?: number; mo?: string; from?: number; to?: number; detail?: string };
-type LateDeliveryIssue = { date: string; order_ref: string; shop: string | null; kind: 'never_opened' | 'not_validated' | 'not_pushed'; push_error?: string | null };
+type LateDeliveryIssue = { date: string; order_ref: string; shop: string | null; kind: 'never_opened' | 'not_validated' | 'not_pushed'; push_error?: string | null; doneOnOdoo?: boolean };
 type SafetyStockIssue = { sku: string; name: string; category: string; qty: number; threshold: number };
 type OrphanStockIssue = { sku: string; name: string; category: string | null; qty: number; sent48h: number; upcoming: number; kind: 'orphan_positive' | 'negative_stuck' };
 type StockSnapshot = { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string };
@@ -68,6 +68,10 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
   const [err, setErr] = useState<string | null>(null);
   const [fixing, setFixing] = useState<string | null>(null);
   const [fixErr, setFixErr] = useState<Record<string, string>>({});
+  // Onglets (Axel, 2026-09-03 : "plusieurs onglets cliquables pour pas surcharger une seule
+  // page") — principal = sync Odoo + réconciliation + coverage + production→stock ;
+  // les nouveaux checks vivent dans leurs propres onglets.
+  const [tab, setTab] = useState<'main' | 'deliveries' | 'stock'>('main');
 
   const latest = runs[0] ?? null;
   const history = runs.slice(1);
@@ -201,10 +205,35 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             <div className="card p-3 text-sm border" style={{ borderColor: '#F0B4B4', backgroundColor: '#FDF2F2', color: '#B42318' }}>{latest.error}</div>
           )}
 
-          {/* ══ Domaine 1 : Sync Odoo ══ */}
-          <Domain emoji="🔄" title={vi ? 'Đồng bộ Odoo' : 'Sync Odoo'}
-            subtitle={vi ? 'Cron đồng bộ · giới hạn đọc · kho → Odoo (MO)' : 'Cron de sync · plafonds de lecture · stock → Odoo (MO)'}
-            count={latest.stock_odoo_count ?? 0} vi={vi}>
+          {/* Onglets */}
+          {(() => {
+            const mainCount = (latest.issue_count ?? 0) + (latest.delivery_coverage_count ?? 0) + (latest.production_stock_count ?? 0) + (latest.stock_odoo_count ?? 0);
+            const tabs: { id: 'main' | 'deliveries' | 'stock'; label: string; n: number }[] = [
+              { id: 'main', label: vi ? '🏠 Chính' : '🏠 Principal', n: mainCount },
+              { id: 'deliveries', label: vi ? '🚚 Giao hàng' : '🚚 Livraisons', n: latest.late_delivery_count ?? 0 },
+              { id: 'stock', label: vi ? '📦 Kho' : '📦 Stock', n: (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0) },
+            ];
+            return (
+              <div className="flex gap-2 flex-wrap">
+                {tabs.map(t => (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                      tab === t.id ? 'bg-navy text-white' : 'bg-white border border-border-soft text-ink-light hover:text-navy'}`}>
+                    {t.label}
+                    <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
+                      style={t.n === 0 ? { backgroundColor: '#ECFDF5', color: '#047857' }
+                        : tab === t.id ? { backgroundColor: '#C9A84C', color: '#1A4731' }
+                        : { backgroundColor: '#FDF2F2', color: '#B42318' }}>
+                      {t.n === 0 ? '✓' : t.n}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* ══ Onglet principal : Sync Odoo ══ */}
+          {tab === 'main' && (<>
       {/* Odoo sync heartbeat (lab_v52) -- live, independent of the stored runs below */}
       {(() => {
         const st = heartbeatStatus(heartbeat);
@@ -325,12 +354,6 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
               </div>
             )}
           </Section>
-          </Domain>
-
-          {/* ══ Domaine 2 : Commandes & livraisons ══ */}
-          <Domain emoji="📦" title={vi ? 'Đơn hàng & giao hàng' : 'Commandes & livraisons'}
-            subtitle={vi ? 'Đối chiếu Odoo · độ phủ delivery-check · đơn chưa hoàn tất (7 ngày)' : 'Réconciliation Odoo · couverture delivery-check · livraisons non bouclées (7 j)'}
-            count={(latest.issue_count ?? 0) + (latest.delivery_coverage_count ?? 0) + (latest.late_delivery_count ?? 0)} vi={vi}>
           {/* 1. Reconciliation */}
           <Section
             icon={ShieldCheck}
@@ -392,15 +415,18 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
+          </>)}
+
+          {tab === 'deliveries' && (<>
           {/* 5. Livraisons non bouclées (7 jours glissants) */}
           <Section
             icon={Truck}
             title={vi ? 'Giao hàng chưa hoàn tất (7 ngày)' : 'Livraisons non bouclées (7 jours)'}
-            subtitle={vi ? 'Quá hạn: chưa mở / chưa xác nhận / chưa đẩy Odoo' : 'Date passée : jamais ouverte / non validée / pas poussée sur Odoo'}
+            subtitle={vi ? 'Quá hạn: chưa mở / chưa xác nhận / chưa đẩy Odoo — đã kiểm tra chéo với Odoo' : 'Date passée : jamais ouverte / non validée / pas poussée — vérifié en croisé avec Odoo'}
             count={latest.late_delivery_count ?? 0} vi={vi}>
-            {(latest.late_delivery_issues ?? []).length > 0 && (
+            {(latest.late_delivery_issues ?? []).filter(x => !x.doneOnOdoo).length > 0 && (
               <div className="divide-y divide-border-soft">
-                {(latest.late_delivery_issues ?? []).map((iss, i) => (
+                {(latest.late_delivery_issues ?? []).filter(x => !x.doneOnOdoo).map((iss, i) => (
                   <div key={i} className="px-4 py-2.5 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-navy min-w-0 truncate">
@@ -422,12 +448,33 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
               </div>
             )}
           </Section>
-          </Domain>
 
-          {/* ══ Domaine 3 : Production & stock ══ */}
-          <Domain emoji="🏭" title={vi ? 'Sản xuất & kho' : 'Production & stock'}
-            subtitle={vi ? 'Sản xuất → kho · tồn bất thường (làm theo đơn) · dưới ngưỡng an toàn' : 'Production → stock · stock résiduel (made-to-order) · sous seuil de sécurité'}
-            count={(latest.production_stock_count ?? 0) + (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0)} vi={vi}>
+          {/* Faites sur Odoo mais pas tracées dans l'app — vérifié picking par picking, hors
+              compteur d'alerte (Axel, 2026-09-03). Le travail a eu lieu ; seul le traçage manque. */}
+          {(latest.late_delivery_issues ?? []).some(x => x.doneOnOdoo) && (
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3">
+                <div className="text-sm font-bold text-navy">✅ {vi ? 'Đã giao trên Odoo nhưng chưa ghi trong app' : "Faites sur Odoo mais pas tracées dans l'app"}</div>
+                <div className="text-[11px] text-ink-light">{vi ? 'Picking Odoo đã done — chỉ thiếu bước trên app, không phải giao trễ' : 'Le picking Odoo est validé — il ne manque que le traçage côté app, pas la livraison'}</div>
+              </div>
+              <div className="divide-y divide-border-soft">
+                {(latest.late_delivery_issues ?? []).filter(x => x.doneOnOdoo).map((iss, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2 gap-3 text-sm">
+                    <div className="text-ink-light min-w-0 truncate">
+                      {iss.date} · <span className="font-mono text-xs">{iss.order_ref}</span>
+                      {iss.shop && <span> · {iss.shop}</span>}
+                    </div>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#4B5563', backgroundColor: '#F3F4F6' }}>
+                      {vi ? 'Xong trên Odoo' : 'Faite sur Odoo'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          </>)}
+
+          {tab === 'main' && (<>
           {/* 3. Production -> Stock */}
           <Section
             icon={Package}
@@ -455,6 +502,9 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
+          </>)}
+
+          {tab === 'stock' && (<>
           {/* 6. Stock résiduel / négatif persistant — made-to-order */}
           <Section icon={Box}
             title={vi ? 'Tồn kho bất thường (làm theo đơn)' : 'Stock résiduel (made-to-order)'}
@@ -509,7 +559,7 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
                 : `📸 ${vi ? 'Ảnh chụp kho Odoo' : 'Photo du stock Odoo'}: ${fmtDateTime(latest.stock_snapshot.at)} · ${latest.stock_snapshot.items.length} SKU`}
             </div>
           )}
-          </Domain>
+          </>)}
         </>
       )}
 
@@ -533,37 +583,6 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Domaine repliable — le Check porte maintenant 9+ vérifications (Axel, 2026-09-02:
-// "restructure l'onglet check par domaine"). Un domaine tout vert se replie en une ligne ;
-// un domaine avec des anomalies s'ouvre tout seul. L'état manuel (clic) prime ensuite.
-function Domain({ emoji, title, subtitle, count, vi, children }: {
-  emoji: string; title: string; subtitle: string; count: number; vi: boolean; children?: React.ReactNode;
-}) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const isOpen = open ?? count > 0;
-  return (
-    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB', backgroundColor: '#FAFAF7' }}>
-      <button onClick={() => setOpen(!isOpen)} className="w-full flex items-center justify-between gap-3 px-4 py-3">
-        <span className="flex items-center gap-2.5 min-w-0 text-left">
-          <span className="text-lg leading-none">{emoji}</span>
-          <span className="min-w-0">
-            <span className="block text-sm font-bold text-navy">{title}</span>
-            <span className="block text-[11px] text-ink-light truncate">{subtitle}</span>
-          </span>
-        </span>
-        <span className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-            style={count === 0 ? { color: '#047857', backgroundColor: '#ECFDF5' } : { color: '#B45309', backgroundColor: '#FFFBEB' }}>
-            {count === 0 ? 'OK ✓' : `${count} ${vi ? 'bất thường' : 'anomalies'}`}
-          </span>
-          <ChevronRight size={16} className={`text-ink-light transition-transform ${isOpen ? 'rotate-90' : ''}`} />
-        </span>
-      </button>
-      {isOpen && <div className="px-3 pb-3 space-y-3">{children}</div>}
     </div>
   );
 }

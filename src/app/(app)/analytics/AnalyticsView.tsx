@@ -21,13 +21,14 @@ const STOCK_CATS = ['Macaron', 'Biscuit Voyage', 'Tiramisu'];
 type TraceEntry = {
   team: string | null;
   lastSend: { date: string; team: string | null; by: string | null; qty: number } | null;
+  sent7: { qty: number; count: number } | null;
   deliv7: { qty: number; count: number; lastRef: string | null; lastDate: string | null; lastBy: string | null } | null;
 };
 
 export default function AnalyticsView({
   range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
   daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct,
-  stockRunAt, stockSnapshot, stockThresholds, stockSent, stockUpcoming, stockTrace, aggregated = false,
+  stockRunAt, stockSnapshot, stockThresholds, stockSent, stockUpcoming, stockTrace, stockPrices, aggregated = false,
 }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
@@ -46,6 +47,7 @@ export default function AnalyticsView({
   stockSent: Record<string, number>;
   stockUpcoming: Record<string, number>;
   stockTrace: Record<string, TraceEntry>;
+  stockPrices: Record<string, number>;
   aggregated?: boolean;
 }) {
   const { lang } = useI18n();
@@ -127,7 +129,8 @@ export default function AnalyticsView({
       {/* ══ Vision stock (2026-09-02, chantier stock phase A) ══ — rendue depuis l'instantané
           du dernier run de Check (zéro appel Odoo à l'ouverture) ; bouton refresh = lecture live. */}
       <StockSection vi={vi} runAt={stockRunAt} snapshot={stockSnapshot}
-        thresholds={stockThresholds} initialSent={stockSent} initialUpcoming={stockUpcoming} initialTrace={stockTrace} />
+        thresholds={stockThresholds} initialSent={stockSent} initialUpcoming={stockUpcoming} initialTrace={stockTrace}
+        prices={stockPrices} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Completion by team — cards done/total */}
@@ -379,10 +382,11 @@ export default function AnalyticsView({
 // Chaque ligne se déplie (clic) en traçabilité : dernier envoi en stock (équipe + personne),
 // livraisons 7 j (dernière commande cliquable + qui l'a poussée), demande à venir — et le tag
 // explicite « envoi manquant — Team X » ou « NON EXPLIQUÉ » (Axel, 2026-09-02).
-function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpcoming, initialTrace }: {
+function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpcoming, initialTrace, prices }: {
   vi: boolean; runAt: string | null; snapshot: StockSnapshotT | null;
   thresholds: Record<string, number>; initialSent: Record<string, number>; initialUpcoming: Record<string, number>;
   initialTrace: Record<string, TraceEntry>;
+  prices: Record<string, number>;
 }) {
   const [live, setLive] = useState<{ snapshot: StockSnapshotT; sent: Record<string, number>; upcoming: Record<string, number>; trace: Record<string, TraceEntry> } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -409,6 +413,8 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
     { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
   const fmtD = (iso: string) => new Date(iso.length <= 10 ? iso + 'T00:00:00' : iso).toLocaleString(vi ? 'vi-VN' : 'en-GB',
     { day: '2-digit', month: '2-digit', ...(iso.length > 10 ? { hour: '2-digit', minute: '2-digit' } : {}), timeZone: 'Asia/Ho_Chi_Minh' });
+  // Valorisation compacte (VND) : 850k, 12.4M — qty négative = pas de valeur affichable.
+  const fmtVnd = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : `${Math.round(v / 1e3)}k`;
   const teamName = (t: string | null | undefined) =>
     t && TEAM_LABELS[t as Team] ? (vi ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en) : (t ?? '—');
   const teamChip = (t: string | null | undefined) => t ? (
@@ -424,9 +430,17 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
     const ls = t?.lastSend ?? null;
     const d7 = t?.deliv7 ?? null;
     const up = upcoming[sku] ?? 0;
+    const s7 = t?.sent7 ?? null;
+    const net7 = (s7?.qty ?? 0) - (d7?.qty ?? 0);
     return (
       <div className="mx-3 mb-2 rounded-xl px-3 py-2 text-[11.5px] space-y-1"
         style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A', color: '#1A2C24' }}>
+        <div className="font-semibold" style={{ color: '#1A4731' }}>
+          🧮 {vi ? 'Tồn Odoo' : 'Stock Odoo'} = <b>{qty}</b> — {vi ? 'tổng gửi kho (VÀO) − tổng giao hàng (RA) từ trước tới nay' : 'total des envois en stock (ENTRÉES) − total des livraisons (SORTIES) depuis toujours'}
+        </div>
+        <div>
+          ⚖️ {vi ? 'Cân đối 7 ngày' : 'Bilan 7 jours'}: <b style={{ color: '#047857' }}>+{s7?.qty ?? 0}</b> {vi ? 'gửi kho' : 'envoyés'} − <b style={{ color: '#B42318' }}>{d7?.qty ?? 0}</b> {vi ? 'giao' : 'livrés'} = <b>{net7 > 0 ? '+' : ''}{net7}</b>
+        </div>
         <div>
           📤 {vi ? 'Gửi kho gần nhất' : 'Dernier envoi en stock'}:{' '}
           {ls
@@ -445,6 +459,13 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
             : (vi ? 'không có' : 'aucune')}
         </div>
         {up > 0 && <div>📅 {vi ? 'Sắp giao (hôm nay/mai)' : 'À livrer (auj./demain)'}: ×{up}</div>}
+        {qty < 0 && ls && (
+          <div style={{ color: '#4B5563' }}>
+            💡 {vi
+              ? `Âm = đã giao TRƯỚC khi gửi kho. Lần gửi kho tới phải đưa về ~0 — nếu vẫn âm, là thiếu gửi kho (${teamName(t?.team)}).`
+              : `Négatif = livré AVANT l'envoi en stock. Le prochain envoi doit ramener vers 0 — s'il reste négatif, c'est un envoi manquant (${teamName(t?.team)}).`}
+          </div>
+        )}
         {qty < 0 && !ls && (
           <div className="font-bold" style={{ color: '#B42318' }}>
             👤 {vi ? 'Thiếu GỬI KHO' : 'ENVOI EN STOCK manquant'} — {teamName(t?.team)}
@@ -542,9 +563,14 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
           <h4 className="text-xs font-bold text-navy uppercase tracking-wider">
             {vi ? 'Kho dài hạn' : 'Stock long terme'}
           </h4>
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-            style={belowCount ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
-            {belowCount ? `${belowCount} ${vi ? 'dưới ngưỡng' : 'sous seuil'}` : 'OK ✓'}
+          <span className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ color: '#92600A', backgroundColor: '#FFF4CC' }}>
+              💰 {fmtVnd(stockItems.reduce((s, i) => s + Math.max(0, i.qty) * (prices[i.sku] ?? 0), 0))}₫
+            </span>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+              style={belowCount ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
+              {belowCount ? `${belowCount} ${vi ? 'dưới ngưỡng' : 'sous seuil'}` : 'OK ✓'}
+            </span>
           </span>
         </div>
         <div className="rounded-xl overflow-hidden max-h-96 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
@@ -552,7 +578,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
             <div key={cat}>
               <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
                 style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E5E7EB' }}>
-                <span>{cat} · {items.length} SKU · {items.reduce((s, i) => s + i.qty, 0)} {vi ? 'cái' : 'u.'}</span>
+                <span>{cat} · {items.length} SKU · {items.reduce((s, i) => s + i.qty, 0)} {vi ? 'cái' : 'u.'} · {fmtVnd(items.reduce((s, i) => s + Math.max(0, i.qty) * (prices[i.sku] ?? 0), 0))}₫</span>
                 {items.some(i => i.below) && (
                   <span style={{ color: '#B42318' }}>{items.filter(i => i.below).length} {vi ? 'dưới ngưỡng' : 'sous seuil'}</span>
                 )}
@@ -571,6 +597,9 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
                       <span className="font-bold" style={{ color: i.qty < 0 || i.below ? '#B42318' : '#1A4731' }}>{i.qty}</span>
                       <span className="text-[11px] text-ink-light w-16 text-right">
                         {i.threshold != null ? `${vi ? 'ngưỡng' : 'seuil'} ${i.threshold}` : '—'}
+                      </span>
+                      <span className="text-[11px] font-semibold w-14 text-right" style={{ color: '#92600A' }}>
+                        {i.qty > 0 && prices[i.sku] ? `${fmtVnd(i.qty * prices[i.sku])}₫` : '—'}
                       </span>
                       <ChevronDown size={12} className={`text-ink-light transition-transform ${openSku === i.sku ? 'rotate-180' : ''}`} />
                     </div>
