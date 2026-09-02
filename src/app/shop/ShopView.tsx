@@ -329,8 +329,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
 
   // Opens the confirm sheet with a snapshot of the current draft — does NOT save anything yet.
   function requestConfirmLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number]) {
-    const d = draft[l.id];
-    if (!d || !name.trim()) return;
+    // The qty input DISPLAYS a computed default (saved receipt qty, else the lab-checked qty)
+    // even when the shop never touched the field -- but that default only lands in `draft` on a
+    // keystroke or a pencil tap. OK then found no draft entry and silently did nothing (shops,
+    // 2026-09-01: "you have to put some number in the receive field before clicking OK,
+    // although there are numbers in there already"). Confirm exactly what the input displays --
+    // the same fallback expression the render uses -- instead of requiring a keystroke first.
+    const d = draft[l.id] ?? { qty: String(l.receipt?.qty_received ?? refQty(l)), note: l.receipt?.note ?? '' };
+    if (!name.trim()) return;
     const qtyNum = d.qty.trim() === '' ? null : Number(d.qty);
     setPendingReceipt({ order, line: l, qty: qtyNum, note: d.note });
   }
