@@ -83,7 +83,7 @@ type Assignment = {
   category_name_vi: string | null;
   category_name_en: string | null;
   breakdown: BreakdownItem[];
-  lab_imports: { delivery_date: string; order_number: number; type: string; status: string };
+  lab_imports: { delivery_date: string; order_number: number; type: string; status: string; imported_at?: string };
 };
 
 // Search result = a lab fiche (id is the fiche_id, variant_id its default variant)
@@ -229,6 +229,11 @@ export default function StationView({
   const [showRecap, setShowRecap] = useState(true);
   const [showDoneRecap, setShowDoneRecap] = useState(true);
   const [showOrderRecap, setShowOrderRecap] = useState(true);
+  // Point 2 (chef Entremet, 2026-09-02): per-order tracking. orderView switches the
+  // Commande tab between the per-product list ('sp', historic view) and per-order
+  // cards ('don'); orderFilter narrows the Production tab to one order's cards.
+  const [orderView, setOrderView] = useState<'sp' | 'don'>('sp');
+  const [orderFilter, setOrderFilter] = useState<string | null>(null);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -933,6 +938,41 @@ export default function StationView({
   const handledCards = orderCards.filter(a => a.status === 'done' || a.status === 'skip').length;
   const pct = orderCards.length ? Math.round(handledCards / orderCards.length * 100) : 0;
 
+  // ── Per-order grouping (point 2) ── groups the day's order cards by Odoo ref so a
+  // chef can follow one order — especially a same-day supplementary order (đơn bổ sung)
+  // — instead of hunting through per-product cards. Regular cards link to orders via
+  // their breakdown entries; matched manual cakes via bc_order_ref.
+  type OrderGroupItem = { a: Assignment; qty: number; note: string | null };
+  type OrderGroup = { ref: string; shop: string; time: string | null; boSung: boolean; items: OrderGroupItem[] };
+  const orderGroups: OrderGroup[] = (() => {
+    // Bổ sung = the card's import was created ON the delivery day itself (lab time);
+    // normal orders are imported before their delivery day starts.
+    const labDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const m = new Map<string, OrderGroup>();
+    const add = (ref: string, shop: string, time: string | null, boSung: boolean, item: OrderGroupItem) => {
+      const g = m.get(ref) ?? { ref, shop, time: null, boSung: false, items: [] };
+      g.items.push(item);
+      if (time && (!g.time || time < g.time)) g.time = time;
+      if (boSung) g.boSung = true;
+      m.set(ref, g);
+    };
+    for (const a of orderCards) {
+      const boSung = !!a.lab_imports?.imported_at
+        && labDay.format(new Date(a.lab_imports.imported_at)) === a.lab_imports.delivery_date;
+      const bds = (Array.isArray(a.breakdown) ? a.breakdown : []).filter(b => b.order_ref);
+      for (const b of bds) add(b.order_ref!, b.shop_name, b.delivery_time?.slice(0, 5) ?? null, boSung, { a, qty: b.qty, note: b.note ?? null });
+      if (!bds.length && a.bc_order_ref && a.bc_order_ref !== '__pending_create__') {
+        add(a.bc_order_ref, a.bc_shop_name || '', a.bc_ready_time?.slice(0, 5) ?? null, boSung, { a, qty: a.qty_to_produce, note: a.bc_notes ?? null });
+      }
+    }
+    return Array.from(m.values()).sort((x, y) =>
+      x.boSung !== y.boSung ? (x.boSung ? -1 : 1)
+        : (x.time ?? '99:99') !== (y.time ?? '99:99') ? (x.time ?? '99:99').localeCompare(y.time ?? '99:99')
+          : x.ref.localeCompare(y.ref));
+  })();
+  const groupDone = (g: OrderGroup) =>
+    g.items.filter(it => it.a.status === 'done' || it.a.status === 'skip').length;
+
   const inProgressCount = assignments.filter(a => a.status === 'in_progress').length;
   const pendingCount = assignments.filter(a => a.status === 'pending').length;
   const termineCount = termine.length;
@@ -1117,7 +1157,7 @@ export default function StationView({
         return (
           <div className="max-w-3xl mx-auto px-4 pt-3">
             <button
-              onClick={() => { setActiveTab('termine'); setProdDay(qtyToday > 0 ? 'today' : 'tomorrow'); }}
+              onClick={() => { setActiveTab('termine'); setOrderFilter(null); setProdDay(qtyToday > 0 ? 'today' : 'tomorrow'); }}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors"
               style={{ backgroundColor: '#FFFBEB', border: '1px solid #FCD34D' }}>
               <Package size={18} className="shrink-0" style={{ color: '#B45309' }} />
@@ -1152,7 +1192,7 @@ export default function StationView({
               const dateStr = new Date((d === 'tomorrow' ? tomorrow : today) + 'T00:00:00')
                 .toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
               return (
-                <button key={d} onClick={() => setProdDay(d)}
+                <button key={d} onClick={() => { setProdDay(d); setOrderFilter(null); }}
                   className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   style={active
                     ? { backgroundColor: '#1A4731', color: 'white' }
@@ -1189,8 +1229,55 @@ export default function StationView({
       )}
 
       {/* ─── PRODUCTION TAB ─── */}
-      {activeTab === 'production' && (
+      {activeTab === 'production' && (() => {
+        // Order filter (point 2): narrow this tab's lists to one order's cards. The
+        // lists are re-derived (not renamed) so everything below stays untouched.
+        const matchesOrder = (a: Assignment) => !orderFilter
+          || (Array.isArray(a.breakdown) ? a.breakdown : []).some(b => b.order_ref === orderFilter)
+          || a.bc_order_ref === orderFilter;
+        const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder);
+        const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
+        const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
+        return (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+          {/* Order-filter chips (point 2) — pick one order to see only its cards */}
+          {orderGroups.length > 1 && (
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
+              <button onClick={() => setOrderFilter(null)}
+                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap active:scale-95 transition-all"
+                style={!orderFilter
+                  ? { backgroundColor: '#1A4731', color: 'white', border: '1px solid #1A4731' }
+                  : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+                {lang === 'vi' ? 'Tất cả' : 'All'}
+              </button>
+              {orderGroups.map(g => {
+                const active = orderFilter === g.ref;
+                const n = g.items.filter(it => !it.a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(it.a.status)).length;
+                return (
+                  <button key={g.ref} onClick={() => setOrderFilter(active ? null : g.ref)}
+                    className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap active:scale-95 transition-all"
+                    style={active
+                      ? { backgroundColor: '#1A4731', color: 'white', border: '1px solid #1A4731' }
+                      : g.boSung
+                        ? { backgroundColor: '#FFF4CC', border: '1px solid #C9A84C', color: '#92600A' }
+                        : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+                    {g.boSung && '⚡ '}{g.ref}
+                    <span style={{ opacity: 0.75, fontWeight: 600 }}> · {g.shop}</span>
+                    {n > 0 && <span style={{ opacity: 0.75 }}> · {n}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {orderFilter && (
+            <div className="rounded-xl px-4 py-2 flex items-center justify-between text-sm font-semibold"
+              style={{ backgroundColor: '#FFF4CC', color: '#92600A', border: '1px solid #C9A84C' }}>
+              <span>🔎 {lang === 'vi' ? 'Đang lọc theo' : 'Filtering by'} <span className="font-mono font-bold">{orderFilter}</span></span>
+              <button onClick={() => setOrderFilter(null)} className="font-bold underline shrink-0">
+                ✕ {lang === 'vi' ? 'Bỏ lọc' : 'Clear'}
+              </button>
+            </div>
+          )}
           {production.length === 0 && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#2D6A4F' }} />
@@ -1369,7 +1456,8 @@ export default function StationView({
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ─── BON DE COMMANDE TAB — client orders only (no extra production) ─── */}
       {activeTab === 'commande' && (() => {
@@ -1387,6 +1475,106 @@ export default function StationView({
             </div>
           ) : (
             <div className="space-y-3">
+              {/* Point 2 (chef Entremet): switch between per-order and per-product views */}
+              <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #E0D49A', backgroundColor: 'white' }}>
+                {([['don', lang === 'vi' ? '📦 Theo đơn' : '📦 By order'], ['sp', lang === 'vi' ? '🧺 Theo sản phẩm' : '🧺 By product']] as const).map(([v, label]) => (
+                  <button key={v} onClick={() => setOrderView(v)}
+                    className="flex-1 py-2.5 text-sm font-bold transition-all"
+                    style={orderView === v
+                      ? { backgroundColor: '#1A4731', color: 'white' }
+                      : { backgroundColor: 'white', color: '#1A4731' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {orderView === 'don' ? (
+                <div className="space-y-3">
+                  {orderGroups.length === 0 && (
+                    <div className="text-center py-16">
+                      <ClipboardList size={40} className="mx-auto mb-3 text-ink-light" />
+                      <p className="font-semibold text-ink-light">
+                        {lang === 'vi' ? 'Không tìm thấy đơn nào (thiếu mã đơn Odoo)' : 'No order with an Odoo ref found'}
+                      </p>
+                    </div>
+                  )}
+                  {orderGroups.map(g => {
+                    const done = groupDone(g);
+                    const total = g.items.length;
+                    const prodCount = g.items.filter(it => ['pending', 'in_progress', 'partial', 'blocked'].includes(it.a.status)).length;
+                    return (
+                      <div key={g.ref} className="rounded-2xl overflow-hidden bg-white"
+                        style={{ border: g.boSung ? '2px solid #C9A84C' : '1px solid #E0D49A' }}>
+                        {/* Order header */}
+                        <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap"
+                          style={{ backgroundColor: g.boSung ? '#FFF4CC' : '#F0F9F4' }}>
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className="font-mono font-black text-sm" style={{ color: '#92600A' }}>{g.ref}</span>
+                            <span className="flex items-center gap-1 text-sm font-bold" style={{ color: '#1A4731' }}>
+                              <Store size={12} />{g.shop}
+                            </span>
+                            {g.boSung && (
+                              <span className="text-[10px] font-black rounded-full px-2 py-0.5 animate-pulse"
+                                style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
+                                ⚡ {lang === 'vi' ? 'BỔ SUNG' : 'SUPPLEMENT'}
+                              </span>
+                            )}
+                            {g.time && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                style={{ backgroundColor: 'white', color: '#C9A84C', border: '1px solid #E0D49A' }}>
+                                ⏰ {g.time}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs font-black shrink-0 rounded-full px-2 py-0.5"
+                            style={done === total
+                              ? { backgroundColor: '#047857', color: 'white' }
+                              : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #E0D49A' }}>
+                            {done}/{total} {lang === 'vi' ? 'xong' : 'done'}
+                          </span>
+                        </div>
+                        {/* Items of this order */}
+                        {g.items.map((it, i) => {
+                          const a = it.a;
+                          const pill = a.status === 'done' ? { t: lang === 'vi' ? 'Xong' : 'Done', c: '#047857', bg: '#ECFDF5' }
+                            : a.status === 'skip' ? { t: lang === 'vi' ? 'Có sẵn' : 'In stock', c: '#6D28D9', bg: '#F5F3FF' }
+                              : a.status === 'blocked' ? { t: lang === 'vi' ? 'Chặn' : 'Blocked', c: '#B91C1C', bg: '#FEF2F2' }
+                                : (a.status === 'in_progress' || a.status === 'partial') ? { t: lang === 'vi' ? 'Đang làm' : 'In progress', c: '#92600A', bg: '#FFF4CC' }
+                                  : { t: lang === 'vi' ? 'Chưa làm' : 'To do', c: '#6B7280', bg: '#F3F4F6' };
+                          return (
+                            <div key={`${a.id}-${i}`} className="flex items-center gap-3 px-4 py-2.5"
+                              style={{ borderTop: '1px solid #F0EAD0' }}>
+                              {a.image_url
+                                ? <img src={thumb(a.image_url, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
+                                : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>
+                                  {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {a.sku && <span className="text-[9px] font-mono text-ink-light">{a.sku}</span>}
+                                  {it.note && <span className="text-[10px] font-semibold" style={{ color: '#92600A' }}>📝 {it.note}</span>}
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ color: pill.c, backgroundColor: pill.bg }}>{pill.t}</span>
+                              <span className="font-black shrink-0" style={{ color: '#1A4731' }}>×{it.qty}</span>
+                            </div>
+                          );
+                        })}
+                        {/* Jump to the Production tab filtered on this order */}
+                        {prodCount > 0 && (
+                          <button onClick={() => { setOrderFilter(g.ref); setActiveTab('production'); }}
+                            className="w-full px-4 py-2.5 text-sm font-bold text-left flex items-center justify-between active:scale-[0.99] transition-all"
+                            style={{ backgroundColor: '#FBF6E3', color: '#1A4731', borderTop: '1px solid #E0D49A' }}>
+                            <span>{lang === 'vi' ? `Xem ${prodCount} thẻ trong Sản xuất` : `View ${prodCount} card(s) in Production`}</span>
+                            <ChevronRight size={16} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (<>
               {/* Summary header — day-aware label + completion (in-stock counts as handled) */}
               <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
                 style={{ backgroundColor: '#1A4731', color: 'white' }}>
@@ -1577,6 +1765,7 @@ export default function StationView({
                   );
                 })}
               </div>
+              </>)}
             </div>
           )}
         </div>
