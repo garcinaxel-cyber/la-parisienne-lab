@@ -15,16 +15,19 @@ type DeliveryTeamStat = { team: string; expected: number; checked: number; rate:
 type DiscrepancyTeamStat = { team: string; total: number; adjusted: number; rate: number };
 type DiscrepancyProductStat = { name: string; total: number; adjusted: number; rate: number };
 type CompletionGapProduct = { name: string; expected: number; checked: number; gap: number };
-type DemandCategory = { category: string; demand: number; produced: number; gapPct: number; status: 'under' | 'ok' | 'over' };
 type StockSnapshotT = { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string };
 // Doit rester aligné sur STOCK_CATEGORIES de lib/checks.ts (fichier client — pas d'import server possible)
 const STOCK_CATS = ['Macaron', 'Biscuit Voyage', 'Tiramisu'];
-type DemandTeam = { team: string; totalDemand: number; categories: DemandCategory[] };
+type TraceEntry = {
+  team: string | null;
+  lastSend: { date: string; team: string | null; by: string | null; qty: number } | null;
+  deliv7: { qty: number; count: number; lastRef: string | null; lastDate: string | null; lastBy: string | null } | null;
+};
 
 export default function AnalyticsView({
   range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
   daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct,
-  demandVsProduction, stockRunAt, stockSnapshot, stockThresholds, stockSent, stockUpcoming, aggregated = false,
+  stockRunAt, stockSnapshot, stockThresholds, stockSent, stockUpcoming, stockTrace, aggregated = false,
 }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
@@ -37,12 +40,12 @@ export default function AnalyticsView({
   completionGapsByTeam: Record<string, CompletionGapProduct[]>;
   discrepancyByTeam: DiscrepancyTeamStat[];
   discrepancyByProduct: DiscrepancyProductStat[];
-  demandVsProduction: DemandTeam[];
   stockRunAt: string | null;
   stockSnapshot: StockSnapshotT | null;
   stockThresholds: Record<string, number>;
   stockSent: Record<string, number>;
   stockUpcoming: Record<string, number>;
+  stockTrace: Record<string, TraceEntry>;
   aggregated?: boolean;
 }) {
   const { lang } = useI18n();
@@ -124,57 +127,7 @@ export default function AnalyticsView({
       {/* ══ Vision stock (2026-09-02, chantier stock phase A) ══ — rendue depuis l'instantané
           du dernier run de Check (zéro appel Odoo à l'ouverture) ; bouton refresh = lecture live. */}
       <StockSection vi={vi} runAt={stockRunAt} snapshot={stockSnapshot}
-        thresholds={stockThresholds} initialSent={stockSent} initialUpcoming={stockUpcoming} />
-
-      {/* Demand vs production, by team then category — "je veux voir si on est en sous
-          capacité ou sur capacité" (Axel, 2026-08-21). Not a true capacity metric (no
-          standard-time data exists anywhere in this app) — this is demand (qty ordered) vs
-          actual output (qty produced), the closest reliable proxy. */}
-      <div className="card p-4">
-        <h3 className="font-semibold text-sm text-navy mb-0.5 flex items-center gap-1.5">
-          <Package size={15} className="text-navy" /> {vi ? 'Nhu cầu so với sản xuất' : 'Demand vs production'}
-        </h3>
-        <p className="text-[11px] text-ink-light mb-3">
-          {vi ? 'SL đặt hàng so với SL thực sản xuất, theo đội và danh mục sản phẩm' : 'Qty ordered vs qty actually produced, by team and product category'}
-        </p>
-        {demandVsProduction.length === 0 ? <p className="text-xs text-ink-light">—</p> : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {demandVsProduction.map(t => (
-              <div key={t.team} className="rounded-xl p-3" style={{ border: '1px solid #F3F4F6' }}>
-                <div className="text-xs font-bold mb-2 px-1.5 py-0.5 rounded-full inline-block"
-                  style={{ color: TEAM_LABELS[t.team as Team]?.color, backgroundColor: TEAM_LABELS[t.team as Team]?.bg }}>
-                  {teamLabel(t.team)}
-                </div>
-                <div className="space-y-2">
-                  {t.categories.map(c => {
-                    const badge = c.status === 'under'
-                      ? { label: vi ? 'Thiếu' : 'Under', bg: '#FEE2E2', fg: '#DC2626' }
-                      : c.status === 'over'
-                      ? { label: vi ? 'Dư' : 'Over', bg: '#FEF3C7', fg: '#92600A' }
-                      : { label: vi ? 'Cân bằng' : 'Balanced', bg: '#DCFCE7', fg: '#166534' };
-                    const barPct = c.demand > 0 ? Math.min(150, Math.round(c.produced / c.demand * 100)) : 0;
-                    return (
-                      <div key={c.category}>
-                        <div className="flex justify-between items-center text-[12px] mb-1 gap-2">
-                          <span className="text-navy truncate">{c.category}</span>
-                          <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0" style={{ backgroundColor: badge.bg, color: badge.fg }}>{badge.label}</span>
-                        </div>
-                        <div className="flex justify-between text-[11px] text-ink-light mb-1">
-                          <span>{c.produced.toLocaleString()} / {c.demand.toLocaleString()} {vi ? 'cái' : 'units'}</span>
-                          <span>{c.gapPct > 0 ? '+' : ''}{c.gapPct}%</span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-border-soft overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: `${Math.min(100, barPct)}%`, backgroundColor: badge.fg }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+        thresholds={stockThresholds} initialSent={stockSent} initialUpcoming={stockUpcoming} initialTrace={stockTrace} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Completion by team — cards done/total */}
@@ -420,22 +373,26 @@ export default function AnalyticsView({
 }
 
 
-// ── Section Stock (2026-09-02) ────────────────────────────────────────────────
-// Vue 1 : les 3 catégories stockées long terme (Macaron / Biscuit Voyage / Tiramisu) — stock
-// Odoo + seuil de sécurité saisi par les chefs. Vue 2 : cohérence made-to-order — un stock ≠ 0
-// doit être expliqué par un envoi <48h ou une livraison à venir ; un NÉGATIF récent est normal
-// (livré avant l'envoi en stock), un négatif sans envoi récent = production Odoo manquante.
-function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpcoming }: {
+// ── Section Stock (2026-09-02, traçabilité + regroupement 09-03) ─────────────
+// Vue 1 : les 3 catégories stockées long terme, groupées PAR CATÉGORIE, seuils des chefs.
+// Vue 2 : cohérence made-to-order, groupée PAR CATÉGORIE, verdict par SKU.
+// Chaque ligne se déplie (clic) en traçabilité : dernier envoi en stock (équipe + personne),
+// livraisons 7 j (dernière commande cliquable + qui l'a poussée), demande à venir — et le tag
+// explicite « envoi manquant — Team X » ou « NON EXPLIQUÉ » (Axel, 2026-09-02).
+function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpcoming, initialTrace }: {
   vi: boolean; runAt: string | null; snapshot: StockSnapshotT | null;
   thresholds: Record<string, number>; initialSent: Record<string, number>; initialUpcoming: Record<string, number>;
+  initialTrace: Record<string, TraceEntry>;
 }) {
-  const [live, setLive] = useState<{ snapshot: StockSnapshotT; sent: Record<string, number>; upcoming: Record<string, number> } | null>(null);
+  const [live, setLive] = useState<{ snapshot: StockSnapshotT; sent: Record<string, number>; upcoming: Record<string, number>; trace: Record<string, TraceEntry> } | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [openSku, setOpenSku] = useState<string | null>(null);
 
   const snap = live?.snapshot ?? snapshot;
   const sent = live?.sent ?? initialSent;
   const upcoming = live?.upcoming ?? initialUpcoming;
+  const trace = live?.trace ?? initialTrace;
 
   async function refresh() {
     setLoading(true); setErr(null);
@@ -443,13 +400,64 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
       const { refreshStockLiveAction } = await import('./actions');
       const res = await refreshStockLiveAction();
       if ('error' in res) setErr(res.error ?? 'Erreur');
-      else setLive({ snapshot: res.snapshot, sent: res.sent, upcoming: res.upcoming });
+      else setLive({ snapshot: res.snapshot, sent: res.sent, upcoming: res.upcoming, trace: res.trace });
     } catch (e: any) { setErr(String(e?.message ?? e)); }
     setLoading(false);
   }
 
   const fmtAt = (iso: string) => new Date(iso).toLocaleString(vi ? 'vi-VN' : 'en-GB',
     { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+  const fmtD = (iso: string) => new Date(iso.length <= 10 ? iso + 'T00:00:00' : iso).toLocaleString(vi ? 'vi-VN' : 'en-GB',
+    { day: '2-digit', month: '2-digit', ...(iso.length > 10 ? { hour: '2-digit', minute: '2-digit' } : {}), timeZone: 'Asia/Ho_Chi_Minh' });
+  const teamName = (t: string | null | undefined) =>
+    t && TEAM_LABELS[t as Team] ? (vi ? TEAM_LABELS[t as Team].vi : TEAM_LABELS[t as Team].en) : (t ?? '—');
+  const teamChip = (t: string | null | undefined) => t ? (
+    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+      style={{ color: TEAM_LABELS[t as Team]?.color ?? '#4B5563', backgroundColor: TEAM_LABELS[t as Team]?.bg ?? '#F3F4F6' }}>
+      {teamName(t)}
+    </span>
+  ) : null;
+
+  // Traçabilité dépliée sous une ligne — qui / quelle commande / non expliqué.
+  const traceDetail = (sku: string, qty: number) => {
+    const t = trace[sku];
+    const ls = t?.lastSend ?? null;
+    const d7 = t?.deliv7 ?? null;
+    const up = upcoming[sku] ?? 0;
+    return (
+      <div className="mx-3 mb-2 rounded-xl px-3 py-2 text-[11.5px] space-y-1"
+        style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A', color: '#1A2C24' }}>
+        <div>
+          📤 {vi ? 'Gửi kho gần nhất' : 'Dernier envoi en stock'}:{' '}
+          {ls
+            ? <>{fmtD(ls.date)} · <b>{teamName(ls.team)}</b>{ls.by ? ` · ${ls.by}` : ''} · +{ls.qty}</>
+            : <b style={{ color: '#B42318' }}>{vi ? 'không có trong 14 ngày' : 'aucun depuis 14 jours'}</b>}
+        </div>
+        <div>
+          🚚 {vi ? 'Đã giao & đẩy Odoo (7 ngày)' : 'Livré & poussé Odoo (7 jours)'}:{' '}
+          {d7
+            ? <>×{d7.qty} · {d7.count} {vi ? 'đơn' : 'cmd'}
+                {d7.lastRef && <> · {vi ? 'gần nhất' : 'dernière'}{' '}
+                  <a className="underline font-semibold" style={{ color: '#1D4ED8' }}
+                    href={`/delivery-check/${d7.lastDate}/${d7.lastRef}`}>{d7.lastRef}</a>
+                  {d7.lastBy ? ` (${vi ? 'bởi' : 'par'} ${d7.lastBy})` : ''}</>}
+              </>
+            : (vi ? 'không có' : 'aucune')}
+        </div>
+        {up > 0 && <div>📅 {vi ? 'Sắp giao (hôm nay/mai)' : 'À livrer (auj./demain)'}: ×{up}</div>}
+        {qty < 0 && !ls && (
+          <div className="font-bold" style={{ color: '#B42318' }}>
+            👤 {vi ? 'Thiếu GỬI KHO' : 'ENVOI EN STOCK manquant'} — {teamName(t?.team)}
+          </div>
+        )}
+        {qty > 0 && !ls && !d7 && up === 0 && (
+          <div className="font-bold" style={{ color: '#B42318' }}>
+            ❓ {vi ? 'KHÔNG GIẢI THÍCH ĐƯỢC — kiểm tra thực tế' : 'NON EXPLIQUÉ — à vérifier physiquement'}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const header = (
     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -461,7 +469,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
           {live
             ? `${vi ? 'Đọc trực tiếp lúc' : 'Lecture live à'} ${fmtAt(live.snapshot.at)}`
             : snap
-              ? `📸 ${vi ? 'Ảnh chụp từ lần Check' : 'Instantané du dernier Check'}: ${fmtAt(runAt ?? snap.at)}`
+              ? `📸 ${vi ? 'Ảnh chụp từ lần Check' : 'Instantané du dernier Check'}: ${fmtAt(runAt ?? snap.at)} · ${vi ? 'bấm 1 dòng để xem truy vết' : 'clique une ligne pour la traçabilité'}`
               : (vi ? 'Chưa có ảnh chụp kho — chạy Check hoặc bấm nút bên phải' : "Aucun instantané — lance un Check ou clique Actualiser")}
         </p>
       </div>
@@ -484,9 +492,14 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
 
   const stockItems = snap.items
     .filter(i => i.category && STOCK_CATS.includes(i.category))
-    .map(i => ({ ...i, threshold: thresholds[i.sku] ?? null, below: thresholds[i.sku] != null && i.qty < thresholds[i.sku] }))
-    .sort((a, b) => Number(b.below) - Number(a.below) || (a.category ?? '').localeCompare(b.category ?? '') || a.name.localeCompare(b.name));
+    .map(i => ({ ...i, threshold: thresholds[i.sku] ?? null, below: thresholds[i.sku] != null && i.qty < thresholds[i.sku] }));
   const belowCount = stockItems.filter(i => i.below).length;
+  const stockByCat = new Map<string, typeof stockItems>();
+  for (const cat of STOCK_CATS) {
+    const items = stockItems.filter(i => i.category === cat)
+      .sort((a, b) => Number(b.below) - Number(a.below) || a.qty - b.qty || a.name.localeCompare(b.name));
+    if (items.length) stockByCat.set(cat, items);
+  }
 
   type Verdict = 'negative_stuck' | 'orphan' | 'transit' | 'covered';
   const mtoItems = snap.items
@@ -495,18 +508,26 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
       const s = sent[i.sku] ?? 0, u = upcoming[i.sku] ?? 0;
       const verdict: Verdict = i.qty < 0 ? (s > 0 ? 'transit' : 'negative_stuck') : (s === 0 && u === 0 ? 'orphan' : 'covered');
       return { ...i, s, u, verdict };
-    })
-    .sort((a, b) => {
-      const rank = (v: Verdict) => v === 'negative_stuck' ? 0 : v === 'orphan' ? 1 : v === 'covered' ? 2 : 3;
-      return rank(a.verdict) - rank(b.verdict) || Math.abs(b.qty) - Math.abs(a.qty);
     });
   const mtoBad = mtoItems.filter(i => i.verdict === 'negative_stuck' || i.verdict === 'orphan').length;
+  const vRank = (v: Verdict) => v === 'negative_stuck' ? 0 : v === 'orphan' ? 1 : v === 'covered' ? 2 : 3;
+  const mtoByCat = new Map<string, typeof mtoItems>();
+  for (const i of mtoItems) {
+    const cat = i.category ?? (vi ? 'Khác' : 'Autre');
+    if (!mtoByCat.has(cat)) mtoByCat.set(cat, []);
+    mtoByCat.get(cat)!.push(i);
+  }
+  const mtoCats = Array.from(mtoByCat.entries()).map(([cat, items]) => ({
+    cat,
+    items: items.sort((a, b) => vRank(a.verdict) - vRank(b.verdict) || Math.abs(b.qty) - Math.abs(a.qty)),
+    bad: items.filter(i => i.verdict === 'negative_stuck' || i.verdict === 'orphan').length,
+  })).sort((a, b) => b.bad - a.bad || a.cat.localeCompare(b.cat));
 
-  const verdictBadge = (v: Verdict, qty: number) => {
-    if (v === 'negative_stuck') return { label: vi ? 'Âm kéo dài — thiếu gửi kho?' : 'Négatif persistant — envoi kho manquant ?', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
-    if (v === 'orphan') return { label: vi ? 'Tồn không rõ lý do' : 'Stock inexpliqué', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
-    if (v === 'transit') return { label: vi ? 'Đang trung chuyển (bình thường)' : 'En transit (normal)', style: { color: '#4B5563', backgroundColor: '#F3F4F6' } };
-    return { label: vi ? 'Có lý do (gửi kho / sắp giao)' : 'Expliqué (envoi / livraison à venir)', style: { color: '#047857', backgroundColor: '#ECFDF5' } };
+  const verdictBadge = (v: Verdict) => {
+    if (v === 'negative_stuck') return { label: vi ? 'Âm — thiếu gửi kho' : 'Négatif — envoi manquant', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
+    if (v === 'orphan') return { label: vi ? 'Không rõ lý do' : 'Inexpliqué', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
+    if (v === 'transit') return { label: vi ? 'Đang trung chuyển' : 'En transit (normal)', style: { color: '#4B5563', backgroundColor: '#F3F4F6' } };
+    return { label: vi ? 'Có lý do' : 'Expliqué', style: { color: '#047857', backgroundColor: '#ECFDF5' } };
   };
 
   return (
@@ -515,33 +536,48 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
       {err && <p className="text-xs" style={{ color: '#B42318' }}>{err}</p>}
       {snap.error && <p className="text-xs" style={{ color: '#B42318' }}>{vi ? 'Lỗi đọc kho' : 'Erreur lecture stock'}: {snap.error}</p>}
 
-      {/* Vue 1 — 3 catégories stockées long terme */}
+      {/* Vue 1 — stock long terme, groupé par catégorie */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <h4 className="text-xs font-bold text-navy uppercase tracking-wider">
-            {vi ? 'Kho dài hạn — Macaron · Biscuit Voyage · Tiramisu' : 'Stock long terme — Macaron · Biscuit Voyage · Tiramisu'}
+            {vi ? 'Kho dài hạn' : 'Stock long terme'}
           </h4>
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
             style={belowCount ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
             {belowCount ? `${belowCount} ${vi ? 'dưới ngưỡng' : 'sous seuil'}` : 'OK ✓'}
           </span>
         </div>
-        <p className="text-[11px] text-ink-light mb-2">
-          {vi ? 'Ngưỡng an toàn do bếp đặt trong tab Phân tích của trạm. Cột chênh lệch so với lý thuyết sẽ mở sau kiểm kê.' : "Seuils saisis par les chefs dans leur onglet Analytique. La colonne d'écart vs théorique s'activera après l'inventaire."}
-        </p>
-        <div className="rounded-xl overflow-hidden max-h-80 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
-          {stockItems.map((i, idx) => (
-            <div key={i.sku} className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px] bg-white" style={{ borderTop: idx ? '1px solid #F3F4F6' : undefined }}>
-              <div className="min-w-0 truncate text-navy">
-                <span className="font-mono text-[10px] text-ink-light">{i.sku}</span> {i.name}
-                <span className="text-[10px] text-ink-light"> · {i.category}</span>
+        <div className="rounded-xl overflow-hidden max-h-96 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
+          {Array.from(stockByCat.entries()).map(([cat, items]) => (
+            <div key={cat}>
+              <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E5E7EB' }}>
+                <span>{cat} · {items.length} SKU · {items.reduce((s, i) => s + i.qty, 0)} {vi ? 'cái' : 'u.'}</span>
+                {items.some(i => i.below) && (
+                  <span style={{ color: '#B42318' }}>{items.filter(i => i.below).length} {vi ? 'dưới ngưỡng' : 'sous seuil'}</span>
+                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="font-bold" style={{ color: i.below ? '#B42318' : '#1A4731' }}>{i.qty}</span>
-                <span className="text-[11px] text-ink-light w-16 text-right">
-                  {i.threshold != null ? `${vi ? 'ngưỡng' : 'seuil'} ${i.threshold}` : '—'}
-                </span>
-              </div>
+              {items.map(i => (
+                <div key={i.sku}>
+                  <div onClick={() => setOpenSku(openSku === i.sku ? null : i.sku)}
+                    className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px] bg-white cursor-pointer hover:bg-gold-pale"
+                    style={{ borderTop: '1px solid #F3F4F6' }}>
+                    <div className="min-w-0 truncate text-navy flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] text-ink-light">{i.sku}</span>
+                      <span className="truncate">{i.name}</span>
+                      {teamChip(trace[i.sku]?.team)}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-bold" style={{ color: i.qty < 0 || i.below ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                      <span className="text-[11px] text-ink-light w-16 text-right">
+                        {i.threshold != null ? `${vi ? 'ngưỡng' : 'seuil'} ${i.threshold}` : '—'}
+                      </span>
+                      <ChevronDown size={12} className={`text-ink-light transition-transform ${openSku === i.sku ? 'rotate-180' : ''}`} />
+                    </div>
+                  </div>
+                  {openSku === i.sku && traceDetail(i.sku, i.qty)}
+                </div>
+              ))}
             </div>
           ))}
           {!stockItems.length && (
@@ -550,47 +586,49 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
         </div>
       </div>
 
-      {/* Vue 2 — cohérence made-to-order */}
+      {/* Vue 2 — made-to-order, groupé par catégorie */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <h4 className="text-xs font-bold text-navy uppercase tracking-wider">
-            {vi ? 'Hàng làm theo đơn — tồn kho phải = 0 hoặc có lý do' : 'Made-to-order — le stock doit être 0 ou expliqué'}
+            {vi ? 'Hàng làm theo đơn — tồn phải = 0 hoặc có lý do' : 'Made-to-order — stock = 0 ou expliqué'}
           </h4>
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
             style={mtoBad ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
             {mtoBad ? `${mtoBad} ${vi ? 'bất thường' : 'anomalies'}` : 'OK ✓'}
           </span>
         </div>
-        <p className="text-[11px] text-ink-light mb-2">
-          {vi
-            ? 'Âm ngắn hạn là bình thường (giao trước, gửi kho sau). Âm không có gửi kho gần đây = sản xuất chưa lên Odoo.'
-            : "Un négatif court est normal (livré avant l'envoi en stock). Négatif sans envoi récent = production jamais montée sur Odoo."}
-        </p>
         <div className="rounded-xl overflow-hidden max-h-96 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
-          {mtoItems.map((i, idx) => {
-            const b = verdictBadge(i.verdict, i.qty);
-            return (
-              <div key={i.sku} className="px-3 py-1.5 text-[13px] bg-white" style={{ borderTop: idx ? '1px solid #F3F4F6' : undefined }}>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 truncate text-navy">
-                    <span className="font-mono text-[10px] text-ink-light">{i.sku}</span> {i.name}
-                    {i.category && <span className="text-[10px] text-ink-light"> · {i.category}</span>}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-bold" style={{ color: i.qty < 0 ? '#B42318' : '#1A4731' }}>{i.qty}</span>
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={b.style}>{b.label}</span>
-                  </div>
-                </div>
-                {(i.s > 0 || i.u > 0) && (
-                  <div className="text-[10px] text-ink-light mt-0.5">
-                    {i.s > 0 && `${vi ? 'gửi kho <48h' : 'envoyé <48h'}: ${i.s}`}
-                    {i.s > 0 && i.u > 0 && ' · '}
-                    {i.u > 0 && `${vi ? 'sắp giao' : 'à livrer auj/demain'}: ${i.u}`}
-                  </div>
-                )}
+          {mtoCats.map(({ cat, items, bad }) => (
+            <div key={cat}>
+              <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ backgroundColor: '#FBF6E3', color: '#92600A', borderTop: '1px solid #E5E7EB' }}>
+                <span>{cat} · {items.length} SKU</span>
+                {bad > 0 && <span style={{ color: '#B42318' }}>{bad} {vi ? 'bất thường' : 'anomalies'}</span>}
               </div>
-            );
-          })}
+              {items.map(i => {
+                const b = verdictBadge(i.verdict);
+                return (
+                  <div key={i.sku}>
+                    <div onClick={() => setOpenSku(openSku === i.sku ? null : i.sku)}
+                      className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px] bg-white cursor-pointer hover:bg-gold-pale"
+                      style={{ borderTop: '1px solid #F3F4F6' }}>
+                      <div className="min-w-0 truncate text-navy flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-ink-light">{i.sku}</span>
+                        <span className="truncate">{i.name}</span>
+                        {teamChip(trace[i.sku]?.team)}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-bold" style={{ color: i.qty < 0 ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={b.style}>{b.label}</span>
+                        <ChevronDown size={12} className={`text-ink-light transition-transform ${openSku === i.sku ? 'rotate-180' : ''}`} />
+                      </div>
+                    </div>
+                    {openSku === i.sku && traceDetail(i.sku, i.qty)}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
           {!mtoItems.length && (
             <div className="px-3 py-4 text-xs text-ink-light bg-white">
               {vi ? 'Không có SKU làm theo đơn nào còn tồn ≠ 0 🎉' : 'Aucun SKU made-to-order avec du stock ≠ 0 🎉'}

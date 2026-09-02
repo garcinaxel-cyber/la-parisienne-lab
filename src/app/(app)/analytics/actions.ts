@@ -5,6 +5,7 @@ import {
   collectLabStockSnapshot, checkSafetyStock, checkOrphanStock, collectMtoExplanations, STOCK_CATEGORIES,
   type StockSnapshot, type SafetyStockIssue, type OrphanStockIssue,
 } from '@/lib/checks';
+import { collectStockTrace, type StockTrace } from '@/lib/stock-trace';
 
 export interface LiveStockResult {
   snapshot: StockSnapshot;
@@ -12,6 +13,7 @@ export interface LiveStockResult {
   orphan: OrphanStockIssue[];
   sent: Record<string, number>;
   upcoming: Record<string, number>;
+  trace: StockTrace;
 }
 
 // "Actualiser en direct" de la section stock d'/analytics (2026-09-02). Par défaut la page rend
@@ -28,14 +30,16 @@ export async function refreshStockLiveAction(): Promise<LiveStockResult | { erro
   const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const snapshot = await collectLabStockSnapshot(service as any);
-  if (snapshot.error) return { snapshot, safety: [], orphan: [], sent: {}, upcoming: {} };
+  if (snapshot.error) return { snapshot, safety: [], orphan: [], sent: {}, upcoming: {}, trace: {} };
   const mtoSkus = snapshot.items
     .filter(i => i.qty !== 0 && !(i.category && STOCK_CATEGORIES.includes(i.category)))
     .map(i => i.sku);
-  const [safety, orphan, expl] = await Promise.all([
+  const traceSkus = snapshot.items.filter(i => i.qty !== 0).map(i => i.sku);
+  const [safety, orphan, expl, trace] = await Promise.all([
     checkSafetyStock(service as any, snapshot).catch((): SafetyStockIssue[] => []),
     checkOrphanStock(service as any, snapshot).catch((): OrphanStockIssue[] => []),
     collectMtoExplanations(service as any, mtoSkus).catch(() => ({ sent: {}, upcoming: {} })),
+    collectStockTrace(service as any, traceSkus).catch((): StockTrace => ({})),
   ]);
-  return { snapshot, safety, orphan, sent: expl.sent, upcoming: expl.upcoming };
+  return { snapshot, safety, orphan, sent: expl.sent, upcoming: expl.upcoming, trace };
 }
