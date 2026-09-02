@@ -272,6 +272,22 @@ export async function validateDeliveryOnOdooAction(
       patch.odoo_push_error = result.error ?? 'Erreur inconnue';
     }
     await supabase.from('lab_delivery_orders').update(patch).eq('id', deliveryOrderId);
+    // Point 3 (Axel, 2026-09-02) — permanent push journal: odoo_push_error above is overwritten
+    // by the next successful attempt, so failures (and auto-created missing lines) would vanish
+    // from history. This log is append-only and never rewritten. Best-effort: a log failure
+    // must never fail the push itself.
+    const { error: logErr } = await supabase.from('lab_delivery_push_log').insert({
+      delivery_order_id: deliveryOrderId,
+      order_ref: header.order_ref,
+      source_type: header.source_type,
+      ok: result.ok,
+      error: result.error ?? null,
+      plan: result.plan ?? null,
+      created_moves: result.createdMoves ?? null,
+      backorder_warning: result.backorderWarning ?? null,
+      by_name: auth.profile?.full_name ?? null,
+    });
+    if (logErr) console.error('[delivery-validate] push log insert failed:', logErr.message);
     revalidatePath(`/delivery-check/${header.delivery_date}/${header.order_ref}`);
     revalidatePath('/delivery-check');
     revalidatePath('/delivery-check/category');

@@ -76,6 +76,15 @@ export interface DeliveryValidateResult {
   pickingId?: number;
   pickingName?: string;
   plan?: PlannedWrite[]; // what would be / was written per stock.move
+  // Point 3 (Axel, 2026-09-02): a checked SKU can be missing from the picking entirely when the
+  // sales team added its line to the order AFTER approval — the picking is generated at approval,
+  // so later lines never get a stock.move. Instead of the hard "Produits cochés introuvables"
+  // stop, the missing move is recreated on the picking at validate time, linked to the order's
+  // own demand line (replenishment_line_id / sale_line_id) so delivered-qty/invoicing stay
+  // correct. ONLY done when that demand line exists on the Odoo order; a SKU with no demand line
+  // at all still errors exactly as before.
+  plannedCreations?: { sku: string; product_name_vi: string; qty: number }[]; // dryRun: will be ADDED
+  createdMoves?: { sku: string; moveId: number; qty: number }[]; // real run: what was added
   // Set when button_validate returned `true` (no error) but Odoo created a backorder picking
   // anyway — belt-and-suspenders after two different context-flag attempts each failed silently
   // once already (2026-08-18, 5 orders total). Still ok:true (the delivered quantities DID get
@@ -194,6 +203,74 @@ async function resolveSkuByProductId(productIds: number[]): Promise<Record<numbe
   return skuByProductId;
 }
 
+type PickingTemplate = { locationId: number; locationDestId: number; pickingTypeId: number | null; groupId: number | null };
+
+type MissingCreation = {
+  sku: string; product_name_vi: string; qty: number;
+  productId: number; uomId: number; displayName: string; demandLineId: number;
+};
+
+// Point 3 — for each checked SKU absent from the picking, find its product AND its demand line
+// on the Odoo order itself. Only a SKU whose demand line exists is eligible for auto-creation
+// (that is precisely the "line added after approval" case); anything else stays a hard error.
+// A missing SKU checked at 0 is skipped entirely: nothing deliverable, nothing to create.
+async function resolveMissingCreations(
+  checklistLines: DeliveryValidateLine[],
+  mismatches: string[],
+  demandLineIdByProductId: Record<number, number>,
+): Promise<{ creations: MissingCreation[]; unresolvable: string[] }> {
+  const bySku: Record<string, DeliveryValidateLine> = {};
+  for (const l of checklistLines) bySku[l.sku] = l;
+  const creations: MissingCreation[] = [];
+  const unresolvable: string[] = [];
+  const products = mismatches.length
+    ? await odooExecute<any[]>('product.product', 'search_read',
+        [[['default_code', 'in', mismatches]]], { fields: ['id', 'default_code', 'uom_id', 'display_name'] })
+    : [];
+  const productBySku: Record<string, any> = {};
+  for (const pr of products) if (pr.default_code && !productBySku[pr.default_code]) productBySku[pr.default_code] = pr;
+  for (const sku of mismatches) {
+    const l = bySku[sku];
+    if (!l || l.qty_checked <= 0) continue;
+    const prod = productBySku[sku];
+    const demandLineId = prod ? demandLineIdByProductId[prod.id] : undefined;
+    if (!prod || !demandLineId || !prod.uom_id?.[0]) { unresolvable.push(sku); continue; }
+    creations.push({
+      sku, product_name_vi: l.product_name_vi, qty: l.qty_checked,
+      productId: prod.id, uomId: prod.uom_id[0], displayName: prod.display_name || sku, demandLineId,
+    });
+  }
+  return { creations, unresolvable };
+}
+
+// Creates the missing stock.moves on the picking, then action_confirm so the new draft moves
+// join the picking's normal flow before button_validate. Copies locations/type/group from the
+// picking itself — always the right template, even if the picking had zero moves left.
+async function createMissingMoves(
+  pickingId: number, tpl: PickingTemplate, creations: MissingCreation[],
+  linkField: 'replenishment_line_id' | 'sale_line_id',
+): Promise<{ sku: string; moveId: number; qty: number }[]> {
+  const created: { sku: string; moveId: number; qty: number }[] = [];
+  for (const cr of creations) {
+    const vals: Record<string, unknown> = {
+      name: cr.displayName,
+      product_id: cr.productId,
+      product_uom: cr.uomId,
+      product_uom_qty: cr.qty,
+      picking_id: pickingId,
+      location_id: tpl.locationId,
+      location_dest_id: tpl.locationDestId,
+      [linkField]: cr.demandLineId,
+    };
+    if (tpl.pickingTypeId) vals.picking_type_id = tpl.pickingTypeId;
+    if (tpl.groupId) vals.group_id = tpl.groupId;
+    const moveId = await odooExecuteWrite<number>('stock.move', 'create', [vals], { context: NO_MAIL_CONTEXT });
+    created.push({ sku: cr.sku, moveId, qty: cr.qty });
+  }
+  await odooExecuteWrite('stock.picking', 'action_confirm', [[pickingId]], { context: NO_MAIL_CONTEXT });
+  return created;
+}
+
 export async function validateDeliveryOnOdoo(
   supabase: SupabaseClient,
   orderRef: string,
@@ -256,7 +333,7 @@ async function validateReplenishment(
   const pickingId = pickingIds[0];
 
   const pickings = await odooExecute<any[]>('stock.picking', 'search_read',
-    [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state'] });
+    [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state', 'location_id', 'location_dest_id', 'picking_type_id', 'group_id'] });
   const picking = pickings[0];
   if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${pickingId} introuvable` };
   if (DONE_STATES.has(picking.state)) {
@@ -292,19 +369,41 @@ async function validateReplenishment(
   if (built.error) return { ok: false, dryRun, orderConfirmed, error: built.error };
   const { plan, needsSplit, mismatches } = built;
 
+  let creations: MissingCreation[] = [];
+  let plannedCreations: { sku: string; product_name_vi: string; qty: number }[] | undefined;
   if (mismatches.length) {
-    return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo : ${mismatches.join(', ')} — vérification manuelle nécessaire.` };
+    // Point 3 (Axel, 2026-09-02): recreate the missing move instead of hard-stopping — but only
+    // for SKUs that DO have a demand line on the REP order (line added after approval).
+    const allReqLines = await odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
+      [[['request_id', '=', req.id]]], { fields: ['id', 'product_id'] });
+    const demandLineIdByProductId: Record<number, number> = {};
+    for (const l of allReqLines) { const pid = l.product_id?.[0]; if (pid && !demandLineIdByProductId[pid]) demandLineIdByProductId[pid] = l.id; }
+    const resolved = await resolveMissingCreations(checklistLines, mismatches, demandLineIdByProductId);
+    if (resolved.unresolvable.length) {
+      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo ET sans ligne de demande sur la commande : ${resolved.unresolvable.join(', ')} — vérification manuelle nécessaire.` };
+    }
+    creations = resolved.creations;
+    if (creations.length) plannedCreations = creations.map(cr => ({ sku: cr.sku, product_name_vi: cr.product_name_vi, qty: cr.qty }));
   }
   if (needsSplit.length) {
     return { ok: false, dryRun, orderConfirmed, needsSplit, pickingId, pickingName: picking.name };
   }
   if (dryRun) {
-    return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan };
+    return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, plannedCreations };
+  }
+
+  let createdMoves: { sku: string; moveId: number; qty: number }[] | undefined;
+  if (creations.length) {
+    createdMoves = await createMissingMoves(pickingId, {
+      locationId: picking.location_id?.[0], locationDestId: picking.location_dest_id?.[0],
+      pickingTypeId: picking.picking_type_id?.[0] ?? null, groupId: picking.group_id?.[0] ?? null,
+    }, creations, 'replenishment_line_id');
+    for (const cm of createdMoves) plan.push({ sku: cm.sku, moveId: cm.moveId, note: null, expectedQty: cm.qty, deliverQty: cm.qty });
   }
 
   const written = await writeQuantitiesAndValidatePicking(pickingId, plan);
   if (!written.ok) {
-    return { ok: false, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, error: written.error };
+    return { ok: false, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, createdMoves, error: written.error };
   }
 
   // Verify no backorder actually got created, rather than trust button_validate's `true` return
@@ -318,7 +417,7 @@ async function validateReplenishment(
     backorderWarning = `Odoo a quand même créé ${newPickingIds.length > 1 ? 'des bons de livraison' : 'un bon de livraison'} supplémentaire(s) (${newPickingIds.join(', ')}) — à supprimer manuellement dans Odoo si tu ne veux pas de reliquat ouvert.`;
   }
 
-  return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, backorderWarning };
+  return { ok: true, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, createdMoves, backorderWarning };
 }
 
 async function validateSalesOrder(
@@ -353,7 +452,7 @@ async function validateSalesOrder(
   const pickingId = pickingIds[0];
 
   const pickings = await odooExecute<any[]>('stock.picking', 'search_read',
-    [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state'] });
+    [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state', 'location_id', 'location_dest_id', 'picking_type_id', 'group_id'] });
   const picking = pickings[0];
   if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${pickingId} introuvable` };
   if (BLOCKED_STATES.has(picking.state)) {
@@ -417,24 +516,50 @@ async function validateSalesOrder(
   if (built.error) return { ok: false, dryRun, orderConfirmed, error: built.error };
   const { plan, needsSplit, mismatches } = built;
 
+  let creations: MissingCreation[] = [];
+  let plannedCreations: { sku: string; product_name_vi: string; qty: number }[] | undefined;
   if (mismatches.length) {
-    return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo : ${mismatches.join(', ')} — vérification manuelle nécessaire.` };
+    // Point 3 (Axel, 2026-09-02): same as REP — but never touch a picking already done, and only
+    // create for SKUs that DO have a sale.order.line on the order (line added after approval).
+    if (alreadyDoneOnOdoo) {
+      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés absents du picking Odoo déjà validé : ${mismatches.join(', ')} — vérification manuelle nécessaire.` };
+    }
+    const demandLineIdByProductId: Record<number, number> = {};
+    for (const l of allSoLines) {
+      if (l.display_type) continue;
+      const pid = l.product_id?.[0];
+      if (pid && !demandLineIdByProductId[pid]) demandLineIdByProductId[pid] = l.id;
+    }
+    const resolved = await resolveMissingCreations(checklistLines, mismatches, demandLineIdByProductId);
+    if (resolved.unresolvable.length) {
+      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo ET sans ligne de commande : ${resolved.unresolvable.join(', ')} — vérification manuelle nécessaire.` };
+    }
+    creations = resolved.creations;
+    if (creations.length) plannedCreations = creations.map(cr => ({ sku: cr.sku, product_name_vi: cr.product_name_vi, qty: cr.qty }));
   }
   if (needsSplit.length) {
     return { ok: false, dryRun, orderConfirmed, needsSplit, pickingId, pickingName: picking.name };
   }
   if (dryRun) {
     return {
-      ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan,
+      ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan, plannedCreations,
       invoiceAlreadyExisted, invoiceName: existingInvoices[0]?.name,
     };
   }
 
   let backorderWarning: string | undefined;
+  let createdMoves: { sku: string; moveId: number; qty: number }[] | undefined;
   if (!alreadyDoneOnOdoo) {
+    if (creations.length) {
+      createdMoves = await createMissingMoves(pickingId, {
+        locationId: picking.location_id?.[0], locationDestId: picking.location_dest_id?.[0],
+        pickingTypeId: picking.picking_type_id?.[0] ?? null, groupId: picking.group_id?.[0] ?? null,
+      }, creations, 'sale_line_id');
+      for (const cm of createdMoves) plan.push({ sku: cm.sku, moveId: cm.moveId, note: null, expectedQty: cm.qty, deliverQty: cm.qty });
+    }
     const written = await writeQuantitiesAndValidatePicking(pickingId, plan);
     if (!written.ok) {
-      return { ok: false, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, error: written.error };
+      return { ok: false, dryRun, orderConfirmed, pickingId, pickingName: picking.name, plan, createdMoves, error: written.error };
     }
     const afterSo = await odooExecute<any[]>('sale.order', 'search_read',
       [[['id', '=', so.id]]], { fields: ['picking_ids'] });
@@ -454,7 +579,7 @@ async function validateSalesOrder(
   // time), and a duplicate invoice would be a real accounting mistake, not just a cosmetic one.
   if (invoiceAlreadyExisted) {
     return {
-      ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan, backorderWarning,
+      ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan, createdMoves, backorderWarning,
       invoiceAlreadyExisted: true, invoiceName: existingInvoices[0].name,
     };
   }
@@ -481,7 +606,7 @@ async function validateSalesOrder(
   }
 
   return {
-    ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan, backorderWarning,
+    ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo, pickingId, pickingName: picking.name, plan, createdMoves, backorderWarning,
     invoiceCreated, invoiceName, invoiceError,
   };
 }

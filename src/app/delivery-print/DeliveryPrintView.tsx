@@ -75,6 +75,10 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   const [invoiceName, setInvoiceName] = useState<string | null>(null);
   const [invoiceAlreadyExisted, setInvoiceAlreadyExisted] = useState(false);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  // Point 3 — SKUs checked but absent from the Odoo picking (line added to the order after
+  // approval): previewed as "will be ADDED", then created for real on confirm.
+  const [plannedCreations, setPlannedCreations] = useState<{ sku: string; product_name_vi: string; qty: number }[]>([]);
+  const [createdMoves, setCreatedMoves] = useState<{ sku: string; moveId: number; qty: number }[]>([]);
 
   // ?validate=1 (Axel, 2026-08-18) — coming from the order page's "À valider sur Odoo" link,
   // which only shows once the order is already printed — jump straight to the pop-up instead of
@@ -115,6 +119,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
       setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return;
     }
     setPlan(res.plan ?? []); setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setPlannedCreations(res.plannedCreations ?? []);
     setInvoiceAlreadyExisted(!!res.invoiceAlreadyExisted); setInvoiceName(res.invoiceName ?? null);
     setStep('preview');
   }
@@ -125,6 +130,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
     const res = await validateDeliveryOnOdooAction(header.id, false, buildSplits());
     if (!res.ok) { setErrorMsg(res.error ?? (vi ? 'Lỗi không xác định' : 'Erreur inconnue')); setStep('error'); return; }
     setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
+    setCreatedMoves(res.createdMoves ?? []);
     setBackorderWarning(res.backorderWarning ?? null);
     setInvoiceName(res.invoiceName ?? null);
     setInvoiceAlreadyExisted(!!res.invoiceAlreadyExisted);
@@ -377,6 +383,19 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                               </div>
                             ))}
                           </div>
+                          {plannedCreations.length > 0 && (
+                            <div className="rounded-xl mb-4 px-3 py-2" style={{ backgroundColor: '#FEF3C7', border: '1px solid #F59E0B' }}>
+                              <p className="text-xs font-bold mb-1" style={{ color: '#92400E' }}>
+                                {vi ? 'Chưa có trên phiếu Odoo — sẽ được THÊM với số lượng đã kiểm:' : "Absents du bon Odoo — seront AJOUTÉS avec la quantité vérifiée :"}
+                              </p>
+                              {plannedCreations.map((cr, i) => (
+                                <div key={i} className="flex items-center justify-between text-xs" style={{ color: '#92400E' }}>
+                                  <span className="truncate flex-1">{cr.sku} · {cr.product_name_vi}</span>
+                                  <span className="font-bold shrink-0">+{cr.qty}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </>
                       )}
                       {isSo && (
@@ -411,6 +430,12 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                     ? (vi ? 'Đơn hàng đã được xác nhận trên Odoo.' : 'La commande était déjà validée sur Odoo.')
                     : (vi ? `Số lượng đã được ghi và bàn giao trên Odoo (${pickingName}).` : `Quantités écrites et livraison validée sur Odoo (${pickingName}).`)}
                 </p>
+                {createdMoves.length > 0 && (
+                  <p className="text-sm mb-3" style={{ color: '#166534' }}>
+                    {vi ? `Đã thêm ${createdMoves.length} dòng vào phiếu Odoo: ` : `${createdMoves.length} ligne(s) ajoutée(s) au bon Odoo : `}
+                    {createdMoves.map(cr => `${cr.sku} +${cr.qty}`).join(', ')}.
+                  </p>
+                )}
                 {isSo && invoiceName && (
                   <p className="text-sm mb-3" style={{ color: '#166534' }}>
                     {invoiceAlreadyExisted
