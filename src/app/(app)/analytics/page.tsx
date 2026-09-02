@@ -1,6 +1,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import AnalyticsView from './AnalyticsView';
+import { collectMtoExplanations, STOCK_CATEGORIES } from '@/lib/checks';
 
 export const revalidate = 300; // 5 min cache — analytics don't need to be real-time
 
@@ -295,10 +296,30 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
     return { team, totalDemand, categories };
   }).sort((a, b) => b.totalDemand - a.totalDemand);
 
+  // ── Section Stock (2026-09-02, chantier stock phase A) ─────────────────────
+  // Rendue depuis l'instantané du DERNIER run de Check : zéro appel Odoo à l'ouverture de la
+  // page (Axel : "il faut que ce soit optimisé") — le bouton "Actualiser en direct" (action
+  // refreshStockLiveAction) relit Odoo à la demande. Les explications MTO (envois <48h, demande
+  // à venir) sont recalculées ici : 3 petites requêtes Supabase indexées, pas d'Odoo.
+  const { data: lastStockRun } = await supabase.from('lab_reconciliation_runs')
+    .select('run_at, stock_snapshot')
+    .not('stock_snapshot', 'is', null)
+    .order('run_at', { ascending: false }).limit(1).maybeSingle();
+  const stockSnapshot = (lastStockRun?.stock_snapshot ?? null) as { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string } | null;
+  const { data: thresholdRows } = await supabase.from('lab_stock_safety_thresholds').select('sku, threshold');
+  const stockThresholds: Record<string, number> = {};
+  for (const t of thresholdRows ?? []) stockThresholds[t.sku] = Number(t.threshold);
+  const mtoSkus = (stockSnapshot?.items ?? [])
+    .filter(i => i.qty !== 0 && !(i.category && STOCK_CATEGORIES.includes(i.category)))
+    .map(i => i.sku);
+  const mtoExpl = await collectMtoExplanations(supabase as any, mtoSkus).catch(() => ({ sent: {}, upcoming: {} }));
+
   return <AnalyticsView range={range} days={days} kpis={kpisOut} teams={teamsOut} topProducts={topOut}
     reasons={reasonsOut} blockedCards={blockedCardsOut} blockTrend={blockTrendOut} teamDominantReason={teamDominantReasonOut}
     daily={dailyOut} completionByTeamDelivery={completionByTeamDelivery} completionGapsByTeam={completionGapsByTeam}
     discrepancyByTeam={discrepancyByTeam} discrepancyByProduct={discrepancyByProduct}
     demandVsProduction={demandVsProduction}
+    stockRunAt={lastStockRun?.run_at ?? null} stockSnapshot={stockSnapshot}
+    stockThresholds={stockThresholds} stockSent={mtoExpl.sent} stockUpcoming={mtoExpl.upcoming}
     aggregated={aggregated} />;
 }

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { Package, CheckCircle2, ClipboardList, AlertCircle, ChevronDown, ChevronUp, Clock, User } from 'lucide-react';
+import { Package, CheckCircle2, ClipboardList, AlertCircle, ChevronDown, ChevronUp, Clock, User, RefreshCw, Box } from 'lucide-react';
 
 type Kpis = { unitsProduced: number; unitsPlanned: number; completion: number; orders: number; blocked: number };
 type TeamStat = { team: string; completion: number; units: number };
@@ -16,12 +16,15 @@ type DiscrepancyTeamStat = { team: string; total: number; adjusted: number; rate
 type DiscrepancyProductStat = { name: string; total: number; adjusted: number; rate: number };
 type CompletionGapProduct = { name: string; expected: number; checked: number; gap: number };
 type DemandCategory = { category: string; demand: number; produced: number; gapPct: number; status: 'under' | 'ok' | 'over' };
+type StockSnapshotT = { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string };
+// Doit rester aligné sur STOCK_CATEGORIES de lib/checks.ts (fichier client — pas d'import server possible)
+const STOCK_CATS = ['Macaron', 'Biscuit Voyage', 'Tiramisu'];
 type DemandTeam = { team: string; totalDemand: number; categories: DemandCategory[] };
 
 export default function AnalyticsView({
   range, days, kpis, teams, topProducts, reasons, blockedCards, blockTrend, teamDominantReason,
   daily, completionByTeamDelivery, completionGapsByTeam, discrepancyByTeam, discrepancyByProduct,
-  demandVsProduction, aggregated = false,
+  demandVsProduction, stockRunAt, stockSnapshot, stockThresholds, stockSent, stockUpcoming, aggregated = false,
 }: {
   range: string; days: number; kpis: Kpis; teams: TeamStat[];
   topProducts: { name: string; qty: number }[];
@@ -35,6 +38,11 @@ export default function AnalyticsView({
   discrepancyByTeam: DiscrepancyTeamStat[];
   discrepancyByProduct: DiscrepancyProductStat[];
   demandVsProduction: DemandTeam[];
+  stockRunAt: string | null;
+  stockSnapshot: StockSnapshotT | null;
+  stockThresholds: Record<string, number>;
+  stockSent: Record<string, number>;
+  stockUpcoming: Record<string, number>;
   aggregated?: boolean;
 }) {
   const { lang } = useI18n();
@@ -112,6 +120,11 @@ export default function AnalyticsView({
           </div>
         ))}
       </div>
+
+      {/* ══ Vision stock (2026-09-02, chantier stock phase A) ══ — rendue depuis l'instantané
+          du dernier run de Check (zéro appel Odoo à l'ouverture) ; bouton refresh = lecture live. */}
+      <StockSection vi={vi} runAt={stockRunAt} snapshot={stockSnapshot}
+        thresholds={stockThresholds} initialSent={stockSent} initialUpcoming={stockUpcoming} />
 
       {/* Demand vs production, by team then category — "je veux voir si on est en sous
           capacité ou sur capacité" (Axel, 2026-08-21). Not a true capacity metric (no
@@ -399,6 +412,189 @@ export default function AnalyticsView({
                 {vi ? '14 ngày gần nhất · xanh lá = hoàn thành 100%' : 'Last 14 days · green = 100% complete'}
               </div>
             </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Section Stock (2026-09-02) ────────────────────────────────────────────────
+// Vue 1 : les 3 catégories stockées long terme (Macaron / Biscuit Voyage / Tiramisu) — stock
+// Odoo + seuil de sécurité saisi par les chefs. Vue 2 : cohérence made-to-order — un stock ≠ 0
+// doit être expliqué par un envoi <48h ou une livraison à venir ; un NÉGATIF récent est normal
+// (livré avant l'envoi en stock), un négatif sans envoi récent = production Odoo manquante.
+function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpcoming }: {
+  vi: boolean; runAt: string | null; snapshot: StockSnapshotT | null;
+  thresholds: Record<string, number>; initialSent: Record<string, number>; initialUpcoming: Record<string, number>;
+}) {
+  const [live, setLive] = useState<{ snapshot: StockSnapshotT; sent: Record<string, number>; upcoming: Record<string, number> } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const snap = live?.snapshot ?? snapshot;
+  const sent = live?.sent ?? initialSent;
+  const upcoming = live?.upcoming ?? initialUpcoming;
+
+  async function refresh() {
+    setLoading(true); setErr(null);
+    try {
+      const { refreshStockLiveAction } = await import('./actions');
+      const res = await refreshStockLiveAction();
+      if ('error' in res) setErr(res.error ?? 'Erreur');
+      else setLive({ snapshot: res.snapshot, sent: res.sent, upcoming: res.upcoming });
+    } catch (e: any) { setErr(String(e?.message ?? e)); }
+    setLoading(false);
+  }
+
+  const fmtAt = (iso: string) => new Date(iso).toLocaleString(vi ? 'vi-VN' : 'en-GB',
+    { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+
+  const header = (
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <h3 className="font-semibold text-sm text-navy flex items-center gap-1.5">
+          <Box size={15} className="text-navy" /> {vi ? 'Kho (Odoo)' : 'Stock (Odoo)'}
+        </h3>
+        <p className="text-[11px] text-ink-light">
+          {live
+            ? `${vi ? 'Đọc trực tiếp lúc' : 'Lecture live à'} ${fmtAt(live.snapshot.at)}`
+            : snap
+              ? `📸 ${vi ? 'Ảnh chụp từ lần Check' : 'Instantané du dernier Check'}: ${fmtAt(runAt ?? snap.at)}`
+              : (vi ? 'Chưa có ảnh chụp kho — chạy Check hoặc bấm nút bên phải' : "Aucun instantané — lance un Check ou clique Actualiser")}
+        </p>
+      </div>
+      <button onClick={refresh} disabled={loading}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-white bg-navy hover:bg-navy/90 disabled:opacity-60 transition-colors">
+        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        {loading ? (vi ? 'Đang đọc…' : 'Lecture…') : (vi ? 'Đọc trực tiếp Odoo' : 'Actualiser en direct')}
+      </button>
+    </div>
+  );
+
+  if (!snap) {
+    return (
+      <div className="card p-4 space-y-2">
+        {header}
+        {err && <p className="text-xs" style={{ color: '#B42318' }}>{err}</p>}
+      </div>
+    );
+  }
+
+  const stockItems = snap.items
+    .filter(i => i.category && STOCK_CATS.includes(i.category))
+    .map(i => ({ ...i, threshold: thresholds[i.sku] ?? null, below: thresholds[i.sku] != null && i.qty < thresholds[i.sku] }))
+    .sort((a, b) => Number(b.below) - Number(a.below) || (a.category ?? '').localeCompare(b.category ?? '') || a.name.localeCompare(b.name));
+  const belowCount = stockItems.filter(i => i.below).length;
+
+  type Verdict = 'negative_stuck' | 'orphan' | 'transit' | 'covered';
+  const mtoItems = snap.items
+    .filter(i => i.qty !== 0 && !(i.category && STOCK_CATS.includes(i.category)))
+    .map(i => {
+      const s = sent[i.sku] ?? 0, u = upcoming[i.sku] ?? 0;
+      const verdict: Verdict = i.qty < 0 ? (s > 0 ? 'transit' : 'negative_stuck') : (s === 0 && u === 0 ? 'orphan' : 'covered');
+      return { ...i, s, u, verdict };
+    })
+    .sort((a, b) => {
+      const rank = (v: Verdict) => v === 'negative_stuck' ? 0 : v === 'orphan' ? 1 : v === 'covered' ? 2 : 3;
+      return rank(a.verdict) - rank(b.verdict) || Math.abs(b.qty) - Math.abs(a.qty);
+    });
+  const mtoBad = mtoItems.filter(i => i.verdict === 'negative_stuck' || i.verdict === 'orphan').length;
+
+  const verdictBadge = (v: Verdict, qty: number) => {
+    if (v === 'negative_stuck') return { label: vi ? 'Âm kéo dài — thiếu gửi kho?' : 'Négatif persistant — envoi kho manquant ?', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
+    if (v === 'orphan') return { label: vi ? 'Tồn không rõ lý do' : 'Stock inexpliqué', style: { color: '#B42318', backgroundColor: '#FDF2F2' } };
+    if (v === 'transit') return { label: vi ? 'Đang trung chuyển (bình thường)' : 'En transit (normal)', style: { color: '#4B5563', backgroundColor: '#F3F4F6' } };
+    return { label: vi ? 'Có lý do (gửi kho / sắp giao)' : 'Expliqué (envoi / livraison à venir)', style: { color: '#047857', backgroundColor: '#ECFDF5' } };
+  };
+
+  return (
+    <div className="card p-4 space-y-4">
+      {header}
+      {err && <p className="text-xs" style={{ color: '#B42318' }}>{err}</p>}
+      {snap.error && <p className="text-xs" style={{ color: '#B42318' }}>{vi ? 'Lỗi đọc kho' : 'Erreur lecture stock'}: {snap.error}</p>}
+
+      {/* Vue 1 — 3 catégories stockées long terme */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-xs font-bold text-navy uppercase tracking-wider">
+            {vi ? 'Kho dài hạn — Macaron · Biscuit Voyage · Tiramisu' : 'Stock long terme — Macaron · Biscuit Voyage · Tiramisu'}
+          </h4>
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+            style={belowCount ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
+            {belowCount ? `${belowCount} ${vi ? 'dưới ngưỡng' : 'sous seuil'}` : 'OK ✓'}
+          </span>
+        </div>
+        <p className="text-[11px] text-ink-light mb-2">
+          {vi ? 'Ngưỡng an toàn do bếp đặt trong tab Phân tích của trạm. Cột chênh lệch so với lý thuyết sẽ mở sau kiểm kê.' : "Seuils saisis par les chefs dans leur onglet Analytique. La colonne d'écart vs théorique s'activera après l'inventaire."}
+        </p>
+        <div className="rounded-xl overflow-hidden max-h-80 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
+          {stockItems.map((i, idx) => (
+            <div key={i.sku} className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px] bg-white" style={{ borderTop: idx ? '1px solid #F3F4F6' : undefined }}>
+              <div className="min-w-0 truncate text-navy">
+                <span className="font-mono text-[10px] text-ink-light">{i.sku}</span> {i.name}
+                <span className="text-[10px] text-ink-light"> · {i.category}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-bold" style={{ color: i.below ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                <span className="text-[11px] text-ink-light w-16 text-right">
+                  {i.threshold != null ? `${vi ? 'ngưỡng' : 'seuil'} ${i.threshold}` : '—'}
+                </span>
+              </div>
+            </div>
+          ))}
+          {!stockItems.length && (
+            <div className="px-3 py-4 text-xs text-ink-light bg-white">{vi ? 'Không có dữ liệu' : 'Aucune donnée'}</div>
+          )}
+        </div>
+      </div>
+
+      {/* Vue 2 — cohérence made-to-order */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-xs font-bold text-navy uppercase tracking-wider">
+            {vi ? 'Hàng làm theo đơn — tồn kho phải = 0 hoặc có lý do' : 'Made-to-order — le stock doit être 0 ou expliqué'}
+          </h4>
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+            style={mtoBad ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#047857', backgroundColor: '#ECFDF5' }}>
+            {mtoBad ? `${mtoBad} ${vi ? 'bất thường' : 'anomalies'}` : 'OK ✓'}
+          </span>
+        </div>
+        <p className="text-[11px] text-ink-light mb-2">
+          {vi
+            ? 'Âm ngắn hạn là bình thường (giao trước, gửi kho sau). Âm không có gửi kho gần đây = sản xuất chưa lên Odoo.'
+            : "Un négatif court est normal (livré avant l'envoi en stock). Négatif sans envoi récent = production jamais montée sur Odoo."}
+        </p>
+        <div className="rounded-xl overflow-hidden max-h-96 overflow-y-auto" style={{ border: '1px solid #E5E7EB' }}>
+          {mtoItems.map((i, idx) => {
+            const b = verdictBadge(i.verdict, i.qty);
+            return (
+              <div key={i.sku} className="px-3 py-1.5 text-[13px] bg-white" style={{ borderTop: idx ? '1px solid #F3F4F6' : undefined }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 truncate text-navy">
+                    <span className="font-mono text-[10px] text-ink-light">{i.sku}</span> {i.name}
+                    {i.category && <span className="text-[10px] text-ink-light"> · {i.category}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-bold" style={{ color: i.qty < 0 ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={b.style}>{b.label}</span>
+                  </div>
+                </div>
+                {(i.s > 0 || i.u > 0) && (
+                  <div className="text-[10px] text-ink-light mt-0.5">
+                    {i.s > 0 && `${vi ? 'gửi kho <48h' : 'envoyé <48h'}: ${i.s}`}
+                    {i.s > 0 && i.u > 0 && ' · '}
+                    {i.u > 0 && `${vi ? 'sắp giao' : 'à livrer auj/demain'}: ${i.u}`}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!mtoItems.length && (
+            <div className="px-3 py-4 text-xs text-ink-light bg-white">
+              {vi ? 'Không có SKU làm theo đơn nào còn tồn ≠ 0 🎉' : 'Aucun SKU made-to-order avec du stock ≠ 0 🎉'}
+            </div>
           )}
         </div>
       </div>

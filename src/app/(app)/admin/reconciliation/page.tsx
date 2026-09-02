@@ -24,7 +24,10 @@ export default async function CheckPage() {
       check_range_from, check_range_to,
       delivery_coverage_issues, delivery_coverage_count,
       production_stock_issues, production_stock_count,
-      stock_odoo_issues, stock_odoo_count, odoo_volume
+      stock_odoo_issues, stock_odoo_count, odoo_volume,
+      late_delivery_issues, late_delivery_count,
+      safety_stock_issues, safety_stock_count,
+      orphan_stock_issues, orphan_stock_count, stock_snapshot
     `)
     .order('run_at', { ascending: false })
     .limit(20);

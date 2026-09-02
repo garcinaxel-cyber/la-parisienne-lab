@@ -149,6 +149,30 @@ export async function applyInventoryPush(lines: InventoryCountInput[], inventory
   return pushInventory(lines, inventoryDate, false);
 }
 
+export interface LabStockQuant { sku: string; name: string; qty: number }
+
+// Read-only WIDE snapshot: every product carrying a default_code (SKU) present in stock.quant at
+// LAB/Stock, in 2 Odoo calls total (all quants at the location, then one product read for the
+// codes). Powers the stock checks and the /analytics stock views (2026-09-02) — one shared read
+// per Check run instead of one per consumer (Axel: "il faut que ce soit optimisé").
+// limit 5000: ~1210 quants today; the cap only exists so a runaway location can't blow the
+// payload — revisit if LAB/Stock ever legitimately approaches it.
+export async function getLabStockAllQuants(): Promise<LabStockQuant[]> {
+  const locationId = await getLabStockLocationId();
+  const quants = await odooExecute<any[]>('stock.quant', 'search_read',
+    [[['location_id', '=', locationId]]], { fields: ['product_id', 'quantity'], limit: 5000 });
+  const qtyByProductId: Record<number, number> = {};
+  for (const q of quants) {
+    const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+    if (pid) qtyByProductId[pid] = (qtyByProductId[pid] ?? 0) + Number(q.quantity ?? 0);
+  }
+  const ids = Object.keys(qtyByProductId).map(Number);
+  const prods = ids.length ? await odooExecute<any[]>('product.product', 'read', [ids], { fields: ['default_code', 'name'] }) : [];
+  return prods
+    .filter(pr => pr.default_code)
+    .map(pr => ({ sku: pr.default_code as string, name: pr.name as string, qty: qtyByProductId[pr.id] ?? 0 }));
+}
+
 export interface LabStockLevel { sku: string; name: string; qty: number; found: boolean; }
 
 // Read-only current on-hand at LAB/Stock for a list of SKUs — same lookup as pushInventory()

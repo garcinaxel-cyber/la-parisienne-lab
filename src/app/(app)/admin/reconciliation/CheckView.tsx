@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { ShieldCheck, AlertTriangle, RefreshCw, TrendingUp, TrendingDown, Truck, Package, Box } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, RefreshCw, TrendingUp, TrendingDown, Truck, Package, Box, ChevronRight } from 'lucide-react';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { runCheckNowAction, fixStockOdooIssueAction } from './actions';
 
@@ -10,6 +10,10 @@ type ReconciliationIssue = { date: string; team: string; variantLabel: string; n
 type DeliveryCoverageIssue = { kind: 'not_materialized' | 'qty_drift'; date: string; order_ref: string; sku?: string; expected_odoo?: number; expected_app?: number };
 type ProductionStockIssue = { date: string; team: string; product: string; produced: number; sent: number; gap: number; is_extra: boolean; card_id: string };
 type StockOdooIssue = { date: string; kind: 'not_synced' | 'drifted' | 'no_odoo_product' | 'missing_sku' | 'error'; sku?: string; product?: string; qty?: number; mo?: string; from?: number; to?: number; detail?: string };
+type LateDeliveryIssue = { date: string; order_ref: string; shop: string | null; kind: 'never_opened' | 'not_validated' | 'not_pushed'; push_error?: string | null };
+type SafetyStockIssue = { sku: string; name: string; category: string; qty: number; threshold: number };
+type OrphanStockIssue = { sku: string; name: string; category: string | null; qty: number; sent48h: number; upcoming: number; kind: 'orphan_positive' | 'negative_stuck' };
+type StockSnapshot = { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string };
 
 type Run = {
   id: string; run_at: string; triggered_by: string;
@@ -20,6 +24,10 @@ type Run = {
   production_stock_issues: ProductionStockIssue[]; production_stock_count: number;
   stock_odoo_issues: StockOdooIssue[]; stock_odoo_count: number;
   odoo_volume?: OdooVolume | null;
+  late_delivery_issues?: LateDeliveryIssue[] | null; late_delivery_count?: number | null;
+  safety_stock_issues?: SafetyStockIssue[] | null; safety_stock_count?: number | null;
+  orphan_stock_issues?: OrphanStockIssue[] | null; orphan_stock_count?: number | null;
+  stock_snapshot?: StockSnapshot | null;
 };
 type OdooVolumeGauge = { count: number; cap: number };
 type OdooVolume =
@@ -27,7 +35,8 @@ type OdooVolume =
   | { error: string; measured_at: string };
 
 function totalOf(r: Run): number {
-  return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0);
+  return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0)
+    + (r.late_delivery_count ?? 0) + (r.safety_stock_count ?? 0) + (r.orphan_stock_count ?? 0);
 }
 
 type Heartbeat = { last_success_at: string | null; last_error_at: string | null; last_error: string | null };
@@ -106,8 +115,8 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
           </h1>
           <p className="text-ink-light text-sm mt-1 max-w-xl">
             {vi
-              ? '4 kiểm tra tự động trong 1 lần bấm: đối chiếu Odoo, độ phủ delivery-check, sản xuất → kho, kho → Odoo. Tự động chạy mỗi sáng, lưu 7 ngày.'
-              : 'All 4 checks run together in one click: Odoo reconciliation, delivery-check coverage, production → stock, stock → Odoo. Runs automatically every morning, 7-day history.'}
+              ? 'Tất cả kiểm tra chạy trong 1 lần bấm, xếp theo 3 nhóm: Đồng bộ Odoo · Đơn hàng & giao hàng · Sản xuất & kho. Tự động mỗi sáng, lưu 7 ngày.'
+              : 'Tous les checks en un clic, groupés en 3 domaines : Sync Odoo · Commandes & livraisons · Production & stock. Automatique chaque matin, historique 7 jours.'}
           </p>
         </div>
         <button onClick={runNow} disabled={running}
@@ -121,6 +130,8 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
         <div className="card p-3 text-sm border" style={{ borderColor: '#F0B4B4', backgroundColor: '#FDF2F2', color: '#B42318' }}>{err}</div>
       )}
 
+      {!latest ? (
+        <>
       {/* Odoo sync heartbeat (lab_v52) -- live, independent of the stored runs below */}
       {(() => {
         const st = heartbeatStatus(heartbeat);
@@ -156,11 +167,10 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
           </div>
         );
       })()}
-
-      {!latest ? (
         <div className="card px-4 py-10 text-center text-sm text-ink-light">
           {vi ? 'Chưa có lần kiểm tra nào.' : 'No check has run yet.'}
         </div>
+        </>
       ) : (
         <>
           <div className="card p-4 flex items-center justify-between gap-4 flex-wrap">
@@ -191,6 +201,45 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             <div className="card p-3 text-sm border" style={{ borderColor: '#F0B4B4', backgroundColor: '#FDF2F2', color: '#B42318' }}>{latest.error}</div>
           )}
 
+          {/* ══ Domaine 1 : Sync Odoo ══ */}
+          <Domain emoji="🔄" title={vi ? 'Đồng bộ Odoo' : 'Sync Odoo'}
+            subtitle={vi ? 'Cron đồng bộ · giới hạn đọc · kho → Odoo (MO)' : 'Cron de sync · plafonds de lecture · stock → Odoo (MO)'}
+            count={latest.stock_odoo_count ?? 0} vi={vi}>
+      {/* Odoo sync heartbeat (lab_v52) -- live, independent of the stored runs below */}
+      {(() => {
+        const st = heartbeatStatus(heartbeat);
+        const errIsRecent = !!heartbeat?.last_error_at && (!heartbeat?.last_success_at || heartbeat.last_error_at > heartbeat.last_success_at);
+        const style = st.kind === 'stale' ? { backgroundColor: '#FDF2F2', color: '#B42318' }
+          : st.kind === 'ok' ? { backgroundColor: '#ECFDF5', color: '#047857' }
+          : { backgroundColor: '#F3F4F6', color: '#4B5563' };
+        const label = st.kind === 'stale' ? (vi ? 'Không đồng bộ' : 'Sync late')
+          : st.kind === 'ok' ? 'OK'
+          : st.kind === 'night' ? (vi ? 'Ngoài giờ cron' : 'Outside cron hours')
+          : (vi ? 'Chưa có dữ liệu' : 'No data yet');
+        return (
+          <div className="card p-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-xs uppercase tracking-wider text-ink-light font-semibold mb-1">
+                {vi ? 'Đồng bộ Odoo (cron 15 phút)' : 'Odoo sync (15-min cron)'}
+              </div>
+              <div className="text-sm text-navy font-medium">
+                {heartbeat?.last_success_at
+                  ? `${vi ? 'Lần thành công gần nhất' : 'Last success'}: ${fmtDateTime(heartbeat.last_success_at)}${st.ageMin != null ? ` · ${st.ageMin} min` : ''}`
+                  : (vi ? 'Chưa ghi nhận lần đồng bộ nào' : 'No sync recorded yet')}
+              </div>
+              {errIsRecent && (
+                <div className="text-xs mt-0.5 truncate" style={{ color: '#B42318' }}>
+                  {vi ? 'Lỗi gần nhất' : 'Last error'}: {fmtDateTime(heartbeat!.last_error_at!)} — {heartbeat!.last_error}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold shrink-0" style={style}>
+              {st.kind === 'stale' ? <AlertTriangle size={16} /> : st.kind === 'ok' ? <ShieldCheck size={16} /> : <RefreshCw size={16} />}
+              {label}
+            </div>
+          </div>
+        );
+      })()}
           {/* 0. Odoo fetch volume vs sync caps (lab_v53) -- warn before a cap silently truncates */}
           {latest.odoo_volume && (() => {
             const v = latest.odoo_volume;
@@ -233,6 +282,55 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             );
           })()}
 
+          {/* 4. Stock -> Odoo */}
+          <Section
+            icon={Box}
+            title={vi ? 'Kho → Odoo' : 'Stock → Odoo'}
+            subtitle={vi ? 'Đã gửi vào kho nhưng chưa lên Odoo (MO)' : 'Sent to stock but not reflected on Odoo (MO)'}
+            count={latest.stock_odoo_count} vi={vi}>
+            {latest.stock_odoo_issues.length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {latest.stock_odoo_issues.map((iss, i) => {
+                  const fixable = (iss.kind === 'not_synced' || iss.kind === 'drifted') && !!iss.sku;
+                  const key = `${iss.date}:${iss.sku}`;
+                  return (
+                    <div key={i} className="px-4 py-2.5 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-navy min-w-0 truncate">
+                          {iss.date} · {iss.product ?? iss.sku ?? '—'}{iss.qty != null ? ` ×${iss.qty}` : ''}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                            {iss.kind === 'not_synced' && (vi ? 'Chưa lên Odoo' : 'Not synced to Odoo')}
+                            {iss.kind === 'drifted' && `${vi ? 'Lệch MO' : 'MO drift'}: ${iss.from} → ${iss.to}`}
+                            {iss.kind === 'no_odoo_product' && (vi ? 'Không thấy SP trên Odoo' : 'No matching Odoo product')}
+                            {iss.kind === 'missing_sku' && (vi ? 'Gửi kho không có SKU' : 'Sent to stock with no SKU')}
+                            {iss.kind === 'error' && (iss.detail ?? (vi ? 'Lỗi' : 'Error'))}
+                          </span>
+                          {fixable && (
+                            <button onClick={() => fixIssue(iss.date, iss.sku)} disabled={fixing === key}
+                              className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full text-white bg-navy hover:bg-navy/90 disabled:opacity-60 transition-colors">
+                              <RefreshCw size={11} className={fixing === key ? 'animate-spin' : ''} />
+                              {fixing === key ? (vi ? 'Đang tạo…' : 'Fixing…') : (vi ? 'Tạo MO' : 'Create MO')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {fixErr[key] && (
+                        <div className="text-xs mt-1" style={{ color: '#B42318' }}>{fixErr[key]}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+          </Domain>
+
+          {/* ══ Domaine 2 : Commandes & livraisons ══ */}
+          <Domain emoji="📦" title={vi ? 'Đơn hàng & giao hàng' : 'Commandes & livraisons'}
+            subtitle={vi ? 'Đối chiếu Odoo · độ phủ delivery-check · đơn chưa hoàn tất (7 ngày)' : 'Réconciliation Odoo · couverture delivery-check · livraisons non bouclées (7 j)'}
+            count={(latest.issue_count ?? 0) + (latest.delivery_coverage_count ?? 0) + (latest.late_delivery_count ?? 0)} vi={vi}>
           {/* 1. Reconciliation */}
           <Section
             icon={ShieldCheck}
@@ -294,6 +392,42 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
+          {/* 5. Livraisons non bouclées (7 jours glissants) */}
+          <Section
+            icon={Truck}
+            title={vi ? 'Giao hàng chưa hoàn tất (7 ngày)' : 'Livraisons non bouclées (7 jours)'}
+            subtitle={vi ? 'Quá hạn: chưa mở / chưa xác nhận / chưa đẩy Odoo' : 'Date passée : jamais ouverte / non validée / pas poussée sur Odoo'}
+            count={latest.late_delivery_count ?? 0} vi={vi}>
+            {(latest.late_delivery_issues ?? []).length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {(latest.late_delivery_issues ?? []).map((iss, i) => (
+                  <div key={i} className="px-4 py-2.5 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-navy min-w-0 truncate">
+                        {iss.date} · <span className="font-mono text-xs">{iss.order_ref}</span>
+                        {iss.shop && <span className="text-ink-light"> · {iss.shop}</span>}
+                      </div>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                        style={iss.kind === 'not_validated' ? { color: '#B45309', backgroundColor: '#FFFBEB' } : { color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                        {iss.kind === 'never_opened' && (vi ? 'Chưa mở delivery-check' : 'Jamais ouverte')}
+                        {iss.kind === 'not_validated' && (vi ? 'Chưa xác nhận xong' : 'Non validée')}
+                        {iss.kind === 'not_pushed' && (vi ? 'Chưa đẩy lên Odoo' : 'Pas poussée sur Odoo')}
+                      </span>
+                    </div>
+                    {iss.kind === 'not_pushed' && iss.push_error && (
+                      <div className="text-xs mt-1 truncate" style={{ color: '#B42318' }}>{iss.push_error}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+          </Domain>
+
+          {/* ══ Domaine 3 : Production & stock ══ */}
+          <Domain emoji="🏭" title={vi ? 'Sản xuất & kho' : 'Production & stock'}
+            subtitle={vi ? 'Sản xuất → kho · tồn bất thường (làm theo đơn) · dưới ngưỡng an toàn' : 'Production → stock · stock résiduel (made-to-order) · sous seuil de sécurité'}
+            count={(latest.production_stock_count ?? 0) + (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0)} vi={vi}>
           {/* 3. Production -> Stock */}
           <Section
             icon={Package}
@@ -321,49 +455,61 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
-          {/* 4. Stock -> Odoo */}
-          <Section
-            icon={Box}
-            title={vi ? 'Kho → Odoo' : 'Stock → Odoo'}
-            subtitle={vi ? 'Đã gửi vào kho nhưng chưa lên Odoo (MO)' : 'Sent to stock but not reflected on Odoo (MO)'}
-            count={latest.stock_odoo_count} vi={vi}>
-            {latest.stock_odoo_issues.length > 0 && (
+          {/* 6. Stock résiduel / négatif persistant — made-to-order */}
+          <Section icon={Box}
+            title={vi ? 'Tồn kho bất thường (làm theo đơn)' : 'Stock résiduel (made-to-order)'}
+            subtitle={vi ? 'Tồn ≠ 0 không có gửi kho <48h hay giao hàng sắp tới giải thích' : "Stock ≠ 0 sans envoi <48h ni livraison à venir qui l'explique"}
+            count={latest.orphan_stock_count ?? 0} vi={vi}>
+            {(latest.orphan_stock_issues ?? []).length > 0 && (
               <div className="divide-y divide-border-soft">
-                {latest.stock_odoo_issues.map((iss, i) => {
-                  const fixable = (iss.kind === 'not_synced' || iss.kind === 'drifted') && !!iss.sku;
-                  const key = `${iss.date}:${iss.sku}`;
-                  return (
-                    <div key={i} className="px-4 py-2.5 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-navy min-w-0 truncate">
-                          {iss.date} · {iss.product ?? iss.sku ?? '—'}{iss.qty != null ? ` ×${iss.qty}` : ''}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
-                            {iss.kind === 'not_synced' && (vi ? 'Chưa lên Odoo' : 'Not synced to Odoo')}
-                            {iss.kind === 'drifted' && `${vi ? 'Lệch MO' : 'MO drift'}: ${iss.from} → ${iss.to}`}
-                            {iss.kind === 'no_odoo_product' && (vi ? 'Không thấy SP trên Odoo' : 'No matching Odoo product')}
-                            {iss.kind === 'missing_sku' && (vi ? 'Gửi kho không có SKU' : 'Sent to stock with no SKU')}
-                            {iss.kind === 'error' && (iss.detail ?? (vi ? 'Lỗi' : 'Error'))}
-                          </span>
-                          {fixable && (
-                            <button onClick={() => fixIssue(iss.date, iss.sku)} disabled={fixing === key}
-                              className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full text-white bg-navy hover:bg-navy/90 disabled:opacity-60 transition-colors">
-                              <RefreshCw size={11} className={fixing === key ? 'animate-spin' : ''} />
-                              {fixing === key ? (vi ? 'Đang tạo…' : 'Fixing…') : (vi ? 'Tạo MO' : 'Create MO')}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {fixErr[key] && (
-                        <div className="text-xs mt-1" style={{ color: '#B42318' }}>{fixErr[key]}</div>
-                      )}
+                {(latest.orphan_stock_issues ?? []).map((iss, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
+                    <div className="text-navy min-w-0 truncate">
+                      <span className="font-mono text-xs">{iss.sku}</span> · {iss.name}
+                      {iss.category && <span className="text-ink-light"> · {iss.category}</span>}
                     </div>
-                  );
-                })}
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                      {iss.kind === 'orphan_positive'
+                        ? `×${iss.qty} ${vi ? 'tồn không rõ lý do' : 'inexpliqué'}`
+                        : `${iss.qty} ${vi ? 'âm kéo dài (thiếu gửi kho?)' : 'négatif persistant (envoi kho manquant ?)'}`}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </Section>
+
+          {/* 7. Sous seuil de sécurité — seuils saisis par les chefs (lab_stock_safety_thresholds) */}
+          <Section icon={AlertTriangle}
+            title={vi ? 'Dưới ngưỡng an toàn (kho dài hạn)' : 'Sous seuil de sécurité (stock long terme)'}
+            subtitle={vi ? 'Macaron · Biscuit Voyage · Tiramisu — ngưỡng do bếp đặt ở tab Phân tích' : 'Macaron · Biscuit Voyage · Tiramisu — seuils saisis par les chefs'}
+            count={latest.safety_stock_count ?? 0} vi={vi}>
+            {(latest.safety_stock_issues ?? []).length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {(latest.safety_stock_issues ?? []).map((iss, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
+                    <div className="text-navy min-w-0 truncate">
+                      <span className="font-mono text-xs">{iss.sku}</span> · {iss.name}
+                      <span className="text-ink-light"> · {iss.category}</span>
+                    </div>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                      style={iss.qty <= 0 ? { color: '#B42318', backgroundColor: '#FDF2F2' } : { color: '#B45309', backgroundColor: '#FFFBEB' }}>
+                      {iss.qty} / {vi ? 'ngưỡng' : 'seuil'} {iss.threshold}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+
+          {latest.stock_snapshot && (
+            <div className="text-[11px] px-1" style={latest.stock_snapshot.error ? { color: '#B42318' } : { color: '#9CA3AF' }}>
+              {latest.stock_snapshot.error
+                ? `${vi ? 'Lỗi đọc kho Odoo' : 'Erreur lecture stock Odoo'}: ${latest.stock_snapshot.error}`
+                : `📸 ${vi ? 'Ảnh chụp kho Odoo' : 'Photo du stock Odoo'}: ${fmtDateTime(latest.stock_snapshot.at)} · ${latest.stock_snapshot.items.length} SKU`}
+            </div>
+          )}
+          </Domain>
         </>
       )}
 
@@ -387,6 +533,37 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Domaine repliable — le Check porte maintenant 9+ vérifications (Axel, 2026-09-02:
+// "restructure l'onglet check par domaine"). Un domaine tout vert se replie en une ligne ;
+// un domaine avec des anomalies s'ouvre tout seul. L'état manuel (clic) prime ensuite.
+function Domain({ emoji, title, subtitle, count, vi, children }: {
+  emoji: string; title: string; subtitle: string; count: number; vi: boolean; children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const isOpen = open ?? count > 0;
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB', backgroundColor: '#FAFAF7' }}>
+      <button onClick={() => setOpen(!isOpen)} className="w-full flex items-center justify-between gap-3 px-4 py-3">
+        <span className="flex items-center gap-2.5 min-w-0 text-left">
+          <span className="text-lg leading-none">{emoji}</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-bold text-navy">{title}</span>
+            <span className="block text-[11px] text-ink-light truncate">{subtitle}</span>
+          </span>
+        </span>
+        <span className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={count === 0 ? { color: '#047857', backgroundColor: '#ECFDF5' } : { color: '#B45309', backgroundColor: '#FFFBEB' }}>
+            {count === 0 ? 'OK ✓' : `${count} ${vi ? 'bất thường' : 'anomalies'}`}
+          </span>
+          <ChevronRight size={16} className={`text-ink-light transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+        </span>
+      </button>
+      {isOpen && <div className="px-3 pb-3 space-y-3">{children}</div>}
     </div>
   );
 }

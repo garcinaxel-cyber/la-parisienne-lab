@@ -4,6 +4,7 @@ import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { odooExecute, odooConfigured, labTodayUtcThreshold } from '@/lib/odoo';
 import { SYNC_GRACE_DAYS, ODOO_FETCH_CAPS } from '@/lib/odoo-sync';
+import { getLabStockAllQuants } from '@/lib/odoo-inventory';
 
 // "Check" — Axel, 2026-08-20: one button, everything checks automatically, 7-day run-history
 // (see lab_v46_check_and_blocked_tracking.sql). Reconciliation (lib/reconciliation.ts) already
@@ -221,6 +222,167 @@ export async function measureOdooFetchVolume(): Promise<OdooVolume> {
   }
 }
 
+// ── 6. Livraisons non bouclées — 7 jours glissants (Axel, 2026-09-02) ────────
+// "le total des commandes qui n'ont pas la delivery sur Odoo, donc pas faites sur le delivery
+// check par définition". Source = la demande importée (lab_order_lines, published), PAS
+// lab_delivery_orders seul — une commande jamais ouverte n'a aucune ligne là-bas et serait
+// invisible. 7 jours en arrière maximum, exprès : ne pas accumuler l'époque où le process
+// n'était pas rodé. Une commande du jour n'est pas "en retard" tant que son jour n'est pas fini.
+export interface LateDeliveryIssue {
+  date: string; order_ref: string; shop: string | null;
+  kind: 'never_opened' | 'not_validated' | 'not_pushed';
+  push_error?: string | null;
+}
+
+export async function checkLateDeliveries(supabase: SupabaseClient): Promise<LateDeliveryIssue[]> {
+  const now = new Date();
+  const from = toDateStr(new Date(now.getTime() - 7 * 86400000));
+  const to = toDateStr(new Date(now.getTime() - 86400000)); // yesterday (VN)
+  const demandRows = await fetchAllPages<any>((f, t) => supabase.from('lab_order_lines')
+    .select('order_ref, delivery_date, shop_name')
+    .gte('delivery_date', from).lte('delivery_date', to)
+    .gt('qty', 0).eq('published', true).not('order_ref', 'is', null)
+    .order('id').range(f, t));
+  const orders = new Map<string, { date: string; ref: string; shop: string | null }>();
+  for (const r of demandRows) {
+    const key = `${r.delivery_date}|${r.order_ref}`;
+    if (!orders.has(key)) orders.set(key, { date: r.delivery_date, ref: r.order_ref, shop: r.shop_name ?? null });
+  }
+  if (!orders.size) return [];
+  const { data: dcos } = await supabase.from('lab_delivery_orders')
+    .select('order_ref, delivery_date, status, odoo_push_status, odoo_push_error')
+    .gte('delivery_date', from).lte('delivery_date', to);
+  const dcoByKey: Record<string, any> = {};
+  for (const d of dcos ?? []) dcoByKey[`${d.delivery_date}|${d.order_ref}`] = d;
+  const issues: LateDeliveryIssue[] = [];
+  for (const o of Array.from(orders.values())) {
+    const d = dcoByKey[`${o.date}|${o.ref}`];
+    if (!d) { issues.push({ date: o.date, order_ref: o.ref, shop: o.shop, kind: 'never_opened' }); continue; }
+    if (d.status !== 'validated') { issues.push({ date: o.date, order_ref: o.ref, shop: o.shop, kind: 'not_validated' }); continue; }
+    if (d.odoo_push_status !== 'validated' && d.odoo_push_status !== 'already_done') {
+      issues.push({ date: o.date, order_ref: o.ref, shop: o.shop, kind: 'not_pushed', push_error: d.odoo_push_error ?? null });
+    }
+  }
+  return issues.sort((a, b) => b.date.localeCompare(a.date) || a.order_ref.localeCompare(b.order_ref));
+}
+
+// ── 7. Snapshot stock LAB partagé + checks stock (Axel, 2026-09-02) ──────────
+// UNE lecture Odoo large par run (getLabStockAllQuants: 2 appels RPC), partagée par le check
+// "seuil de sécurité", le check "stock résiduel MTO" ET les vues stock de /analytics (qui
+// lisent le snapshot stocké du dernier run au lieu de rappeler Odoo à chaque ouverture).
+// Modèle métier (Axel) : seules 3 catégories se stockent dans la durée ; tout le reste est
+// made-to-order — son stock doit être 0 ou expliqué par un envoi en attente de livraison. Un
+// stock NÉGATIF transitoire est normal (livraison validée avant l'envoi en stock — Odoo sort
+// le stock à la delivery, l'entrée arrive après) ; un négatif SANS envoi récent = production
+// jamais envoyée en stock, donc jamais produite côté Odoo.
+export const STOCK_CATEGORIES = ['Macaron', 'Biscuit Voyage', 'Tiramisu'];
+
+export type StockSnapshotItem = { sku: string; name: string; qty: number; category: string | null };
+export type StockSnapshot = { at: string; items: StockSnapshotItem[]; error?: string };
+
+export async function collectLabStockSnapshot(supabase: SupabaseClient): Promise<StockSnapshot> {
+  const at = new Date().toISOString();
+  if (!odooConfigured()) return { at, items: [], error: 'odoo not configured' };
+  try {
+    const [quants, { data: variants }, { data: fiches }] = await Promise.all([
+      getLabStockAllQuants(),
+      supabase.from('lab_fiche_variants').select('sku, fiche_id').not('sku', 'is', null).limit(3000),
+      supabase.from('lab_fiche_meta').select('id, category'),
+    ]);
+    const catByFiche: Record<string, string | null> = {};
+    for (const f of fiches ?? []) catByFiche[f.id] = f.category ?? null;
+    const catBySku: Record<string, string | null> = {};
+    for (const v of variants ?? []) if (v.sku && !(v.sku in catBySku)) catBySku[v.sku] = catByFiche[v.fiche_id] ?? null;
+    const bySku: Record<string, { name: string; qty: number }> = {};
+    for (const q of quants) bySku[q.sku] = { name: q.name, qty: q.qty };
+    // Catalogued finished goods only (SKU known to the fiche system): every 3-stock-category SKU
+    // (even at 0 — the safety check needs those), plus any other catalogued SKU with a non-zero
+    // LAB quantity (the made-to-order coherence set). Raw materials / semi-finished quants are
+    // dropped here — they have no fiche.
+    const items: StockSnapshotItem[] = [];
+    for (const [sku, category] of Object.entries(catBySku)) {
+      const q = bySku[sku];
+      const isStockCat = !!category && STOCK_CATEGORIES.includes(category);
+      if (!isStockCat && (!q || q.qty === 0)) continue;
+      items.push({ sku, name: q?.name ?? sku, qty: q?.qty ?? 0, category });
+    }
+    items.sort((a, b) => Math.abs(b.qty) - Math.abs(a.qty));
+    return { at, items };
+  } catch (e: any) {
+    return { at, items: [], error: String(e?.message ?? e) };
+  }
+}
+
+// ── 8. Sous seuil de sécurité (3 catégories stock) ───────────────────────────
+// Les seuils EXISTENT déjà : lab_stock_safety_thresholds, saisis par les chefs dans l'onglet
+// Analytique de leur station (2026-08-21). Zéro nouvelle saisie — un SKU sans seuil n'alerte pas.
+export interface SafetyStockIssue { sku: string; name: string; category: string; qty: number; threshold: number }
+
+export async function checkSafetyStock(supabase: SupabaseClient, snapshot: StockSnapshot): Promise<SafetyStockIssue[]> {
+  if (snapshot.error) return [];
+  const stockItems = snapshot.items.filter(i => i.category && STOCK_CATEGORIES.includes(i.category));
+  if (!stockItems.length) return [];
+  const { data: rows } = await supabase.from('lab_stock_safety_thresholds').select('sku, threshold');
+  const thr: Record<string, number> = {};
+  for (const r of rows ?? []) thr[r.sku] = Number(r.threshold);
+  return stockItems
+    .filter(i => thr[i.sku] != null && i.qty < thr[i.sku])
+    .map(i => ({ sku: i.sku, name: i.name, category: i.category!, qty: i.qty, threshold: thr[i.sku] }))
+    .sort((a, b) => (a.qty / a.threshold) - (b.qty / b.threshold));
+}
+
+// ── 9. Stock résiduel / négatif persistant — made-to-order ───────────────────
+// Règle absolue (pas besoin d'inventaire) : un SKU made-to-order avec stock ≠ 0 doit être
+// expliqué par un ENVOI en stock récent (<48h, seuil Axel 2026-09-02 — l'envoi est l'événement
+// qui crée la MO Odoo ; la réception est interne à l'app et ignorée exprès) ou par une
+// livraison à venir (aujourd'hui/demain). Sinon : positif = stock qui traîne (oubli, annulation
+// jamais scrappée, vol…) ; négatif = livré mais jamais envoyé en stock (production Odoo
+// manquante).
+export interface OrphanStockIssue {
+  sku: string; name: string; category: string | null; qty: number;
+  sent48h: number; upcoming: number;
+  kind: 'orphan_positive' | 'negative_stuck';
+}
+
+// Explications d'un stock MTO ≠ 0 : envois en stock <48h (création du transfert = l'événement
+// qui crée la MO Odoo) + demande à livrer aujourd'hui/demain. Partagé entre checkOrphanStock et
+// la section stock d'/analytics (qui recalcule ces 2 maps au rendu, sans appel Odoo).
+export async function collectMtoExplanations(supabase: SupabaseClient, skus: string[]): Promise<{ sent: Record<string, number>; upcoming: Record<string, number> }> {
+  const sent: Record<string, number> = {};
+  const upcoming: Record<string, number> = {};
+  if (!skus.length) return { sent, upcoming };
+  const since = new Date(Date.now() - 48 * 3600000).toISOString();
+  const today = toDateStr(new Date());
+  const tomorrow = toDateStr(new Date(Date.now() + 86400000));
+  const { data: transfers } = await supabase.from('lab_stock_transfers').select('id').gte('created_at', since);
+  const tids = (transfers ?? []).map((t: any) => t.id);
+  if (tids.length) {
+    const { data: tlines } = await supabase.from('lab_stock_transfer_lines')
+      .select('sku, qty_sent').in('transfer_id', tids).in('sku', skus);
+    for (const l of tlines ?? []) if (l.sku) sent[l.sku] = (sent[l.sku] ?? 0) + Number(l.qty_sent ?? 0);
+  }
+  const { data: demand } = await supabase.from('lab_order_lines')
+    .select('product_sku, qty')
+    .gte('delivery_date', today).lte('delivery_date', tomorrow)
+    .gt('qty', 0).eq('published', true).in('product_sku', skus).limit(5000);
+  for (const d of demand ?? []) if (d.product_sku) upcoming[d.product_sku] = (upcoming[d.product_sku] ?? 0) + Number(d.qty ?? 0);
+  return { sent, upcoming };
+}
+
+export async function checkOrphanStock(supabase: SupabaseClient, snapshot: StockSnapshot): Promise<OrphanStockIssue[]> {
+  if (snapshot.error) return [];
+  const mto = snapshot.items.filter(i => i.qty !== 0 && !(i.category && STOCK_CATEGORIES.includes(i.category)));
+  if (!mto.length) return [];
+  const { sent, upcoming } = await collectMtoExplanations(supabase, mto.map(i => i.sku));
+  const issues: OrphanStockIssue[] = [];
+  for (const i of mto) {
+    const s = sent[i.sku] ?? 0, u = upcoming[i.sku] ?? 0;
+    if (i.qty > 0 && s === 0 && u === 0) issues.push({ ...i, sent48h: s, upcoming: u, kind: 'orphan_positive' });
+    else if (i.qty < 0 && s === 0) issues.push({ ...i, sent48h: s, upcoming: u, kind: 'negative_stuck' });
+  }
+  return issues.sort((a, b) => Math.abs(b.qty) - Math.abs(a.qty));
+}
+
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 export interface AllChecksResult {
   reconciliation: ReconciliationResult;
@@ -230,16 +392,35 @@ export interface AllChecksResult {
   productionStock: ProductionStockIssue[];
   stockOdoo: StockOdooIssue[];
   odooVolume: OdooVolume;
+  lateDeliveries: LateDeliveryIssue[];
+  stockSnapshot: StockSnapshot;
+  safetyStock: SafetyStockIssue[];
+  orphanStock: OrphanStockIssue[];
 }
 
 export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksResult> {
   const { from, to } = checkWindow();
-  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume] = await Promise.all([
+  // The 2026-09-02 stock checks are individually guarded — a failure there degrades to an empty
+  // result (plus snapshot.error), it can never take the whole run down with it.
+  const stockPipeline = (async () => {
+    const snapshot = await collectLabStockSnapshot(supabase);
+    const [safetyStock, orphanStock] = await Promise.all([
+      checkSafetyStock(supabase, snapshot).catch((): SafetyStockIssue[] => []),
+      checkOrphanStock(supabase, snapshot).catch((): OrphanStockIssue[] => []),
+    ]);
+    return { snapshot, safetyStock, orphanStock };
+  })();
+  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume, lateDeliveries, stock] = await Promise.all([
     runReconciliationCheck(supabase),
     checkDeliveryCoverage(supabase, from, to),
     checkProductionToStock(supabase, from, to),
     checkStockToOdoo(supabase, from, to),
     measureOdooFetchVolume(),
+    checkLateDeliveries(supabase).catch((): LateDeliveryIssue[] => []),
+    stockPipeline,
   ]);
-  return { reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo, odooVolume };
+  return {
+    reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo, odooVolume,
+    lateDeliveries, stockSnapshot: stock.snapshot, safetyStock: stock.safetyStock, orphanStock: stock.orphanStock,
+  };
 }
