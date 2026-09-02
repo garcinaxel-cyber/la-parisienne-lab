@@ -1235,6 +1235,19 @@ export default function StationView({
         const matchesOrder = (a: Assignment) => !orderFilter
           || (Array.isArray(a.breakdown) ? a.breakdown : []).some(b => b.order_ref === orderFilter)
           || a.bc_order_ref === orderFilter;
+        // With a filter on, quantities shown are the FILTERED ORDER's share of the card,
+        // not the card total: a card can merge several orders' demand (e.g. ×18 = 12+6
+        // across two REPs), and showing the card total against one order overstates it —
+        // the same class of bug as the History-tab totals (2026-09-01). Manual cakes
+        // (empty breakdown, matched via bc_order_ref) belong to one order: card qty is
+        // already that order's qty.
+        const qtyForFilter = (a: Assignment) => {
+          if (!orderFilter) return a.qty_to_produce;
+          const share = (Array.isArray(a.breakdown) ? a.breakdown : [])
+            .filter(b => b.order_ref === orderFilter)
+            .reduce((s, b) => s + (Number(b.qty) || 0), 0);
+          return share > 0 ? share : a.qty_to_produce;
+        };
         const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder);
         const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
         const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
@@ -1311,7 +1324,7 @@ export default function StationView({
               const cat = (lang === 'vi' ? a.category_name_vi : a.category_name_en) || a.category_name_vi || OTHER;
               const name = lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi);
               const e = m.get(key) ?? { name, sku: a.sku ?? null, cat, qty: 0 };
-              e.qty += a.qty_to_produce;
+              e.qty += qtyForFilter(a);
               m.set(key, e);
             }
             const items = Array.from(m.values());
@@ -1369,7 +1382,17 @@ export default function StationView({
               x[0] === OTHER ? 1 : y[0] === OTHER ? -1 : x[0].localeCompare(y[0]));
             // Single category (or none) → plain list, no chrome
             if (entries.length <= 1) {
-              return production.map(a => <ProductionCard key={a.id} a={a} {...sharedCardProps} />);
+              return production.map(a => (
+                <div key={a.id}>
+                  {orderFilter && qtyForFilter(a) < a.qty_to_produce && (
+                    <div className="rounded-t-xl px-3 py-1.5 text-[11px] font-bold"
+                      style={{ backgroundColor: '#FFF4CC', color: '#92600A', border: '1px solid #C9A84C', borderBottom: 'none' }}>
+                      ↳ ×{qtyForFilter(a)} {lang === 'vi' ? 'cho đơn này' : 'for this order'} · {lang === 'vi' ? 'thẻ gộp nhiều đơn, tổng' : 'multi-order card, total'} ×{a.qty_to_produce}
+                    </div>
+                  )}
+                  <ProductionCard a={a} {...sharedCardProps} />
+                </div>
+              ));
             }
             return (
               <>
@@ -1377,7 +1400,7 @@ export default function StationView({
                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-[102px] sm:top-[118px] z-10 py-2"
                   style={{ backgroundColor: '#FDF8E7' }}>
                   {entries.map(([cat, items]) => {
-                    const qty = items.reduce((s, a) => s + a.qty_to_produce, 0);
+                    const qty = items.reduce((s, a) => s + qtyForFilter(a), 0);
                     return (
                       <a key={cat} href={`#cat-${encodeURIComponent(cat)}`}
                         className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
@@ -1392,11 +1415,21 @@ export default function StationView({
                     <div className="flex items-center gap-2 pt-2">
                       <span className="font-bold text-sm" style={{ color: '#1A4731' }}>{cat}</span>
                       <span className="text-xs font-medium" style={{ color: '#92600A' }}>
-                        {items.length} {lang === 'vi' ? 'sản phẩm' : 'products'} · {items.reduce((s, a) => s + a.qty_to_produce, 0)} {lang === 'vi' ? 'cái' : 'units'}
+                        {items.length} {lang === 'vi' ? 'sản phẩm' : 'products'} · {items.reduce((s, a) => s + qtyForFilter(a), 0)} {lang === 'vi' ? 'cái' : 'units'}
                       </span>
                       <div className="flex-1 border-t" style={{ borderColor: '#E0D49A' }} />
                     </div>
-                    {items.map(a => <ProductionCard key={a.id} a={a} {...sharedCardProps} />)}
+                    {items.map(a => (
+                      <div key={a.id}>
+                        {orderFilter && qtyForFilter(a) < a.qty_to_produce && (
+                          <div className="rounded-t-xl px-3 py-1.5 text-[11px] font-bold"
+                            style={{ backgroundColor: '#FFF4CC', color: '#92600A', border: '1px solid #C9A84C', borderBottom: 'none' }}>
+                            ↳ ×{qtyForFilter(a)} {lang === 'vi' ? 'cho đơn này' : 'for this order'} · {lang === 'vi' ? 'thẻ gộp nhiều đơn, tổng' : 'multi-order card, total'} ×{a.qty_to_produce}
+                          </div>
+                        )}
+                        <ProductionCard a={a} {...sharedCardProps} />
+                      </div>
+                    ))}
                   </div>
                 ))}
               </>
@@ -1426,7 +1459,7 @@ export default function StationView({
                         <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>
                           {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                         </div>
-                        <div className="text-xs" style={{ color: '#8B5CF6' }}>×{a.qty_to_produce}</div>
+                        <div className="text-xs" style={{ color: '#8B5CF6' }}>×{qtyForFilter(a)}</div>
                       </div>
                       <button onClick={() => advanceStatus(a)} disabled={updating === a.id}
                         className="px-3 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-all shrink-0"
