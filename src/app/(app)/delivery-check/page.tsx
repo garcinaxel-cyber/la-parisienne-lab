@@ -1,6 +1,8 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import DeliveryCheckIndexView from './DeliveryCheckIndexView';
+import { isOrderDone } from '@/lib/delivery-order-status';
+import { getOdooDoneExternalMap } from '@/lib/late-delivery-odoo-cache';
 
 export const revalidate = 0;
 
@@ -142,11 +144,24 @@ export default async function DeliveryCheckPage() {
     };
   });
 
+  // Vérification Odoo (Axel, 2026-09-03 : S03515 "Fully Delivered" sur Odoo mais toujours
+  // "en retard" sans signal dans l'app) — scopée aux seules commandes déjà en retard côté app,
+  // avec cache (voir late-delivery-odoo-cache.ts) pour ne jamais multiplier les appels Odoo au
+  // fil des chargements de page par toute l'équipe.
+  const lateCandidates = ordersWithProgress
+    .filter(o => o.delivery_date < today && !isOrderDone(o))
+    .map(o => ({ order_ref: o.order_ref, delivery_date: o.delivery_date }));
+  const odooDoneExternalMap = await getOdooDoneExternalMap(supabase, lateCandidates);
+  const ordersFinal = ordersWithProgress.map(o => ({
+    ...o,
+    odoo_done_external: odooDoneExternalMap[`${o.delivery_date}||${o.order_ref}`] ?? false,
+  }));
+
   return (
     <DeliveryCheckIndexView
       today={today}
       tomorrow={tomorrow}
-      orders={ordersWithProgress}
+      orders={ordersFinal}
       pendingCakesCount={(pendingCakes ?? []).length}
       syncGaps={gapRows ?? []}
       dateAlerts={dateAlertRows ?? []}

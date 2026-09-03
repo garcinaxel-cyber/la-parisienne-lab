@@ -228,6 +228,48 @@ export async function measureOdooFetchVolume(): Promise<OdooVolume> {
 // lab_delivery_orders seul — une commande jamais ouverte n'a aucune ligne là-bas et serait
 // invisible. 7 jours en arrière maximum, exprès : ne pas accumuler l'époque où le process
 // n'était pas rodé. Une commande du jour n'est pas "en retard" tant que son jour n'est pas fini.
+
+// Vérification Odoo partagée (Axel, 2026-09-03 : "attention, il se peut qu'elle soit faite sur
+// Odoo mais pas sur l'app") — réutilisée par checkLateDeliveries ET par la page opérationnelle
+// /delivery-check (isOrderDone ne connaissait QUE le statut app, jamais Odoo directement : une
+// commande traitée sur Odoo en direct, sans jamais passer par l'app, restait "en retard" pour
+// toujours, sans aucun signal). "Fait" = TOUS les pickings liés sont 'done' ou 'cancel', ET au
+// moins un est réellement 'done' — pas juste "au moins un picking done" (bug trouvé le 09-03 :
+// REP/2026/01284 avait un picking partiel 'done' + son reliquat/backorder encore en attente,
+// donc PAS réellement livré, mais l'ancienne logique "any done" le marquait à tort comme fait).
+export async function crossCheckOdooDone(refs: string[]): Promise<Record<string, boolean>> {
+  const result: Record<string, boolean> = {};
+  if (!refs.length || !odooConfigured()) return result;
+  try {
+    const repRefs = refs.filter(r => r.startsWith('REP'));
+    const soRefs = refs.filter(r => !r.startsWith('REP'));
+    const pickingIdsByRef: Record<string, number[]> = {};
+    if (repRefs.length) {
+      const reps = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
+        [[['name', 'in', repRefs]]], { fields: ['name', 'delivery_picking_ids'] });
+      for (const r of reps) pickingIdsByRef[r.name] = r.delivery_picking_ids ?? [];
+    }
+    if (soRefs.length) {
+      const sos = await odooExecute<any[]>('sale.order', 'search_read',
+        [[['name', 'in', soRefs]]], { fields: ['name', 'picking_ids'] });
+      for (const s of sos) pickingIdsByRef[s.name] = s.picking_ids ?? [];
+    }
+    const allPids = Array.from(new Set(Object.values(pickingIdsByRef).flat())) as number[];
+    const pickings = allPids.length
+      ? await odooExecute<any[]>('stock.picking', 'read', [allPids], { fields: ['state'] })
+      : [];
+    const stateById: Record<number, string> = {};
+    for (const pk of pickings) stateById[pk.id] = pk.state;
+    for (const ref of refs) {
+      const pids = pickingIdsByRef[ref] ?? [];
+      result[ref] = pids.length > 0
+        && pids.every(id => stateById[id] === 'done' || stateById[id] === 'cancel')
+        && pids.some(id => stateById[id] === 'done');
+    }
+  } catch { /* best-effort — jamais fatal pour l'appelant */ }
+  return result;
+}
+
 export interface LateDeliveryIssue {
   date: string; order_ref: string; shop: string | null;
   kind: 'never_opened' | 'not_validated' | 'not_pushed';
@@ -267,34 +309,10 @@ export async function checkLateDeliveries(supabase: SupabaseClient): Promise<Lat
       issues.push({ date: o.date, order_ref: o.ref, shop: o.shop, kind: 'not_pushed', push_error: d.odoo_push_error ?? null });
     }
   }
-  // Vérification best-effort contre Odoo : 3 lectures scopées aux seules commandes signalées.
-  // Si Odoo est injoignable, les kinds d'origine restent (jamais fatal).
-  if (issues.length && odooConfigured()) {
-    try {
-      const repRefs = issues.filter(i => i.order_ref.startsWith('REP')).map(i => i.order_ref);
-      const soRefs = issues.filter(i => !i.order_ref.startsWith('REP')).map(i => i.order_ref);
-      const pickingIdsByRef: Record<string, number[]> = {};
-      if (repRefs.length) {
-        const reps = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
-          [[['name', 'in', repRefs]]], { fields: ['name', 'delivery_picking_ids'] });
-        for (const r of reps) pickingIdsByRef[r.name] = r.delivery_picking_ids ?? [];
-      }
-      if (soRefs.length) {
-        const sos = await odooExecute<any[]>('sale.order', 'search_read',
-          [[['name', 'in', soRefs]]], { fields: ['name', 'picking_ids'] });
-        for (const s of sos) pickingIdsByRef[s.name] = s.picking_ids ?? [];
-      }
-      const allPids = Array.from(new Set(Object.values(pickingIdsByRef).flat())) as number[];
-      const pickings = allPids.length
-        ? await odooExecute<any[]>('stock.picking', 'read', [allPids], { fields: ['state'] })
-        : [];
-      const stateById: Record<number, string> = {};
-      for (const pk of pickings) stateById[pk.id] = pk.state;
-      for (const iss of issues) {
-        const pids = pickingIdsByRef[iss.order_ref] ?? [];
-        if (pids.length && pids.some(id => stateById[id] === 'done')) iss.doneOnOdoo = true;
-      }
-    } catch { /* best-effort — on garde les kinds d'origine */ }
+  // Vérification best-effort contre Odoo, scopée aux seules commandes signalées.
+  if (issues.length) {
+    const doneByRef = await crossCheckOdooDone(issues.map(i => i.order_ref));
+    for (const iss of issues) if (doneByRef[iss.order_ref]) iss.doneOnOdoo = true;
   }
   return issues.sort((a, b) => b.date.localeCompare(a.date) || a.order_ref.localeCompare(b.order_ref));
 }

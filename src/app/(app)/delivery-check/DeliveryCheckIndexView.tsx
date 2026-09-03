@@ -4,11 +4,17 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin } from 'lucide-react';
+import { isOrderDone } from '@/lib/delivery-order-status';
 
 type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
   status: string; checked: number; total: number; printed_at: string | null;
   odoo_push_status: string | null;
+  // Vérifié en direct contre Odoo, scopé aux commandes en retard côté app (Axel, 2026-09-03 :
+  // une commande traitée directement sur Odoo, jamais poussée depuis l'app, restait "en retard"
+  // pour toujours sans aucun signal). Absent/false pour aujourd'hui/demain — jamais vérifié là,
+  // volontairement (voir late-delivery-odoo-cache.ts).
+  odoo_done_external?: boolean;
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -42,13 +48,6 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
   const setDay = (d: 'today' | 'tomorrow' | 'late') =>
     router.replace(d === 'today' ? '/delivery-check' : `/delivery-check?day=${d}`, { scroll: false });
   const activeDate = day === 'today' ? today : tomorrow;
-  // Same "done" definition the row itself uses to pick its badge (odooDone > validated > full) —
-  // kept as one function so the "late" tab's filter can never silently drift from what a row
-  // actually displays.
-  const isOrderDone = (o: OrderRow) =>
-    o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done'
-    || o.status === 'validated'
-    || (o.total > 0 && o.checked === o.total);
   // "Late" = still-pending orders (not fully checked/validated) from before today, surfaced by
   // the widened sync window (2026-08-26, Axel: a manual/exceptional cake formalized into a real
   // Odoo order a day+ after its own delivery_date). Excluding already-done orders is deliberate
@@ -56,7 +55,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
   // window pulls in every order from the last 7 days for anti-duplicate safety, but the vast
   // majority of those were already checked/delivered normally and aren't "late" in any actionable
   // sense; this tab should only ever surface what still needs attention.
-  const lateOrders = orders.filter(o => o.delivery_date < today && !isOrderDone(o));
+  // Split in two (Axel, 2026-09-03): an order already done directly on Odoo (never pushed from
+  // the app) needs no action — it's excluded from the actionable red count, but NOT hidden: it's
+  // shown in its own green list below so it stays traceable instead of silently disappearing.
+  const lateOrders = orders.filter(o => o.delivery_date < today && !isOrderDone(o) && !o.odoo_done_external);
+  const lateDoneExternal = orders.filter(o => o.delivery_date < today && !isOrderDone(o) && o.odoo_done_external);
   const dayOrders = day === 'late' ? lateOrders : orders.filter(o => o.delivery_date === activeDate);
 
   return (
@@ -174,7 +177,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
               {d === 'today' ? (vi ? 'Hôm nay' : "Aujourd'hui") : (vi ? 'Ngày mai' : 'Demain')}
             </button>
           ))}
-          {lateOrders.length > 0 && (
+          {(lateOrders.length > 0 || lateDoneExternal.length > 0) && (
             <button onClick={() => setDay('late')}
               className="text-xs font-bold rounded-full px-3.5 py-1.5 inline-flex items-center gap-1"
               style={{
@@ -192,7 +195,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         </Link>
       </div>
 
-      {dayOrders.length === 0 ? (
+      {dayOrders.length === 0 && !(day === 'late' && lateDoneExternal.length > 0) ? (
         <div className="card p-10 text-center">
           <ClipboardCheck size={44} className="mx-auto mb-3 text-green-600" />
           <p className="font-semibold text-navy">{vi ? 'Không có đơn nào' : 'Aucune commande'}</p>
@@ -218,6 +221,18 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                 </div>
               </div>
             ))}
+          {lateDoneExternal.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider px-1 mb-1.5" style={{ color: '#166534' }}>
+                {vi
+                  ? `Đã xong trên Odoo (${lateDoneExternal.length}) — không cần thao tác`
+                  : `Faites sur Odoo (${lateDoneExternal.length}) — aucune action requise`}
+              </div>
+              <div className="space-y-2">
+                {lateDoneExternal.map(o => renderOrderRow(o))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -235,11 +250,16 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
     // app, this one means it's actually been written back to Odoo. Distinct gold tint so
     // it's never confused with plain checklist-validated at a glance.
     const odooDone = o.odoo_push_status === 'validated' || o.odoo_push_status === 'already_done';
-    const dotColor = odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
+    // Done directly on Odoo without ever going through the app's own push (Axel, 2026-09-03) —
+    // distinct green tint so it's never confused with the amber "100%" (which means the app
+    // itself pushed it); this is the one case the app never initiated but still needs a clear
+    // positive signal rather than the order just vanishing from the late list.
+    const odooDoneExternal = !!o.odoo_done_external && !odooDone;
+    const dotColor = odooDoneExternal ? '#16A34A' : odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
     // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
     // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
-    const bg = odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
-    const border = odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
+    const bg = odooDoneExternal ? '#F0FDF4' : odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+    const border = odooDoneExternal ? '#BBF7D0' : odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
     return (
       // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
       // captures them as separate segments, so no encoding here.
@@ -258,7 +278,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           </div>
           <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
         </div>
-        {odooDone ? (
+        {odooDoneExternal ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#166534' }}>
+            <CheckCheck size={15} /> {vi ? 'Xong trên Odoo' : 'Fait sur Odoo'}
+          </span>
+        ) : odooDone ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#92400E' }}>
             <CheckCheck size={15} /> {vi ? '100%' : '100%'}
           </span>
