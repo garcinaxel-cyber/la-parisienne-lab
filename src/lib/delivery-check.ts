@@ -99,7 +99,7 @@ export async function ensureDeliveryOrderChecklist(
   }
 
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
-    .select('id, sku, category, product_category, note, qty_expected').eq('delivery_order_id', header.id);
+    .select('id, sku, category, product_category, note, qty_expected, product_name_vi').eq('delivery_order_id', header.id);
   const existingKeys = new Set((existingLines ?? []).map((l: any) => `${l.category}||${l.sku}`));
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
@@ -143,9 +143,16 @@ export async function ensureDeliveryOrderChecklist(
   // passe en Autre" bug — confirmed every existing row had product_category null in DB).
   const packagingNoteBySku: Record<string, string> = {};
   const packagingQtyBySku: Record<string, number> = {};
+  // Odoo Vietnamese name for packaging/matière SKUs (Axel, 2026-09-03) — odoo-packaging-sync.ts
+  // now reads product.product with context lang:'vi_VN' instead of the English base name, but
+  // that only affects rows synced from now on. This map lets the self-heal loop below repatch
+  // already-materialized check lines the same way qty_expected/note already self-heal, so an
+  // order opened before the fix corrects itself on next open instead of needing a DB backfill.
+  const packagingNameBySku: Record<string, string> = {};
   for (const p of packaging) {
     if (p.note) packagingNoteBySku[p.sku] = p.note;
     packagingQtyBySku[p.sku] = (packagingQtyBySku[p.sku] ?? 0) + p.qty;
+    if (p.name) packagingNameBySku[p.sku] = p.name;
   }
   // An excluded SKU's own lab_order_lines demand belongs in the SAME packaging bucket as its
   // (possibly separate) lab_order_packaging_lines row for that sku — merged here so nothing
@@ -158,9 +165,9 @@ export async function ensureDeliveryOrderChecklist(
     if (excludedSkuSet.has(sku)) packagingQtyBySku[sku] = (packagingQtyBySku[sku] ?? 0) + e.qty;
   }
 
-  const toHeal: { id: string; patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number } }[] = [];
+  const toHeal: { id: string; patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number; product_name_vi?: string; product_name_en?: string } }[] = [];
   for (const el of existingLines ?? []) {
-    const patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number } = {};
+    const patch: { product_category?: string; note?: string; category?: 'production' | 'packaging'; team?: string | null; qty_expected?: number; product_name_vi?: string; product_name_en?: string } = {};
     if (el.category === 'production') {
       const e = bySku[el.sku];
       // Re-check on every open, not just at creation — a SKU can get excluded AFTER its check
@@ -198,6 +205,13 @@ export async function ensureDeliveryOrderChecklist(
       if (el.sku) {
         const computedQty = packagingQtyBySku[el.sku];
         if (computedQty !== undefined && computedQty !== el.qty_expected) patch.qty_expected = computedQty;
+        // Same fallback order as the toInsert branch below (packaging row name, else the
+        // production-line name for an excluded SKU with no separate packaging row).
+        const computedName = el.sku ? (packagingNameBySku[el.sku] ?? bySku[el.sku]?.name_vi) : undefined;
+        if (computedName && computedName !== el.product_name_vi) {
+          patch.product_name_vi = computedName;
+          patch.product_name_en = computedName;
+        }
       }
     }
     if (Object.keys(patch).length) toHeal.push({ id: el.id, patch });
@@ -334,7 +348,7 @@ export async function ensureDeliveryOrderChecklistsBatch(
 
   const { data: allExistingLines } = headerIds.length
     ? await supabase.from('lab_delivery_check_lines')
-        .select('id, delivery_order_id, sku, category, product_category, note, qty_expected')
+        .select('id, delivery_order_id, sku, category, product_category, note, qty_expected, product_name_vi')
         .in('delivery_order_id', headerIds)
     : { data: [] as any[] };
   const existingLinesByHeader = new Map<string, any[]>();
@@ -385,9 +399,12 @@ export async function ensureDeliveryOrderChecklistsBatch(
 
     const packagingNoteBySku: Record<string, string> = {};
     const packagingQtyBySku: Record<string, number> = {};
+    // Same Vietnamese-name self-heal as ensureDeliveryOrderChecklist above (2026-09-03).
+    const packagingNameBySku: Record<string, string> = {};
     for (const p of packaging) {
       if (p.note) packagingNoteBySku[p.sku] = p.note;
       packagingQtyBySku[p.sku] = (packagingQtyBySku[p.sku] ?? 0) + p.qty;
+      if (p.name) packagingNameBySku[p.sku] = p.name;
     }
     for (const [sku, e] of Object.entries(bySku)) {
       if (excludedSkuSet.has(sku)) packagingQtyBySku[sku] = (packagingQtyBySku[sku] ?? 0) + e.qty;
@@ -411,6 +428,11 @@ export async function ensureDeliveryOrderChecklistsBatch(
         if (el.sku) {
           const computedQty = packagingQtyBySku[el.sku];
           if (computedQty !== undefined && computedQty !== el.qty_expected) patch.qty_expected = computedQty;
+          const computedName = packagingNameBySku[el.sku] ?? bySku[el.sku]?.name_vi;
+          if (computedName && computedName !== el.product_name_vi) {
+            patch.product_name_vi = computedName;
+            patch.product_name_en = computedName;
+          }
         }
       }
       if (Object.keys(patch).length) allToHeal.push({ id: el.id, patch });

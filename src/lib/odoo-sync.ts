@@ -154,8 +154,15 @@ const productIds = Array.from(new Set([
   ...soLines.map(l => l.product_id?.[0]),
   ...replLines.map(l => l.product_id?.[0]),
 ].filter(Boolean))) as number[];
+// context lang: vi_VN (Axel, 2026-09-03) — packaging/matière products are typed in Odoo with
+// an explicit English base name + a separate Vietnamese translation (Odoo's standard
+// ir.translation on product.template.name — confirmed live: "Kraft paper takeaway cake bag"
+// EN vs "Túi kraft đựng bánh mang về" VI on the same product). Production SKUs are typed
+// directly in Vietnamese with no separate translation record, so this context is a no-op for
+// them (Odoo falls back to the base name when no vi_VN override exists) — safe to apply here
+// unconditionally rather than splitting this shared fetch by excluded/production SKU.
 const products: any[] = productIds.length
-  ? await odooExecute('product.product', 'read', [productIds], { fields: ['default_code', 'name', 'display_name'] })
+  ? await odooExecute('product.product', 'read', [productIds], { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' } })
   : [];
 const skuByProductId: Record<number, { sku: string; name: string }> = {};
 for (const p of products) {

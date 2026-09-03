@@ -144,8 +144,12 @@ async function mapExcludedLines(
 ) {
   const productIds = Array.from(new Set(lines.map(l => l.product_id?.[0]).filter(Boolean)));
   if (!productIds.length) return [];
+  // context lang: vi_VN (Axel, 2026-09-03) — packaging/matière products carry an explicit
+  // Odoo translation (English base name + separate Vietnamese one, confirmed live via a
+  // product's Translate: name dialog), unlike production SKUs which are typed directly in
+  // Vietnamese. Without this the app showed the English base name for every packaging line.
   const products = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['id', 'in', productIds]]], { fields: ['id', 'name', 'default_code', 'display_name'] }), 15000, 'products');
+    [[['id', 'in', productIds]]], { fields: ['id', 'name', 'default_code', 'display_name'], context: { lang: 'vi_VN' } }), 15000, 'products');
   const bySku: Record<number, { sku: string; name: string }> = {};
   // Same fix as odoo-sync.ts (2026-08-27): plain `name` is the shared template name (no flavor
   // for variant products) — `display_name` is the only field carrying the variant's own
