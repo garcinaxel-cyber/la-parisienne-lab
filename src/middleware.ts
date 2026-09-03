@@ -29,6 +29,9 @@ export function middleware(req: NextRequest) {
   // Same treatment — one-off inventory-date correction diagnostic/fix (2026-08-22), secret-gated
   // itself, called by hand via curl (no session).
   if (pathname.startsWith('/api/odoo/inventory-date-fix')) return NextResponse.next();
+  // Same treatment — read-only Odoo ref diagnostic (2026-09-03), secret-gated itself, called by
+  // hand (no session).
+  if (pathname.startsWith('/api/admin/odoo-ref-debug')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
