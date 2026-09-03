@@ -32,6 +32,7 @@ export function middleware(req: NextRequest) {
   // Same treatment — read-only Odoo ref diagnostic (2026-09-03), secret-gated itself, called by
   // hand (no session).
   if (pathname.startsWith('/api/admin/odoo-ref-debug')) return NextResponse.next();
+  if (pathname.startsWith('/api/admin/shop-order-skus-debug')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
