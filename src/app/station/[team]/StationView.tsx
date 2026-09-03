@@ -118,6 +118,7 @@ type DateSummary = {
   productCount: number;
   totalQty: number;
   doneQty: number;
+  stockQty: number; // servi depuis le stock (cartes 'skip') — rendu explicite 2026-09-03
   import_ids: string[];
   unsentCount: number; // distinct products still not sent to stock (history tab only)
 };
@@ -255,6 +256,11 @@ export default function StationView({
   // so the history view can split "sent to stock" (compact list) from "not sent" (individual
   // cards, selectable) once expanded. See groupHistoryProd() below.
   const [historyProduction, setHistoryProduction] = useState<Record<string, HistoryProdRow[]>>({});
+  // Cartes "có sẵn trong kho" (skip) du jour — servies depuis le stock, donc absentes de la
+  // liste "produit". Sans elles, le badge (98) ≠ la liste (80) et ça ressemble à des lignes
+  // cachées (Axel, 2026-09-03 : "le total produit par jour est pas correct ou il y a des
+  // lignes cachées") — en réalité 80 produits + 18 pris en stock = 98.
+  const [historyInStock, setHistoryInStock] = useState<Record<string, { name: string; variant: string; qty: number }[]>>({});
   const [loadingDetails, setLoadingDetails] = useState(false);
   // Which "not sent" product groups are selected for the history day's send-to-stock action.
   // Missing entry for a date = everything defaults to selected (see groupHistoryProd usage).
@@ -490,7 +496,7 @@ export default function StationView({
           const byDate = new Map<string, DateSummary>();
           for (const imp of imports) {
             if (!byDate.has(imp.delivery_date))
-              byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, import_ids: [], unsentCount: 0 });
+              byDate.set(imp.delivery_date, { delivery_date: imp.delivery_date, productCount: 0, totalQty: 0, doneQty: 0, stockQty: 0, import_ids: [], unsentCount: 0 });
             byDate.get(imp.delivery_date)!.import_ids.push(imp.id);
           }
           // Distinct products still not sent to stock, per date (history tab only — surfaced as a
@@ -499,10 +505,15 @@ export default function StationView({
           for (const a of asgns ?? []) {
             const imp = imports.find((i: any) => i.id === a.import_id);
             if (!imp) continue;
+            // Cancelled cards are out of every production metric everywhere else (today's
+            // tabs, analytics) — the badge was the one place still counting them, silently
+            // inflating "sản phẩm / cái" on days with cancellations (Axel, 2026-09-03).
+            if (a.cancelled) continue;
             const s = byDate.get(imp.delivery_date)!;
             s.productCount++;
             s.totalQty += a.qty_to_produce ?? 0;
             if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
+            if (a.status === 'skip') s.stockQty += a.qty_to_produce ?? 0;
             if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
               const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
               set.add(`${a.product_name_vi ?? ''}||${a.variant_label ?? 'Standard'}`);
@@ -562,8 +573,8 @@ export default function StationView({
         .select('id, order_ref, shop_name, product_name_vi, variant_label, qty, product_sku')
         .in('import_id', import_ids).eq('team', team).order('order_ref'),
       supabase.from('lab_assignments')
-        .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_sent_total, is_extra, cancelled, variant_id')
-        .in('import_id', import_ids).eq('team', team).eq('status', 'done'),
+        .select('id, product_name_vi, product_name_en, variant_label, image_url, qty_produced, total_qty, qty_to_produce, qty_sent_total, is_extra, cancelled, variant_id, status')
+        .in('import_id', import_ids).eq('team', team).in('status', ['done', 'skip']),
       // Birthday-cake design photo/notes/message — only lives on lab_manual_cakes, never on
       // lab_order_lines. Matched by team+date so both Odoo-linked AND still-unlinked
       // exceptional orders show their design here (not just once they hit an Odoo doc).
@@ -628,7 +639,17 @@ export default function StationView({
       : { data: [] as any[] };
     const skuByVariantId: Record<string, string | null> = {};
     for (const v of variantRows ?? []) skuByVariantId[v.id] = v.sku ?? null;
-    const rows: HistoryProdRow[] = (prod ?? []).filter(a => !a.cancelled).map(a => ({
+    // Skip = servi depuis le stock : montré dans son propre bloc, jamais dans la logique
+    // d'envoi en stock (rien n'a été produit, il n'y a rien à envoyer).
+    const inStockAgg = new Map<string, { name: string; variant: string; qty: number }>();
+    for (const a of (prod ?? []).filter(x => x.status === 'skip' && !x.cancelled)) {
+      const key = `${a.product_name_vi}||${a.variant_label ?? 'Standard'}`;
+      const g = inStockAgg.get(key) ?? { name: a.product_name_vi, variant: a.variant_label ?? 'Standard', qty: 0 };
+      g.qty += a.qty_to_produce ?? 0;
+      inStockAgg.set(key, g);
+    }
+    setHistoryInStock(prev => ({ ...prev, [delivery_date]: Array.from(inStockAgg.values()).sort((x, y) => x.name.localeCompare(y.name)) }));
+    const rows: HistoryProdRow[] = (prod ?? []).filter(a => !a.cancelled && a.status === 'done').map(a => ({
       id: a.id, product_name_vi: a.product_name_vi, product_name_en: a.product_name_en ?? '',
       sku: (a.variant_id && skuByVariantId[a.variant_id]) ?? null,
       variant_label: a.variant_label ?? 'Standard', image_url: a.image_url ?? null,
@@ -2103,6 +2124,11 @@ export default function StationView({
                     <div className="font-bold text-sm capitalize" style={{ color: '#1A4731' }}>{dateLabel}</div>
                     <div className="text-xs mt-0.5 font-medium" style={{ color: pct === 100 ? '#2D6A4F' : '#92600A' }}>
                       {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'units'}
+                      {d.stockQty > 0 && (
+                        <span className="font-normal" style={{ color: '#6D28D9' }}>
+                          {' '}({d.totalQty - d.stockQty} {lang === 'vi' ? 'làm' : 'produits'} + {d.stockQty} {lang === 'vi' ? 'từ kho' : 'du stock'})
+                        </span>
+                      )}
                     </div>
                     {d.unsentCount > 0 && (
                       <div className="inline-flex items-center gap-1 mt-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold"
@@ -2125,7 +2151,7 @@ export default function StationView({
                       </div>
                     )}
                     {/* Production only (no order/commande view here — see the Upcoming tab for that) */}
-                    {details && sent.length === 0 && unsent.length === 0 && (
+                    {details && sent.length === 0 && unsent.length === 0 && (historyInStock[d.delivery_date] ?? []).length === 0 && (
                       <p className="text-center text-xs py-3 text-gray-400">
                         {lang === 'vi' ? 'Không có sản xuất' : 'Aucune production'}
                       </p>
@@ -2142,6 +2168,27 @@ export default function StationView({
                                 {g.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
                               </span>
                               <span className="font-bold ml-3 shrink-0" style={{ color: '#1A4731' }}>×{g.qty}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Servi depuis le stock (cartes skip) — rien n'a été produit pour ces
+                        lignes, elles sortent de l'étagère. Les montrer ferme l'écart visuel
+                        badge (98) vs liste produite (80) : 80 + 18 = 98 (2026-09-03). */}
+                    {(historyInStock[d.delivery_date] ?? []).length > 0 && (
+                      <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE' }}>
+                        <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: '#6D28D9' }}>
+                          📦 {lang === 'vi' ? 'Lấy từ kho — không cần làm' : 'Servi depuis le stock — pas produit'} · ×{(historyInStock[d.delivery_date] ?? []).reduce((s, g) => s + g.qty, 0)}
+                        </div>
+                        <div className="space-y-0.5">
+                          {(historyInStock[d.delivery_date] ?? []).map(g => (
+                            <div key={`${g.name}||${g.variant}`} className="flex items-center justify-between text-xs">
+                              <span style={{ color: '#374151' }}>
+                                {g.name}
+                                {g.variant && g.variant !== 'Standard' ? <span className="ml-1 text-gray-400">· {g.variant}</span> : null}
+                              </span>
+                              <span className="font-bold ml-3 shrink-0" style={{ color: '#6D28D9' }}>×{g.qty}</span>
                             </div>
                           ))}
                         </div>
