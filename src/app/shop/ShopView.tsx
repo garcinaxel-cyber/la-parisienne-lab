@@ -898,7 +898,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                           {l.imageUrl ? (
                             <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
                               className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
-                              <img src={thumb(l.imageUrl, 100)} alt="" className="w-full h-full object-cover" />
+                              <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                             </button>
                           ) : (
                             <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
