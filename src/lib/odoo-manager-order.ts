@@ -1,4 +1,4 @@
-import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labLocalToOdooUtc } from '@/lib/odoo';
+import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labLocalToOdooUtc, LAB_TZ } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
 
 // Phase 3 of the shop portal plan (Axel, 2026-09-03): a shop manager places a real stock
@@ -34,16 +34,61 @@ export interface ManagerOrderResult {
   error?: string;
 }
 
-// Tomorrow's lab-local calendar date. Managers may only ever order for next-day delivery
-// (Axel, confirmed 2026-09-03) — same "same-day stays exceptional, never auto-handled" posture
-// as odoo-order-lock.ts's lockTomorrowOrders, computed the identical way (UTC date-math on the
-// lab-local calendar date, not a raw +24h offset, so it can never land on the wrong side of a
-// timezone boundary).
-export function tomorrowLabDate(): string {
+// Lab-local calendar date `daysAhead` days from today (today+1 = tomorrow), computed via
+// UTC date-math on the lab-local calendar date rather than a raw +24h offset so it can never
+// land on the wrong side of a timezone boundary (VN = UTC+7, no DST).
+function labDateOffset(daysAhead: number): string {
   const todayLocal = labDateOf(new Date().toISOString())!;
   const d = new Date(todayLocal + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCDate(d.getUTCDate() + daysAhead);
   return d.toISOString().split('T')[0];
+}
+
+// Tomorrow's lab-local calendar date — the EARLIEST a manager may ever pick. Same-day delivery
+// stays permanently out of scope for this feature (Axel, 2026-09-03, reconfirmed same day:
+// "aucune commande le jour meme") — same "same-day stays exceptional, never auto-handled"
+// posture as odoo-order-lock.ts's lockTomorrowOrders.
+export function tomorrowLabDate(): string {
+  return labDateOffset(1);
+}
+
+// How far ahead a manager may pick a delivery date. A safety backstop against a fat-fingered
+// date (a stray digit landing years out) — NOT a business rule; Axel only ruled out a TIME
+// cutoff for J+2-and-beyond, not a date range cap. Raise this if 90 days turns out too tight.
+const MAX_DELIVERY_DAYS_AHEAD = 90;
+
+// Managers may only place an order for TOMORROW (J+1) before 14h00 lab-local — Axel,
+// 2026-09-03: "avant 14h le jour j, aucune commande le jour meme" reinforces the next-day floor
+// above with a hard ordering-window cutoff for that specific date, so the lab gets the
+// afternoon to plan tomorrow's production against everything ordered on time. Axel's follow-up
+// the same day is explicit this cutoff does NOT extend to J+2 and beyond — "laisser la
+// possibilite de commander les Jour J+2 et plus, y a pas de limite d'horaire pour ca" — ordering
+// further ahead is allowed at any hour. Deliberately separate from odoo-order-lock.ts's
+// 16h/23h59 job, which LOCKS already-entered assistant orders — this gate instead blocks a
+// manager from CREATING a brand-new confirmed order for tomorrow specifically, once past the
+// deadline.
+const ORDER_CUTOFF_HOUR = 14;
+
+export function isManagerOrderWindowOpenForTomorrow(): boolean {
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: LAB_TZ, hour: '2-digit', hour12: false });
+  const hourPart = fmt.formatToParts(new Date()).find(p => p.type === 'hour')?.value ?? '00';
+  const hour = hourPart === '24' ? 0 : Number(hourPart);
+  return hour < ORDER_CUTOFF_HOUR;
+}
+
+// Validates a manager-picked delivery date server-side — never trust the client's
+// <input type="date"> min attribute alone. Must be a real 'YYYY-MM-DD' at or after tomorrow,
+// within the sanity backstop above, and if it's specifically tomorrow, still within 14h00.
+function validateDeliveryDate(date: string): { ok: true } | { ok: false; error: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Ngày giao không hợp lệ' };
+  const min = tomorrowLabDate();
+  const max = labDateOffset(MAX_DELIVERY_DAYS_AHEAD);
+  if (date < min) return { ok: false, error: 'Không thể đặt giao cho hôm nay hoặc ngày đã qua — chọn từ ngày mai trở đi' };
+  if (date > max) return { ok: false, error: `Ngày giao quá xa (tối đa ${MAX_DELIVERY_DAYS_AHEAD} ngày) — vui lòng liên hệ quản lý` };
+  if (date === min && !isManagerOrderWindowOpenForTomorrow()) {
+    return { ok: false, error: `Đã hết giờ đặt hàng cho ngày mai (chỉ nhận trước ${ORDER_CUTOFF_HOUR}h00) — vui lòng chọn từ ngày kia trở đi hoặc quay lại vào sáng mai` };
+  }
+  return { ok: true };
 }
 
 const warehouseCache = new Map<string, { id: number; name: string } | null>();
@@ -87,7 +132,10 @@ async function resolveProducts(skus: string[]): Promise<Record<string, { id: num
 export async function createManagerReplenishment(
   shopName: string,
   lines: ManagerOrderLine[],
+  deliveryDate: string,
 ): Promise<ManagerOrderResult> {
+  const dateCheck = validateDeliveryDate(deliveryDate);
+  if (!dateCheck.ok) return { ok: false, error: dateCheck.error };
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   const validLines = lines.filter(l => l.sku && l.qty > 0);
   if (!validLines.length) return { ok: false, error: 'Aucune ligne valide dans la commande' };
@@ -111,8 +159,6 @@ export async function createManagerReplenishment(
   }
   const missing = skus.filter(s => !products[s]);
   if (missing.length) return { ok: false, error: `Produit(s) introuvable(s) dans Odoo : ${missing.join(', ')}` };
-
-  const deliveryDate = tomorrowLabDate();
 
   let reqId: number | undefined;
   let submitted = false; // true once action_submit has actually gone through — see doc comment above

@@ -8,7 +8,7 @@ import {
 } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
-import { createManagerReplenishment, tomorrowLabDate } from '@/lib/odoo-manager-order';
+import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -941,7 +941,7 @@ export async function verifyManagerPinAction(pin: string, shopName?: string): Pr
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const manager = await resolveManager(auth.shopName, pin);
-  if (!manager) return { error: 'Code PIN incorrect' };
+  if (!manager) return { error: 'Mã PIN không đúng' };
   return { manager };
 }
 
@@ -954,42 +954,76 @@ export async function verifyManagerPinAction(pin: string, shopName?: string): Pr
 // original Phase 3 spec: shops do need to reorder packaging/matière, not just finished goods).
 export type ShopManagerCatalogProduct = { sku: string; name: string; category: string; imageUrl: string | null; isPackaging: boolean };
 
-export async function searchManagerOrderProductsAction(query: string, shopName?: string): Promise<{ products?: ShopManagerCatalogProduct[]; error?: string }> {
+// `category` lets the manager browse a whole category (e.g. tapping a chip) instead of typing —
+// Axel, 2026-09-03: "faciliter l'ajout de produit, pas forcement 1 par 1, et un filtre par
+// categorie". When a category is picked with no text query, this returns the WHOLE category
+// (raised cap) rather than the short typeahead cap used for a plain text search.
+export async function searchManagerOrderProductsAction(query: string, shopName?: string, category?: string): Promise<{ products?: ShopManagerCatalogProduct[]; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const q = (query ?? '').trim().toLowerCase().slice(0, 60);
+  const cat = (category ?? '').trim();
+  const browsingCategory = !q && !!cat;
 
-  const production = await fetchProductionCatalog();
-  const filteredProduction: ShopManagerCatalogProduct[] = (q ? production.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : production)
-    .map(p => ({ ...p, isPackaging: false }));
+  let filteredProduction: ShopManagerCatalogProduct[] = (await fetchProductionCatalog()).map(p => ({ ...p, isPackaging: false }));
+  if (q) filteredProduction = filteredProduction.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q));
+  if (cat) filteredProduction = filteredProduction.filter(p => p.category === cat);
 
   let packaging: ShopManagerCatalogProduct[] = [];
-  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
-  const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
-  if (excludedSkus.length && odooConfigured()) {
-    try {
-      const domain: any[] = q
-        ? ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]]
-        : [['default_code', 'in', excludedSkus]];
-      const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
-        { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: 30 });
-      packaging = rows.filter(p => p.default_code).map(p => {
-        const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
-        return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: 'Packaging', imageUrl: null, isPackaging: true };
-      });
-    } catch {
-      // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
+  if (!cat || cat === 'Packaging') {
+    const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+    const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
+    if (excludedSkus.length && odooConfigured()) {
+      try {
+        const domain: any[] = q
+          ? ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]]
+          : [['default_code', 'in', excludedSkus]];
+        const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
+          { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: browsingCategory ? 200 : 30 });
+        packaging = rows.filter(p => p.default_code).map(p => {
+          const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+          return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: 'Packaging', imageUrl: null, isPackaging: true };
+        });
+      } catch {
+        // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
+      }
     }
   }
 
-  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 40);
+  const cap = browsingCategory ? 200 : 40;
+  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, cap);
   return { products: all };
 }
 
-export async function getManagerOrderDeliveryDateAction(): Promise<{ date?: string; error?: string }> {
-  return { date: tomorrowLabDate() };
+// Distinct categories for the browse chips — production-catalog categories plus "Packaging"
+// when there's anything to show there, sorted for a stable chip order.
+export async function getManagerOrderCategoriesAction(shopName?: string): Promise<{ categories?: string[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const production = await fetchProductionCatalog();
+  const cats = new Set<string>();
+  for (const p of production) if (p.category) cats.add(p.category);
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  if ((excludedRows ?? []).some((r: any) => r.sku)) cats.add('Packaging');
+  return { categories: Array.from(cats).sort((a, b) => a.localeCompare(b, 'vi')) };
+}
+
+export async function getManagerOrderContextAction(): Promise<{ minDate?: string; defaultDate?: string; tomorrowOrderingOpen?: boolean; error?: string }> {
+  const minDate = tomorrowLabDate();
+  const tomorrowOrderingOpen = isManagerOrderWindowOpenForTomorrow();
+  return { minDate, defaultDate: tomorrowOrderingOpen ? minDate : dayAfter(minDate), tomorrowOrderingOpen };
+}
+
+function dayAfter(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
 // The real, order-creating action. Re-verifies the PIN server-side (see comment above), then
@@ -1000,20 +1034,21 @@ export async function getManagerOrderDeliveryDateAction(): Promise<{ date?: stri
 export async function submitManagerOrderAction(input: {
   pin: string;
   shopName?: string;
+  deliveryDate: string;
   lines: { sku: string; name: string; qty: number; note?: string }[];
 }): Promise<{ orderRef?: string; deliveryDate?: string; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const manager = await resolveManager(auth.shopName, input.pin);
-  if (!manager) return { error: 'Code PIN incorrect' };
+  if (!manager) return { error: 'Mã PIN không đúng' };
 
   const lines = (input.lines ?? [])
     .map(l => ({ sku: String(l.sku ?? '').trim(), name: String(l.name ?? '').trim(), qty: Number(l.qty), note: l.note?.trim() }))
     .filter(l => l.sku && l.qty > 0);
-  if (!lines.length) return { error: 'Panier vide' };
+  if (!lines.length) return { error: 'Giỏ hàng trống' };
 
-  const res = await createManagerReplenishment(auth.shopName, lines);
-  if (!res.ok || !res.orderRef) return { error: res.error ?? 'Erreur inconnue' };
+  const res = await createManagerReplenishment(auth.shopName, lines, String(input.deliveryDate ?? ''));
+  if (!res.ok || !res.orderRef) return { error: res.error ?? 'Lỗi không xác định' };
 
   const supabase = service();
   if (supabase) {

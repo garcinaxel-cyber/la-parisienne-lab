@@ -187,6 +187,10 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderGateMsg, setOrderGateMsg] = useState<string | null>(null);
   const [orderUnlocking, setOrderUnlocking] = useState(false);
   const [orderDeliveryDate, setOrderDeliveryDate] = useState<string | null>(null);
+  const [orderMinDate, setOrderMinDate] = useState<string | null>(null);
+  const [orderTomorrowOpen, setOrderTomorrowOpen] = useState(true);
+  const [orderCategories, setOrderCategories] = useState<string[]>([]);
+  const [orderCategoryFilter, setOrderCategoryFilter] = useState<string | null>(null);
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
   const [orderSearching, setOrderSearching] = useState(false);
@@ -277,27 +281,39 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   }, [tab]);
 
   useEffect(() => {
-    if (tab !== 'order' || orderDeliveryDate) return;
+    if (tab !== 'order' || orderMinDate) return;
     (async () => {
       const actions = await import('./actions');
-      const res = await actions.getManagerOrderDeliveryDateAction();
-      setOrderDeliveryDate(res.date ?? null);
+      const res = await actions.getManagerOrderContextAction();
+      setOrderMinDate(res.minDate ?? null);
+      setOrderTomorrowOpen(res.tomorrowOrderingOpen ?? true);
+      setOrderDeliveryDate(res.defaultDate ?? res.minDate ?? null);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   useEffect(() => {
+    if (!orderManager || orderCategories.length) return;
+    (async () => {
+      const actions = await import('./actions');
+      const res = await actions.getManagerOrderCategoriesAction(readOnly ? shopName : undefined);
+      setOrderCategories(res.categories ?? []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderManager]);
+
+  useEffect(() => {
     const q = orderSearchQuery.trim();
-    if (q.length < 2) { setOrderSearchResults([]); return; }
+    if (q.length < 2 && !orderCategoryFilter) { setOrderSearchResults([]); return; }
     const t = setTimeout(async () => {
       setOrderSearching(true);
       const actions = await import('./actions');
-      const res = await actions.searchManagerOrderProductsAction(q, readOnly ? shopName : undefined);
+      const res = await actions.searchManagerOrderProductsAction(q, readOnly ? shopName : undefined, orderCategoryFilter ?? undefined);
       setOrderSearching(false);
       setOrderSearchResults(res.products ?? []);
     }, 250);
     return () => clearTimeout(t);
-  }, [orderSearchQuery]);
+  }, [orderSearchQuery, orderCategoryFilter]);
 
   useEffect(() => {
     const q = stockSearchQuery.trim();
@@ -727,12 +743,23 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderCart([]);
     setOrderResult(null);
     setOrderMsg(null);
-  }
-
-  function addOrderItem(p: ShopManagerCatalogProduct) {
-    setOrderCart(prev => prev.some(l => l.sku === p.sku) ? prev : [...prev, { sku: p.sku, name: p.name, qty: 1, note: '' }]);
+    setOrderCategories([]);
+    setOrderCategoryFilter(null);
     setOrderSearchQuery('');
     setOrderSearchResults([]);
+  }
+
+  // Sets a product's cart quantity directly (adds it if new, updates in place if already
+  // there) — used by the browse/search result rows' +/- steppers so a manager can tap down a
+  // whole category or a run of search matches without the list closing after each one (Axel,
+  // 2026-09-03: "faciliter l'ajout de produit, pas forcement 1 par 1").
+  function setOrderQtyForProduct(p: ShopManagerCatalogProduct, qty: number) {
+    const clamped = Math.max(0, Math.floor(qty) || 0);
+    setOrderCart(prev => {
+      const exists = prev.some(l => l.sku === p.sku);
+      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '' }] : prev;
+      return prev.map(l => l.sku === p.sku ? { ...l, qty: clamped } : l);
+    });
   }
 
   function updateOrderQty(sku: string, qty: number) {
@@ -755,6 +782,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     const res = await actions.submitManagerOrderAction({
       pin: orderPin.trim(),
       ...(readOnly ? { shopName } : {}),
+      deliveryDate: orderDeliveryDate ?? '',
       lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
     });
     setOrderSubmitting(false);
@@ -855,7 +883,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
           <button onClick={() => setTab('order')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'order' ? '#1f2937' : 'white', color: tab === 'order' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
-            <Package2 size={16} /> Commande
+            <Package2 size={16} /> Đặt hàng
           </button>
         </div>
 
@@ -1406,40 +1434,80 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               </div>
             ) : (
               <>
-                <div className="bg-white rounded-2xl p-4 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: orderManager.color }} />
-                    <div className="min-w-0">
+                <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: orderManager.color }} />
                       <div className="text-sm font-bold text-navy truncate">{orderManager.name}</div>
-                      <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}</div>
                     </div>
+                    <button onClick={lockManager} className="text-xs font-semibold shrink-0" style={{ color: '#9CA3AF' }}>Khoá lại</button>
                   </div>
-                  <button onClick={lockManager} className="text-xs font-semibold shrink-0" style={{ color: '#9CA3AF' }}>Khoá lại</button>
+                  <div className="flex items-center gap-2">
+                    <Truck size={14} className="shrink-0" style={{ color: '#9CA3AF' }} />
+                    <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Giao hàng:</span>
+                    <input type="date" value={orderDeliveryDate ?? ''} min={orderMinDate ?? undefined}
+                      onChange={e => setOrderDeliveryDate(e.target.value)}
+                      className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                  </div>
+                  {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen && (
+                    <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
+                      Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>
+                  {orderCategories.length > 0 && (
+                    <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-0.5 px-0.5" style={{ WebkitOverflowScrolling: 'touch' }}>
+                      <button onClick={() => setOrderCategoryFilter(null)}
+                        className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
+                        style={{ backgroundColor: !orderCategoryFilter ? '#1f2937' : 'white', color: !orderCategoryFilter ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+                        Tất cả
+                      </button>
+                      {orderCategories.map(cat => (
+                        <button key={cat} onClick={() => setOrderCategoryFilter(prev => prev === cat ? null : cat)}
+                          className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
+                          style={{ backgroundColor: orderCategoryFilter === cat ? '#1f2937' : 'white', color: orderCategoryFilter === cat ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="relative">
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                     <input type="text" value={orderSearchQuery} onChange={e => setOrderSearchQuery(e.target.value)}
                       placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                    {orderSearchQuery.trim().length >= 2 && (
-                      <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
-                        style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
-                        {orderSearching ? (
-                          <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
-                        ) : !orderSearchResults.length ? (
-                          <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
-                        ) : orderSearchResults.map(p => (
-                          <button key={p.sku} onClick={() => addOrderItem(p)}
-                            className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
-                            {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
-                            <span className="truncate">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
+                  {(orderSearchQuery.trim().length >= 2 || orderCategoryFilter) && (
+                    <div className="rounded-lg overflow-y-auto overscroll-contain max-h-72"
+                      style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                      {orderSearching ? (
+                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                      ) : !orderSearchResults.length ? (
+                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                      ) : orderSearchResults.map(p => {
+                        const qtyInCart = orderCart.find(l => l.sku === p.sku)?.qty ?? 0;
+                        return (
+                          <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                            {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                            <span className="truncate flex-1 min-w-0">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button onClick={() => setOrderQtyForProduct(p, qtyInCart - 1)} disabled={qtyInCart <= 0}
+                                className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: '1px solid #D1D5DB' }}>
+                                <Minus size={11} />
+                              </button>
+                              <span className="w-5 text-center text-xs font-bold">{qtyInCart}</span>
+                              <button onClick={() => setOrderQtyForProduct(p, qtyInCart + 1)}
+                                className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #D1D5DB' }}>
+                                <Plus size={11} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {!orderCart.length ? (
@@ -1477,7 +1545,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
 
                 {orderMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderMsg}</div>}
 
-                <button onClick={() => setOrderPendingConfirm(true)} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting}
+                <button onClick={() => setOrderPendingConfirm(true)} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting || (orderDeliveryDate === orderMinDate && !orderTomorrowOpen)}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
                   style={{ backgroundColor: '#1f2937' }}>
                   {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
