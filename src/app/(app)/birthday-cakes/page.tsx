@@ -1,6 +1,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import BirthdayCakesView from './BirthdayCakesView';
+import { normShop } from '@/lib/manual-cake-coverage';
 
 export const revalidate = 0;
 
@@ -88,7 +89,7 @@ export default async function BirthdayCakesPage() {
 
   // Manual cakes created in the app (not yet matched to an Odoo order)
   const { data: manual } = await supabase.from('lab_manual_cakes')
-    .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, rejected_order_refs')
+    .select('id, product_name_vi, product_sku, delivery_date, ready_time, delivered_by, delivery_address, message, qty, needs_odoo, rejected_order_refs, shop_name')
     .is('matched_order_ref', null)
     .gte('delivery_date', since7)
     .order('delivery_date');
@@ -107,7 +108,14 @@ export default async function BirthdayCakesPage() {
   }
   const manualCakes = (manual ?? []).map((m: any) => {
     const rejected = new Set<string>(m.rejected_order_refs ?? []);
-    const sug = (matchBySkuDate[`${m.product_sku}||${m.delivery_date}`] ?? []).find(c => !rejected.has(c.ref)) ?? null;
+    // Never suggest a candidate from an obviously different shop — a La Paris Tây Hồ manual cake
+    // must not be proposed against a La Paris Timecity order just because they share a SKU and
+    // delivery date (same class of bug fixed 2026-08-07 in exceptional-orders/page.tsx and
+    // orders/[date]/page.tsx — this /birthday-cakes flow had been left out of that fix). Only
+    // filter when both sides carry a shop name, same as the other two suggestion lists.
+    const sug = (matchBySkuDate[`${m.product_sku}||${m.delivery_date}`] ?? []).find(c =>
+      !rejected.has(c.ref) && (!m.shop_name || !c.shop || normShop(m.shop_name) === normShop(c.shop))
+    ) ?? null;
     return {
       id: m.id,
       source: 'manual' as const, manualId: m.id as string | null, needsOdoo: !!m.needs_odoo,
