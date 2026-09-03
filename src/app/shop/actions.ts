@@ -6,6 +6,7 @@ import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
+import { odooExecute, odooConfigured } from '@/lib/odoo';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -598,5 +599,195 @@ export async function getShopLossesDailyRecapForStaffAction(shopName: string): P
   const auth = await requireStaffSession();
   if ('error' in auth) return { error: auth.error };
   return { recap: await fetchDailyLossRecap(shopName) };
+}
+
+// ── Daily stock count ("Kiểm kho") ──────────────────────────────────────────
+// Axel, 2026-09-03: shops count their own stock every day, in-app only — no Odoo write for now
+// ("je veux pas encore que ça se comptabilise sur Odoo, c'est pour leur info perso"; the table
+// shape already matches odoo-inventory.ts's InventoryCountInput so a future push is additive).
+// The checklist is NOT prefilled with quantities — only WHICH products appear on it is prefilled,
+// from that shop's own order history over a rolling 2-week window ("je pense qu'il faut pas que
+// le stock soit prerempli mais les produits qu'on met déjà dans la liste de comptabilisation on
+// peut se baser sur ce qu'ils ont commandé avant... sur 2 semaines ça suffit"). A shop can add a
+// product that isn't on that auto list — once added it's remembered for next time ("on le
+// mémorise" — lab_shop_stock_count_items), including packagings (with their Vietnamese name,
+// resolved live from Odoo the same way delivery-check does). Counts are editable multiple times
+// the same day (Axel: "comptage modifiable") — upserted on (shop_name, sku, count_date).
+const STOCK_COUNT_WINDOW_DAYS = 14;
+
+function vnDateStr(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+// Which SKUs belong on this shop's checklist, and their display name — derived live from order
+// history + manually-added extras, never stored itself (only the counted quantities are).
+async function stockCountBaseNames(shopName: string): Promise<Map<string, { name: string; isExtra: boolean }>> {
+  const supabase = service();
+  const out = new Map<string, { name: string; isExtra: boolean }>();
+  if (!supabase) return out;
+  const target = normalizeShopName(shopName);
+  const since = new Date(Date.now() - STOCK_COUNT_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
+
+  // Same broad-fetch-then-normalize pattern as fetchDeliveries/fetchCakes above — shop_name is
+  // stored inconsistently across sync sources (see normalizeShopName's comment).
+  const { data: orderLines } = await supabase.from('lab_order_lines')
+    .select('product_sku, product_name_vi, shop_name').gte('delivery_date', since).gt('qty', 0).limit(10000);
+  const { data: packagingLines } = await supabase.from('lab_order_packaging_lines')
+    .select('sku, product_name_vi, shop_name').gte('delivery_date', since).limit(10000);
+
+  for (const l of orderLines ?? []) {
+    if (!l.product_sku || normalizeShopName(l.shop_name) !== target) continue;
+    if (!out.has(l.product_sku)) out.set(l.product_sku, { name: l.product_name_vi || l.product_sku, isExtra: false });
+  }
+  for (const l of packagingLines ?? []) {
+    if (!l.sku || normalizeShopName(l.shop_name) !== target) continue;
+    if (!out.has(l.sku)) out.set(l.sku, { name: l.product_name_vi || l.sku, isExtra: false });
+  }
+
+  const { data: extras } = await supabase.from('lab_shop_stock_count_items').select('sku, product_name').eq('shop_name', shopName);
+  for (const e of extras ?? []) out.set(e.sku, { name: e.product_name, isExtra: true });
+
+  return out;
+}
+
+export type ShopStockCountLine = { sku: string; name: string; qty: number | null; isExtra: boolean };
+
+async function fetchStockCountList(shopName: string): Promise<ShopStockCountLine[]> {
+  const supabase = service();
+  if (!supabase) return [];
+  const baseNames = await stockCountBaseNames(shopName);
+
+  const today = vnDateStr();
+  const { data: counts } = await supabase.from('lab_shop_stock_counts')
+    .select('sku, qty').eq('shop_name', shopName).eq('count_date', today);
+  const qtyBySku = new Map<string, number>();
+  for (const c of counts ?? []) qtyBySku.set(c.sku, Number(c.qty));
+
+  return Array.from(baseNames.entries())
+    .map(([sku, v]) => ({ sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function getMyStockCountListAction(): Promise<{ shopName?: string; date?: string; lines?: ShopStockCountLine[]; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  return { shopName: auth.shopName, date: vnDateStr(), lines: await fetchStockCountList(auth.shopName) };
+}
+
+export async function getStockCountListForStaffAction(shopName: string): Promise<{ date?: string; lines?: ShopStockCountLine[]; error?: string }> {
+  const auth = await requireStaffSession();
+  if ('error' in auth) return { error: auth.error };
+  return { date: vnDateStr(), lines: await fetchStockCountList(shopName) };
+}
+
+export async function saveStockCountAction(input: {
+  entries: { sku: string; qty: number }[];
+  updatedByName: string;
+  shopName?: string; // only used (and only trusted) when the caller is staff testing as this shop
+}): Promise<{ ok?: boolean; saved?: number; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const name = (input.updatedByName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Name required' };
+  if (!Array.isArray(input.entries) || !input.entries.length) return { error: 'No data' };
+
+  // Re-derive names/eligibility server-side rather than trusting the client's pairing — an
+  // entry for a SKU that isn't (or is no longer) on this shop's list is silently dropped.
+  const baseNames = await stockCountBaseNames(auth.shopName);
+  const today = vnDateStr();
+  const rows = input.entries
+    .filter(e => e.sku && baseNames.has(e.sku) && Number.isFinite(e.qty) && Number(e.qty) >= 0)
+    .map(e => ({
+      shop_name: auth.shopName, sku: e.sku, product_name: baseNames.get(e.sku)!.name,
+      count_date: today, qty: Number(e.qty), updated_by_name: name, updated_at: new Date().toISOString(),
+    }));
+  if (!rows.length) return { error: 'No valid data' };
+
+  const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date' });
+  if (error) return { error: error.message };
+  return { ok: true, saved: rows.length };
+}
+
+export type ShopStockSearchProduct = { sku: string; name: string; isPackaging: boolean };
+
+// "Add a product" search for the stock-count checklist — production catalog (same source as the
+// order/[token] flow) PLUS packaging/matière SKUs (lab_excluded_skus, resolved live against Odoo
+// with the Vietnamese name — same context: { lang: 'vi_VN' } trick as delivery-check's packaging
+// lines, since lab_excluded_skus.product_name itself is stored inconsistently — Axel, 2026-09-03:
+// "les shops commandes des packagings des fois, il faut qu'ils puissent les sélectionner et voir
+// le nom viet").
+export async function searchStockCountProductsAction(query: string, shopName?: string): Promise<{ products?: ShopStockSearchProduct[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const q = (query ?? '').trim().toLowerCase().slice(0, 60);
+
+  const { data: fiches } = await supabase.from('lab_fiche_meta').select('id, name_vi').eq('is_active', true);
+  const ficheById: Record<string, any> = {};
+  for (const f of fiches ?? []) ficheById[f.id] = f;
+  const ficheIds = (fiches ?? []).map(f => f.id);
+  const { data: vars } = ficheIds.length
+    ? await supabase.from('lab_fiche_variants').select('fiche_id, sku, label').in('fiche_id', ficheIds)
+    : { data: [] as any[] };
+  const skus = Array.from(new Set((vars ?? []).map((v: any) => v.sku).filter(Boolean)));
+  const { data: nameRows } = skus.length
+    ? await supabase.from('lab_order_lines').select('product_sku, product_name_vi').in('product_sku', skus).limit(5000)
+    : { data: [] as any[] };
+  const nameBySku: Record<string, string> = {};
+  for (const r of nameRows ?? []) if (r.product_sku && r.product_name_vi && !nameBySku[r.product_sku]) nameBySku[r.product_sku] = r.product_name_vi;
+
+  const production: ShopStockSearchProduct[] = (vars ?? []).flatMap((v: any) => {
+    const f = ficheById[v.fiche_id];
+    if (!f || !v.sku) return [];
+    const label = v.label && v.label !== 'Standard' ? v.label : '';
+    const name = nameBySku[v.sku] || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : v.sku);
+    return [{ sku: v.sku as string, name, isPackaging: false }];
+  });
+
+  let packaging: ShopStockSearchProduct[] = [];
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
+  if (excludedSkus.length && odooConfigured()) {
+    try {
+      const domain: any[] = q
+        ? ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]]
+        : [['default_code', 'in', excludedSkus]];
+      const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
+        { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: 30 });
+      packaging = rows.filter(p => p.default_code).map(p => {
+        const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+        return { sku: p.default_code as string, name: variantName || p.name || p.default_code, isPackaging: true };
+      });
+    } catch {
+      // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
+    }
+  }
+
+  const filteredProduction = (q ? production.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : production);
+  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 30);
+  return { products: all };
+}
+
+export async function addStockCountItemAction(input: {
+  sku: string; name: string; addedByName: string; shopName?: string;
+}): Promise<{ item?: ShopStockCountLine; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const sku = (input.sku ?? '').trim().slice(0, 60);
+  const name = (input.name ?? '').trim().slice(0, 200);
+  const addedBy = (input.addedByName ?? '').trim().slice(0, 80);
+  if (!sku || !name) return { error: 'Product required' };
+  if (!addedBy) return { error: 'Name required' };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const { error } = await supabase.from('lab_shop_stock_count_items')
+    .upsert({ shop_name: auth.shopName, sku, product_name: name, added_by_name: addedBy, added_at: new Date().toISOString() }, { onConflict: 'shop_name,sku' });
+  if (error) return { error: error.message };
+  return { item: { sku, name, qty: null, isExtra: true } };
 }
 

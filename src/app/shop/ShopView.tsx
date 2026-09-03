@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check, ClipboardList } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
+const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
 
 // Same result shape as /api/lab/products-search (station/inventory product picker) — reused
 // as-is here rather than writing a second search endpoint. main_image_url is already returned
@@ -89,7 +90,7 @@ function NamePicker({ value, onChange, names, onManage }: {
 // `shopName` via a staff session" rather than "cannot write".
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock'>('deliveries');
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
   // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
@@ -138,6 +139,21 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [pendingLoss, setPendingLoss] = useState(false);
 
   const [lossName, setLossName] = useState('');
+
+  // ── Kiểm kho (daily stock count) — Axel, 2026-09-03: shops count their own stock every day,
+  // in-app only, no Odoo write for now. The checklist (which SKUs) is auto-built server-side
+  // from this shop's own order history (rolling 2-week window) + any manually-added extras;
+  // quantities are never prefilled — only what the shop already saved today (if reopening).
+  const [stockLines, setStockLines] = useState<ShopStockCountLine[] | null>(null);
+  const [stockDate, setStockDate] = useState<string | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
+  const [stockName, setStockName] = useState('');
+  const [stockSaving, setStockSaving] = useState(false);
+  const [stockMsg, setStockMsg] = useState<string | null>(null);
+  const [stockSearchQuery, setStockSearchQuery] = useState('');
+  const [stockSearchResults, setStockSearchResults] = useState<ShopStockSearchProduct[]>([]);
+  const [stockSearching, setStockSearching] = useState(false);
 
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
@@ -194,6 +210,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     if (!readOnly) {
       try { setName(localStorage.getItem(NAME_STORAGE_KEY) ?? ''); } catch {}
       try { setLossName(localStorage.getItem(LOSS_NAME_STORAGE_KEY) ?? ''); } catch {}
+      try { setStockName(localStorage.getItem(STOCK_NAME_STORAGE_KEY) ?? ''); } catch {}
     }
     load();
     loadStaffNames();
@@ -205,6 +222,25 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     loadLosses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'stock' || stockLines !== null) return;
+    loadStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    const q = stockSearchQuery.trim();
+    if (q.length < 2) { setStockSearchResults([]); return; }
+    const t = setTimeout(async () => {
+      setStockSearching(true);
+      const actions = await import('./actions');
+      const res = await actions.searchStockCountProductsAction(q, readOnly ? shopName : undefined);
+      setStockSearching(false);
+      setStockSearchResults(res.products ?? []);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [stockSearchQuery]);
 
   async function loadLosses() {
     setLossesLoading(true);
@@ -359,6 +395,59 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
   }
 
+  async function loadStock() {
+    setStockLoading(true);
+    const actions = await import('./actions');
+    const res = readOnly ? await actions.getStockCountListForStaffAction(shopName) : await actions.getMyStockCountListAction();
+    setStockLoading(false);
+    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
+    setStockLines(res.lines ?? []);
+    setStockDate(res.date ?? null);
+    const d: Record<string, string> = {};
+    for (const l of res.lines ?? []) if (l.qty !== null) d[l.sku] = String(l.qty);
+    setStockDraft(d);
+  }
+
+  async function addStockItem(p: ShopStockSearchProduct) {
+    const trimmedName = stockName.trim();
+    if (!trimmedName) { setStockMsg('Chọn tên trước khi thêm sản phẩm'); return; }
+    const actions = await import('./actions');
+    const res = await actions.addStockCountItemAction({
+      sku: p.sku, name: p.name, addedByName: trimmedName, ...(readOnly ? { shopName } : {}),
+    });
+    if (res.item) {
+      setStockLines(prev => {
+        const cur = prev ?? [];
+        if (cur.some(l => l.sku === res.item!.sku)) return cur;
+        return [...cur, res.item!].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setStockSearchQuery(''); setStockSearchResults([]); setStockMsg(null);
+    } else if (res.error) setStockMsg(`Lỗi: ${res.error}`);
+  }
+
+  // Sends only the rows the shop actually typed a quantity for — a blank input is simply not
+  // included, never coerced to 0 (Axel: comptage NOT prefilled). Re-savable any number of times
+  // the same day (server upserts on shop_name+sku+count_date).
+  async function saveStockCount() {
+    const trimmedName = stockName.trim();
+    if (!trimmedName || !stockLines?.length) return;
+    const validSkus = new Set(stockLines.map(l => l.sku));
+    const entries = Object.entries(stockDraft)
+      .filter(([sku, v]) => validSkus.has(sku) && v.trim() !== '')
+      .map(([sku, v]) => ({ sku, qty: Number(v) }))
+      .filter(e => Number.isFinite(e.qty) && e.qty >= 0);
+    if (!entries.length) { setStockMsg('Chưa nhập số lượng nào'); return; }
+    try { localStorage.setItem(STOCK_NAME_STORAGE_KEY, trimmedName); } catch {}
+    setStockSaving(true); setStockMsg(null);
+    const actions = await import('./actions');
+    const res = await actions.saveStockCountAction({
+      entries, updatedByName: trimmedName, ...(readOnly ? { shopName } : {}),
+    });
+    setStockSaving(false);
+    if (res.error) setStockMsg(`Lỗi: ${res.error}`);
+    else setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+  }
+
   async function logout() {
     const { createClient } = await import('@/lib/supabase-browser');
     await createClient().auth.signOut();
@@ -418,6 +507,11 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'losses' ? '#1f2937' : 'white', color: tab === 'losses' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Trash2 size={16} /> Hao hụt
+          </button>
+          <button onClick={() => setTab('stock')}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            style={{ backgroundColor: tab === 'stock' ? '#1f2937' : 'white', color: tab === 'stock' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            <ClipboardList size={16} /> Kiểm kho
           </button>
         </div>
 
@@ -735,6 +829,76 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 ))}
               </div>
             )}
+          </div>
+        ) : tab === 'stock' ? (
+          <div className="space-y-3">
+            <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+              <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                Kiểm kho hôm nay{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
+              </div>
+              <div>
+                <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                <NamePicker value={stockName} onChange={setStockName} names={staffNames} onManage={() => setShowStaffModal(true)} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm không có trong danh sách</div>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
+                <input type="text" value={stockSearchQuery} onChange={e => setStockSearchQuery(e.target.value)}
+                  placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                {stockSearchQuery.trim().length >= 2 && (
+                  <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
+                    style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                    {stockSearching ? (
+                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                    ) : !stockSearchResults.length ? (
+                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                    ) : stockSearchResults.map(p => (
+                      <button key={p.sku} onClick={() => addStockItem(p)}
+                        className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: '#F3F4F6' }}>
+                        <span className="truncate">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
+                        {p.isPackaging && <span className="text-[10px] font-bold shrink-0 uppercase" style={{ color: '#6B7280' }}>Packaging</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {stockLoading && stockLines === null ? (
+              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+            ) : !stockLines?.length ? (
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                  {stockLines.map(l => (
+                    <div key={l.sku} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">{l.name}</div>
+                        <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
+                      </div>
+                      <input type="number" min={0} step="1" inputMode="decimal"
+                        value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
+                        placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button onClick={saveStockCount}
+              disabled={stockSaving || !stockName.trim() || !stockLines?.length}
+              className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
+              style={{ backgroundColor: '#1f2937' }}>
+              {stockSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Lưu kiểm kho
+            </button>
+            {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
           </div>
         ) : (
           !cakes?.length ? (
