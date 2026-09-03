@@ -1,8 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check, ClipboardList } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check, ClipboardList, FileText, Download } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopDailyReport } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 
@@ -102,7 +102,7 @@ function NamePicker({ value, onChange, names, onManage }: {
 // `shopName` via a staff session" rather than "cannot write".
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report'>('deliveries');
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
   // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
@@ -166,6 +166,17 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [stockSearchQuery, setStockSearchQuery] = useState('');
   const [stockSearchResults, setStockSearchResults] = useState<ShopStockSearchProduct[]>([]);
   const [stockSearching, setStockSearching] = useState(false);
+
+  // Daily report ("Báo cáo") — Axel, 2026-09-03 phase 2: combines today's stock count + today's
+  // losses, generated on demand (re-fetched every time this tab is opened, unlike the other tabs'
+  // load-once-per-mount caches, since it depends on data the shop may have just changed on the
+  // Kiểm kho tab). reportRef wraps only the printable content (not the export button/status line)
+  // so the PDF capture below doesn't include them.
+  const [dailyReport, setDailyReport] = useState<ShopDailyReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportExporting, setReportExporting] = useState(false);
+  const [reportMsg, setReportMsg] = useState<string | null>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
@@ -238,6 +249,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   useEffect(() => {
     if (tab !== 'stock' || stockLines !== null) return;
     loadStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'report') return;
+    loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -460,6 +477,52 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     else setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
   }
 
+  async function loadReport() {
+    setReportLoading(true);
+    setReportMsg(null);
+    const actions = await import('./actions');
+    const res = readOnly ? await actions.getDailyReportForStaffAction(shopName) : await actions.getMyDailyReportAction();
+    setReportLoading(false);
+    if (res.error) { setReportMsg(`Lỗi: ${res.error}`); return; }
+    setDailyReport(res.report ?? null);
+  }
+
+  // Client-side PDF export (Axel, 2026-09-03: "le rapport doit etre exportable pdf" — "pdf en
+  // viet bien sur") — rasterizes the already-rendered report DOM (real browser text layout, so
+  // Vietnamese diacritics render correctly with zero font-embedding work) via html2canvas, then
+  // slices that image across as many A4 pages as needed in jsPDF. Both libs are dynamically
+  // imported so they never enter the bundle for any page that isn't this tab.
+  async function exportReportPdf() {
+    if (!reportRef.current || !dailyReport) return;
+    setReportExporting(true);
+    setReportMsg(null);
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
+      const canvas = await html2canvas(reportRef.current, { scale: 2, backgroundColor: '#FAF8F3' });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+      pdf.save(`bao-cao-${shopName}-${dailyReport.date}.pdf`);
+    } catch {
+      setReportMsg('Lỗi khi xuất PDF, vui lòng thử lại.');
+    } finally {
+      setReportExporting(false);
+    }
+  }
+
   async function logout() {
     const { createClient } = await import('@/lib/supabase-browser');
     await createClient().auth.signOut();
@@ -504,26 +567,31 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             </div>
           </div>
         )}
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <button onClick={() => setTab('deliveries')}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'deliveries' ? '#1f2937' : 'white', color: tab === 'deliveries' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Truck size={16} /> Giao hàng
           </button>
           <button onClick={() => setTab('cakes')}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'cakes' ? '#1f2937' : 'white', color: tab === 'cakes' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Cake size={16} /> Bánh sinh nhật
           </button>
           <button onClick={() => setTab('losses')}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'losses' ? '#1f2937' : 'white', color: tab === 'losses' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Trash2 size={16} /> Hao hụt
           </button>
           <button onClick={() => setTab('stock')}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'stock' ? '#1f2937' : 'white', color: tab === 'stock' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <ClipboardList size={16} /> Kiểm kho
+          </button>
+          <button onClick={() => setTab('report')}
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            style={{ backgroundColor: tab === 'report' ? '#1f2937' : 'white', color: tab === 'report' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            <FileText size={16} /> Báo cáo
           </button>
         </div>
 
@@ -926,6 +994,82 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               Lưu kiểm kho
             </button>
             {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
+          </div>
+        ) : tab === 'report' ? (
+          <div className="space-y-3">
+            <div ref={reportRef} className="space-y-3">
+              <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                  Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
+                </div>
+                <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
+              </div>
+
+              {reportLoading && !dailyReport ? (
+                <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+              ) : !dailyReport ? null : !dailyReport.stockCounted ? (
+                <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                  Chưa kiểm kho hôm nay — vui lòng kiểm kho trước khi xem báo cáo.
+                </div>
+              ) : (
+                <>
+                  <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                    <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
+                    <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {groupStockByCategory(dailyReport.stockLines).map(g => (
+                      <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                        <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
+                        </div>
+                        <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                          {g.lines.map(l => (
+                            <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
+                              <span className="text-sm truncate" style={{ color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
+                              <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
+                                {l.qty === null ? 'Chưa kiểm' : l.qty}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                        Hao hụt hôm nay{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
+                      </div>
+                    </div>
+                    {!dailyReport.losses.length ? (
+                      <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt hôm nay</div>
+                    ) : (
+                      <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                        {dailyReport.losses.map(p => (
+                          <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
+                            <span className="text-sm truncate">{p.productName}</span>
+                            <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {dailyReport?.stockCounted && (
+              <button onClick={exportReportPdf} disabled={reportExporting}
+                className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
+                style={{ backgroundColor: '#1f2937' }}>
+                {reportExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Xuất PDF
+              </button>
+            )}
+            {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
           </div>
         ) : (
           !cakes?.length ? (
