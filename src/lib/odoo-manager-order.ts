@@ -31,7 +31,17 @@ export interface ManagerOrderResult {
   ok: boolean;
   orderRef?: string;
   deliveryDate?: string; // 'YYYY-MM-DD', lab-local
+  deliveryTime?: string; // 'HH:MM', lab-local
   error?: string;
+}
+
+const DEFAULT_DELIVERY_TIME = '09:00';
+
+// Manager-picked delivery time — anything that isn't a real 'HH:MM' falls back to the same
+// 09:00 default labLocalToOdooUtc itself already defaults to, so a stray/empty value never
+// breaks the Odoo write, it just loses the manager's specific-time intent for that one order.
+function cleanDeliveryTime(time: string | undefined): string {
+  return time && /^\d{2}:\d{2}$/.test(time) ? time : DEFAULT_DELIVERY_TIME;
 }
 
 // Lab-local calendar date `daysAhead` days from today (today+1 = tomorrow), computed via
@@ -133,9 +143,11 @@ export async function createManagerReplenishment(
   shopName: string,
   lines: ManagerOrderLine[],
   deliveryDate: string,
+  deliveryTime?: string,
 ): Promise<ManagerOrderResult> {
   const dateCheck = validateDeliveryDate(deliveryDate);
   if (!dateCheck.ok) return { ok: false, error: dateCheck.error };
+  const time = cleanDeliveryTime(deliveryTime);
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   const validLines = lines.filter(l => l.sku && l.qty > 0);
   if (!validLines.length) return { ok: false, error: 'Aucune ligne valide dans la commande' };
@@ -166,7 +178,7 @@ export async function createManagerReplenishment(
     reqId = await tmo(odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
       warehouse_id: wh.id,
       source_warehouse_id: sourceWh.id,
-      delivery_date: labLocalToOdooUtc(deliveryDate),
+      delivery_date: labLocalToOdooUtc(deliveryDate, time),
     }], { context: NO_MAIL_CONTEXT }), 25000, 'create replenishment');
 
     for (const l of validLines) {
@@ -190,7 +202,7 @@ export async function createManagerReplenishment(
     const orderRef = req?.name;
     if (!orderRef) return { ok: false, error: `Commande créée et confirmée dans Odoo (id ${reqId}) mais référence introuvable — vérifier manuellement dans Odoo` };
 
-    return { ok: true, orderRef, deliveryDate };
+    return { ok: true, orderRef, deliveryDate, deliveryTime: time };
   } catch (e: any) {
     const baseError = String(e?.message ?? e);
     if (reqId && !submitted) {

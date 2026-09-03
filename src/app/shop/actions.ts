@@ -1035,8 +1035,9 @@ export async function submitManagerOrderAction(input: {
   pin: string;
   shopName?: string;
   deliveryDate: string;
+  deliveryTime?: string;
   lines: { sku: string; name: string; qty: number; note?: string }[];
-}): Promise<{ orderRef?: string; deliveryDate?: string; error?: string }> {
+}): Promise<{ orderRef?: string; deliveryDate?: string; deliveryTime?: string; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const manager = await resolveManager(auth.shopName, input.pin);
@@ -1047,7 +1048,7 @@ export async function submitManagerOrderAction(input: {
     .filter(l => l.sku && l.qty > 0);
   if (!lines.length) return { error: 'Giỏ hàng trống' };
 
-  const res = await createManagerReplenishment(auth.shopName, lines, String(input.deliveryDate ?? ''));
+  const res = await createManagerReplenishment(auth.shopName, lines, String(input.deliveryDate ?? ''), input.deliveryTime);
   if (!res.ok || !res.orderRef) return { error: res.error ?? 'Lỗi không xác định' };
 
   const supabase = service();
@@ -1058,9 +1059,10 @@ export async function submitManagerOrderAction(input: {
       shop_name: auth.shopName,
       order_ref: res.orderRef,
       delivery_date: res.deliveryDate,
+      delivery_time: res.deliveryTime,
       lines,
     });
   }
 
-  return { orderRef: res.orderRef, deliveryDate: res.deliveryDate };
+  return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime };
 }

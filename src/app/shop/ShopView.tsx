@@ -187,6 +187,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderGateMsg, setOrderGateMsg] = useState<string | null>(null);
   const [orderUnlocking, setOrderUnlocking] = useState(false);
   const [orderDeliveryDate, setOrderDeliveryDate] = useState<string | null>(null);
+  const [orderDeliveryTime, setOrderDeliveryTime] = useState('09:00');
   const [orderMinDate, setOrderMinDate] = useState<string | null>(null);
   const [orderTomorrowOpen, setOrderTomorrowOpen] = useState(true);
   const [orderCategories, setOrderCategories] = useState<string[]>([]);
@@ -198,7 +199,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
-  const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string } | null>(null);
+  const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string } | null>(null);
 
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
@@ -747,6 +748,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderCategoryFilter(null);
     setOrderSearchQuery('');
     setOrderSearchResults([]);
+    setOrderDeliveryTime('09:00');
   }
 
   // Sets a product's cart quantity directly (adds it if new, updates in place if already
@@ -783,11 +785,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       pin: orderPin.trim(),
       ...(readOnly ? { shopName } : {}),
       deliveryDate: orderDeliveryDate ?? '',
+      deliveryTime: orderDeliveryTime,
       lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
     });
     setOrderSubmitting(false);
     if (res.error || !res.orderRef || !res.deliveryDate) { setOrderMsg(`Lỗi: ${res.error ?? 'không rõ'}`); return; }
-    setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate });
+    setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime });
     setOrderCart([]);
   }
 
@@ -1423,7 +1426,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
                 <CheckCircle2 size={32} className="mx-auto" style={{ color: '#16A34A' }} />
                 <div className="text-sm font-bold text-navy">Đã xác nhận đơn hàng</div>
-                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}</div>
+                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` lúc ${orderResult.deliveryTime}` : ''}</div>
                 <div className="rounded-xl px-4 py-3" style={{ backgroundColor: '#F9FAFB' }}>
                   <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã đơn Odoo</div>
                   <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{orderResult.orderRef}</div>
@@ -1448,12 +1451,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     <input type="date" value={orderDeliveryDate ?? ''} min={orderMinDate ?? undefined}
                       onChange={e => setOrderDeliveryDate(e.target.value)}
                       className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                    <input type="time" value={orderDeliveryTime} onChange={e => setOrderDeliveryTime(e.target.value)}
+                      className="w-[92px] shrink-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
                   </div>
-                  {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen && (
-                    <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
-                      Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.
-                    </div>
-                  )}
+                  <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
+                    {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen
+                      ? 'Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.'
+                      : 'Đặt hàng cho ngày mai: bắt buộc trước 14h00.'}
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
@@ -1700,7 +1705,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               Xác nhận đơn hàng ({orderCart.filter(l => l.qty > 0).length} sản phẩm)
             </div>
             <div className="text-xs" style={{ color: '#6B7280' }}>
-              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'} · Quản lý: {orderManager.name}
+              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}{orderDeliveryTime ? ` lúc ${orderDeliveryTime}` : ''} · Quản lý: {orderManager.name}
             </div>
             <div className="space-y-1.5">
               {orderCart.filter(l => l.qty > 0).map(l => (
