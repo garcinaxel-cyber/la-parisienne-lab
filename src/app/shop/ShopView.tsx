@@ -493,29 +493,88 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // Vietnamese diacritics render correctly with zero font-embedding work) via html2canvas, then
   // slices that image across as many A4 pages as needed in jsPDF. Both libs are dynamically
   // imported so they never enter the bundle for any page that isn't this tab.
+  // Paginates the report by content boundaries (category headers, product rows, loss rows —
+  // each marked with data-pdf-block, headers additionally with data-pdf-header) instead of
+  // slicing the raster image at fixed page-height offsets. That naive approach cut cards and
+  // rows arbitrarily mid-content (Axel, 2026-09-03: "regarde comment il rend le pdf", screenshot
+  // showing orphaned rows with no header/border above them). This packs whole blocks onto each
+  // page and never splits one, deferring a header to the next page if the row right after it
+  // wouldn't also fit — so a header is never left alone at the bottom of a page.
   async function exportReportPdf() {
     if (!reportRef.current || !dailyReport) return;
     setReportExporting(true);
     setReportMsg(null);
     try {
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
-      const canvas = await html2canvas(reportRef.current, { scale: 2, backgroundColor: '#FAF8F3' });
-      const imgData = canvas.toDataURL('image/png');
+      const container = reportRef.current;
+      const containerRect = container.getBoundingClientRect();
+      const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#FAF8F3' });
+      const pxRatio = canvas.width / containerRect.width;
+
+      type Block = { top: number; bottom: number; isHeader: boolean };
+      const blockEls = Array.from(container.querySelectorAll<HTMLElement>('[data-pdf-block]'));
+      const blocks: Block[] = blockEls.map(el => {
+        const r = el.getBoundingClientRect();
+        const top = (r.top - containerRect.top) * pxRatio;
+        const bottom = (r.bottom - containerRect.top) * pxRatio;
+        return { top, bottom, isHeader: el.getAttribute('data-pdf-header') === 'true' };
+      });
+
       const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      const MARGIN = 28;
+      const pageWidthPt = pdf.internal.pageSize.getWidth();
+      const pageHeightPt = pdf.internal.pageSize.getHeight();
+      const imgWidthPt = pageWidthPt - MARGIN * 2;
+      const contentHeightPt = pageHeightPt - MARGIN * 2;
+      const ptPerPx = imgWidthPt / canvas.width;
+      const capacityPx = contentHeightPt / ptPerPx;
+
+      // Fallback: if for some reason no blocks were found, treat the whole image as one block.
+      const effectiveBlocks = blocks.length ? blocks : [{ top: 0, bottom: canvas.height, isHeader: false }];
+
+      const pageRanges: { start: number; end: number }[] = [];
+      let pageBlocks: Block[] = [];
+      let pageStart = 0;
+      let i = 0;
+      while (i < effectiveBlocks.length) {
+        const b = effectiveBlocks[i];
+        if (pageBlocks.length === 0) pageStart = b.top;
+
+        // Avoid leaving a lone header at the bottom of a page: if this block is a header (not the
+        // first on the page) and the block right after it wouldn't also fit, push it to a new page.
+        if (b.isHeader && pageBlocks.length > 0 && i + 1 < effectiveBlocks.length) {
+          const next = effectiveBlocks[i + 1];
+          if (next.bottom - pageStart > capacityPx) {
+            pageRanges.push({ start: pageStart, end: pageBlocks[pageBlocks.length - 1].bottom });
+            pageBlocks = [];
+            continue;
+          }
+        }
+
+        const usedHeight = b.bottom - pageStart;
+        if (usedHeight <= capacityPx || pageBlocks.length === 0) {
+          pageBlocks.push(b);
+          i++;
+        } else {
+          pageRanges.push({ start: pageStart, end: pageBlocks[pageBlocks.length - 1].bottom });
+          pageBlocks = [];
+        }
       }
+      if (pageBlocks.length) pageRanges.push({ start: pageStart, end: pageBlocks[pageBlocks.length - 1].bottom });
+
+      const sliceCanvas = document.createElement('canvas');
+      const sliceCtx = sliceCanvas.getContext('2d');
+      pageRanges.forEach((range, idx) => {
+        const sliceHeightPx = Math.max(1, Math.min(range.end, canvas.height) - range.start);
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        sliceCtx?.clearRect(0, 0, canvas.width, sliceHeightPx);
+        sliceCtx?.drawImage(canvas, 0, range.start, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx);
+        const sliceData = sliceCanvas.toDataURL('image/png');
+        if (idx > 0) pdf.addPage();
+        pdf.addImage(sliceData, 'PNG', MARGIN, MARGIN, imgWidthPt, sliceHeightPx * ptPerPx);
+      });
+
       pdf.save(`bao-cao-${shopName}-${dailyReport.date}.pdf`);
     } catch {
       setReportMsg('Lỗi khi xuất PDF, vui lòng thử lại.');
@@ -1049,7 +1108,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
         ) : tab === 'report' ? (
           <div className="space-y-3">
             <div ref={reportRef} className="space-y-3">
-              <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+              <div data-pdf-block="true" className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                   Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
                 </div>
@@ -1064,7 +1123,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
               ) : (
                 <>
-                  <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                  <div data-pdf-block="true" className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
                     <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
                     <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
                   </div>
@@ -1072,12 +1131,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   <div className="space-y-3">
                     {groupStockByCategory(dailyReport.stockLines).map(g => (
                       <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                        <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                        <div data-pdf-block="true" data-pdf-header="true" className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
                           <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
                         </div>
                         <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                           {g.lines.map(l => (
-                            <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
+                            <div key={l.sku} data-pdf-block="true" className="px-4 py-2 flex items-center justify-between gap-3">
                               <span className="text-sm truncate" style={{ color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
                               <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
                                 {l.qty === null ? 'Chưa kiểm' : l.qty}
@@ -1090,17 +1149,17 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   </div>
 
                   <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                    <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                    <div data-pdf-block="true" data-pdf-header="true" className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
                       <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                         Hao hụt hôm nay{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
                       </div>
                     </div>
                     {!dailyReport.losses.length ? (
-                      <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt hôm nay</div>
+                      <div data-pdf-block="true" className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt hôm nay</div>
                     ) : (
                       <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                         {dailyReport.losses.map(p => (
-                          <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
+                          <div key={p.productName} data-pdf-block="true" className="px-4 py-2 flex items-center justify-between gap-2">
                             <span className="text-sm truncate">{p.productName}</span>
                             <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
                           </div>
