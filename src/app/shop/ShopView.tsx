@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, X, Check, ClipboardList, FileText, Download } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopDailyReport } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, KeyRound, Send } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopDailyReport, ShopManager, ShopManagerCatalogProduct } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 
@@ -102,7 +102,7 @@ function NamePicker({ value, onChange, names, onManage }: {
 // `shopName` via a staff session" rather than "cannot write".
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order'>('deliveries');
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
   // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
@@ -176,6 +176,25 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [reportLoading, setReportLoading] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
+
+  // Commande (manager-only) — Axel, 2026-09-03 phase 3: a PIN-gated shop manager places a real
+  // stock replenishment order (production catalog + packaging), auto-confirmed on Odoo at
+  // creation. orderPin doubles as the gate input AND, once unlocked, the remembered PIN resent
+  // with the actual submit (re-verified server-side every time — never just trusted from
+  // orderManager alone). Deliberately separate from the exceptional-orders/manual-cakes flow.
+  const [orderManager, setOrderManager] = useState<ShopManager | null>(null);
+  const [orderPin, setOrderPin] = useState('');
+  const [orderGateMsg, setOrderGateMsg] = useState<string | null>(null);
+  const [orderUnlocking, setOrderUnlocking] = useState(false);
+  const [orderDeliveryDate, setOrderDeliveryDate] = useState<string | null>(null);
+  const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
+  const [orderSearching, setOrderSearching] = useState(false);
+  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string }[]>([]);
+  const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
+  const [orderMsg, setOrderMsg] = useState<string | null>(null);
+  const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string } | null>(null);
 
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
@@ -256,6 +275,29 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'order' || orderDeliveryDate) return;
+    (async () => {
+      const actions = await import('./actions');
+      const res = await actions.getManagerOrderDeliveryDateAction();
+      setOrderDeliveryDate(res.date ?? null);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    const q = orderSearchQuery.trim();
+    if (q.length < 2) { setOrderSearchResults([]); return; }
+    const t = setTimeout(async () => {
+      setOrderSearching(true);
+      const actions = await import('./actions');
+      const res = await actions.searchManagerOrderProductsAction(q, readOnly ? shopName : undefined);
+      setOrderSearching(false);
+      setOrderSearchResults(res.products ?? []);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [orderSearchQuery]);
 
   useEffect(() => {
     const q = stockSearchQuery.trim();
@@ -666,6 +708,66 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     }
   }
 
+  // ── Commande (manager-only) ──
+  async function unlockManager() {
+    if (!orderPin.trim()) return;
+    setOrderUnlocking(true);
+    setOrderGateMsg(null);
+    const actions = await import('./actions');
+    const res = await actions.verifyManagerPinAction(orderPin.trim(), readOnly ? shopName : undefined);
+    setOrderUnlocking(false);
+    if (res.error) { setOrderGateMsg(res.error); return; }
+    setOrderManager(res.manager ?? null);
+  }
+
+  function lockManager() {
+    setOrderManager(null);
+    setOrderPin('');
+    setOrderGateMsg(null);
+    setOrderCart([]);
+    setOrderResult(null);
+    setOrderMsg(null);
+  }
+
+  function addOrderItem(p: ShopManagerCatalogProduct) {
+    setOrderCart(prev => prev.some(l => l.sku === p.sku) ? prev : [...prev, { sku: p.sku, name: p.name, qty: 1, note: '' }]);
+    setOrderSearchQuery('');
+    setOrderSearchResults([]);
+  }
+
+  function updateOrderQty(sku: string, qty: number) {
+    setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, qty: Math.max(0, Math.floor(qty) || 0) } : l));
+  }
+
+  function updateOrderNote(sku: string, note: string) {
+    setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, note } : l));
+  }
+
+  function removeOrderItem(sku: string) {
+    setOrderCart(prev => prev.filter(l => l.sku !== sku));
+  }
+
+  async function confirmOrder() {
+    setOrderPendingConfirm(false);
+    setOrderSubmitting(true);
+    setOrderMsg(null);
+    const actions = await import('./actions');
+    const res = await actions.submitManagerOrderAction({
+      pin: orderPin.trim(),
+      ...(readOnly ? { shopName } : {}),
+      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
+    });
+    setOrderSubmitting(false);
+    if (res.error || !res.orderRef || !res.deliveryDate) { setOrderMsg(`Lỗi: ${res.error ?? 'không rõ'}`); return; }
+    setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate });
+    setOrderCart([]);
+  }
+
+  function newOrder() {
+    setOrderResult(null);
+    setOrderMsg(null);
+  }
+
   async function logout() {
     const { createClient } = await import('@/lib/supabase-browser');
     await createClient().auth.signOut();
@@ -749,6 +851,11 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'report' ? '#1f2937' : 'white', color: tab === 'report' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <FileText size={16} /> Báo cáo
+          </button>
+          <button onClick={() => setTab('order')}
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            style={{ backgroundColor: tab === 'order' ? '#1f2937' : 'white', color: tab === 'order' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            <Package2 size={16} /> Commande
           </button>
         </div>
 
@@ -1264,6 +1371,121 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             )}
             {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
           </div>
+        ) : tab === 'order' ? (
+          <div className="space-y-3">
+            {!orderManager ? (
+              <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
+                <KeyRound size={28} className="mx-auto" style={{ color: '#6B7280' }} />
+                <div className="text-sm font-bold text-navy">Khu vực dành cho quản lý</div>
+                <div className="text-xs" style={{ color: '#6B7280' }}>Nhập mã PIN để đặt hàng bổ sung cho ngày mai.</div>
+                <input type="password" inputMode="numeric" value={orderPin}
+                  onChange={e => setOrderPin(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') unlockManager(); }}
+                  placeholder="Mã PIN" className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold"
+                  style={{ border: '1px solid #D1D5DB' }} />
+                {orderGateMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderGateMsg}</div>}
+                <button onClick={unlockManager} disabled={orderUnlocking || !orderPin.trim()}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#1f2937' }}>
+                  {orderUnlocking ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                  Mở khoá
+                </button>
+              </div>
+            ) : orderResult ? (
+              <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
+                <CheckCircle2 size={32} className="mx-auto" style={{ color: '#16A34A' }} />
+                <div className="text-sm font-bold text-navy">Đã xác nhận đơn hàng</div>
+                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}</div>
+                <div className="rounded-xl px-4 py-3" style={{ backgroundColor: '#F9FAFB' }}>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã đơn Odoo</div>
+                  <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{orderResult.orderRef}</div>
+                </div>
+                <button onClick={newOrder} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#1f2937' }}>
+                  Đặt đơn khác
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="bg-white rounded-2xl p-4 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: orderManager.color }} />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-navy truncate">{orderManager.name}</div>
+                      <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}</div>
+                    </div>
+                  </div>
+                  <button onClick={lockManager} className="text-xs font-semibold shrink-0" style={{ color: '#9CA3AF' }}>Khoá lại</button>
+                </div>
+
+                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
+                    <input type="text" value={orderSearchQuery} onChange={e => setOrderSearchQuery(e.target.value)}
+                      placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                    {orderSearchQuery.trim().length >= 2 && (
+                      <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
+                        style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                        {orderSearching ? (
+                          <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                        ) : !orderSearchResults.length ? (
+                          <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                        ) : orderSearchResults.map(p => (
+                          <button key={p.sku} onClick={() => addOrderItem(p)}
+                            className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                            {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                            <span className="truncate">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {!orderCart.length ? (
+                  <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: '1px solid #E5E7EB' }}>
+                    Giỏ hàng trống — tìm và thêm sản phẩm ở trên
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                      {orderCart.map(l => (
+                        <div key={l.sku} className="px-4 py-2.5 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold truncate">{l.name}</span>
+                            <button onClick={() => removeOrderItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => updateOrderQty(l.sku, l.qty - 1)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}>
+                              <Minus size={12} />
+                            </button>
+                            <input type="number" value={l.qty} onChange={e => updateOrderQty(l.sku, Number(e.target.value))}
+                              className="w-14 text-center rounded-lg py-1 text-sm font-bold shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+                            <button onClick={() => updateOrderQty(l.sku, l.qty + 1)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}>
+                              <Plus size={12} />
+                            </button>
+                            <input type="text" value={l.note} onChange={e => updateOrderNote(l.sku, e.target.value)}
+                              placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {orderMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderMsg}</div>}
+
+                <button onClick={() => setOrderPendingConfirm(true)} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#1f2937' }}>
+                  {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  Xác nhận đơn hàng
+                </button>
+              </>
+            )}
+          </div>
         ) : (
           !cakes?.length ? (
             <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
@@ -1393,6 +1615,44 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               </button>
               <button onClick={() => { setPendingLoss(false); submitLoss(); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#DC2626' }}>
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Double-check before a manager order — this goes straight to Odoo (create + auto-confirm
+          the REP order), so nothing fires until "Xác nhận" here, same posture as the loss-report
+          modal above (Axel, 2026-09-03 phase 3). */}
+      {orderPendingConfirm && orderManager && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+              Xác nhận đơn hàng ({orderCart.filter(l => l.qty > 0).length} sản phẩm)
+            </div>
+            <div className="text-xs" style={{ color: '#6B7280' }}>
+              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'} · Quản lý: {orderManager.name}
+            </div>
+            <div className="space-y-1.5">
+              {orderCart.filter(l => l.qty > 0).map(l => (
+                <div key={l.sku} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-bold text-navy truncate">{l.name}</div>
+                    {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
+                  </div>
+                  <span className="text-sm font-bold shrink-0">×{l.qty}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.</div>
+            <div className="flex gap-2">
+              <button onClick={() => setOrderPendingConfirm(false)}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                Huỷ
+              </button>
+              <button onClick={confirmOrder}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#16A34A' }}>
                 Xác nhận
               </button>
             </div>

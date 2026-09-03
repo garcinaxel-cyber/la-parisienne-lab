@@ -1,4 +1,5 @@
 'use server';
+import { createHash } from 'crypto';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { ensureDeliveryOrderChecklist, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
@@ -6,6 +7,8 @@ import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
+import { odooConfigured, odooExecute } from '@/lib/odoo';
+import { createManagerReplenishment, tomorrowLabDate } from '@/lib/odoo-manager-order';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -895,4 +898,134 @@ export async function getDailyReportForStaffAction(shopName: string): Promise<{ 
   const auth = await requireStaffSession();
   if ('error' in auth) return { error: auth.error };
   return { report: await fetchDailyReport(shopName) };
+}
+
+// ── Commande (manager-only) ─────────────────────────────────────────────────────────────────
+// Phase 3 of the shop portal plan (Axel, 2026-09-03): a shop manager places a real stock
+// replenishment order directly from the portal, PIN-gated. Deliberately separate from the
+// existing lab_manual_cakes "exceptional orders" flow — Axel: "je ne veux pas que tu considere
+// cette commande comme les commandes exceptionnel manuels". Reads/writes here never touch
+// lab_manual_cakes; the actual Odoo document creation lives in its own module
+// (src/lib/odoo-manager-order.ts) that always auto-confirms (draft -> submitted -> approved) so
+// the order reaches the chefs' production queue the same way any other confirmed order does —
+// "l'app lira la commande pour les chefs comme le process actuel". Managers may only ever order
+// for next-day delivery (Axel confirmed 2026-09-03) — same "same-day stays exceptional" posture
+// the rest of the app already has (odoo-order-lock.ts).
+//
+// The PIN unlocks the tab within whichever shop's shared portal login is already open — there
+// is no separate manager login (Axel confirmed this UX 2026-09-03). A manager can be authorized
+// for several shops on one PIN (Quan: Timecity + Bà Triệu). The PIN is re-verified server-side
+// on every submit (not just trusted from a client-held "already unlocked" flag) — the client
+// keeps the PIN in memory after a successful unlock so the manager isn't asked to retype it for
+// every order in the same session, but the actual Odoo-writing action always re-checks it.
+function hashManagerPin(pin: string): string {
+  return createHash('sha256').update(pin).digest('hex');
+}
+
+export type ShopManager = { id: string; name: string; color: string };
+
+async function resolveManager(shopName: string, pin: string): Promise<ShopManager | null> {
+  const cleanPin = (pin ?? '').trim();
+  if (!cleanPin) return null;
+  const supabase = service();
+  if (!supabase) return null;
+  const { data } = await supabase.from('lab_shop_managers')
+    .select('id, name, color, shops')
+    .eq('active', true)
+    .eq('pin_hash', hashManagerPin(cleanPin));
+  const match = (data ?? []).find((m: any) => Array.isArray(m.shops) && m.shops.includes(shopName));
+  return match ? { id: match.id, name: match.name, color: match.color } : null;
+}
+
+export async function verifyManagerPinAction(pin: string, shopName?: string): Promise<{ manager?: ShopManager; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const manager = await resolveManager(auth.shopName, pin);
+  if (!manager) return { error: 'Code PIN incorrect' };
+  return { manager };
+}
+
+// "Add a product" search for the Commande cart — same production catalog as the Kiểm kho
+// search (every active category, birthday cakes/bentos included — this is a real Odoo
+// replenishment order, not the daily-count checklist, so nothing needs to be held back) PLUS
+// packaging/matière SKUs resolved live against Odoo with the Vietnamese name (same
+// lab_excluded_skus + context: { lang: 'vi_VN' } approach used by the Kiểm kho search before
+// packaging was dropped from that specific feature — packaging stays IN SCOPE here, per Axel's
+// original Phase 3 spec: shops do need to reorder packaging/matière, not just finished goods).
+export type ShopManagerCatalogProduct = { sku: string; name: string; category: string; imageUrl: string | null; isPackaging: boolean };
+
+export async function searchManagerOrderProductsAction(query: string, shopName?: string): Promise<{ products?: ShopManagerCatalogProduct[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const q = (query ?? '').trim().toLowerCase().slice(0, 60);
+
+  const production = await fetchProductionCatalog();
+  const filteredProduction: ShopManagerCatalogProduct[] = (q ? production.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : production)
+    .map(p => ({ ...p, isPackaging: false }));
+
+  let packaging: ShopManagerCatalogProduct[] = [];
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
+  if (excludedSkus.length && odooConfigured()) {
+    try {
+      const domain: any[] = q
+        ? ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]]
+        : [['default_code', 'in', excludedSkus]];
+      const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
+        { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: 30 });
+      packaging = rows.filter(p => p.default_code).map(p => {
+        const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+        return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: 'Packaging', imageUrl: null, isPackaging: true };
+      });
+    } catch {
+      // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
+    }
+  }
+
+  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 40);
+  return { products: all };
+}
+
+export async function getManagerOrderDeliveryDateAction(): Promise<{ date?: string; error?: string }> {
+  return { date: tomorrowLabDate() };
+}
+
+// The real, order-creating action. Re-verifies the PIN server-side (see comment above), then
+// hands off to createManagerReplenishment (src/lib/odoo-manager-order.ts) — creates the Odoo
+// document, adds every line, and immediately confirms it. On success, logs an audit row
+// (lab_shop_manager_orders) — best-effort, never blocks the manager from seeing their order
+// reference just because the local log write failed.
+export async function submitManagerOrderAction(input: {
+  pin: string;
+  shopName?: string;
+  lines: { sku: string; name: string; qty: number; note?: string }[];
+}): Promise<{ orderRef?: string; deliveryDate?: string; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const manager = await resolveManager(auth.shopName, input.pin);
+  if (!manager) return { error: 'Code PIN incorrect' };
+
+  const lines = (input.lines ?? [])
+    .map(l => ({ sku: String(l.sku ?? '').trim(), name: String(l.name ?? '').trim(), qty: Number(l.qty), note: l.note?.trim() }))
+    .filter(l => l.sku && l.qty > 0);
+  if (!lines.length) return { error: 'Panier vide' };
+
+  const res = await createManagerReplenishment(auth.shopName, lines);
+  if (!res.ok || !res.orderRef) return { error: res.error ?? 'Erreur inconnue' };
+
+  const supabase = service();
+  if (supabase) {
+    await supabase.from('lab_shop_manager_orders').insert({
+      manager_id: manager.id,
+      manager_name: manager.name,
+      shop_name: auth.shopName,
+      order_ref: res.orderRef,
+      delivery_date: res.deliveryDate,
+      lines,
+    });
+  }
+
+  return { orderRef: res.orderRef, deliveryDate: res.deliveryDate };
 }
