@@ -684,15 +684,37 @@ async function fetchProductionCatalog(): Promise<ShopStockSearchProduct[]> {
   });
 }
 
-// Birthday cake / Bento cake stay out of the default checklist — manual-add only (see 2nd
-// follow-up note above). Matched case-insensitively/trimmed against lab_fiche_meta.category.
-const STOCK_COUNT_EXCLUDED_CATEGORIES = new Set(['birthday cake', 'bento cake']);
+// Birthday cake / Bento cake / Drinks stay out of the default checklist — manual-add only (see
+// 2nd follow-up note above; Drinks added 2026-09-03 3rd follow-up: "les drinks tu enleves").
+// Matched case-insensitively/trimmed against lab_fiche_meta.category.
+const STOCK_COUNT_EXCLUDED_CATEGORIES = new Set(['birthday cake', 'bento cake', 'drinks - lp']);
+
+// Axel, 2026-09-03 (3rd follow-up): a handful of individual SKUs to drop from the default
+// checklist regardless of category — display-only "fake cake" props (BGBM/BGBMC), discontinued
+// or duplicate listings, and tiramisu minis. Also finger cakes (category Cake): keep only the 9
+// "Chiếc" (whole/piece) SKUs whose code starts with B — the "Cốc" (cup, S-prefixed) and W-prefixed
+// variants of the same 9 products are dropped. Same manual-add-only treatment as the excluded
+// categories above (still findable/addable via search if a shop genuinely needs one).
+const STOCK_COUNT_EXCLUDED_SKUS = new Set([
+  // "il faut ... enleve ... WMCPRMN, SCWM6C, WBY70G, WMCCS2, WMMCDLMN"
+  'WMCPRMN', 'SCWM6C', 'WBY70G', 'WMCCS2', 'WMMCDLMN',
+  // "BBF tu enleves, BTT, BGBM, BGBMC"
+  'BBF', 'BTT', 'BGBM', 'BGBMC',
+  // "enleve les tiramisu mini" (lab_fiche_meta.category = 'Tiramisu', name containing "mini")
+  'BTMVM', 'BTRMSMNCF', 'BTRMSMNHP', 'BTVQM',
+  // "BBGBR"
+  'BBGBR',
+  // finger cake (category Cake) — non-"B-prefix" variants of the 9 kept products
+  'S-BBCFCC', 'S-BBGFC', 'S-BBMCFC', 'S-BBMFB2', 'S-BBMFC', 'S-BBPCFB', 'S-BBPFC', 'S-BBSFC', 'S-BBSFC1',
+  'WBCFC', 'WBGF', 'WBMF', 'WBMF1', 'WBPCF', 'WBSF', 'WBSF1', 'WMMCH', 'WMPF',
+]);
 
 async function stockCountCatalog(): Promise<Map<string, ShopStockSearchProduct>> {
   const all = await fetchProductionCatalog();
   const out = new Map<string, ShopStockSearchProduct>();
   for (const p of all) {
     if (STOCK_COUNT_EXCLUDED_CATEGORIES.has(p.category.trim().toLowerCase())) continue;
+    if (STOCK_COUNT_EXCLUDED_SKUS.has(p.sku)) continue;
     out.set(p.sku, p);
   }
   return out;

@@ -166,6 +166,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [stockSearchQuery, setStockSearchQuery] = useState('');
   const [stockSearchResults, setStockSearchResults] = useState<ShopStockSearchProduct[]>([]);
   const [stockSearching, setStockSearching] = useState(false);
+  const [stockCategoryFilter, setStockCategoryFilter] = useState<string | null>(null);
 
   // Daily report ("Báo cáo") — Axel, 2026-09-03 phase 2: combines today's stock count + today's
   // losses, generated on demand (re-fetched every time this tab is opened, unlike the other tabs'
@@ -536,6 +537,20 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // this only needs to check which tab is active. Staff-test access (readOnly=true) is now just
   // as interactive as the shop's own login (Axel, 2026-08-25) — the only remaining gate is the day.
   const canConfirm = day === 'today';
+
+  // Kiểm kho category filter + per-category completion (Axel, 2026-09-03: "je voudrais que tu
+  // mettes un filtre par categorie et une fois qu une categorie est check en entier la categorie
+  // s affiche en vert") — "checked" means every line in that category has a non-empty value in
+  // the live draft (stockDraft), not the last-saved qty, so the category turns green the moment
+  // the last product in it is typed in, even before "Lưu kiểm kho" is pressed.
+  const stockGroups = stockLines ? groupStockByCategory(stockLines) : [];
+  const stockGroupsWithProgress = stockGroups.map(g => ({
+    ...g,
+    filled: g.lines.filter(l => (stockDraft[l.sku] ?? '').trim() !== '').length,
+  }));
+  const visibleStockGroups = stockCategoryFilter
+    ? stockGroupsWithProgress.filter(g => g.category === stockCategoryFilter)
+    : stockGroupsWithProgress;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
@@ -954,11 +969,45 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng
               </div>
             ) : (
+              <>
+                <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+                  <button type="button" onClick={() => setStockCategoryFilter(null)}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs font-bold rounded-full px-3 py-1.5"
+                    style={{
+                      backgroundColor: stockCategoryFilter === null ? '#1f2937' : 'white',
+                      color: stockCategoryFilter === null ? 'white' : '#374151',
+                      border: `1px solid ${stockCategoryFilter === null ? '#1f2937' : '#D1D5DB'}`,
+                    }}>
+                    Tất cả
+                  </button>
+                  {stockGroupsWithProgress.map(g => {
+                    const isComplete = g.filled === g.lines.length;
+                    const active = stockCategoryFilter === g.category;
+                    return (
+                      <button key={g.category} type="button" onClick={() => setStockCategoryFilter(g.category)}
+                        className="shrink-0 inline-flex items-center gap-1 text-xs font-bold rounded-full px-3 py-1.5"
+                        style={{
+                          backgroundColor: active ? '#1f2937' : isComplete ? '#DCFCE7' : 'white',
+                          color: active ? 'white' : isComplete ? '#166534' : '#374151',
+                          border: `1px solid ${active ? '#1f2937' : isComplete ? '#86EFAC' : '#D1D5DB'}`,
+                        }}>
+                        {isComplete && <Check size={12} />}
+                        {g.category} ({g.filled}/{g.lines.length})
+                      </button>
+                    );
+                  })}
+                </div>
+
               <div className="space-y-3">
-                {groupStockByCategory(stockLines).map(g => (
+                {visibleStockGroups.map(g => {
+                  const isComplete = g.filled === g.lines.length;
+                  return (
                   <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                    <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
-                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
+                    <div className="px-4 py-2" style={{ backgroundColor: isComplete ? '#DCFCE7' : '#F9FAFB' }}>
+                      <div className="text-xs font-bold uppercase tracking-wide flex items-center gap-1" style={{ color: isComplete ? '#166534' : '#6B7280' }}>
+                        {isComplete && <Check size={12} />}
+                        {g.category}
+                      </div>
                     </div>
                     <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                       {g.lines.map(l => (
@@ -982,8 +1031,10 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       ))}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
+              </>
             )}
 
             <button onClick={saveStockCount}
