@@ -6,7 +6,6 @@ import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
-import { odooExecute, odooConfigured } from '@/lib/odoo';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -610,17 +609,53 @@ export async function getShopLossesDailyRecapForStaffAction(shopName: string): P
 // le stock soit prerempli mais les produits qu'on met déjà dans la liste de comptabilisation on
 // peut se baser sur ce qu'ils ont commandé avant... sur 2 semaines ça suffit"). A shop can add a
 // product that isn't on that auto list — once added it's remembered for next time ("on le
-// mémorise" — lab_shop_stock_count_items), including packagings (with their Vietnamese name,
-// resolved live from Odoo the same way delivery-check does). Counts are editable multiple times
-// the same day (Axel: "comptage modifiable") — upserted on (shop_name, sku, count_date).
+// mémorise" — lab_shop_stock_count_items). Counts are editable multiple times the same day
+// (Axel: "comptage modifiable") — upserted on (shop_name, sku, count_date).
+//
+// Axel, 2026-09-03 (follow-up): "je veux pax le packaging dans le comptage de stock et les
+// produits je veux un comptage par category stp et je veux les photos des produits stp" —
+// production SKUs only (packaging/matière removed entirely from this feature, both the
+// order-history base list — already production-only, lab_order_lines — and the add-product
+// search, which used to also offer lab_excluded_skus/Odoo packaging results), each line now
+// carries its fiche category (for the UI to group by) and a product photo, resolved the same
+// way the delivery-check thumbnails and the order/[token] catalog already do (variant image,
+// falling back to the fiche's own image).
 const STOCK_COUNT_WINDOW_DAYS = 14;
 
 function vnDateStr(d: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
+// Category + photo for a set of production SKUs — joined live from lab_fiche_variants/
+// lab_fiche_meta (never stored on the count rows themselves, so a fiche's category/photo edit
+// is picked up immediately on next load).
+const STOCK_COUNT_FALLBACK_CATEGORY = 'Khác';
+
+async function resolveFicheMetaBySku(skus: string[]): Promise<Record<string, { category: string; imageUrl: string | null }>> {
+  const out: Record<string, { category: string; imageUrl: string | null }> = {};
+  const supabase = service();
+  if (!supabase || !skus.length) return out;
+  const { data: vars } = await supabase.from('lab_fiche_variants').select('sku, fiche_id, image_url').in('sku', skus);
+  const ficheIds = Array.from(new Set((vars ?? []).map((v: any) => v.fiche_id).filter(Boolean)));
+  const { data: fiches } = ficheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, category, image_url').in('id', ficheIds)
+    : { data: [] as any[] };
+  const ficheById: Record<string, any> = {};
+  for (const f of fiches ?? []) ficheById[f.id] = f;
+  for (const v of vars ?? []) {
+    if (!v.sku) continue;
+    const f = ficheById[v.fiche_id];
+    out[v.sku] = { category: f?.category || STOCK_COUNT_FALLBACK_CATEGORY, imageUrl: v.image_url ?? f?.image_url ?? null };
+  }
+  return out;
+}
+
 // Which SKUs belong on this shop's checklist, and their display name — derived live from order
 // history + manually-added extras, never stored itself (only the counted quantities are).
+// Production only (see 2026-09-03 follow-up above) — lab_order_lines is already production-only
+// demand, so the extras (lab_shop_stock_count_items) are the only place a packaging SKU could
+// have slipped in before this change; addStockCountItemAction now rejects non-production SKUs
+// going forward, but any already added are still hidden here as a defensive backstop.
 async function stockCountBaseNames(shopName: string): Promise<Map<string, { name: string; isExtra: boolean }>> {
   const supabase = service();
   const out = new Map<string, { name: string; isExtra: boolean }>();
@@ -632,30 +667,33 @@ async function stockCountBaseNames(shopName: string): Promise<Map<string, { name
   // stored inconsistently across sync sources (see normalizeShopName's comment).
   const { data: orderLines } = await supabase.from('lab_order_lines')
     .select('product_sku, product_name_vi, shop_name').gte('delivery_date', since).gt('qty', 0).limit(10000);
-  const { data: packagingLines } = await supabase.from('lab_order_packaging_lines')
-    .select('sku, product_name_vi, shop_name').gte('delivery_date', since).limit(10000);
-
   for (const l of orderLines ?? []) {
     if (!l.product_sku || normalizeShopName(l.shop_name) !== target) continue;
     if (!out.has(l.product_sku)) out.set(l.product_sku, { name: l.product_name_vi || l.product_sku, isExtra: false });
   }
-  for (const l of packagingLines ?? []) {
-    if (!l.sku || normalizeShopName(l.shop_name) !== target) continue;
-    if (!out.has(l.sku)) out.set(l.sku, { name: l.product_name_vi || l.sku, isExtra: false });
-  }
 
   const { data: extras } = await supabase.from('lab_shop_stock_count_items').select('sku, product_name').eq('shop_name', shopName);
-  for (const e of extras ?? []) out.set(e.sku, { name: e.product_name, isExtra: true });
+  const extraSkus = (extras ?? []).map((e: any) => e.sku).filter(Boolean);
+  const productionExtraSkus = new Set(
+    extraSkus.length ? Object.keys(await resolveFicheMetaBySku(extraSkus)) : [],
+  );
+  for (const e of extras ?? []) {
+    if (!productionExtraSkus.has(e.sku)) continue; // drop any pre-existing packaging extra
+    out.set(e.sku, { name: e.product_name, isExtra: true });
+  }
 
   return out;
 }
 
-export type ShopStockCountLine = { sku: string; name: string; qty: number | null; isExtra: boolean };
+export type ShopStockCountLine = {
+  sku: string; name: string; qty: number | null; isExtra: boolean; category: string; imageUrl: string | null;
+};
 
 async function fetchStockCountList(shopName: string): Promise<ShopStockCountLine[]> {
   const supabase = service();
   if (!supabase) return [];
   const baseNames = await stockCountBaseNames(shopName);
+  const ficheMeta = await resolveFicheMetaBySku(Array.from(baseNames.keys()));
 
   const today = vnDateStr();
   const { data: counts } = await supabase.from('lab_shop_stock_counts')
@@ -664,8 +702,13 @@ async function fetchStockCountList(shopName: string): Promise<ShopStockCountLine
   for (const c of counts ?? []) qtyBySku.set(c.sku, Number(c.qty));
 
   return Array.from(baseNames.entries())
-    .map(([sku, v]) => ({ sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .map(([sku, v]) => ({
+      sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null,
+      category: ficheMeta[sku]?.category ?? STOCK_COUNT_FALLBACK_CATEGORY, imageUrl: ficheMeta[sku]?.imageUrl ?? null,
+    }))
+    // Grouped by category in the UI — sort server-side the same way so the client can just walk
+    // the array in order.
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
 export async function getMyStockCountListAction(): Promise<{ shopName?: string; date?: string; lines?: ShopStockCountLine[]; error?: string }> {
@@ -711,14 +754,11 @@ export async function saveStockCountAction(input: {
   return { ok: true, saved: rows.length };
 }
 
-export type ShopStockSearchProduct = { sku: string; name: string; isPackaging: boolean };
+export type ShopStockSearchProduct = { sku: string; name: string; category: string; imageUrl: string | null };
 
-// "Add a product" search for the stock-count checklist — production catalog (same source as the
-// order/[token] flow) PLUS packaging/matière SKUs (lab_excluded_skus, resolved live against Odoo
-// with the Vietnamese name — same context: { lang: 'vi_VN' } trick as delivery-check's packaging
-// lines, since lab_excluded_skus.product_name itself is stored inconsistently — Axel, 2026-09-03:
-// "les shops commandes des packagings des fois, il faut qu'ils puissent les sélectionner et voir
-// le nom viet").
+// "Add a product" search for the stock-count checklist — production catalog only (same source
+// as the order/[token] flow). Packaging/matière SKUs were removed from this feature entirely
+// (Axel, 2026-09-03: "je veux pax le packaging dans le comptage de stock").
 export async function searchStockCountProductsAction(query: string, shopName?: string): Promise<{ products?: ShopStockSearchProduct[]; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
@@ -726,12 +766,12 @@ export async function searchStockCountProductsAction(query: string, shopName?: s
   if (!supabase) return { error: 'Server not configured' };
   const q = (query ?? '').trim().toLowerCase().slice(0, 60);
 
-  const { data: fiches } = await supabase.from('lab_fiche_meta').select('id, name_vi').eq('is_active', true);
+  const { data: fiches } = await supabase.from('lab_fiche_meta').select('id, name_vi, category, image_url').eq('is_active', true);
   const ficheById: Record<string, any> = {};
   for (const f of fiches ?? []) ficheById[f.id] = f;
   const ficheIds = (fiches ?? []).map(f => f.id);
   const { data: vars } = ficheIds.length
-    ? await supabase.from('lab_fiche_variants').select('fiche_id, sku, label').in('fiche_id', ficheIds)
+    ? await supabase.from('lab_fiche_variants').select('fiche_id, sku, label, image_url').in('fiche_id', ficheIds)
     : { data: [] as any[] };
   const skus = Array.from(new Set((vars ?? []).map((v: any) => v.sku).filter(Boolean)));
   const { data: nameRows } = skus.length
@@ -745,31 +785,12 @@ export async function searchStockCountProductsAction(query: string, shopName?: s
     if (!f || !v.sku) return [];
     const label = v.label && v.label !== 'Standard' ? v.label : '';
     const name = nameBySku[v.sku] || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : v.sku);
-    return [{ sku: v.sku as string, name, isPackaging: false }];
+    return [{ sku: v.sku as string, name, category: f.category || STOCK_COUNT_FALLBACK_CATEGORY, imageUrl: v.image_url ?? f.image_url ?? null }];
   });
 
-  let packaging: ShopStockSearchProduct[] = [];
-  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
-  const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
-  if (excludedSkus.length && odooConfigured()) {
-    try {
-      const domain: any[] = q
-        ? ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]]
-        : [['default_code', 'in', excludedSkus]];
-      const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
-        { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: 30 });
-      packaging = rows.filter(p => p.default_code).map(p => {
-        const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
-        return { sku: p.default_code as string, name: variantName || p.name || p.default_code, isPackaging: true };
-      });
-    } catch {
-      // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
-    }
-  }
-
-  const filteredProduction = (q ? production.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : production);
-  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 30);
-  return { products: all };
+  const filtered = (q ? production.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : production)
+    .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 30);
+  return { products: filtered };
 }
 
 export async function addStockCountItemAction(input: {
@@ -785,9 +806,15 @@ export async function addStockCountItemAction(input: {
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
+  // Defense in depth: only a real production SKU can be added — packaging/matière is out of
+  // this feature entirely now (2026-09-03), so this rejects a stale/tampered client call the
+  // same way the search endpoint above no longer offers packaging as a candidate.
+  const ficheMeta = await resolveFicheMetaBySku([sku]);
+  const meta = ficheMeta[sku];
+  if (!meta) return { error: 'SKU không có trong danh mục sản xuất' };
+
   const { error } = await supabase.from('lab_shop_stock_count_items')
     .upsert({ shop_name: auth.shopName, sku, product_name: name, added_by_name: addedBy, added_at: new Date().toISOString() }, { onConflict: 'shop_name,sku' });
   if (error) return { error: error.message };
-  return { item: { sku, name, qty: null, isExtra: true } };
+  return { item: { sku, name, qty: null, isExtra: true, category: meta.category, imageUrl: meta.imageUrl } };
 }
-

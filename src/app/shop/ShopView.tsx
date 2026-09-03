@@ -54,6 +54,18 @@ function fmtDate(d: string) {
   return `${day}/${m}`;
 }
 
+// Kiểm kho is grouped by fiche category (Axel, 2026-09-03: "je veux un comptage par category").
+// The list already arrives sorted category-then-name from the server, so this just buckets it —
+// insertion order into the Map already matches that server order, no re-sort needed here.
+function groupStockByCategory(lines: ShopStockCountLine[]): { category: string; lines: ShopStockCountLine[] }[] {
+  const byCategory = new Map<string, ShopStockCountLine[]>();
+  for (const l of lines) {
+    if (!byCategory.has(l.category)) byCategory.set(l.category, []);
+    byCategory.get(l.category)!.push(l);
+  }
+  return Array.from(byCategory.entries()).map(([category, lines]) => ({ category, lines }));
+}
+
 // Staff roster picker (Axel, 2026-08-27) — a <select> over the shop's managed name list plus a
 // small gear button opening the manage modal, used in both the delivery-confirm name field and
 // the loss-report name field so there's exactly one roster shared everywhere a name is needed.
@@ -847,7 +859,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={stockSearchQuery} onChange={e => setStockSearchQuery(e.target.value)}
-                  placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                  placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
                 {stockSearchQuery.trim().length >= 2 && (
                   <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
                     style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
@@ -857,9 +869,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
                     ) : stockSearchResults.map(p => (
                       <button key={p.sku} onClick={() => addStockItem(p)}
-                        className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: '#F3F4F6' }}>
+                        className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                        {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
                         <span className="truncate">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
-                        {p.isPackaging && <span className="text-[10px] font-bold shrink-0 uppercase" style={{ color: '#6B7280' }}>Packaging</span>}
                       </button>
                     ))}
                   </div>
@@ -874,20 +886,35 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng
               </div>
             ) : (
-              <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
-                  {stockLines.map(l => (
-                    <div key={l.sku} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{l.name}</div>
-                        <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
-                      </div>
-                      <input type="number" min={0} step="1" inputMode="decimal"
-                        value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
-                        placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+              <div className="space-y-3">
+                {groupStockByCategory(stockLines).map(g => (
+                  <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
                     </div>
-                  ))}
-                </div>
+                    <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                      {g.lines.map(l => (
+                        <div key={l.sku} className="px-4 py-2.5 flex items-center gap-3">
+                          {l.imageUrl ? (
+                            <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
+                              className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                              <img src={thumb(l.imageUrl, 100)} alt="" className="w-full h-full object-cover" />
+                            </button>
+                          ) : (
+                            <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold truncate">{l.name}</div>
+                            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
+                          </div>
+                          <input type="number" min={0} step="1" inputMode="decimal"
+                            value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
+                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
