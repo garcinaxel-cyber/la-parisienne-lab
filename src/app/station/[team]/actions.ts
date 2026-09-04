@@ -74,11 +74,14 @@ export type TeamAnalytics = {
 // "stocks Lab des tiramisu (baby_mama), macaron et biscuit voyage (team hung)"). Confirmed live:
 // category='Tiramisu' → 11 SKUs, all team baby_mama; 'Macaron' → 35 SKUs + 'Biscuit Voyage' → 22
 // SKUs, both team hung. Entremet/baker intentionally have no entry — completion-only (Axel "OUI").
-// IMPORTANT: 'Biscuit Voyage' is NOT exclusive to hung — 5 "Lady Finger" SKUs in that same
-// category belong to baby_mama (confirmed live). Filtering by category alone leaked baby_mama's
-// items into hung's stock card — must also filter lab_fiche_meta.teams @> [team] below.
+// IMPORTANT: 'Biscuit Voyage' is NOT exclusive to hung — 5 "Lady Finger" ("Bánh Sampa...") SKUs
+// in that same category belong to baby_mama (confirmed live, 2026-09-04: teams=['baby_mama'] on
+// all 5, vs. hung's 22 and baker's 3 in the same category). 'Biscuit Voyage' is listed for BOTH
+// teams below on purpose — filtering by category alone would leak baby_mama's items into hung's
+// stock card (and vice versa), so getTeamAnalyticsAction also filters lab_fiche_meta.teams @>
+// [team], which scopes each team to only its own SKUs within the shared category.
 const TEAM_STOCK_CATEGORIES: Record<string, string[]> = {
-  baby_mama: ['Tiramisu'],
+  baby_mama: ['Tiramisu', 'Biscuit Voyage'],
   hung: ['Macaron', 'Biscuit Voyage'],
 };
 
