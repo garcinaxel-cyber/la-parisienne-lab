@@ -195,7 +195,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
   const [orderSearching, setOrderSearching] = useState(false);
-  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string }[]>([]);
+  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null }[]>([]);
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
@@ -759,7 +759,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     const clamped = Math.max(0, Math.floor(qty) || 0);
     setOrderCart(prev => {
       const exists = prev.some(l => l.sku === p.sku);
-      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '' }] : prev;
+      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl }] : prev;
       return prev.map(l => l.sku === p.sku ? { ...l, qty: clamped } : l);
     });
   }
@@ -1494,8 +1494,15 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       ) : orderSearchResults.map(p => {
                         const qtyInCart = orderCart.find(l => l.sku === p.sku)?.qty ?? 0;
                         return (
-                          <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
-                            {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                          <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: '#F3F4F6' }}>
+                            {p.imageUrl ? (
+                              <button type="button" onClick={() => setZoomImage(p.imageUrl!)}
+                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                                <img src={thumb(p.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
+                              </button>
+                            ) : (
+                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                            )}
                             <span className="truncate flex-1 min-w-0">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button onClick={() => setOrderQtyForProduct(p, qtyInCart - 1)} disabled={qtyInCart <= 0}
@@ -1524,8 +1531,16 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                       {orderCart.map(l => (
                         <div key={l.sku} className="px-4 py-2.5 space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-semibold truncate">{l.name}</span>
+                          <div className="flex items-center gap-2.5">
+                            {l.imageUrl ? (
+                              <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
+                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                                <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
+                              </button>
+                            ) : (
+                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                            )}
+                            <span className="text-sm font-semibold truncate flex-1 min-w-0">{l.name}</span>
                             <button onClick={() => removeOrderItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1709,7 +1724,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             </div>
             <div className="space-y-1.5">
               {orderCart.filter(l => l.qty > 0).map(l => (
-                <div key={l.sku} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                  {l.imageUrl ? (
+                    <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
+                  ) : (
+                    <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy truncate">{l.name}</div>
                     {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
