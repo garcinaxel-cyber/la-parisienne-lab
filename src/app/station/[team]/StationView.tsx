@@ -12,6 +12,7 @@ import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/li
 import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import { thumb } from '@/lib/img-thumb';
+import { armNotifySound, playNewOrderChime } from '@/lib/notify-sound';
 
 function SearchIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
   return (
@@ -224,6 +225,34 @@ export default function StationView({
     { table: 'lab_birthday_details' },
     { table: 'lab_assignments', filter: `team=eq.${team}` },
   ]);
+  // New-order sound + visual alert (Axel, 2026-09-04: chefs get no cue when an order arrives —
+  // the refresh above is silent). Arm the chime's AudioContext on the very first tap of the
+  // session so it's unlocked well before any order can actually arrive.
+  useEffect(() => { armNotifySound(); }, []);
+  const [newOrderAlert, setNewOrderAlert] = useState(0);
+  useEffect(() => {
+    if (isHistoryView) return; // browsing a past date — a live "new order" ping doesn't apply
+    const supabase = createClient();
+    let pending = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`station-neworder-${team}`)
+      // INSERT only — never UPDATE/DELETE, so ticking a box, editing a qty, or cancelling an
+      // order never sounds. Debounced so every insert from one sync wave (or one big manual
+      // import) collapses into a single chime, per Axel: "par vague de sync, pas par ligne" —
+      // and a wave with zero new lines never reaches this handler at all, so no sound either.
+      .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'lab_assignments', filter: `team=eq.${team}` } as any, () => {
+        pending += 1;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          setNewOrderAlert(n => n + pending);
+          pending = 0;
+          playNewOrderChime();
+        }, 700);
+      })
+      .subscribe();
+    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
+  }, [team, isHistoryView]);
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
   const [showInStock, setShowInStock] = useState(false);
@@ -1018,6 +1047,23 @@ export default function StationView({
   // chef sees it without having to open the Analytics tab first).
   const lowStockAlert = (analyticsData?.stock ?? []).some(g => g.items.some(i => i.found && i.threshold != null && i.qty < i.threshold));
 
+  // Flash the browser tab title while there's an unseen new-order alert, so it's noticeable
+  // even if the chef only glances at the tab strip rather than the page itself. Keyed on the
+  // boolean (not the raw count) so a second wave arriving while the banner is already showing
+  // doesn't restart the interval mid-flash.
+  const hasNewOrderAlert = newOrderAlert > 0;
+  useEffect(() => {
+    if (!hasNewOrderAlert) return;
+    const base = document.title;
+    const flashText = lang === 'vi' ? '\uD83D\uDD34 Đơn hàng mới!' : '\uD83D\uDD34 New order!';
+    let showingFlash = false;
+    const id = setInterval(() => {
+      document.title = showingFlash ? base : flashText;
+      showingFlash = !showingFlash;
+    }, 1000);
+    return () => { clearInterval(id); document.title = base; };
+  }, [hasNewOrderAlert, lang]);
+
   const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
     {
       id: 'production',
@@ -1171,6 +1217,27 @@ export default function StationView({
           ))}
         </div>
       </header>
+
+      {/* New-order alert banner (2026-09-04) — dismissed by tapping it (jumps to Commande) or
+          the close icon; not auto-cleared on tab focus, so it stays until the chef actually
+          acknowledges it rather than disappearing just because the browser tab blinked active. */}
+      {newOrderAlert > 0 && (
+        <div className="max-w-3xl mx-auto px-4 pt-3">
+          <button
+            onClick={() => { setNewOrderAlert(0); setActiveTab('commande'); setOrderFilter(null); }}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors animate-pulse"
+            style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5' }}>
+            <ClipboardList size={18} className="shrink-0" style={{ color: '#B91C1C' }} />
+            <span className="text-sm flex-1 min-w-0 font-bold" style={{ color: '#991B1B' }}>
+              {lang === 'vi'
+                ? `${newOrderAlert} đơn hàng mới vừa đến`
+                : `${newOrderAlert} new order${newOrderAlert > 1 ? 's' : ''} just arrived`}
+            </span>
+            <X size={16} className="shrink-0" style={{ color: '#B91C1C' }}
+              onClick={(e) => { e.stopPropagation(); setNewOrderAlert(0); }} />
+          </button>
+        </div>
+      )}
 
       {/* Reminder: anything produced (today OR ahead-of-tomorrow) that still needs to go to
           stock. Combines BOTH lists regardless of which Today/Tomorrow sub-tab is active — an
