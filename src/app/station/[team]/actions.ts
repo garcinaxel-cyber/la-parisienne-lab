@@ -6,6 +6,48 @@ import { TEAM_LABELS } from '@/lib/types';
 import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 
+// Push subscribe/unsubscribe (phase 3, 2026-09-04) — same auth posture as syncOdooAction: the
+// user session only confirms the click came from a logged-in station account, the actual write
+// goes through the service-role client since lab_push_subscriptions has zero RLS policies (see
+// lab_v61_push_subscriptions). endpoint is globally unique per device subscription, so upsert on
+// it — a chef re-enabling on the same device/browser just refreshes the row instead of
+// duplicating it.
+export async function subscribePushAction(
+  team: string,
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  if (!subscription?.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+    return { error: 'Invalid subscription' };
+  }
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Not configured' };
+  const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const { error } = await service.from('lab_push_subscriptions').upsert({
+    team,
+    endpoint: subscription.endpoint,
+    p256dh: subscription.keys.p256dh,
+    auth: subscription.keys.auth,
+    user_id: session.user.id,
+    user_name: session.user.email ?? null,
+    last_seen_at: new Date().toISOString(),
+  }, { onConflict: 'endpoint' });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function unsubscribePushAction(endpoint: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  if (!endpoint) return { error: 'Missing endpoint' };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Not configured' };
+  const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  await service.from('lab_push_subscriptions').delete().eq('endpoint', endpoint);
+  return { ok: true };
+}
+
 export async function sendProductionReadyNotification(
   teamSlug: string,
   date: string,

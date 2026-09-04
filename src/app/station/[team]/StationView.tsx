@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
@@ -13,6 +13,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import { thumb } from '@/lib/img-thumb';
 import { armNotifySound, playNewOrderChime } from '@/lib/notify-sound';
+import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 
 function SearchIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
   return (
@@ -253,6 +254,38 @@ export default function StationView({
       .subscribe();
     return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
   }, [team, isHistoryView]);
+  // Push notification opt-in state (phase 3, 2026-09-04) — reflects the REAL subscription state
+  // (checked via the service worker/PushManager on mount), not just a locally-remembered
+  // boolean, so the bell icon is still correct after e.g. the chef revoked the permission from
+  // browser settings outside the app.
+  const [pushState, setPushState] = useState<'checking' | 'off' | 'on' | 'unsupported' | 'not-configured'>('checking');
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const support = pushSupport();
+      if (support !== 'ready') { if (!cancelled) setPushState(support); return; }
+      const sub = await getExistingPushSubscription();
+      if (!cancelled) setPushState(sub ? 'on' : 'off');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  async function handleTogglePush() {
+    if (pushState === 'on') {
+      const endpoint = await unsubscribeCurrentPush();
+      if (endpoint) {
+        const { unsubscribePushAction } = await import('./actions');
+        await unsubscribePushAction(endpoint);
+      }
+      setPushState('off');
+      return;
+    }
+    if (pushState !== 'off') return; // unsupported / not-configured — nothing to do
+    const result = await requestPushSubscription();
+    if (!result.ok) { setPushState(result.reason === 'not-configured' ? 'not-configured' : 'off'); return; }
+    const { subscribePushAction } = await import('./actions');
+    const res = await subscribePushAction(team, result.subscription);
+    setPushState(res.error ? 'off' : 'on');
+  }
   // Production day sub-toggle: today (default) or tomorrow (pre-production)
   const [prodDay, setProdDay] = useState<'today' | 'tomorrow'>('today');
   const [showInStock, setShowInStock] = useState(false);
@@ -1171,6 +1204,16 @@ export default function StationView({
                   ? <AlertCircle size={14} />
                   : <RefreshCw size={14} className={syncState === 'syncing' ? 'animate-spin' : ''} />}
             </button>
+            {(pushState === 'on' || pushState === 'off') && (
+              <button onClick={handleTogglePush}
+                title={pushState === 'on'
+                  ? (lang === 'vi' ? 'Tắt thông báo đẩy' : 'Turn off push notifications')
+                  : (lang === 'vi' ? 'Bật thông báo đẩy (kể cả khi khóa màn hình)' : 'Enable push notifications (even screen locked)')}
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: pushState === 'on' ? '#7CD98C' : 'rgba(255,255,255,0.5)' }}>
+                <Bell size={14} />
+              </button>
+            )}
             <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
               className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
