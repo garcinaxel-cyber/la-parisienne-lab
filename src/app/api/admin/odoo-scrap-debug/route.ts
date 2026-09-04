@@ -674,6 +674,25 @@ export async function GET(req: Request) {
       });
       return NextResponse.json({ rows });
     }
+    if (action === 'states') {
+      // Read-only batch state check (2026-09-04, Axel: "verifie que les Scrap de Bà Triệu et
+      // Time City sont correctement saisie sur odoo") — the 2026-08-27 fix below (testwizard/
+      // testvalidate) resolves the insufficient-qty wizard automatically going forward, but
+      // odoo_scrap_id being set in lab_shop_losses doesn't itself prove a given record reached
+      // 'done' (e.g. if the wizard resolution silently failed for some other reason). Pass
+      // ?ids=1,2,3 (comma-separated stock.scrap ids) — usually the odoo_scrap_id column from
+      // lab_shop_losses for the shop/date range being audited.
+      const idsParam = url.searchParams.get('ids') ?? '';
+      const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
+      const rows = await odooExecuteWrite<any[]>('stock.scrap', 'read', [ids], { fields: ['state', 'name', 'scrap_qty'] });
+      const foundIds = new Set(rows.map(r => r.id));
+      const missing = ids.filter(id => !foundIds.has(id));
+      const notDone = rows.filter(r => r.state !== 'done');
+      const stateCounts: Record<string, number> = {};
+      for (const r of rows) stateCounts[r.state] = (stateCounts[r.state] ?? 0) + 1;
+      return NextResponse.json({ requested: ids.length, found: rows.length, missing, stateCounts, notDone });
+    }
     if (action === 'inspect') {
       const rows = await odooExecuteWrite<any[]>('stock.scrap', 'read', [[id]], {
         fields: ['state', 'product_id', 'scrap_qty', 'location_id', 'scrap_location_id', 'origin'],
