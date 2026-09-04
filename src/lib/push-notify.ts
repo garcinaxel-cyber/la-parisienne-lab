@@ -33,10 +33,12 @@ export async function sendTeamPush(
 ): Promise<void> {
   if (!ensureConfigured()) return;
   try {
+    // team match OR a subscriber flagged push_all_teams on their profile (Axel, 2026-09-04:
+    // wants every order notification regardless of team on his own account only).
     const { data: subs } = await supabase
       .from('lab_push_subscriptions')
       .select('id, endpoint, p256dh, auth')
-      .eq('team', team);
+      .or(`team.eq.${team},all_teams.eq.true`);
     if (!subs?.length) return;
 
     const deadIds: string[] = [];

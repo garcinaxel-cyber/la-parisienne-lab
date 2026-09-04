@@ -23,9 +23,13 @@ export async function subscribePushAction(
     return { error: 'Invalid subscription' };
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Not configured' };
+  // push_all_teams (profiles): Axel, 2026-09-04 — his account only, not every admin, receives
+  // push for every team's orders regardless of which station he taps the bell on.
+  const { data: profile } = await supabase.from('profiles').select('push_all_teams').eq('id', session.user.id).single();
   const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const { error } = await service.from('lab_push_subscriptions').upsert({
     team,
+    all_teams: profile?.push_all_teams ?? false,
     endpoint: subscription.endpoint,
     p256dh: subscription.keys.p256dh,
     auth: subscription.keys.auth,
