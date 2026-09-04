@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConsolidatedLine } from '@/lib/excel-parser';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
-import { sendTeamPush } from '@/lib/push-notify';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -28,7 +27,16 @@ export async function persistImportsFromLines(
   supabase: SupabaseClient,
   consolidated: ConsolidatedLine[],
   opts: PersistOptions,
-): Promise<{ createdImports: number; earliestDate: string | null; error?: string }> {
+): Promise<{
+  createdImports: number; earliestDate: string | null; error?: string;
+  // Team -> count of newly-created PUBLISHED assignments this call, for phase-3 push
+  // notifications (2026-09-04). Deliberately just data, not a side effect: import-persist.ts is
+  // isomorphic (ImportView.tsx, a client component, calls persistImportsFromLines directly with
+  // a browser Supabase client) and web-push needs Node-only modules (net/tls via
+  // https-proxy-agent) that don't exist in a browser bundle — sending must happen in the two
+  // server-only callers (odoo-auto-sync.ts, and the import publish action), not here.
+  publishedTeamCounts?: Record<string, number>;
+}> {
   const today = new Date().toISOString().split('T')[0];
 
   // Resolve every SKU → variant → fiche once (team default = fiche.teams[0])
@@ -87,6 +95,7 @@ export async function persistImportsFromLines(
 
   const allDates = Array.from(byDate.keys()).sort();
   let createdImports = 0;
+  const publishedTeamCounts: Record<string, number> = {};
 
   // Birthday cakes: a line already covered by a manual cake (same SKU + order + delivery date)
   // must NOT get its own production card — the manual cake IS the card for that demand. See
@@ -198,21 +207,13 @@ export async function persistImportsFromLines(
       }
       for (const a of insertedAsgs ?? []) asgIdByKey[`${a.team}||${a.variant_label}||${a.product_name_vi}`] = a.id;
 
-      // Push notification (phase 3, 2026-09-04) — only for a PUBLISHED import: a draft (manual
-      // review flow, not the Odoo auto-sync which always publishes) isn't visible to chefs yet,
-      // so pushing about it would ring a phone for an order the app doesn't show — worse than no
-      // notification at all. Fire-and-forget: never awaited by the caller, and sendTeamPush
-      // itself never throws (no VAPID keys configured yet = silent no-op), so this can never slow
-      // or break the import/sync path it's attached to.
+      // Tally for the caller to push-notify from (see publishedTeamCounts above) — only counted
+      // for a PUBLISHED import: a draft (manual review, not the auto-sync cron which always
+      // publishes) isn't visible to chefs yet, so notifying about it would ring a phone for an
+      // order the app doesn't show.
       if (opts.status === 'published') {
-        const byTeam = new Map<string, number>();
-        for (const a of insertedAsgs ?? []) byTeam.set(a.team, (byTeam.get(a.team) ?? 0) + 1);
-        for (const [t, teamCount] of Array.from(byTeam.entries())) {
-          sendTeamPush(supabase, t, {
-            title: 'La Parisienne Lab',
-            body: teamCount > 1 ? `${teamCount} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến',
-            url: `/station/${t}`,
-          }).catch(() => {});
+        for (const a of insertedAsgs ?? []) {
+          publishedTeamCounts[a.team] = (publishedTeamCounts[a.team] ?? 0) + 1;
         }
       }
     }
@@ -243,5 +244,5 @@ export async function persistImportsFromLines(
     createdImports++;
   }
 
-  return { createdImports, earliestDate: allDates[0] ?? null };
+  return { createdImports, earliestDate: allDates[0] ?? null, publishedTeamCounts };
 }

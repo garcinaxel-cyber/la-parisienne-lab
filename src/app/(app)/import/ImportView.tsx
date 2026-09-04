@@ -7,7 +7,7 @@ import { parseExcelFile, consolidateLines, type ConsolidatedLine, type SkippedLi
 import { TEAM_LABELS, TEAMS, type Team } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { persistImportsFromLines } from '@/lib/import-persist';
-import { createFicheFromSku } from './actions';
+import { createFicheFromSku, notifyNewOrdersPushAction } from './actions';
 import { excludeSkuAction } from '../odoo-changes-actions';
 
 type Step = 'upload' | 'preview' | 'saving' | 'done';
@@ -327,7 +327,7 @@ export default function ImportView() {
     const sourceTypeByRef: Record<string, string> = {};
     for (const pf of parsedFiles) for (const l of pf.lines) for (const b of l.breakdown) if (b.order_ref) sourceTypeByRef[b.order_ref] = pf.sourceType;
 
-    const { earliestDate, error: persistErr } = await persistImportsFromLines(supabase, effectiveLines, {
+    const { earliestDate, error: persistErr, publishedTeamCounts } = await persistImportsFromLines(supabase, effectiveLines, {
       status: asDraft ? 'draft' : 'published',
       type: importType,
       notes,
@@ -341,6 +341,11 @@ export default function ImportView() {
       excluded: excludedList,
     });
     if (persistErr) { setError(persistErr); setStep('preview'); return; }
+    // Phase-3 push (2026-09-04) — small server-side follow-up call, see notifyNewOrdersPushAction:
+    // web-push can't run in this client component itself. Fire-and-forget, never blocks "done".
+    if (publishedTeamCounts && Object.keys(publishedTeamCounts).length) {
+      notifyNewOrdersPushAction(publishedTeamCounts).catch(() => {});
+    }
     setImportedDate(earliestDate ?? new Date().toISOString().split('T')[0]);
     setStep('done');
   }

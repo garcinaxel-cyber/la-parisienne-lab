@@ -3,6 +3,7 @@ import { runOdooSync } from '@/lib/odoo-sync';
 import { consolidateLines } from '@/lib/excel-parser';
 import { persistImportsFromLines } from '@/lib/import-persist';
 import { applyOdooChanges } from '@/lib/odoo-apply';
+import { sendTeamPush } from '@/lib/push-notify';
 
 export interface AutoSyncResult {
   created_imports: number;
@@ -295,12 +296,29 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
   const sourceTypeByRef: Record<string, string> = {};
   for (const l of lines) if (l.order_ref) sourceTypeByRef[l.order_ref] = l.source_type;
 
-  const { createdImports, error } = await persistImportsFromLines(supabase, consolidated, {
+  const { createdImports, error, publishedTeamCounts } = await persistImportsFromLines(supabase, consolidated, {
     status: 'published', // AUTO mode: new Odoo orders are visible to the chefs immediately
     orderStates: result.stats.order_states,
     sourceTypeByRef,
     auto: true,
   });
+
+  // Phase-3 push notification (2026-09-04) — this is the dominant path chefs actually complained
+  // about ("commande arrive" = the auto-sync bringing in a new Odoo order), so it's fired here
+  // rather than solely relying on the manual-publish action. Fire-and-forget: never awaited, and
+  // sendTeamPush itself never throws (no-op until VAPID env vars exist), so a push failure can
+  // never slow or break this sync run — including the on-demand "Sync now" station button, which
+  // calls this same function.
+  if (!error) {
+    for (const [t, teamCount] of Object.entries(publishedTeamCounts ?? {})) {
+      sendTeamPush(supabase, t, {
+        title: 'La Parisienne Lab',
+        body: teamCount > 1 ? `${teamCount} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến',
+        url: `/station/${t}`,
+      }).catch(() => {});
+    }
+  }
+
   if (error) {
     return {
       created_imports: 0, new_lines: 0, changes_detected: result.changes.length,
