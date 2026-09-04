@@ -529,14 +529,17 @@ export default function StationView({
     })();
   }, [activeTab, team, today]);
 
-  // Lazy-load analytics — via a server action (see getTeamAnalyticsAction in ./actions), NOT
+  // Analytics data — via a server action (see getTeamAnalyticsAction in ./actions), NOT
   // a direct client query: lab_delivery_check_lines/lab_excluded_skus RLS only grants SELECT to
   // admin/lab_manager/assistant, so a chef's own browser session can't read them. The action
   // checks the chef is logged in, then reads through the service-role client and returns only
-  // today's team-scoped completion + Lab stock — same pattern as the Odoo sync button. Fetched
-  // once per tab open (today-only data, no range to cache per).
+  // today's team-scoped completion + Lab stock — same pattern as the Odoo sync button.
+  // Fetched once on mount (no longer gated on opening the tab, 2026-09-04, Axel: point rouge sur
+  // le titre Analytique quand un stock est sous le seuil de securite) so the tab-title red-dot
+  // alert (see lowStockAlert below) reflects reality even before the chef opens the tab. For
+  // entremet/baker (no TEAM_STOCK_CATEGORIES entry) this still only costs the cheap completion
+  // query — getTeamAnalyticsAction only calls Odoo when categories?.length is truthy.
   useEffect(() => {
-    if (activeTab !== 'analytics') return;
     if (analyticsData) return;
     setLoadingAnalytics(true);
     (async () => {
@@ -545,7 +548,7 @@ export default function StationView({
       if (res.data) setAnalyticsData(res.data);
       setLoadingAnalytics(false);
     })();
-  }, [activeTab, team, analyticsData]);
+  }, [team, analyticsData]);
 
   async function saveThreshold(sku: string) {
     const val = parseFloat(thresholdDraft);
@@ -1009,6 +1012,12 @@ export default function StationView({
     });
 
 
+  // Tab-title alert — at least one Lab stock line (any category) below its safety threshold,
+  // same "low" condition as the red highlight on the stock card row further down (Axel,
+  // 2026-08-21 rule; extended 2026-09-04 to also surface as a dot on the tab title itself, so a
+  // chef sees it without having to open the Analytics tab first).
+  const lowStockAlert = (analyticsData?.stock ?? []).some(g => g.items.some(i => i.found && i.threshold != null && i.qty < i.threshold));
+
   const tabs: { id: Tab; labelVi: string; labelEn: string; count: number; icon: React.ReactNode }[] = [
     {
       id: 'production',
@@ -1152,6 +1161,10 @@ export default function StationView({
                     }>
                     {tab.count}
                   </span>
+                )}
+                {tab.id === 'analytics' && lowStockAlert && (
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: '#EF4444', boxShadow: '0 0 0 2px rgba(239,68,68,0.35)' }}
+                    title={lang === 'vi' ? 'Có sản phẩm dưới ngưỡng an toàn' : 'Stock below safety threshold'} />
                 )}
               </span>
             </button>
