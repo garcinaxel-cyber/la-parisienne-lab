@@ -33,6 +33,11 @@ export function middleware(req: NextRequest) {
   // hand (no session).
   if (pathname.startsWith('/api/admin/odoo-ref-debug')) return NextResponse.next();
   if (pathname.startsWith('/api/admin/shop-order-skus-debug')) return NextResponse.next();
+  // Same treatment — read-only batch stock.scrap state diagnostic (2026-09-04), secret-gated
+  // itself, called by hand (no session). Deliberately its own narrow route rather than exempting
+  // /api/admin/odoo-scrap-debug here, which also carries write actions (validate/cancel/
+  // testwizard/invset/...) that must stay behind a real staff session, not a shared secret.
+  if (pathname.startsWith('/api/admin/scrap-states-debug')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
