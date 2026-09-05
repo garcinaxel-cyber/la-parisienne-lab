@@ -76,6 +76,14 @@ export async function GET(req: Request) {
       const rows = await odooExecuteWrite<any[]>('account.move', 'read', [ids], { fields: ['id', 'name', 'state', ...einvoiceFieldNames] });
       return NextResponse.json({ einvoiceFieldNames, rows });
     }
+    if (action === 'permcheck') {
+      // Read-only permission probe (no state change): does the WRITE api user actually have
+      // 'write' rights on account.move, and can it call button_draft / action_post at all —
+      // before Axel's reset-to-draft + discount + repost request is attempted for real.
+      const canWrite = await odooExecuteWrite<boolean>('account.move', 'check_access_rights', ['write'], { raise_exception: false });
+      const canWriteLine = await odooExecuteWrite<boolean>('account.move.line', 'check_access_rights', ['write'], { raise_exception: false });
+      return NextResponse.json({ canWriteMove: canWrite, canWriteMoveLine: canWriteLine });
+    }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
