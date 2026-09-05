@@ -31,15 +31,17 @@ export async function GET(req: Request) {
       ], { fields: ['id', 'name', 'display_name'] });
       if (!partners.length) return NextResponse.json({ error: `No partner matching "${q}"`, partners });
       const partnerIds = partners.map((p: any) => p.id);
+      const noDateFilter = url.searchParams.get('month') === 'all';
       const start = `${year}-${month}-01`;
       const endDate = new Date(Number(year), Number(month), 1); // first day of next month
       const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-01`;
-      const bills = await odooExecuteWrite<any[]>('account.move', 'search_read', [[
+      const domain: any[] = [
         ['partner_id', 'in', partnerIds],
         ['move_type', 'in', ['in_invoice', 'in_refund']],
-        ['invoice_date', '>=', start],
-        ['invoice_date', '<', end],
-      ]], { fields: ['id', 'name', 'ref', 'state', 'invoice_date', 'partner_id', 'amount_untaxed', 'amount_tax', 'amount_total', 'payment_state'] });
+      ];
+      if (!noDateFilter) domain.push(['invoice_date', '>=', start], ['invoice_date', '<', end]);
+      const bills = await odooExecuteWrite<any[]>('account.move', 'search_read', [domain],
+        { fields: ['id', 'name', 'ref', 'state', 'invoice_date', 'date', 'partner_id', 'amount_untaxed', 'amount_tax', 'amount_total', 'payment_state'] });
       const byState: Record<string, number> = {};
       for (const b of bills) byState[b.state] = (byState[b.state] ?? 0) + 1;
       const sumTotal = bills.reduce((s: number, b: any) => s + (b.amount_total || 0), 0);
