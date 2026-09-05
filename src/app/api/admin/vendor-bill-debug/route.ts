@@ -52,7 +52,7 @@ export async function GET(req: Request) {
       const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
       if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
       const raw = url.searchParams.get('raw') === '1';
-      const domain: any[] = raw ? [['move_id', 'in', ids]] : [['move_id', 'in', ids], ['display_type', '=', false]];
+      const domain: any[] = raw ? [['move_id', 'in', ids]] : [['move_id', 'in', ids], ['display_type', '=', 'product']];
       const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [domain],
         { fields: ['id', 'move_id', 'display_type', 'name', 'quantity', 'price_unit', 'discount', 'price_subtotal', 'price_total'] });
       return NextResponse.json({ ids, lineCount: lines.length, lines });
@@ -108,7 +108,7 @@ export async function GET(req: Request) {
           const beforeTotal = bill.amount_total;
           if (bill.state !== 'draft') await odooExecuteWrite('account.move', 'button_draft', [[id]]);
           const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [
-            [['move_id', '=', id], ['display_type', '=', false]],
+            [['move_id', '=', id], ['display_type', '=', 'product']],
           ], { fields: ['id'] });
           const lineIds = lines.map((l: any) => l.id);
           if (lineIds.length) await odooExecuteWrite('account.move.line', 'write', [lineIds, { discount: pct }]);
