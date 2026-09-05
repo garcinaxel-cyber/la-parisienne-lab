@@ -214,11 +214,11 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
 
           {/* Onglets */}
           {(() => {
-            const mainCount = (latest.issue_count ?? 0) + (latest.delivery_coverage_count ?? 0) + (latest.production_stock_count ?? 0) + (latest.stock_odoo_count ?? 0);
+            const mainCount = (latest.issue_count ?? 0) + (latest.delivery_coverage_count ?? 0) + (latest.production_stock_count ?? 0) + (latest.stock_odoo_count ?? 0) + (latest.scrap_sync_count ?? 0);
             const tabs: { id: 'main' | 'deliveries' | 'stock'; label: string; n: number }[] = [
               { id: 'main', label: vi ? '🏠 Chính' : '🏠 Principal', n: mainCount },
               { id: 'deliveries', label: vi ? '🚚 Giao hàng' : '🚚 Livraisons', n: latest.late_delivery_count ?? 0 },
-              { id: 'stock', label: vi ? '📦 Kho' : '📦 Stock', n: (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0) + (latest.scrap_sync_count ?? 0) },
+              { id: 'stock', label: vi ? '📦 Kho' : '📦 Stock', n: (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0) },
             ];
             return (
               <div className="flex gap-2 flex-wrap">
@@ -422,6 +422,37 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
+          {/* 8. Scraps app <-> Odoo — no duplicates, nothing missing */}
+          <Section icon={ArrowLeftRight}
+            title={vi ? 'Hủy hàng (app) so với Odoo' : 'Scraps app vs Odoo'}
+            subtitle={vi ? 'Mỗi lần hủy hàng khai trên app phải có đúng 1 bản ghi trên Odoo' : "Chaque scrap déclaré sur l'app doit avoir exactement 1 fiche sur Odoo"}
+            count={latest.scrap_sync_count ?? 0} vi={vi}>
+            {(latest.scrap_sync_issues ?? []).length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {(latest.scrap_sync_issues ?? []).map((iss, i) => {
+                  const kindLabel = iss.kind === 'not_synced' ? (vi ? 'chưa đồng bộ Odoo' : 'pas encore sur Odoo')
+                    : iss.kind === 'missing_in_odoo' ? (vi ? `Odoo #${iss.odoo_scrap_id} không tồn tại` : `Odoo #${iss.odoo_scrap_id} introuvable`)
+                    : iss.kind === 'not_done' ? (vi ? `Odoo #${iss.odoo_scrap_id} chưa xác nhận (${iss.odoo_state})` : `Odoo #${iss.odoo_scrap_id} non validé (${iss.odoo_state})`)
+                    : (vi ? `trùng Odoo #${iss.odoo_scrap_id}` : `doublon Odoo #${iss.odoo_scrap_id}`);
+                  const sourceLabel = iss.source === 'shop'
+                    ? (iss.shop_name ?? (vi ? 'Cửa hàng' : 'Boutique'))
+                    : (vi ? 'Xưởng' : 'Labo');
+                  return (
+                    <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
+                      <div className="text-navy min-w-0 truncate">
+                        {iss.sku && <span className="font-mono text-xs">{iss.sku}</span>} {iss.sku && '· '}{iss.product_name ?? '—'}
+                        <span className="text-ink-light"> · {sourceLabel} · ×{iss.qty} · {fmtDateTime(iss.reported_at)}</span>
+                      </div>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                        {kindLabel}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+
           </>)}
 
           {tab === 'deliveries' && (<>
@@ -559,36 +590,6 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             )}
           </Section>
 
-          {/* 8. Scraps app <-> Odoo — no duplicates, nothing missing */}
-          <Section icon={ArrowLeftRight}
-            title={vi ? 'Hủy hàng (app) so với Odoo' : 'Scraps app vs Odoo'}
-            subtitle={vi ? 'Mỗi lần hủy hàng khai trên app phải có đúng 1 bản ghi trên Odoo' : "Chaque scrap déclaré sur l'app doit avoir exactement 1 fiche sur Odoo"}
-            count={latest.scrap_sync_count ?? 0} vi={vi}>
-            {(latest.scrap_sync_issues ?? []).length > 0 && (
-              <div className="divide-y divide-border-soft">
-                {(latest.scrap_sync_issues ?? []).map((iss, i) => {
-                  const kindLabel = iss.kind === 'not_synced' ? (vi ? 'chưa đồng bộ Odoo' : 'pas encore sur Odoo')
-                    : iss.kind === 'missing_in_odoo' ? (vi ? `Odoo #${iss.odoo_scrap_id} không tồn tại` : `Odoo #${iss.odoo_scrap_id} introuvable`)
-                    : iss.kind === 'not_done' ? (vi ? `Odoo #${iss.odoo_scrap_id} chưa xác nhận (${iss.odoo_state})` : `Odoo #${iss.odoo_scrap_id} non validé (${iss.odoo_state})`)
-                    : (vi ? `trùng Odoo #${iss.odoo_scrap_id}` : `doublon Odoo #${iss.odoo_scrap_id}`);
-                  const sourceLabel = iss.source === 'shop'
-                    ? (iss.shop_name ?? (vi ? 'Cửa hàng' : 'Boutique'))
-                    : (vi ? 'Xưởng' : 'Labo');
-                  return (
-                    <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
-                      <div className="text-navy min-w-0 truncate">
-                        {iss.sku && <span className="font-mono text-xs">{iss.sku}</span>} {iss.sku && '· '}{iss.product_name ?? '—'}
-                        <span className="text-ink-light"> · {sourceLabel} · ×{iss.qty} · {fmtDateTime(iss.reported_at)}</span>
-                      </div>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
-                        {kindLabel}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Section>
 
           {latest.stock_snapshot && (
             <div className="text-[11px] px-1" style={latest.stock_snapshot.error ? { color: '#B42318' } : { color: '#9CA3AF' }}>
