@@ -89,13 +89,17 @@ export function isManagerOrderWindowOpenForTomorrow(): boolean {
 // Validates a manager-picked delivery date server-side — never trust the client's
 // <input type="date"> min attribute alone. Must be a real 'YYYY-MM-DD' at or after tomorrow,
 // within the sanity backstop above, and if it's specifically tomorrow, still within 14h00.
-function validateDeliveryDate(date: string): { ok: true } | { ok: false; error: string } {
+function validateDeliveryDate(date: string, skipWindowCheck = false): { ok: true } | { ok: false; error: string } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Ngày giao không hợp lệ' };
   const min = tomorrowLabDate();
   const max = labDateOffset(MAX_DELIVERY_DAYS_AHEAD);
   if (date < min) return { ok: false, error: 'Không thể đặt giao cho hôm nay hoặc ngày đã qua — chọn từ ngày mai trở đi' };
   if (date > max) return { ok: false, error: `Ngày giao quá xa (tối đa ${MAX_DELIVERY_DAYS_AHEAD} ngày) — vui lòng liên hệ quản lý` };
-  if (date === min && !isManagerOrderWindowOpenForTomorrow()) {
+  // skipWindowCheck: the 14h00 auto-submit job (Axel, 2026-09-05) deliberately fires AT/AFTER
+  // the cutoff on behalf of a manager who left a draft unconfirmed — the whole point is to
+  // still go through right at 14h00, so the ordinary "too late" rejection below must not apply
+  // to that one trusted server-side caller (src/app/api/odoo/auto-submit-manager-orders/route.ts).
+  if (date === min && !skipWindowCheck && !isManagerOrderWindowOpenForTomorrow()) {
     return { ok: false, error: `Đã hết giờ đặt hàng cho ngày mai (chỉ nhận trước ${ORDER_CUTOFF_HOUR}h00) — vui lòng chọn từ ngày kia trở đi hoặc quay lại vào sáng mai` };
   }
   return { ok: true };
@@ -144,8 +148,9 @@ export async function createManagerReplenishment(
   lines: ManagerOrderLine[],
   deliveryDate: string,
   deliveryTime?: string,
+  skipWindowCheck = false,
 ): Promise<ManagerOrderResult> {
-  const dateCheck = validateDeliveryDate(deliveryDate);
+  const dateCheck = validateDeliveryDate(deliveryDate, skipWindowCheck);
   if (!dateCheck.ok) return { ok: false, error: dateCheck.error };
   const time = cleanDeliveryTime(deliveryTime);
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };

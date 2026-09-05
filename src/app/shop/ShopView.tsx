@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, KeyRound, Send } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopDailyReport, ShopManager, ShopManagerCatalogProduct } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 
@@ -167,6 +167,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [stockSearchResults, setStockSearchResults] = useState<ShopStockSearchProduct[]>([]);
   const [stockSearching, setStockSearching] = useState(false);
   const [stockCategoryFilter, setStockCategoryFilter] = useState<string | null>(null);
+  // Axel, 2026-09-05: "plusieurs inventaire par jour" — session_seq lets a shop run several
+  // distinct counts in one day. stockSessionSeq is whichever session is currently shown (usually
+  // the latest/editable one); stockLatestSessionSeq is the actual latest saved session, used to
+  // tell whether stockSessionSeq is viewing history (< latest) or is the live one (== latest).
+  const [stockSessionSeq, setStockSessionSeq] = useState(1);
+  const [stockLatestSessionSeq, setStockLatestSessionSeq] = useState(1);
+  const [stockSessions, setStockSessions] = useState<ShopStockCountSession[]>([]);
+  const [stockNewSessionConfirm, setStockNewSessionConfirm] = useState(false);
 
   // Daily report ("Báo cáo") — Axel, 2026-09-03 phase 2: combines today's stock count + today's
   // losses, generated on demand (re-fetched every time this tab is opened, unlike the other tabs'
@@ -177,15 +185,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [reportExporting, setReportExporting] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
 
-  // Commande (manager-only) — Axel, 2026-09-03 phase 3: a PIN-gated shop manager places a real
-  // stock replenishment order (production catalog + packaging), auto-confirmed on Odoo at
-  // creation. orderPin doubles as the gate input AND, once unlocked, the remembered PIN resent
-  // with the actual submit (re-verified server-side every time — never just trusted from
-  // orderManager alone). Deliberately separate from the exceptional-orders/manual-cakes flow.
-  const [orderManager, setOrderManager] = useState<ShopManager | null>(null);
-  const [orderPin, setOrderPin] = useState('');
-  const [orderGateMsg, setOrderGateMsg] = useState<string | null>(null);
-  const [orderUnlocking, setOrderUnlocking] = useState(false);
+  // Đặt hàng — Axel, 2026-09-03 phase 3, revised 2026-09-05: ANY shop staff member can build the
+  // cart (no PIN, identified via NamePicker like Kiểm kho/Hao hụt) — a manager's PIN is only
+  // needed at the very last step, to actually confirm and send the order to Odoo (or, if nobody
+  // does before 14h00 for a delivery of tomorrow, the scheduled job sends it on their behalf).
+  // The cart/date/time double as a shared draft persisted to lab_shop_manager_order_drafts —
+  // saved explicitly ("Lưu nháp") or implicitly the moment someone taps "Xác nhận đơn hàng", so
+  // work is never lost even if the PIN step is cancelled.
+  const [orderCreatedByName, setOrderCreatedByName] = useState('');
   const [orderDeliveryDate, setOrderDeliveryDate] = useState<string | null>(null);
   const [orderDeliveryTime, setOrderDeliveryTime] = useState('09:00');
   const [orderMinDate, setOrderMinDate] = useState<string | null>(null);
@@ -196,10 +203,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
   const [orderSearching, setOrderSearching] = useState(false);
   const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null }[]>([]);
+  const [orderDraftLoaded, setOrderDraftLoaded] = useState<ShopManagerOrderDraft | null>(null);
+  const [orderDraftSaving, setOrderDraftSaving] = useState(false);
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
+  const [orderConfirmPin, setOrderConfirmPin] = useState('');
+  const [orderConfirmMsg, setOrderConfirmMsg] = useState<string | null>(null);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
-  const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string } | null>(null);
+  const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string; managerName?: string } | null>(null);
 
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
@@ -294,14 +305,36 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   }, [tab]);
 
   useEffect(() => {
-    if (!orderManager || orderCategories.length) return;
+    if (tab !== 'order' || orderCategories.length) return;
     (async () => {
       const actions = await import('./actions');
       const res = await actions.getManagerOrderCategoriesAction(readOnly ? shopName : undefined);
       setOrderCategories(res.categories ?? []);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderManager]);
+  }, [tab]);
+
+  // Loads whatever draft already exists for the currently-selected delivery date — any staff or
+  // manager picks up exactly where the last person left off, on any device, under the shared
+  // shop login (Axel, 2026-09-05).
+  useEffect(() => {
+    if (tab !== 'order' || !orderDeliveryDate) return;
+    (async () => {
+      const actions = await import('./actions');
+      const res = await actions.getManagerOrderDraftAction(orderDeliveryDate, readOnly ? shopName : undefined);
+      if (res.error) return;
+      const draft = res.draft ?? null;
+      setOrderDraftLoaded(draft);
+      if (draft) {
+        setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null })));
+        if (draft.deliveryTime) setOrderDeliveryTime(draft.deliveryTime);
+        if (draft.createdByName) setOrderCreatedByName(draft.createdByName);
+      } else {
+        setOrderCart([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, orderDeliveryDate]);
 
   useEffect(() => {
     const q = orderSearchQuery.trim();
@@ -482,17 +515,32 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
   }
 
-  async function loadStock() {
+  // viewSessionSeq lets the caller ask for a specific session (used to preview a brand-new
+  // blank one, or to look back at an earlier one in history) — omitted, it loads whichever is
+  // the shop's current/latest session of the day.
+  async function loadStock(viewSessionSeq?: number) {
     setStockLoading(true);
     const actions = await import('./actions');
-    const res = readOnly ? await actions.getStockCountListForStaffAction(shopName) : await actions.getMyStockCountListAction();
+    const res = readOnly ? await actions.getStockCountListForStaffAction(shopName, viewSessionSeq) : await actions.getMyStockCountListAction(viewSessionSeq);
     setStockLoading(false);
     if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
     setStockLines(res.lines ?? []);
     setStockDate(res.date ?? null);
+    setStockSessionSeq(res.sessionSeq ?? 1);
+    setStockLatestSessionSeq(res.latestSessionSeq ?? 1);
+    setStockSessions(res.sessions ?? []);
     const d: Record<string, string> = {};
     for (const l of res.lines ?? []) if (l.qty !== null) d[l.sku] = String(l.qty);
     setStockDraft(d);
+  }
+
+  // "Nouveau comptage" (Axel, 2026-09-05) — previews the next session number as a blank
+  // checklist. Nothing is persisted until the shop actually taps "Lưu kiểm kho": if they close
+  // the tab before saving, the next visit just falls back to the real latest session again.
+  function startNewStockSession() {
+    setStockNewSessionConfirm(false);
+    loadStock(stockLatestSessionSeq + 1);
+    setStockMsg(null);
   }
 
   async function addStockItem(p: ShopStockSearchProduct) {
@@ -514,7 +562,8 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
 
   // Sends only the rows the shop actually typed a quantity for — a blank input is simply not
   // included, never coerced to 0 (Axel: comptage NOT prefilled). Re-savable any number of times
-  // the same day (server upserts on shop_name+sku+count_date).
+  // within the current session (server upserts on shop_name+sku+count_date+session_seq) —
+  // "Đợt mới" above is what actually starts a distinct new count.
   async function saveStockCount() {
     const trimmedName = stockName.trim();
     if (!trimmedName || !stockLines?.length) return;
@@ -528,11 +577,20 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setStockSaving(true); setStockMsg(null);
     const actions = await import('./actions');
     const res = await actions.saveStockCountAction({
-      entries, updatedByName: trimmedName, ...(readOnly ? { shopName } : {}),
+      entries, updatedByName: trimmedName, sessionSeq: stockSessionSeq, ...(readOnly ? { shopName } : {}),
     });
     setStockSaving(false);
-    if (res.error) setStockMsg(`Lỗi: ${res.error}`);
-    else setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
+    setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    if (res.sessionSeq) setStockSessionSeq(res.sessionSeq);
+    setStockLatestSessionSeq(prev => Math.max(prev, res.sessionSeq ?? prev));
+    setStockSessions(prev => {
+      const seq = res.sessionSeq ?? stockSessionSeq;
+      const now = new Date().toISOString();
+      const existing = prev.find(s => s.seq === seq);
+      if (existing) return prev.map(s => s.seq === seq ? { ...s, savedCount: res.saved ?? s.savedCount, updatedAt: now, updatedByNames: Array.from(new Set([...s.updatedByNames, trimmedName])) } : s);
+      return [...prev, { seq, savedCount: res.saved ?? 0, updatedAt: now, updatedByNames: [trimmedName] }].sort((a, b) => a.seq - b.seq);
+    });
   }
 
   async function loadReport() {
@@ -725,30 +783,35 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     }
   }
 
-  // ── Commande (manager-only) ──
-  async function unlockManager() {
-    if (!orderPin.trim()) return;
-    setOrderUnlocking(true);
-    setOrderGateMsg(null);
+  // ── Đặt hàng ──
+  // Explicit "Lưu nháp" — any staff, no PIN. Also called implicitly right before the confirm
+  // modal opens, so nothing typed is ever lost even if the PIN step gets cancelled.
+  async function saveOrderDraft(): Promise<boolean> {
+    const name = orderCreatedByName.trim();
+    if (!name) { setOrderMsg('Chọn tên trước khi lưu nháp'); return false; }
+    if (!orderDeliveryDate || !orderCart.some(l => l.qty > 0)) return false;
+    setOrderDraftSaving(true);
     const actions = await import('./actions');
-    const res = await actions.verifyManagerPinAction(orderPin.trim(), readOnly ? shopName : undefined);
-    setOrderUnlocking(false);
-    if (res.error) { setOrderGateMsg(res.error); return; }
-    setOrderManager(res.manager ?? null);
+    const res = await actions.saveManagerOrderDraftAction({
+      ...(readOnly ? { shopName } : {}),
+      createdByName: name,
+      deliveryDate: orderDeliveryDate,
+      deliveryTime: orderDeliveryTime,
+      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
+    });
+    setOrderDraftSaving(false);
+    if (res.error) { setOrderMsg(`Lỗi: ${res.error}`); return false; }
+    setOrderDraftLoaded(res.draft ?? null);
+    return true;
   }
 
-  function lockManager() {
-    setOrderManager(null);
-    setOrderPin('');
-    setOrderGateMsg(null);
+  async function discardOrderDraft() {
+    if (!orderDeliveryDate) return;
+    const actions = await import('./actions');
+    await actions.discardManagerOrderDraftAction(orderDeliveryDate, readOnly ? shopName : undefined);
+    setOrderDraftLoaded(null);
     setOrderCart([]);
-    setOrderResult(null);
     setOrderMsg(null);
-    setOrderCategories([]);
-    setOrderCategoryFilter(null);
-    setOrderSearchQuery('');
-    setOrderSearchResults([]);
-    setOrderDeliveryTime('09:00');
   }
 
   // Sets a product's cart quantity directly (adds it if new, updates in place if already
@@ -776,22 +839,39 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderCart(prev => prev.filter(l => l.sku !== sku));
   }
 
+  // The one moment a manager's PIN is actually required — re-verified server-side inside
+  // submitManagerOrderAction itself (Axel, 2026-09-05: "la confirmation se fait par le manager
+  // avec son code pin"). A wrong PIN keeps the modal open with an inline error instead of
+  // closing it, so the manager can just retype it.
   async function confirmOrder() {
-    setOrderPendingConfirm(false);
+    if (!orderConfirmPin.trim()) { setOrderConfirmMsg('Nhập mã PIN quản lý'); return; }
     setOrderSubmitting(true);
-    setOrderMsg(null);
+    setOrderConfirmMsg(null);
     const actions = await import('./actions');
     const res = await actions.submitManagerOrderAction({
-      pin: orderPin.trim(),
+      pin: orderConfirmPin.trim(),
       ...(readOnly ? { shopName } : {}),
       deliveryDate: orderDeliveryDate ?? '',
       deliveryTime: orderDeliveryTime,
       lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
     });
     setOrderSubmitting(false);
-    if (res.error || !res.orderRef || !res.deliveryDate) { setOrderMsg(`Lỗi: ${res.error ?? 'không rõ'}`); return; }
-    setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime });
+    if (res.error || !res.orderRef || !res.deliveryDate) { setOrderConfirmMsg(res.error ?? 'Lỗi không rõ'); return; }
+    setOrderPendingConfirm(false);
+    setOrderConfirmPin('');
+    setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: res.managerName });
     setOrderCart([]);
+    setOrderDraftLoaded(null);
+  }
+
+  // Saves whatever's in the cart as a draft first (so nothing is lost if the PIN step is
+  // cancelled), then opens the confirm-and-PIN modal.
+  async function openOrderConfirm() {
+    setOrderMsg(null);
+    await saveOrderDraft();
+    setOrderConfirmPin('');
+    setOrderConfirmMsg(null);
+    setOrderPendingConfirm(true);
   }
 
   function newOrder() {
@@ -1208,9 +1288,54 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
         ) : tab === 'stock' ? (
           <div className="space-y-3">
             <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
-              <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                Kiểm kho hôm nay{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                  Kiểm kho hôm nay{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
+                </div>
+                {stockSessionSeq >= stockLatestSessionSeq && stockSessions.some(s => s.seq === stockLatestSessionSeq) && (
+                  <button type="button" onClick={() => setStockNewSessionConfirm(true)}
+                    className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1" style={{ border: '1px solid #D1D5DB', color: '#1f2937' }}>
+                    🆕 Đợt mới
+                  </button>
+                )}
               </div>
+              {/* Axel, 2026-09-05: "plusieurs inventaire par jour" — a shop can run several
+                  distinct counts today (matin/chiều/tối…); each chip below is one of them, in
+                  order. Only the latest (or the not-yet-saved next one) is still editable —
+                  tapping an older one just previews it read-only-ish (saving still targets the
+                  current session, see saveStockCountAction). */}
+              {(stockSessions.length > 1 || stockSessionSeq !== stockLatestSessionSeq) && (
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ WebkitOverflowScrolling: 'touch' }}>
+                  {Array.from(new Set([...stockSessions.map(s => s.seq), stockLatestSessionSeq, stockSessionSeq])).sort((a, b) => a - b).map(seq => {
+                    const active = seq === stockSessionSeq;
+                    const isLocked = seq < stockLatestSessionSeq;
+                    return (
+                      <button key={seq} type="button" onClick={() => loadStock(seq)}
+                        className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1"
+                        style={{
+                          backgroundColor: active ? '#1f2937' : 'white', color: active ? 'white' : '#374151',
+                          border: `1px solid ${active ? '#1f2937' : '#D1D5DB'}`,
+                        }}>
+                        Đợt {seq}{isLocked ? ' 🔒' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {stockNewSessionConfirm && (
+                <div className="rounded-lg p-2.5 space-y-1.5" style={{ backgroundColor: '#FEF9C3' }}>
+                  <div className="text-[11px] font-semibold" style={{ color: '#854D0E' }}>
+                    Bắt đầu đợt kiểm kho mới sẽ khoá đợt {stockLatestSessionSeq} lại (không sửa được nữa) — tiếp tục?
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setStockNewSessionConfirm(false)} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>Huỷ</button>
+                    <button onClick={startNewStockSession} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5 text-white" style={{ backgroundColor: '#1f2937' }}>Bắt đầu</button>
+                  </div>
+                </div>
+              )}
+              {stockSessionSeq < stockLatestSessionSeq && (
+                <div className="text-[11px] font-semibold" style={{ color: '#9CA3AF' }}>Đang xem lại đợt {stockSessionSeq} (đã khoá) — chọn đợt {stockLatestSessionSeq} ở trên để tiếp tục kiểm kho.</div>
+              )}
               <div>
                 <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
                 <NamePicker value={stockName} onChange={setStockName} names={staffNames} onManage={() => setShowStaffModal(true)} />
@@ -1304,9 +1429,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                             <div className="text-sm font-semibold truncate">{l.name}</div>
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
                           </div>
-                          <input type="number" min={0} step="1" inputMode="decimal"
+                          <input type="number" min={0} step="1" inputMode="decimal" disabled={stockSessionSeq < stockLatestSessionSeq}
                             value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
-                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0 disabled:opacity-50" style={{ border: '1px solid #D1D5DB' }} />
                         </div>
                       ))}
                     </div>
@@ -1318,7 +1443,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             )}
 
             <button onClick={saveStockCount}
-              disabled={stockSaving || !stockName.trim() || !stockLines?.length}
+              disabled={stockSaving || !stockName.trim() || !stockLines?.length || stockSessionSeq < stockLatestSessionSeq}
               className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
               style={{ backgroundColor: '#1f2937' }}>
               {stockSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -1404,29 +1529,11 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
           </div>
         ) : tab === 'order' ? (
           <div className="space-y-3">
-            {!orderManager ? (
-              <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
-                <KeyRound size={28} className="mx-auto" style={{ color: '#6B7280' }} />
-                <div className="text-sm font-bold text-navy">Khu vực dành cho quản lý</div>
-                <div className="text-xs" style={{ color: '#6B7280' }}>Nhập mã PIN để đặt hàng bổ sung cho ngày mai.</div>
-                <input type="password" inputMode="numeric" value={orderPin}
-                  onChange={e => setOrderPin(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') unlockManager(); }}
-                  placeholder="Mã PIN" className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold"
-                  style={{ border: '1px solid #D1D5DB' }} />
-                {orderGateMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderGateMsg}</div>}
-                <button onClick={unlockManager} disabled={orderUnlocking || !orderPin.trim()}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
-                  style={{ backgroundColor: '#1f2937' }}>
-                  {orderUnlocking ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-                  Mở khoá
-                </button>
-              </div>
-            ) : orderResult ? (
+            {orderResult ? (
               <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
                 <CheckCircle2 size={32} className="mx-auto" style={{ color: '#16A34A' }} />
                 <div className="text-sm font-bold text-navy">Đã xác nhận đơn hàng</div>
-                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` lúc ${orderResult.deliveryTime}` : ''}</div>
+                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` lúc ${orderResult.deliveryTime}` : ''}{orderResult.managerName ? ` · Quản lý: ${orderResult.managerName}` : ''}</div>
                 <div className="rounded-xl px-4 py-3" style={{ backgroundColor: '#F9FAFB' }}>
                   <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã đơn Odoo</div>
                   <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{orderResult.orderRef}</div>
@@ -1438,12 +1545,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             ) : (
               <>
                 <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: orderManager.color }} />
-                      <div className="text-sm font-bold text-navy truncate">{orderManager.name}</div>
-                    </div>
-                    <button onClick={lockManager} className="text-xs font-semibold shrink-0" style={{ color: '#9CA3AF' }}>Khoá lại</button>
+                  <div>
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                    <NamePicker value={orderCreatedByName} onChange={setOrderCreatedByName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                   </div>
                   <div className="flex items-center gap-2">
                     <Truck size={14} className="shrink-0" style={{ color: '#9CA3AF' }} />
@@ -1455,10 +1559,20 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                       className="w-[92px] shrink-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
                   </div>
                   <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
-                    {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen
-                      ? 'Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.'
-                      : 'Đặt hàng cho ngày mai: bắt buộc trước 14h00.'}
+                    {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
+                      ? (orderTomorrowOpen
+                        ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — nếu chưa ai xác nhận, đơn sẽ tự động gửi lúc 14h00.'
+                        : 'Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.')
+                      : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
                   </div>
+                  {orderDraftLoaded && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FEF9C3' }}>
+                      <span className="text-[11px] font-semibold truncate" style={{ color: '#854D0E' }}>
+                        📝 Nháp {orderDraftLoaded.createdByName ? `của ${orderDraftLoaded.createdByName} · ` : ''}cập nhật {new Date(orderDraftLoaded.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: '#DC2626' }}>Xoá nháp</button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
@@ -1565,12 +1679,20 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
 
                 {orderMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderMsg}</div>}
 
-                <button onClick={() => setOrderPendingConfirm(true)} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting || (orderDeliveryDate === orderMinDate && !orderTomorrowOpen)}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
-                  style={{ backgroundColor: '#1f2937' }}>
-                  {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  Xác nhận đơn hàng
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={saveOrderDraft} disabled={!orderCart.some(l => l.qty > 0) || !orderCreatedByName.trim() || orderDraftSaving}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 disabled:opacity-40"
+                    style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    {orderDraftSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                    Lưu nháp
+                  </button>
+                  <button onClick={openOrderConfirm} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting || (orderDeliveryDate === orderMinDate && !orderTomorrowOpen)}
+                    className="flex-[2] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
+                    style={{ backgroundColor: '#1f2937' }}>
+                    {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Xác nhận đơn hàng
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -1713,14 +1835,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       {/* Double-check before a manager order — this goes straight to Odoo (create + auto-confirm
           the REP order), so nothing fires until "Xác nhận" here, same posture as the loss-report
           modal above (Axel, 2026-09-03 phase 3). */}
-      {orderPendingConfirm && orderManager && (
+      {orderPendingConfirm && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
               Xác nhận đơn hàng ({orderCart.filter(l => l.qty > 0).length} sản phẩm)
             </div>
             <div className="text-xs" style={{ color: '#6B7280' }}>
-              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}{orderDeliveryTime ? ` lúc ${orderDeliveryTime}` : ''} · Quản lý: {orderManager.name}
+              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}{orderDeliveryTime ? ` lúc ${orderDeliveryTime}` : ''}
             </div>
             <div className="space-y-1.5">
               {orderCart.filter(l => l.qty > 0).map(l => (
@@ -1738,14 +1860,25 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                 </div>
               ))}
             </div>
+            <div>
+              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Mã PIN quản lý</div>
+              <input type="password" inputMode="numeric" value={orderConfirmPin}
+                onChange={e => setOrderConfirmPin(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') confirmOrder(); }}
+                placeholder="Mã PIN" autoFocus
+                className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold"
+                style={{ border: '1px solid #D1D5DB' }} />
+              {orderConfirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: '#DC2626' }}>{orderConfirmMsg}</div>}
+            </div>
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.</div>
             <div className="flex gap-2">
-              <button onClick={() => setOrderPendingConfirm(false)}
+              <button onClick={() => { setOrderPendingConfirm(false); setOrderConfirmPin(''); setOrderConfirmMsg(null); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
                 Huỷ
               </button>
-              <button onClick={confirmOrder}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#16A34A' }}>
+              <button onClick={confirmOrder} disabled={orderSubmitting || !orderConfirmPin.trim()}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
                 Xác nhận
               </button>
             </div>

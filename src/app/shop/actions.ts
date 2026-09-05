@@ -750,14 +750,14 @@ export type ShopStockCountLine = {
   sku: string; name: string; qty: number | null; isExtra: boolean; category: string; imageUrl: string | null;
 };
 
-async function fetchStockCountList(shopName: string): Promise<ShopStockCountLine[]> {
+async function fetchStockCountList(shopName: string, sessionSeq: number): Promise<ShopStockCountLine[]> {
   const supabase = service();
   if (!supabase) return [];
   const entries = await stockCountEntries(shopName);
 
   const today = vnDateStr();
   const { data: counts } = await supabase.from('lab_shop_stock_counts')
-    .select('sku, qty').eq('shop_name', shopName).eq('count_date', today);
+    .select('sku, qty').eq('shop_name', shopName).eq('count_date', today).eq('session_seq', sessionSeq);
   const qtyBySku = new Map<string, number>();
   for (const c of counts ?? []) qtyBySku.set(c.sku, Number(c.qty));
 
@@ -771,23 +771,63 @@ async function fetchStockCountList(shopName: string): Promise<ShopStockCountLine
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
-export async function getMyStockCountListAction(): Promise<{ shopName?: string; date?: string; lines?: ShopStockCountLine[]; error?: string }> {
-  const auth = await requireShopSession();
-  if ('error' in auth) return { error: auth.error };
-  return { shopName: auth.shopName, date: vnDateStr(), lines: await fetchStockCountList(auth.shopName) };
+// Axel, 2026-09-05: "plusieurs inventaire par jour" — a shop can run several DISTINCT counts in
+// one calendar day (matin/chiều/tối…) instead of every save silently overwriting the same row.
+// session_seq partitions lab_shop_stock_counts rows within one shop+day; the "current" (still
+// editable) session is always the highest seq that has any saved data — tapping "Nouveau
+// comptage" in the UI starts current+1 with a blank checklist, which locks the previous one
+// simply by no longer being the target of new saves. Derived entirely from saved rows — no
+// separate "sessions" table needed.
+export type ShopStockCountSession = { seq: number; savedCount: number; updatedAt: string; updatedByNames: string[] };
+
+async function fetchStockSessions(shopName: string, date: string): Promise<ShopStockCountSession[]> {
+  const supabase = service();
+  if (!supabase) return [];
+  const { data } = await supabase.from('lab_shop_stock_counts')
+    .select('session_seq, updated_by_name, updated_at')
+    .eq('shop_name', shopName).eq('count_date', date);
+  const bySession = new Map<number, { count: number; names: Set<string>; latestAt: string }>();
+  for (const row of data ?? []) {
+    const seq = Number(row.session_seq);
+    const cur = bySession.get(seq) ?? { count: 0, names: new Set<string>(), latestAt: row.updated_at as string };
+    cur.count += 1;
+    if (row.updated_by_name) cur.names.add(row.updated_by_name as string);
+    if ((row.updated_at as string) > cur.latestAt) cur.latestAt = row.updated_at as string;
+    bySession.set(seq, cur);
+  }
+  return Array.from(bySession.entries())
+    .map(([seq, v]) => ({ seq, savedCount: v.count, updatedAt: v.latestAt, updatedByNames: Array.from(v.names) }))
+    .sort((a, b) => a.seq - b.seq);
 }
 
-export async function getStockCountListForStaffAction(shopName: string): Promise<{ date?: string; lines?: ShopStockCountLine[]; error?: string }> {
+export async function getMyStockCountListAction(sessionSeq?: number): Promise<{ shopName?: string; date?: string; sessionSeq?: number; latestSessionSeq?: number; sessions?: ShopStockCountSession[]; lines?: ShopStockCountLine[]; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const today = vnDateStr();
+  const sessions = await fetchStockSessions(auth.shopName, today);
+  const latest = sessions.length ? sessions[sessions.length - 1].seq : 1;
+  // Allow latest+1 too — the client requests it to preview/start a brand-new blank session
+  // before anything has actually been saved into it yet.
+  const seq = sessionSeq && sessionSeq >= 1 && sessionSeq <= latest + 1 ? sessionSeq : latest;
+  return { shopName: auth.shopName, date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(auth.shopName, seq) };
+}
+
+export async function getStockCountListForStaffAction(shopName: string, sessionSeq?: number): Promise<{ date?: string; sessionSeq?: number; latestSessionSeq?: number; sessions?: ShopStockCountSession[]; lines?: ShopStockCountLine[]; error?: string }> {
   const auth = await requireStaffSession();
   if ('error' in auth) return { error: auth.error };
-  return { date: vnDateStr(), lines: await fetchStockCountList(shopName) };
+  const today = vnDateStr();
+  const sessions = await fetchStockSessions(shopName, today);
+  const latest = sessions.length ? sessions[sessions.length - 1].seq : 1;
+  const seq = sessionSeq && sessionSeq >= 1 && sessionSeq <= latest + 1 ? sessionSeq : latest;
+  return { date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(shopName, seq) };
 }
 
 export async function saveStockCountAction(input: {
   entries: { sku: string; qty: number }[];
   updatedByName: string;
+  sessionSeq?: number; // which count of the day this belongs to — see fetchStockSessions above
   shopName?: string; // only used (and only trusted) when the caller is staff testing as this shop
-}): Promise<{ ok?: boolean; saved?: number; error?: string }> {
+}): Promise<{ ok?: boolean; saved?: number; sessionSeq?: number; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
@@ -797,21 +837,29 @@ export async function saveStockCountAction(input: {
   if (!name) return { error: 'Name required' };
   if (!Array.isArray(input.entries) || !input.entries.length) return { error: 'No data' };
 
+  const today = vnDateStr();
+  // A save may only continue today's current (latest) session or open exactly the next one —
+  // never an arbitrary/older one and never skip a number — "Nouveau comptage" in the UI locks
+  // the previous session simply by there being a newer one to save into instead.
+  const sessions = await fetchStockSessions(auth.shopName, today);
+  const latest = sessions.length ? sessions[sessions.length - 1].seq : 1;
+  const requested = Number(input.sessionSeq);
+  const sessionSeq = Number.isFinite(requested) && (requested === latest || requested === latest + 1) ? requested : latest;
+
   // Re-derive names/eligibility server-side rather than trusting the client's pairing — an entry
   // for a SKU that isn't (or is no longer) on this shop's list is silently dropped.
   const entries = await stockCountEntries(auth.shopName);
-  const today = vnDateStr();
   const rows = input.entries
     .filter(e => e.sku && entries.has(e.sku) && Number.isFinite(e.qty) && Number(e.qty) >= 0)
     .map(e => ({
       shop_name: auth.shopName, sku: e.sku, product_name: entries.get(e.sku)!.name,
-      count_date: today, qty: Number(e.qty), updated_by_name: name, updated_at: new Date().toISOString(),
+      count_date: today, session_seq: sessionSeq, qty: Number(e.qty), updated_by_name: name, updated_at: new Date().toISOString(),
     }));
   if (!rows.length) return { error: 'No valid data' };
 
-  const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date' });
+  const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date,session_seq' });
   if (error) return { error: error.message };
-  return { ok: true, saved: rows.length };
+  return { ok: true, saved: rows.length, sessionSeq };
 }
 
 // "Add a product" search for the stock-count checklist — unfiltered production catalog
@@ -872,7 +920,11 @@ export type ShopDailyReport = {
 
 async function fetchDailyReport(shopName: string): Promise<ShopDailyReport> {
   const today = vnDateStr();
-  const stockLines = await fetchStockCountList(shopName);
+  // Reflects the latest stock-count session of the day — if a shop ran several counts today
+  // (Axel, 2026-09-05), the report shows the most recent one, same as the Kiểm kho tab itself.
+  const sessions = await fetchStockSessions(shopName, today);
+  const latestSessionSeq = sessions.length ? sessions[sessions.length - 1].seq : 1;
+  const stockLines = await fetchStockCountList(shopName, latestSessionSeq);
   const stockCountedCount = stockLines.filter(l => l.qty !== null).length;
   const lossRecap = await fetchDailyLossRecap(shopName);
   const todayLoss = lossRecap.find(r => r.date === today);
@@ -1026,18 +1078,123 @@ function dayAfter(date: string): string {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
 }
 
-// The real, order-creating action. Re-verifies the PIN server-side (see comment above), then
-// hands off to createManagerReplenishment (src/lib/odoo-manager-order.ts) — creates the Odoo
-// document, adds every line, and immediately confirms it. On success, logs an audit row
-// (lab_shop_manager_orders) — best-effort, never blocks the manager from seeing their order
-// reference just because the local log write failed.
+// ── Đặt hàng draft (Axel, 2026-09-05 follow-up) ─────────────────────────────────────────────
+// Revised design: ANY shop staff member can build/edit the cart (no PIN) — same posture as
+// Kiểm kho/Hao hụt, identified by name via NamePicker. Only actually SENDING it to Odoo needs a
+// manager's PIN — either a manager taps "Xác nhận" themselves, or, if nobody has by 14h00 for a
+// delivery of tomorrow specifically, the scheduled auto-submit job sends it on their behalf
+// (src/app/api/odoo/auto-submit-manager-orders/route.ts). The draft itself never touches Odoo —
+// it's just a shared, persisted "current cart" for the shop's Đặt hàng tab (lab_shop_manager_
+// order_drafts), one active (status='draft') row per shop+delivery_date.
+export type ShopManagerOrderDraft = {
+  id: string;
+  deliveryDate: string;
+  deliveryTime: string | null;
+  lines: { sku: string; name: string; qty: number; note?: string }[];
+  createdByName: string | null;
+  updatedAt: string;
+};
+
+async function findActiveDraft(shopName: string, deliveryDate: string) {
+  const supabase = service();
+  if (!supabase) return null;
+  const { data } = await supabase.from('lab_shop_manager_order_drafts')
+    .select('id, delivery_date, delivery_time, lines, created_by_name, updated_at')
+    .eq('shop_name', shopName).eq('delivery_date', deliveryDate).eq('status', 'draft')
+    .order('updated_at', { ascending: false }).limit(1);
+  return data?.[0] ?? null;
+}
+
+// Loads whatever draft already exists for this shop+date, if any — lets staff/managers resume
+// or review whatever the last person left, regardless of who built it or on which device.
+export async function getManagerOrderDraftAction(deliveryDate: string, shopName?: string): Promise<{ draft?: ShopManagerOrderDraft | null; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const date = String(deliveryDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Ngày giao không hợp lệ' };
+  const row = await findActiveDraft(auth.shopName, date);
+  if (!row) return { draft: null };
+  return {
+    draft: {
+      id: row.id, deliveryDate: row.delivery_date, deliveryTime: row.delivery_time,
+      lines: Array.isArray(row.lines) ? row.lines : [], createdByName: row.created_by_name, updatedAt: row.updated_at,
+    },
+  };
+}
+
+// No PIN — any staff member can save/update the shared draft for this shop+date. Upserts the
+// one active draft row for that date (finds it first rather than relying on a DB unique
+// constraint, since a shop can hold drafts for several different delivery dates at once).
+export async function saveManagerOrderDraftAction(input: {
+  shopName?: string;
+  createdByName: string;
+  deliveryDate: string;
+  deliveryTime?: string;
+  lines: { sku: string; name: string; qty: number; note?: string }[];
+}): Promise<{ draft?: ShopManagerOrderDraft; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const name = (input.createdByName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Cần chọn tên trước' };
+  const date = String(input.deliveryDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Ngày giao không hợp lệ' };
+  if (date < tomorrowLabDate()) return { error: 'Không thể đặt giao cho hôm nay hoặc ngày đã qua' };
+
+  const lines = (input.lines ?? [])
+    .map(l => ({ sku: String(l.sku ?? '').trim(), name: String(l.name ?? '').trim(), qty: Number(l.qty), note: l.note?.trim() || undefined }))
+    .filter(l => l.sku && l.qty > 0);
+  if (!lines.length) return { error: 'Giỏ hàng trống' };
+
+  const existing = await findActiveDraft(auth.shopName, date);
+  const payload = {
+    shop_name: auth.shopName, delivery_date: date, delivery_time: input.deliveryTime ?? null,
+    lines, created_by_name: name, status: 'draft', updated_at: new Date().toISOString(),
+  };
+  const { data, error } = existing
+    ? await supabase.from('lab_shop_manager_order_drafts').update(payload).eq('id', existing.id)
+        .select('id, delivery_date, delivery_time, lines, created_by_name, updated_at').single()
+    : await supabase.from('lab_shop_manager_order_drafts').insert(payload)
+        .select('id, delivery_date, delivery_time, lines, created_by_name, updated_at').single();
+  if (error || !data) return { error: error?.message ?? 'Lưu nháp thất bại' };
+  return {
+    draft: {
+      id: data.id, deliveryDate: data.delivery_date, deliveryTime: data.delivery_time,
+      lines: Array.isArray(data.lines) ? data.lines : [], createdByName: data.created_by_name, updatedAt: data.updated_at,
+    },
+  };
+}
+
+// Any staff can discard a draft they/a colleague started — low-risk, same posture as freely
+// editing it; nothing has reached Odoo yet at this point.
+export async function discardManagerOrderDraftAction(deliveryDate: string, shopName?: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const date = String(deliveryDate ?? '').trim();
+  const existing = await findActiveDraft(auth.shopName, date);
+  if (!existing) return { ok: true };
+  const { error } = await supabase.from('lab_shop_manager_order_drafts').update({ status: 'cancelled' }).eq('id', existing.id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// The real, order-creating action — the one moment a manager's PIN is actually required.
+// Re-verifies the PIN server-side (see comment above), then hands off to
+// createManagerReplenishment (src/lib/odoo-manager-order.ts) — creates the Odoo document, adds
+// every line, and immediately confirms it. On success, logs an audit row
+// (lab_shop_manager_orders) and closes out any matching draft — both best-effort, never block
+// the manager from seeing their order reference just because a local log write failed.
 export async function submitManagerOrderAction(input: {
   pin: string;
   shopName?: string;
   deliveryDate: string;
   deliveryTime?: string;
   lines: { sku: string; name: string; qty: number; note?: string }[];
-}): Promise<{ orderRef?: string; deliveryDate?: string; deliveryTime?: string; error?: string }> {
+}): Promise<{ orderRef?: string; deliveryDate?: string; deliveryTime?: string; managerName?: string; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
   const manager = await resolveManager(auth.shopName, input.pin);
@@ -1062,7 +1219,15 @@ export async function submitManagerOrderAction(input: {
       delivery_time: res.deliveryTime,
       lines,
     });
+    // Best-effort — a manager confirming manually closes out whatever draft was sitting there
+    // for the same date, so the 14h00 auto-submit job never double-sends it.
+    const draft = await findActiveDraft(auth.shopName, String(input.deliveryDate ?? ''));
+    if (draft) {
+      await supabase.from('lab_shop_manager_order_drafts')
+        .update({ status: 'submitted', submitted_order_ref: res.orderRef, submitted_at: new Date().toISOString() })
+        .eq('id', draft.id);
+    }
   }
 
-  return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime };
+  return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: manager.name };
 }
