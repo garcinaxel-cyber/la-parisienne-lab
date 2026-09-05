@@ -883,18 +883,37 @@ export async function saveStockCountAction(input: {
   // Completion detection (phase 4, 2026-09-05: "notif pour les shops lorsque l'inventaire est
   // fait") — computed BEFORE the upsert below so we can tell whether THIS save is the one that
   // covers the last remaining SKU, rather than re-notifying on every later re-save of an
-  // already-complete session. entries (fetched above) is the exact expected SKU set.
+  // already-complete session.
+  //
+  // BUG FIX 2026-09-05 (Axel, shop managers reporting zero "stock count completed" notifs ever):
+  // this used to require every SKU in `entries` — the FULL shared production catalog (231 SKUs
+  // across every product La Paris makes) — before considering a count "complete". No real shop
+  // stocks the whole catalog, so that bar was unreachable: checked the full history and no shop
+  // had EVER cleared 105/231 (~45%). Completion is now judged against this SHOP's own checklist
+  // — every SKU it has recorded a count for in any PAST session (a proxy for what it actually
+  // carries, converging as they keep counting) — rather than the global catalog. A shop's very
+  // first-ever count has no history to compare against, so any non-empty save completes it.
+  const { data: historyRows } = await supabase.from('lab_shop_stock_counts')
+    .select('sku').eq('shop_name', auth.shopName)
+    // Exclude only THIS exact session (today + sessionSeq) — an earlier, already-finished
+    // session from today (a shop that ran "Đợt mới" twice in one day) still counts as real
+    // history, so the baseline doesn't just chase whatever this session happens to save.
+    .or(`count_date.neq.${today},session_seq.neq.${sessionSeq}`);
+  const checklist = new Set((historyRows ?? []).map((r: any) => r.sku as string));
+
   const { data: existingSkuRows } = await supabase.from('lab_shop_stock_counts')
     .select('sku').eq('shop_name', auth.shopName).eq('count_date', today).eq('session_seq', sessionSeq);
   const skusBefore = new Set((existingSkuRows ?? []).map((r: any) => r.sku as string));
-  const wasComplete = entries.size > 0 && Array.from(entries.keys()).every(sku => skusBefore.has(sku));
+  const wasComplete = checklist.size > 0 && Array.from(checklist).every(sku => skusBefore.has(sku));
 
   const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date,session_seq' });
   if (error) return { error: error.message };
 
   if (!wasComplete) {
     for (const r of rows) skusBefore.add(r.sku);
-    const isCompleteNow = entries.size > 0 && Array.from(entries.keys()).every(sku => skusBefore.has(sku));
+    const isCompleteNow = checklist.size > 0
+      ? Array.from(checklist).every(sku => skusBefore.has(sku))
+      : skusBefore.size > 0; // first-ever count for this shop — nothing to compare against yet
     if (isCompleteNow) {
       const viPayload: PushPayload = { title: auth.shopName, body: `📋 Kiểm kho đợt ${sessionSeq} đã hoàn tất (${name})` };
       const enPayload: PushPayload = { title: auth.shopName, body: `📋 Stock count #${sessionSeq} completed (${name})` };
