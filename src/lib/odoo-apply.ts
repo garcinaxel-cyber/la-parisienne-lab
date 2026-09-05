@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 import { nowLabStamp } from '@/lib/odoo';
 import { ensureDeliveryOrderChecklist } from '@/lib/delivery-check';
+import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -365,6 +366,17 @@ async function createLineAndCard(
       // The order line itself was created fine either way — only the card creation failed.
       // Surface it as an error so it doesn't silently disappear (2026-08-04 Cheesy Danish case).
       if (cardErr.error) return { error: cardErr.error };
+
+      // BUG FIX 2026-09-05 (Axel: le cron auto-sync Odoo (~30 min) ajoutait des produits a une
+      // commande deja importee sans jamais notifier personne — seule la creation INITIALE d'une
+      // commande poussait une notif, pas un ajout ulterieur decouvert au sync). Meme mecanisme
+      // que le "commande exceptionnelle" cake_addon (order/[token]/actions.ts) : push vers la
+      // station de l'equipe concernee — Axel le recoit deja aussi via son abonnement
+      // all_teams=true (sendTeamPush matche team OU all_teams), en anglais grace a payloadEn,
+      // donc pas besoin d'un sendAdminPush separe ici (double notif sinon).
+      const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🆕 Odoo thêm SP mới vào đơn ${orderRef}: ${name} x${cardQty}`, url: `/station/${team}` };
+      const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🆕 Odoo added new product to order ${orderRef}: ${name} x${cardQty}`, url: `/station/${team}` };
+      sendTeamPush(supabase, team, viPayload, enPayload).catch(() => {});
     }
   }
 
