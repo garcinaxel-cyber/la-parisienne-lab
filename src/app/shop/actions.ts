@@ -9,6 +9,7 @@ import {
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
+import { sendShopPush, sendAdminPush, type PushPayload } from '@/lib/push-notify';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -260,12 +261,34 @@ export async function confirmReceiptAction(input: {
     .select('id').eq('id', input.checkLineId).eq('delivery_order_id', input.deliveryOrderId).maybeSingle();
   if (!line) return { error: 'Line not found' };
 
+  // Completion detection (phase 4, 2026-09-05: "notif ... lorsque la reception est faite"),
+  // computed BEFORE this upsert for the same before/after transition reason as the stock-count
+  // one above — never re-notify on a later correction to an already-fully-checked order.
+  const { data: allCheckLines } = await supabase.from('lab_delivery_check_lines')
+    .select('id').eq('delivery_order_id', input.deliveryOrderId);
+  const totalLines = allCheckLines?.length ?? 0;
+  const { data: existingReceipts } = await supabase.from('lab_shop_receipt_lines')
+    .select('check_line_id').eq('delivery_order_id', input.deliveryOrderId);
+  const receiptedIds = new Set((existingReceipts ?? []).map((r: any) => r.check_line_id as string));
+  const wasComplete = totalLines > 0 && (allCheckLines ?? []).every((l: any) => receiptedIds.has(l.id));
+
   const { error } = await supabase.from('lab_shop_receipt_lines').upsert({
     check_line_id: input.checkLineId, delivery_order_id: input.deliveryOrderId, shop_name: auth.shopName,
     qty_received: input.qtyReceived, status: input.status, note: input.note ? input.note.slice(0, 300) : null,
     confirmed_by_name: name, confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }, { onConflict: 'check_line_id' });
   if (error) return { error: error.message };
+
+  if (!wasComplete) {
+    receiptedIds.add(input.checkLineId);
+    const isCompleteNow = totalLines > 0 && (allCheckLines ?? []).every((l: any) => receiptedIds.has(l.id));
+    if (isCompleteNow) {
+      const viPayload: PushPayload = { title: auth.shopName, body: `🚚 Đã nhận đủ hàng — đơn #${header.order_ref} (${name})` };
+      const enPayload: PushPayload = { title: auth.shopName, body: `🚚 Delivery fully received — order #${header.order_ref} (${name})` };
+      sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
+      sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
+    }
+  }
 
   // Axel, 2026-08-27: once the shop has confirmed EVERY line of a REPLENISHMENT order's receipt
   // check, prefill Odoo's own quantity_received per line (see odoo-shop-receipt-sync.ts) — never
@@ -857,8 +880,29 @@ export async function saveStockCountAction(input: {
     }));
   if (!rows.length) return { error: 'No valid data' };
 
+  // Completion detection (phase 4, 2026-09-05: "notif pour les shops lorsque l'inventaire est
+  // fait") — computed BEFORE the upsert below so we can tell whether THIS save is the one that
+  // covers the last remaining SKU, rather than re-notifying on every later re-save of an
+  // already-complete session. entries (fetched above) is the exact expected SKU set.
+  const { data: existingSkuRows } = await supabase.from('lab_shop_stock_counts')
+    .select('sku').eq('shop_name', auth.shopName).eq('count_date', today).eq('session_seq', sessionSeq);
+  const skusBefore = new Set((existingSkuRows ?? []).map((r: any) => r.sku as string));
+  const wasComplete = entries.size > 0 && Array.from(entries.keys()).every(sku => skusBefore.has(sku));
+
   const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date,session_seq' });
   if (error) return { error: error.message };
+
+  if (!wasComplete) {
+    for (const r of rows) skusBefore.add(r.sku);
+    const isCompleteNow = entries.size > 0 && Array.from(entries.keys()).every(sku => skusBefore.has(sku));
+    if (isCompleteNow) {
+      const viPayload: PushPayload = { title: auth.shopName, body: `📋 Kiểm kho đợt ${sessionSeq} đã hoàn tất (${name})` };
+      const enPayload: PushPayload = { title: auth.shopName, body: `📋 Stock count #${sessionSeq} completed (${name})` };
+      sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
+      sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
+    }
+  }
+
   return { ok: true, saved: rows.length, sessionSeq };
 }
 
@@ -1230,4 +1274,43 @@ export async function submitManagerOrderAction(input: {
   }
 
   return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: manager.name };
+}
+
+// ── Push notifications (phase 4, 2026-09-05) ────────────────────────────────
+// Shop-scoped subscribe/unsubscribe — same posture as the chefs' subscribePushAction
+// (station/[team]/actions.ts): the session only confirms the click came from a logged-in shop
+// account, the actual write goes through the service-role client (lab_shop_push_subscriptions
+// has zero RLS policies). Keyed on (endpoint, shop_name) rather than endpoint alone — see
+// lab_v67_notification_phase4 — so a manager covering two shops on one phone (Axel, 2026-09-05:
+// "quan est manager des 2 shops") can hold a subscription for each without one overwriting the
+// other; every notification always leads with the shop name so he can tell them apart.
+export async function subscribeShopPushAction(
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+  shopName?: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  if (!subscription?.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+    return { error: 'Invalid subscription' };
+  }
+  const supabase = service();
+  if (!supabase) return { error: 'Not configured' };
+  const { error } = await supabase.from('lab_shop_push_subscriptions').upsert({
+    shop_name: auth.shopName,
+    endpoint: subscription.endpoint,
+    p256dh: subscription.keys.p256dh,
+    auth: subscription.keys.auth,
+    last_seen_at: new Date().toISOString(),
+  }, { onConflict: 'endpoint,shop_name' });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function unsubscribeShopPushAction(endpoint: string, shopName?: string): Promise<{ ok?: boolean }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { ok: true }; // best-effort, never blocks the client-side toggle
+  const supabase = service();
+  if (!supabase || !endpoint) return { ok: true };
+  await supabase.from('lab_shop_push_subscriptions').delete().eq('endpoint', endpoint).eq('shop_name', auth.shopName);
+  return { ok: true };
 }

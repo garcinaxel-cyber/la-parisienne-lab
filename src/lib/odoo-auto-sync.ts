@@ -3,7 +3,7 @@ import { runOdooSync } from '@/lib/odoo-sync';
 import { consolidateLines } from '@/lib/excel-parser';
 import { persistImportsFromLines } from '@/lib/import-persist';
 import { applyOdooChanges } from '@/lib/odoo-apply';
-import { sendTeamPush } from '@/lib/push-notify';
+import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
 
 export interface AutoSyncResult {
   created_imports: number;
@@ -309,13 +309,36 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
   // sendTeamPush itself never throws (no-op until VAPID env vars exist), so a push failure can
   // never slow or break this sync run — including the on-demand "Sync now" station button, which
   // calls this same function.
+  //
+  // Phase-4 (Axel, 2026-09-05): "je voudrais les numeros de commandes concerne avec le nom du
+  // client" — built from `lines` (the pre-consolidation array, already filtered down to just
+  // the NEW orders this run brought in), not from Odoo again — order.partner_id[1] is already
+  // fetched into each line's `shop_name` during odoo-sync.ts (for a real shop order that IS the
+  // shop's name; for an external client sale.order it's that customer's real Odoo name). English
+  // variant reaches only Axel's own admin subscription (lang='en', see sendTeamPush).
   if (!error) {
+    const ordersByTeam = new Map<string, { ref: string; client: string }[]>();
+    for (const l of lines as any[]) {
+      if (!l.team || !l.order_ref) continue;
+      const list = ordersByTeam.get(l.team) ?? [];
+      if (!list.some(o => o.ref === l.order_ref)) list.push({ ref: l.order_ref, client: l.shop_name || '' });
+      ordersByTeam.set(l.team, list);
+    }
     for (const [t, teamCount] of Object.entries(publishedTeamCounts ?? {})) {
-      sendTeamPush(supabase, t, {
-        title: 'La Parisienne Lab',
-        body: teamCount > 1 ? `${teamCount} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến',
-        url: `/station/${t}`,
-      }).catch(() => {});
+      const orders = ordersByTeam.get(t) ?? [];
+      const label = (o: { ref: string; client: string }) => o.client ? `${o.ref} (${o.client})` : o.ref;
+      const shown = orders.slice(0, 3).map(label).join(', ');
+      const restVi = orders.length > 3 ? ` +${orders.length - 3} đơn khác` : '';
+      const restEn = orders.length > 3 ? ` +${orders.length - 3} more` : '';
+      const viBody = orders.length
+        ? `${shown}${restVi}`
+        : (teamCount > 1 ? `${teamCount} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến');
+      const enBody = orders.length
+        ? `${shown}${restEn}`
+        : (teamCount > 1 ? `${teamCount} new orders arrived` : 'A new order arrived');
+      const viPayload: PushPayload = { title: 'La Parisienne Lab', body: viBody, url: `/station/${t}` };
+      const enPayload: PushPayload = { title: 'La Parisienne Lab', body: enBody, url: `/station/${t}` };
+      sendTeamPush(supabase, t, viPayload, enPayload).catch(() => {});
     }
   }
 

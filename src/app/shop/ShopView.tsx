@@ -1,10 +1,11 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send } from 'lucide-react';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft } from './actions';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
+import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
@@ -211,6 +212,42 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string; managerName?: string } | null>(null);
+
+  // Push notification opt-in (phase 4, 2026-09-05: "notif boutique quand c'est bientôt l'heure
+  // de commander" + inventaire/réception terminés) — same reflect-the-real-state pattern as the
+  // chef station bell (StationView.tsx). Only offered on the shop's own real session: a manager
+  // covering several shops (e.g. Quan on Bà Triệu + Time City) taps this once per shop's own
+  // portal on the same phone to receive both, each notification always naming its shop.
+  const [pushState, setPushState] = useState<'checking' | 'off' | 'on' | 'unsupported' | 'not-configured'>('checking');
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+    (async () => {
+      const support = pushSupport();
+      if (support !== 'ready') { if (!cancelled) setPushState(support); return; }
+      const sub = await getExistingPushSubscription();
+      if (!cancelled) setPushState(sub ? 'on' : 'off');
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  async function handleToggleShopPush() {
+    if (pushState === 'on') {
+      const endpoint = await unsubscribeCurrentPush();
+      if (endpoint) {
+        const actions = await import('./actions');
+        await actions.unsubscribeShopPushAction(endpoint);
+      }
+      setPushState('off');
+      return;
+    }
+    if (pushState !== 'off') return;
+    const result = await requestPushSubscription();
+    if (!result.ok) { setPushState(result.reason === 'not-configured' ? 'not-configured' : 'off'); return; }
+    const actions = await import('./actions');
+    const res = await actions.subscribeShopPushAction(result.subscription);
+    setPushState(res.error ? 'off' : 'on');
+  }
 
   // Set to true the moment the manager/staff types a local change into the cart, cleared again
   // once that state is confirmed to match the server (a fresh load, a successful save/discard/
@@ -953,9 +990,19 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               <ArrowLeft size={16} /> Admin
             </button>
           ) : (
-            <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label="Đăng xuất">
-              <LogOut size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              {(pushState === 'on' || pushState === 'off') && (
+                <button onClick={handleToggleShopPush}
+                  title={pushState === 'on' ? 'Tắt thông báo đẩy' : 'Bật thông báo đẩy (nhắc giờ đặt hàng, kiểm kho, giao hàng...)'}
+                  className="p-2 rounded-lg hover:bg-white/10"
+                  style={{ color: pushState === 'on' ? '#7CD98C' : 'rgba(255,255,255,0.6)' }}>
+                  <Bell size={18} />
+                </button>
+              )}
+              <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label="Đăng xuất">
+                <LogOut size={18} />
+              </button>
+            </div>
           )}
         </div>
       </div>

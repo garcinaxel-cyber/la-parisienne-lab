@@ -22,11 +22,11 @@ export async function notifyNewOrdersPushAction(teamCounts: Record<string, numbe
   const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   for (const [team, count] of Object.entries(teamCounts ?? {})) {
     if (!count) continue;
-    await sendTeamPush(service, team, {
-      title: 'La Parisienne Lab',
-      body: count > 1 ? `${count} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến',
-      url: `/station/${team}`,
-    }).catch(() => {});
+    await sendTeamPush(
+      service, team,
+      { title: 'La Parisienne Lab', body: count > 1 ? `${count} đơn hàng mới vừa đến` : 'Có đơn hàng mới vừa đến', url: `/station/${team}` },
+      { title: 'La Parisienne Lab', body: count > 1 ? `${count} new orders arrived` : 'A new order arrived', url: `/station/${team}` },
+    ).catch(() => {});
   }
 }
 

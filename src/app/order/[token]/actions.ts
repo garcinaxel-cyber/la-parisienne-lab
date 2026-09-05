@@ -1,6 +1,7 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
+import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
 
 // Public shop order form — server actions.
 // No session here: the token in the URL is the access key, checked on EVERY call.
@@ -257,6 +258,27 @@ export async function submitShopOrderAction(token: string, input: {
   // card above is unaffected either way. An admin now creates the matching Odoo document
   // manually from /exceptional-orders, optionally grouping several exceptional orders
   // (e.g. multiple same-day Moon Flower cakes) into a single quotation/replenishment.
+
+  // Phase-4 push notification (Axel, 2026-09-05): these orders bypass the normal Odoo-first
+  // sync entirely (see file header) — the station's "new order" push above never fires for
+  // them, so chefs/admin had no alert at all for this path. Framed as "commande exceptionnelle"
+  // rather than an order number (there isn't one yet — the Odoo document is only created later,
+  // once staff matches/confirms it), listing the product(s) instead, per Axel: "si c'est une
+  // commande manuelle alors on dit: commande exceptionnelle et le nom de l'article concerné".
+  const itemsByTeam = new Map<string, string[]>();
+  for (const r of resolved) {
+    const list = itemsByTeam.get(r.team) ?? [];
+    list.push(r.qty > 1 ? `${r.nameVi} x${r.qty}` : r.nameVi);
+    itemsByTeam.set(r.team, list);
+  }
+  const supabaseForPush = supabase;
+  for (const [team, items] of Array.from(itemsByTeam.entries())) {
+    const shown = items.slice(0, 3).join(', ');
+    const rest = items.length > 3 ? ` +${items.length - 3}` : '';
+    const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Đơn đặc biệt: ${shown}${rest}`, url: `/station/${team}` };
+    const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Exceptional order: ${shown}${rest}`, url: `/station/${team}` };
+    sendTeamPush(supabaseForPush, team, viPayload, enPayload).catch(() => {});
+  }
 
   return { ok: true };
 }
