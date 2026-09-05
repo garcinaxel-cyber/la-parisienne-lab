@@ -85,6 +85,34 @@ export async function GET(req: Request) {
       const canWriteLine = await odooExecuteWrite<boolean>('account.move.line', 'check_access_rights', ['write'], { raise_exception: false });
       return NextResponse.json({ canWriteMove: canWrite, canWriteMoveLine: canWriteLine });
     }
+    if (action === 'fixlines') {
+      // WRITE (2026-09-05, Axel: "remet la remise d'origine stp sur ces lignes") — targeted fix
+      // for the 4 invoices where applydiscount's blanket discount=35 overwrote a "tặng"/gift
+      // line's real original discount (recovered as 100% via the saleorder action, matched
+      // against sale.order.line, never touched by applydiscount). Resets just this one move to
+      // draft, sets the given discount ONLY on the given line ids (every other already-correct
+      // line on the invoice is left untouched), reposts.
+      const moveId = Number(url.searchParams.get('moveId'));
+      const lineIdsParam = url.searchParams.get('lineIds') ?? '';
+      const lineIds = lineIdsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      const discount = Number(url.searchParams.get('discount'));
+      if (!moveId || !lineIds.length || !Number.isFinite(discount)) {
+        return NextResponse.json({ error: 'Missing ?moveId= / ?lineIds= / ?discount=' }, { status: 400 });
+      }
+      const before = await odooExecuteWrite<any[]>('account.move', 'read', [[moveId]], { fields: ['id', 'name', 'state', 'amount_total'] });
+      const bill = before[0];
+      if (!bill) return NextResponse.json({ error: 'not found' });
+      const beforeLines = await odooExecuteWrite<any[]>('account.move.line', 'read', [lineIds], { fields: ['id', 'name', 'discount', 'price_unit'] });
+      if (bill.state !== 'draft') await odooExecuteWrite('account.move', 'button_draft', [[moveId]]);
+      await odooExecuteWrite('account.move.line', 'write', [lineIds, { discount }]);
+      await odooExecuteWrite('account.move', 'action_post', [[moveId]]);
+      const after = await odooExecuteWrite<any[]>('account.move', 'read', [[moveId]], { fields: ['id', 'name', 'state', 'amount_total'] });
+      const afterLines = await odooExecuteWrite<any[]>('account.move.line', 'read', [lineIds], { fields: ['id', 'name', 'discount', 'price_unit', 'price_total'] });
+      return NextResponse.json({
+        moveId, name: bill.name, beforeTotal: bill.amount_total, afterTotal: after[0]?.amount_total,
+        state: after[0]?.state, beforeLines, afterLines,
+      });
+    }
     if (action === 'saleorder') {
       // Read-only: recover each affected invoice's ORIGINAL per-line discount from its linked
       // sale.order.line (never touched by applydiscount) — needed to restore "tặng"/gift lines
