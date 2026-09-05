@@ -25,16 +25,24 @@ export function pushConfigured(): boolean {
 
 export type PushPayload = { title: string; body: string; url?: string };
 
+// BUG FIX 2026-09-05 (Axel: aucune visibilite quand un envoi echoue — decouvert en diagnostiquant
+// pourquoi son propre abonnement expire n'avait rien remonte nulle part avant qu'on aille
+// fouiller directement Supabase). Toute erreur d'envoi finissait auparavant dans un `catch` vide
+// — pas de log, pas de trace, rien. sendToSubs renvoie maintenant aussi le detail de chaque echec
+// (pas seulement les 404/410 "morts") pour que l'appelant les journalise via logPushFailures.
+type PushFailure = { endpoint: string; statusCode?: number; message: string };
+
 // Sends one payload to a batch of subscription rows (any table with endpoint/p256dh/auth/lang
 // columns), returning the ids the push service reports as gone (404/410) so the caller can
 // clean them up from its own table — a subscription merely failing temporarily (network blip,
-// 5xx) is left alone.
+// 5xx) is left alone — plus every failure (dead or not) for logging.
 async function sendToSubs(
   subs: { id: string; endpoint: string; p256dh: string; auth: string; lang?: string | null }[],
   payloadVi: PushPayload,
   payloadEn?: PushPayload,
-): Promise<string[]> {
+): Promise<{ deadIds: string[]; failures: PushFailure[] }> {
   const deadIds: string[] = [];
+  const failures: PushFailure[] = [];
   await Promise.all(subs.map(async (s) => {
     const payload = s.lang === 'en' && payloadEn ? payloadEn : payloadVi;
     try {
@@ -43,10 +51,32 @@ async function sendToSubs(
         JSON.stringify(payload),
       );
     } catch (e: any) {
-      if (e?.statusCode === 404 || e?.statusCode === 410) deadIds.push(s.id);
+      const statusCode = e?.statusCode as number | undefined;
+      if (statusCode === 404 || statusCode === 410) deadIds.push(s.id);
+      // Endpoint kept short (last 24 chars) — enough to recognize which device without storing
+      // the full push-service URL in a log table.
+      failures.push({ endpoint: s.endpoint.slice(-24), statusCode, message: (e?.body || e?.message || String(e)).toString().slice(0, 300) });
     }
   }));
-  return deadIds;
+  return { deadIds, failures };
+}
+
+// Best-effort log of send failures — console.error for immediate visibility in Vercel logs, plus
+// a row in lab_push_send_log so failures are queryable later instead of scrolling logs. Never
+// throws: a logging hiccup must not turn into a push-path failure on top of the original one.
+async function logPushFailures(
+  supabase: SupabaseClient,
+  scope: 'team' | 'shop' | 'admin',
+  target: string,
+  failures: PushFailure[],
+): Promise<void> {
+  if (!failures.length) return;
+  console.error(`[push] ${failures.length} failure(s) sending to ${scope}:${target}`, JSON.stringify(failures));
+  try {
+    await supabase.from('lab_push_send_log').insert(
+      failures.map(f => ({ scope, target, endpoint: f.endpoint, status_code: f.statusCode ?? null, error_message: f.message })),
+    );
+  } catch { /* logging itself must never break the send path */ }
 }
 
 // Sends to every subscription on file for one chef/admin team. payloadEn (Axel, 2026-09-05:
@@ -69,9 +99,12 @@ export async function sendTeamPush(
       .select('id, endpoint, p256dh, auth, lang')
       .or(`team.eq.${team},all_teams.eq.true`);
     if (!subs?.length) return;
-    const deadIds = await sendToSubs(subs, payloadVi, payloadEn);
+    const { deadIds, failures } = await sendToSubs(subs, payloadVi, payloadEn);
     if (deadIds.length) await supabase.from('lab_push_subscriptions').delete().in('id', deadIds);
-  } catch { /* best-effort — never let a push failure break the caller */ }
+    await logPushFailures(supabase, 'team', team, failures);
+  } catch (e: any) {
+    await logPushFailures(supabase, 'team', team, [{ endpoint: '', message: (e?.message ?? String(e)).toString().slice(0, 300) }]);
+  }
 }
 
 // Shop-scoped push (phase 4, 2026-09-05) — a separate table/function from sendTeamPush because
@@ -91,9 +124,12 @@ export async function sendShopPush(
       .select('id, endpoint, p256dh, auth, lang')
       .eq('shop_name', shopName);
     if (!subs?.length) return;
-    const deadIds = await sendToSubs(subs, payloadVi, payloadEn);
+    const { deadIds, failures } = await sendToSubs(subs, payloadVi, payloadEn);
     if (deadIds.length) await supabase.from('lab_shop_push_subscriptions').delete().in('id', deadIds);
-  } catch { /* best-effort */ }
+    await logPushFailures(supabase, 'shop', shopName, failures);
+  } catch (e: any) {
+    await logPushFailures(supabase, 'shop', shopName, [{ endpoint: '', message: (e?.message ?? String(e)).toString().slice(0, 300) }]);
+  }
 }
 
 // Reaches ONLY Axel's admin account (all_teams=true), independent of any real chef team, by
