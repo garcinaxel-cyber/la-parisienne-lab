@@ -51,9 +51,10 @@ export async function GET(req: Request) {
       const idsParam = url.searchParams.get('ids') ?? '';
       const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
       if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
-      const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [
-        [['move_id', 'in', ids], ['display_type', '=', false], ['exclude_from_invoice_tab', '=', false]],
-      ], { fields: ['id', 'move_id', 'name', 'quantity', 'price_unit', 'discount', 'price_subtotal', 'price_total'] });
+      const raw = url.searchParams.get('raw') === '1';
+      const domain: any[] = raw ? [['move_id', 'in', ids]] : [['move_id', 'in', ids], ['display_type', '=', false]];
+      const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [domain],
+        { fields: ['id', 'move_id', 'display_type', 'name', 'quantity', 'price_unit', 'discount', 'price_subtotal', 'price_total'] });
       return NextResponse.json({ ids, lineCount: lines.length, lines });
     }
     if (action === 'fields') {
