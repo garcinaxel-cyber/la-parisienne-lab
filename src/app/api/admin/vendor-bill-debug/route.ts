@@ -85,6 +85,26 @@ export async function GET(req: Request) {
       const canWriteLine = await odooExecuteWrite<boolean>('account.move.line', 'check_access_rights', ['write'], { raise_exception: false });
       return NextResponse.json({ canWriteMove: canWrite, canWriteMoveLine: canWriteLine });
     }
+    if (action === 'saleorder') {
+      // Read-only: recover each affected invoice's ORIGINAL per-line discount from its linked
+      // sale.order.line (never touched by applydiscount) — needed to restore "tặng"/gift lines
+      // that applydiscount's blanket discount=35 write incorrectly flattened from their real
+      // (likely 100%) discount down to 35%, before fixing anything.
+      const idsParam = url.searchParams.get('ids') ?? '';
+      const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
+      const moves = await odooExecuteWrite<any[]>('account.move', 'read', [ids], { fields: ['id', 'name', 'invoice_origin'] });
+      const soNames = Array.from(new Set(moves.map((m: any) => m.invoice_origin).filter(Boolean)));
+      const orders = soNames.length
+        ? await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', 'in', soNames]]], { fields: ['id', 'name'] })
+        : [];
+      const orderIds = orders.map((o: any) => o.id);
+      const soLines = orderIds.length
+        ? await odooExecuteWrite<any[]>('sale.order.line', 'search_read', [[['order_id', 'in', orderIds]]],
+            { fields: ['id', 'order_id', 'product_id', 'name', 'product_uom_qty', 'price_unit', 'discount', 'price_subtotal'] })
+        : [];
+      return NextResponse.json({ moves, orders, soLines });
+    }
     if (action === 'applydiscount') {
       // WRITE (2026-09-05, Axel: 35% rebate negotiated with HAPPY TRUE MARKET for August —
       // "reset to draft et mettre la discount et re confirmer"). Confirmed safe to run:
