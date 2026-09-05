@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft } from './actions';
@@ -212,6 +212,12 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string; managerName?: string } | null>(null);
 
+  // Set to true the moment the manager/staff types a local change into the cart, cleared again
+  // once that state is confirmed to match the server (a fresh load, a successful save/discard/
+  // submit). The live-refresh poll below only ever applies a server draft while this is false —
+  // it must never silently overwrite someone's in-progress edits (Axel, 2026-09-05 bug report).
+  const orderCartDirtyRef = useRef(false);
+
   // Staff roster picker (Axel, 2026-08-27): a small managed list per shop so staff pick their
   // name instead of typing it everywhere. Shared between the delivery-confirm name and the
   // loss-report name — one roster, two places it's used. Loaded once at startup; the manage
@@ -317,24 +323,43 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // Loads whatever draft already exists for the currently-selected delivery date — any staff or
   // manager picks up exactly where the last person left off, on any device, under the shared
   // shop login (Axel, 2026-09-05).
+  const loadOrderDraft = useCallback(async (deliveryDate: string) => {
+    const actions = await import('./actions');
+    const res = await actions.getManagerOrderDraftAction(deliveryDate, readOnly ? shopName : undefined);
+    if (res.error) return;
+    const draft = res.draft ?? null;
+    setOrderDraftLoaded(draft);
+    if (draft) {
+      setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null })));
+      if (draft.deliveryTime) setOrderDeliveryTime(draft.deliveryTime);
+      if (draft.createdByName) setOrderCreatedByName(draft.createdByName);
+    } else {
+      setOrderCart([]);
+    }
+    orderCartDirtyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly, shopName]);
+
   useEffect(() => {
     if (tab !== 'order' || !orderDeliveryDate) return;
-    (async () => {
-      const actions = await import('./actions');
-      const res = await actions.getManagerOrderDraftAction(orderDeliveryDate, readOnly ? shopName : undefined);
-      if (res.error) return;
-      const draft = res.draft ?? null;
-      setOrderDraftLoaded(draft);
-      if (draft) {
-        setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null })));
-        if (draft.deliveryTime) setOrderDeliveryTime(draft.deliveryTime);
-        if (draft.createdByName) setOrderCreatedByName(draft.createdByName);
-      } else {
-        setOrderCart([]);
-      }
-    })();
+    loadOrderDraft(orderDeliveryDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, orderDeliveryDate]);
+
+  // BUG FIX (Axel, 2026-09-05): a manager who already had the Order tab open never re-ran the
+  // effect above, so a draft a staff member saved after that point stayed invisible until the
+  // page was reloaded — confirmed live in production (staff's 4-line draft for La Paris Bà
+  // Triệu sat in the DB while the manager's already-open screen kept showing an empty cart).
+  // Polls quietly every 15s in the background and only applies what it finds when nobody is
+  // mid-edit (orderCartDirtyRef) or mid-PIN-confirm (orderPendingConfirm) on this device — never
+  // clobbers in-progress local work.
+  useEffect(() => {
+    if (tab !== 'order' || !orderDeliveryDate) return;
+    const id = setInterval(() => {
+      if (!orderCartDirtyRef.current && !orderPendingConfirm) loadOrderDraft(orderDeliveryDate);
+    }, 15000);
+    return () => clearInterval(id);
+  }, [tab, orderDeliveryDate, orderPendingConfirm, loadOrderDraft]);
 
   useEffect(() => {
     const q = orderSearchQuery.trim();
@@ -802,6 +827,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderDraftSaving(false);
     if (res.error) { setOrderMsg(`Lỗi: ${res.error}`); return false; }
     setOrderDraftLoaded(res.draft ?? null);
+    orderCartDirtyRef.current = false;
     return true;
   }
 
@@ -812,6 +838,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderDraftLoaded(null);
     setOrderCart([]);
     setOrderMsg(null);
+    orderCartDirtyRef.current = false;
   }
 
   // Sets a product's cart quantity directly (adds it if new, updates in place if already
@@ -820,6 +847,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   // 2026-09-03: "faciliter l'ajout de produit, pas forcement 1 par 1").
   function setOrderQtyForProduct(p: ShopManagerCatalogProduct, qty: number) {
     const clamped = Math.max(0, Math.floor(qty) || 0);
+    orderCartDirtyRef.current = true;
     setOrderCart(prev => {
       const exists = prev.some(l => l.sku === p.sku);
       if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl }] : prev;
@@ -828,14 +856,17 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   }
 
   function updateOrderQty(sku: string, qty: number) {
+    orderCartDirtyRef.current = true;
     setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, qty: Math.max(0, Math.floor(qty) || 0) } : l));
   }
 
   function updateOrderNote(sku: string, note: string) {
+    orderCartDirtyRef.current = true;
     setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, note } : l));
   }
 
   function removeOrderItem(sku: string) {
+    orderCartDirtyRef.current = true;
     setOrderCart(prev => prev.filter(l => l.sku !== sku));
   }
 
@@ -862,6 +893,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: res.managerName });
     setOrderCart([]);
     setOrderDraftLoaded(null);
+    orderCartDirtyRef.current = false;
   }
 
   // Saves whatever's in the cart as a draft first (so nothing is lost if the PIN step is
