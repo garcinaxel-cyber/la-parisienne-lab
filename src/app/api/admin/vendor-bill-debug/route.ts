@@ -84,6 +84,43 @@ export async function GET(req: Request) {
       const canWriteLine = await odooExecuteWrite<boolean>('account.move.line', 'check_access_rights', ['write'], { raise_exception: false });
       return NextResponse.json({ canWriteMove: canWrite, canWriteMoveLine: canWriteLine });
     }
+    if (action === 'applydiscount') {
+      // WRITE (2026-09-05, Axel: 35% rebate negotiated with HAPPY TRUE MARKET for August —
+      // "reset to draft et mettre la discount et re confirmer"). Confirmed safe to run:
+      // (a) none of these invoices has a Vietnamese e-invoice number yet (einvoice action),
+      // (b) account.move.line exposes a real Discount (%) field, (c) Axel has temporarily
+      // granted the write API account Accounting rights (permcheck action) specifically for
+      // this. Per-invoice: button_draft -> set discount on every real product line -> action_post.
+      // Stops and reports per-id on the first failure rather than leaving a partial silent mess.
+      const idsParam = url.searchParams.get('ids') ?? '';
+      const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      const pct = Number(url.searchParams.get('pct') ?? '35');
+      if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
+
+      const results: any[] = [];
+      for (const id of ids) {
+        try {
+          const before = await odooExecuteWrite<any[]>('account.move', 'read', [[id]], { fields: ['id', 'name', 'state', 'amount_total'] });
+          const bill = before[0];
+          if (!bill) { results.push({ id, ok: false, error: 'not found' }); continue; }
+          if (bill.state === 'cancel') { results.push({ id, ok: true, skipped: 'cancelled, left untouched' }); continue; }
+          const beforeTotal = bill.amount_total;
+          await odooExecuteWrite('account.move', 'button_draft', [[id]]);
+          const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [
+            [['move_id', '=', id], ['display_type', '=', false], ['exclude_from_invoice_tab', '=', false]],
+          ], { fields: ['id'] });
+          const lineIds = lines.map((l: any) => l.id);
+          if (lineIds.length) await odooExecuteWrite('account.move.line', 'write', [lineIds, { discount: pct }]);
+          await odooExecuteWrite('account.move', 'action_post', [[id]]);
+          const after = await odooExecuteWrite<any[]>('account.move', 'read', [[id]], { fields: ['id', 'name', 'state', 'amount_total'] });
+          results.push({ id, ok: true, name: bill.name, beforeTotal, afterTotal: after[0]?.amount_total, state: after[0]?.state, linesUpdated: lineIds.length });
+        } catch (e: any) {
+          results.push({ id, ok: false, error: String(e?.message ?? e) });
+          break; // stop on first failure — do not plow through the rest of the batch blind
+        }
+      }
+      return NextResponse.json({ pct, requested: ids.length, results });
+    }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
