@@ -37,7 +37,7 @@ export async function GET(req: Request) {
       const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-01`;
       const domain: any[] = [
         ['partner_id', 'in', partnerIds],
-        ['move_type', 'in', ['in_invoice', 'in_refund']],
+        ['move_type', 'in', url.searchParams.get('moveTypes')?.split(',') ?? ['in_invoice', 'in_refund']],
       ];
       if (!noDateFilter) domain.push(['invoice_date', '>=', start], ['invoice_date', '<', end]);
       const bills = await odooExecuteWrite<any[]>('account.move', 'search_read', [domain],
@@ -57,9 +57,24 @@ export async function GET(req: Request) {
       return NextResponse.json({ ids, lineCount: lines.length, lines });
     }
     if (action === 'fields') {
-      const fields = await odooExecuteWrite<Record<string, any>>('account.move.line', 'fields_get', [], { attributes: ['string', 'type'] });
+      const model = url.searchParams.get('model') ?? 'account.move.line';
+      const fields = await odooExecuteWrite<Record<string, any>>(model, 'fields_get', [], { attributes: ['string', 'type'] });
       const hasDiscount = 'discount' in fields;
-      return NextResponse.json({ hasDiscount, discountField: fields['discount'] ?? null });
+      const einvoiceFieldNames = Object.keys(fields).filter(k => /einvoice|e_invoice|edi|hoa_don|invoice_electronic/i.test(k));
+      const einvoiceFields = Object.fromEntries(einvoiceFieldNames.map(k => [k, fields[k]]));
+      return NextResponse.json({ hasDiscount, discountField: fields['discount'] ?? null, einvoiceFields });
+    }
+    if (action === 'einvoice') {
+      // Read-only: check the Vietnamese e-invoice status of specific bills before any reset-to-draft
+      // is even considered — Nghị định 123/2020 requires a formal replace/adjust flow for an
+      // e-invoice already reported to the tax authority, not a simple edit-and-repost.
+      const idsParam = url.searchParams.get('ids') ?? '';
+      const ids = idsParam.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0);
+      if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=1,2,3' }, { status: 400 });
+      const allFields = await odooExecuteWrite<Record<string, any>>('account.move', 'fields_get', [], { attributes: ['string', 'type'] });
+      const einvoiceFieldNames = Object.keys(allFields).filter(k => /einvoice|e_invoice|edi|hoa_don|invoice_electronic|cqt|tax_authority/i.test(k));
+      const rows = await odooExecuteWrite<any[]>('account.move', 'read', [ids], { fields: ['id', 'name', 'state', ...einvoiceFieldNames] });
+      return NextResponse.json({ einvoiceFieldNames, rows });
     }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e: any) {
