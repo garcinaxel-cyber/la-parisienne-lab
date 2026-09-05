@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runReconciliationCheck, type ReconciliationResult } from '@/lib/reconciliation';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
-import { odooExecute, odooConfigured, labTodayUtcThreshold } from '@/lib/odoo';
+import { odooExecute, odooExecuteWrite, odooConfigured, labTodayUtcThreshold } from '@/lib/odoo';
 import { SYNC_GRACE_DAYS, ODOO_FETCH_CAPS } from '@/lib/odoo-sync';
 import { getLabStockAllQuants } from '@/lib/odoo-inventory';
 
@@ -389,6 +389,98 @@ export async function checkSafetyStock(supabase: SupabaseClient, snapshot: Stock
 // livraison à venir (aujourd'hui/demain). Sinon : positif = stock qui traîne (oubli, annulation
 // jamais scrappée, vol…) ; négatif = livré mais jamais envoyé en stock (production Odoo
 // manquante).
+// ── 8. Scraps app <-> Odoo (Axel, 2026-09-05) ────────────────────────────────
+// "verifie que toutes les scraps annoncees sur l'app sont bien sur odoo aussi, sans doublons ou
+// manque" — cross-checks both loss tables (lab_shop_losses = boutiques, lab_internal_losses =
+// lab) against their linked stock.scrap record in Odoo. 30-day trailing window: old enough to
+// catch anything still wrong, bounded enough to keep the Odoo read light (same trade-off as
+// checkLateDeliveries' 7-day window, just wider since scraps aren't a daily-cutoff process).
+// A 10-minute grace period on reported_at avoids flagging a scrap whose async Odoo sync
+// (createShopScrap/createInternalScrap) simply hasn't landed yet.
+export interface ScrapSyncIssue {
+  source: 'shop' | 'internal';
+  id: string;
+  sku: string | null;
+  product_name: string | null;
+  qty: number;
+  reported_at: string;
+  shop_name?: string | null;
+  kind: 'not_synced' | 'missing_in_odoo' | 'not_done' | 'duplicate_odoo_id';
+  odoo_scrap_id?: number | null;
+  odoo_state?: string | null;
+  sync_error?: string | null;
+  duplicate_with?: string[];
+}
+
+type ScrapRow = {
+  id: string; sku: string | null; product_name: string | null; qty: number; reported_at: string;
+  shop_name?: string | null; odoo_scrap_id: number | null; odoo_sync_error: string | null;
+};
+
+export async function checkScrapSync(supabase: SupabaseClient): Promise<ScrapSyncIssue[]> {
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const graceCutoff = new Date(Date.now() - 10 * 60000).toISOString();
+
+  const [{ data: shopRows }, { data: internalRows }] = await Promise.all([
+    supabase.from('lab_shop_losses')
+      .select('id, sku, product_name, qty, reported_at, shop_name, odoo_scrap_id, odoo_sync_error')
+      .gte('reported_at', since).lte('reported_at', graceCutoff),
+    supabase.from('lab_internal_losses')
+      .select('id, sku, product_name, qty, reported_at, odoo_scrap_id, odoo_sync_error')
+      .gte('reported_at', since).lte('reported_at', graceCutoff),
+  ]);
+
+  const rows: (ScrapRow & { source: 'shop' | 'internal' })[] = [
+    ...(shopRows ?? []).map((r: any) => ({ ...r, source: 'shop' as const })),
+    ...(internalRows ?? []).map((r: any) => ({ ...r, source: 'internal' as const, shop_name: null })),
+  ];
+  if (!rows.length) return [];
+
+  const issues: ScrapSyncIssue[] = [];
+  const toIssue = (r: ScrapRow & { source: 'shop' | 'internal' }, extra: Partial<ScrapSyncIssue>): ScrapSyncIssue => ({
+    source: r.source, id: r.id, sku: r.sku, product_name: r.product_name, qty: Number(r.qty),
+    reported_at: r.reported_at, shop_name: r.shop_name ?? null, kind: 'not_synced', ...extra,
+  });
+
+  // 1. Never synced at all — no Odoo id ever recorded locally.
+  for (const r of rows) {
+    if (!r.odoo_scrap_id) issues.push(toIssue(r, { kind: 'not_synced', sync_error: r.odoo_sync_error ?? null }));
+  }
+
+  // 2. Same Odoo scrap id claimed by more than one local row (shop or lab, either table).
+  const byOdooId = new Map<number, (ScrapRow & { source: 'shop' | 'internal' })[]>();
+  for (const r of rows) {
+    if (!r.odoo_scrap_id) continue;
+    const list = byOdooId.get(r.odoo_scrap_id) ?? [];
+    list.push(r);
+    byOdooId.set(r.odoo_scrap_id, list);
+  }
+  for (const [odooId, list] of Array.from(byOdooId.entries())) {
+    if (list.length < 2) continue;
+    for (const r of list) {
+      issues.push(toIssue(r, { kind: 'duplicate_odoo_id', odoo_scrap_id: odooId, duplicate_with: list.filter(x => x.id !== r.id).map(x => x.id) }));
+    }
+  }
+
+  // 3. Each referenced Odoo id must actually exist and be fully validated ('done').
+  const uniqueIds = Array.from(byOdooId.keys());
+  if (uniqueIds.length && odooConfigured()) {
+    try {
+      const odooRows = await odooExecuteWrite<any[]>('stock.scrap', 'search_read', [[['id', 'in', uniqueIds]]], { fields: ['id', 'state'] });
+      const stateById = new Map(odooRows.map((o: any) => [o.id as number, o.state as string]));
+      for (const [odooId, list] of Array.from(byOdooId.entries())) {
+        const state = stateById.get(odooId);
+        for (const r of list) {
+          if (state === undefined) issues.push(toIssue(r, { kind: 'missing_in_odoo', odoo_scrap_id: odooId }));
+          else if (state !== 'done') issues.push(toIssue(r, { kind: 'not_done', odoo_scrap_id: odooId, odoo_state: state }));
+        }
+      }
+    } catch { /* best-effort — never fatal for the whole Check run */ }
+  }
+
+  return issues.sort((a, b) => b.reported_at.localeCompare(a.reported_at));
+}
+
 export interface OrphanStockIssue {
   sku: string; name: string; category: string | null; qty: number;
   sent48h: number; upcoming: number;
@@ -447,6 +539,7 @@ export interface AllChecksResult {
   stockSnapshot: StockSnapshot;
   safetyStock: SafetyStockIssue[];
   orphanStock: OrphanStockIssue[];
+  scrapSync: ScrapSyncIssue[];
 }
 
 export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksResult> {
@@ -461,7 +554,7 @@ export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksR
     ]);
     return { snapshot, safetyStock, orphanStock };
   })();
-  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume, lateDeliveries, stock] = await Promise.all([
+  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume, lateDeliveries, stock, scrapSync] = await Promise.all([
     runReconciliationCheck(supabase),
     checkDeliveryCoverage(supabase, from, to),
     checkProductionToStock(supabase, from, to),
@@ -469,9 +562,10 @@ export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksR
     measureOdooFetchVolume(),
     checkLateDeliveries(supabase).catch((): LateDeliveryIssue[] => []),
     stockPipeline,
+    checkScrapSync(supabase).catch((): ScrapSyncIssue[] => []),
   ]);
   return {
     reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo, odooVolume,
-    lateDeliveries, stockSnapshot: stock.snapshot, safetyStock: stock.safetyStock, orphanStock: stock.orphanStock,
+    lateDeliveries, stockSnapshot: stock.snapshot, safetyStock: stock.safetyStock, orphanStock: stock.orphanStock, scrapSync,
   };
 }

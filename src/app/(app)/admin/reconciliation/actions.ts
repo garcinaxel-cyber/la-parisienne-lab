@@ -20,7 +20,7 @@ export async function runCheckNowAction() {
 
   try {
     const r = await runAllChecks(supabase as any);
-    const totalIssues = r.reconciliation.issues.length + r.deliveryCoverage.length + r.productionStock.length + r.stockOdoo.length + r.lateDeliveries.filter(i => !i.doneOnOdoo).length + r.safetyStock.length + r.orphanStock.length;
+    const totalIssues = r.reconciliation.issues.length + r.deliveryCoverage.length + r.productionStock.length + r.stockOdoo.length + r.lateDeliveries.filter(i => !i.doneOnOdoo).length + r.safetyStock.length + r.orphanStock.length + r.scrapSync.length;
     await supabase.from('lab_reconciliation_runs').insert({
       triggered_by: profile.full_name || 'admin',
       range_from: r.reconciliation.rangeFrom,
@@ -43,6 +43,8 @@ export async function runCheckNowAction() {
       safety_stock_count: r.safetyStock.length,
       orphan_stock_issues: r.orphanStock,
       orphan_stock_count: r.orphanStock.length,
+      scrap_sync_issues: r.scrapSync,
+      scrap_sync_count: r.scrapSync.length,
       stock_snapshot: r.stockSnapshot,
     });
     revalidatePath('/admin/reconciliation');

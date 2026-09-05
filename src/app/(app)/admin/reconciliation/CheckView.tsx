@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { ShieldCheck, AlertTriangle, RefreshCw, TrendingUp, TrendingDown, Truck, Package, Box, ChevronRight } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, RefreshCw, TrendingUp, TrendingDown, Truck, Package, Box, ChevronRight, ArrowLeftRight } from 'lucide-react';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { runCheckNowAction, fixStockOdooIssueAction } from './actions';
 
@@ -13,6 +13,12 @@ type StockOdooIssue = { date: string; kind: 'not_synced' | 'drifted' | 'no_odoo_
 type LateDeliveryIssue = { date: string; order_ref: string; shop: string | null; kind: 'never_opened' | 'not_validated' | 'not_pushed'; push_error?: string | null; doneOnOdoo?: boolean };
 type SafetyStockIssue = { sku: string; name: string; category: string; qty: number; threshold: number };
 type OrphanStockIssue = { sku: string; name: string; category: string | null; qty: number; sent48h: number; upcoming: number; kind: 'orphan_positive' | 'negative_stuck' };
+type ScrapSyncIssue = {
+  source: 'shop' | 'internal'; id: string; sku: string | null; product_name: string | null; qty: number;
+  reported_at: string; shop_name?: string | null;
+  kind: 'not_synced' | 'missing_in_odoo' | 'not_done' | 'duplicate_odoo_id';
+  odoo_scrap_id?: number | null; odoo_state?: string | null; sync_error?: string | null; duplicate_with?: string[];
+};
 type StockSnapshot = { at: string; items: { sku: string; name: string; qty: number; category: string | null }[]; error?: string };
 
 type Run = {
@@ -27,6 +33,7 @@ type Run = {
   late_delivery_issues?: LateDeliveryIssue[] | null; late_delivery_count?: number | null;
   safety_stock_issues?: SafetyStockIssue[] | null; safety_stock_count?: number | null;
   orphan_stock_issues?: OrphanStockIssue[] | null; orphan_stock_count?: number | null;
+  scrap_sync_issues?: ScrapSyncIssue[] | null; scrap_sync_count?: number | null;
   stock_snapshot?: StockSnapshot | null;
 };
 type OdooVolumeGauge = { count: number; cap: number };
@@ -36,7 +43,7 @@ type OdooVolume =
 
 function totalOf(r: Run): number {
   return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0)
-    + (r.late_delivery_count ?? 0) + (r.safety_stock_count ?? 0) + (r.orphan_stock_count ?? 0);
+    + (r.late_delivery_count ?? 0) + (r.safety_stock_count ?? 0) + (r.orphan_stock_count ?? 0) + (r.scrap_sync_count ?? 0);
 }
 
 type Heartbeat = { last_success_at: string | null; last_error_at: string | null; last_error: string | null };
@@ -211,7 +218,7 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
             const tabs: { id: 'main' | 'deliveries' | 'stock'; label: string; n: number }[] = [
               { id: 'main', label: vi ? '🏠 Chính' : '🏠 Principal', n: mainCount },
               { id: 'deliveries', label: vi ? '🚚 Giao hàng' : '🚚 Livraisons', n: latest.late_delivery_count ?? 0 },
-              { id: 'stock', label: vi ? '📦 Kho' : '📦 Stock', n: (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0) },
+              { id: 'stock', label: vi ? '📦 Kho' : '📦 Stock', n: (latest.orphan_stock_count ?? 0) + (latest.safety_stock_count ?? 0) + (latest.scrap_sync_count ?? 0) },
             ];
             return (
               <div className="flex gap-2 flex-wrap">
@@ -548,6 +555,37 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
                     </span>
                   </div>
                 ))}
+              </div>
+            )}
+          </Section>
+
+          {/* 8. Scraps app <-> Odoo — no duplicates, nothing missing */}
+          <Section icon={ArrowLeftRight}
+            title={vi ? 'Hủy hàng (app) so với Odoo' : 'Scraps app vs Odoo'}
+            subtitle={vi ? 'Mỗi lần hủy hàng khai trên app phải có đúng 1 bản ghi trên Odoo' : "Chaque scrap déclaré sur l'app doit avoir exactement 1 fiche sur Odoo"}
+            count={latest.scrap_sync_count ?? 0} vi={vi}>
+            {(latest.scrap_sync_issues ?? []).length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {(latest.scrap_sync_issues ?? []).map((iss, i) => {
+                  const kindLabel = iss.kind === 'not_synced' ? (vi ? 'chưa đồng bộ Odoo' : 'pas encore sur Odoo')
+                    : iss.kind === 'missing_in_odoo' ? (vi ? `Odoo #${iss.odoo_scrap_id} không tồn tại` : `Odoo #${iss.odoo_scrap_id} introuvable`)
+                    : iss.kind === 'not_done' ? (vi ? `Odoo #${iss.odoo_scrap_id} chưa xác nhận (${iss.odoo_state})` : `Odoo #${iss.odoo_scrap_id} non validé (${iss.odoo_state})`)
+                    : (vi ? `trùng Odoo #${iss.odoo_scrap_id}` : `doublon Odoo #${iss.odoo_scrap_id}`);
+                  const sourceLabel = iss.source === 'shop'
+                    ? (iss.shop_name ?? (vi ? 'Cửa hàng' : 'Boutique'))
+                    : (vi ? 'Xưởng' : 'Labo');
+                  return (
+                    <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
+                      <div className="text-navy min-w-0 truncate">
+                        {iss.sku && <span className="font-mono text-xs">{iss.sku}</span>} {iss.sku && '· '}{iss.product_name ?? '—'}
+                        <span className="text-ink-light"> · {sourceLabel} · ×{iss.qty} · {fmtDateTime(iss.reported_at)}</span>
+                      </div>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                        {kindLabel}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Section>
