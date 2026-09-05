@@ -1401,6 +1401,19 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   })}
                 </div>
               )}
+              {(() => {
+                const info = stockSessions.find(s => s.seq === stockSessionSeq);
+                if (!info || stockSessionSeq !== stockLatestSessionSeq || info.savedCount === 0 || stockNewSessionConfirm) return null;
+                const who = info.updatedByNames.join(', ');
+                const time = new Date(info.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                return (
+                  <div className="rounded-lg p-2.5" style={{ backgroundColor: '#FEF3C7' }}>
+                    <div className="text-[11px] font-semibold" style={{ color: '#92400E' }}>
+                      ⚠ Đợt {stockSessionSeq} đã có {info.savedCount} mục được nhập{who ? ` bởi ${who}` : ''} lúc {time}. Đây là tiếp tục đợt cũ — ô nào bạn không nhập lại sẽ giữ nguyên số cũ. Muốn đếm lại toàn bộ từ đầu? Bấm "Đợt mới" ở trên.
+                    </div>
+                  </div>
+                );
+              })()}
               {stockNewSessionConfirm && (
                 <div className="rounded-lg p-2.5 space-y-1.5" style={{ backgroundColor: '#FEF9C3' }}>
                   <div className="text-[11px] font-semibold" style={{ color: '#854D0E' }}>
