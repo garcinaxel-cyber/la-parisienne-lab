@@ -105,9 +105,9 @@ export async function GET(req: Request) {
           if (!bill) { results.push({ id, ok: false, error: 'not found' }); continue; }
           if (bill.state === 'cancel') { results.push({ id, ok: true, skipped: 'cancelled, left untouched' }); continue; }
           const beforeTotal = bill.amount_total;
-          await odooExecuteWrite('account.move', 'button_draft', [[id]]);
+          if (bill.state !== 'draft') await odooExecuteWrite('account.move', 'button_draft', [[id]]);
           const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [
-            [['move_id', '=', id], ['display_type', '=', false], ['exclude_from_invoice_tab', '=', false]],
+            [['move_id', '=', id], ['display_type', '=', false]],
           ], { fields: ['id'] });
           const lineIds = lines.map((l: any) => l.id);
           if (lineIds.length) await odooExecuteWrite('account.move.line', 'write', [lineIds, { discount: pct }]);
