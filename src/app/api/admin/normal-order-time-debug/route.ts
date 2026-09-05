@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooConfigured, odooExecute, odooDateTimeToLocal } from '@/lib/odoo';
 
 export const dynamic = 'force-dynamic';
@@ -8,20 +9,28 @@ export const dynamic = 'force-dynamic';
 // exceptional/manual orders already covered by a Supabase query). Normal shop demand for the
 // 4 La Paris retail branches goes through stock.replenishment.request, not sale.order (see
 // odoo-sync.ts's SALES_ORDER_EXCLUDED_SHOP_SUBSTRINGS comment) — create_date isn't mirrored
-// into Supabase anywhere, so this reads it straight from Odoo. Same CRON_SECRET pattern as the
-// other one-off /api/admin/*-debug routes: narrow, single-purpose, secret-gated, READ-ONLY,
-// called by hand via curl, no session.
+// into Supabase anywhere, so this reads it straight from Odoo.
+//
+// Auth: unlike the other one-off /api/admin/*-debug routes (CRON_SECRET query param, exempted
+// in middleware.ts for curl-by-hand use), this one is gated by a real staff session + admin
+// role instead — Axel couldn't retrieve CRON_SECRET's value from the Vercel dashboard (Vercel
+// masks already-set env var values), so a normal logged-in request (e.g. via his own browser)
+// is the simpler path here. Deliberately NOT exempted in middleware.ts — the standard
+// session-cookie gate applies, same as any other /api/admin page, plus the explicit role check
+// below (matches the pattern in exceptional-orders/actions.ts). Still 100% read-only.
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const secret = url.searchParams.get('secret');
-  if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role !== 'admin') return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+
   if (!odooConfigured()) {
     return NextResponse.json({ error: 'ODOO_* not configured' }, { status: 503 });
   }
 
   try {
+    const url = new URL(req.url);
     const since = url.searchParams.get('since') ?? '2026-07-15 00:00:00';
     const cutoffHour = Number(url.searchParams.get('cutoff') ?? '14');
 
