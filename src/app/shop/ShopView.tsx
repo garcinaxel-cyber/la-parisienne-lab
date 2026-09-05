@@ -55,6 +55,14 @@ function fmtDate(d: string) {
   return `${day}/${m}`;
 }
 
+// Valorisation (Axel, 2026-09-05: "la valorisation de leur stock apres inventaire pour les
+// interface shop") — meme convention d'affichage que le dashboard admin (analytics), juste en
+// VND complet avec separateurs de milliers plutot qu'abrege (170.000 ₫), plus lisible pour un
+// manager boutique qu'un "0.2M".
+function fmtVnd(v: number) {
+  return `${Math.round(v).toLocaleString('vi-VN')} ₫`;
+}
+
 // Kiểm kho is grouped by fiche category (Axel, 2026-09-03: "je veux un comptage par category").
 // The list already arrives sorted category-then-name from the server, so this just buckets it —
 // insertion order into the Map already matches that server order, no re-sort needed here.
@@ -975,6 +983,14 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const visibleStockGroups = stockCategoryFilter
     ? stockGroupsWithProgress.filter(g => g.category === stockCategoryFilter)
     : stockGroupsWithProgress;
+  // Valorisation live (Axel, 2026-09-05) — qty x prix de vente sur le brouillon actuel
+  // (stockDraft), pas seulement le dernier compte sauvegarde, pour que le total bouge en direct
+  // pendant la saisie exactement comme le vert des categories completes juste au-dessus.
+  const stockValuationLive = (stockLines ?? []).reduce((sum, l) => {
+    const v = stockDraft[l.sku];
+    const qty = v !== undefined && v.trim() !== '' ? Number(v) : NaN;
+    return sum + (Number.isFinite(qty) ? qty : 0) * (l.priceB2c ?? 0);
+  }, 0);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
@@ -1467,6 +1483,10 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               </div>
             ) : (
               <>
+                <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ backgroundColor: '#EFF6FF' }}>
+                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#1D4ED8' }}>💰 Valorisation kiểm kho</span>
+                  <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(stockValuationLive)}</span>
+                </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
                   <button type="button" onClick={() => setStockCategoryFilter(null)}
                     className="shrink-0 inline-flex items-center gap-1 text-xs font-bold rounded-full px-3 py-1.5"
@@ -1564,6 +1584,11 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
                     <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
                     <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
+                  </div>
+
+                  <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                    <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>💰 Valorisation kho</span>
+                    <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
                   </div>
 
                   <div className="space-y-3">

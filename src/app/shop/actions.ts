@@ -771,6 +771,7 @@ async function stockCountEntries(shopName: string): Promise<Map<string, StockCou
 
 export type ShopStockCountLine = {
   sku: string; name: string; qty: number | null; isExtra: boolean; category: string; imageUrl: string | null;
+  priceB2c: number | null;
 };
 
 async function fetchStockCountList(shopName: string, sessionSeq: number): Promise<ShopStockCountLine[]> {
@@ -784,10 +785,22 @@ async function fetchStockCountList(shopName: string, sessionSeq: number): Promis
   const qtyBySku = new Map<string, number>();
   for (const c of counts ?? []) qtyBySku.set(c.sku, Number(c.qty));
 
+  // Valorisation (Axel, 2026-09-05: "la valorisation de leur stock apres inventaire pour les
+  // interface shop") — quantite x prix de vente (price_b2c), meme source que la valorisation
+  // stock deja affichee cote admin (analytics/page.tsx). Un SKU sans prix (pas encore au
+  // catalogue B2C, ex. les Paris Brest) -> priceB2c: null, la ligne compte pour 0 dans le total
+  // plutot que de faire echouer tout le calcul.
+  const skus = Array.from(entries.keys());
+  const { data: priceRows } = skus.length
+    ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
+    : { data: [] as any[] };
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+
   return Array.from(entries.entries())
     .map(([sku, v]) => ({
       sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null,
-      category: v.category, imageUrl: v.imageUrl,
+      category: v.category, imageUrl: v.imageUrl, priceB2c: priceBySku.get(sku) ?? null,
     }))
     // Grouped by category in the UI — sort server-side the same way so the client can just walk
     // the array in order.
@@ -961,7 +974,9 @@ export async function addStockCountItemAction(input: {
   const { error } = await supabase.from('lab_shop_stock_count_items')
     .upsert({ shop_name: auth.shopName, sku, product_name: name, added_by_name: addedBy, added_at: new Date().toISOString() }, { onConflict: 'shop_name,sku' });
   if (error) return { error: error.message };
-  return { item: { sku, name, qty: null, isExtra: true, category: meta.category, imageUrl: meta.imageUrl } };
+  const { data: priceRow } = await supabase.from('product_variants').select('price_b2c').eq('sku', sku).maybeSingle();
+  const priceB2c = priceRow && Number(priceRow.price_b2c) > 0 ? Number(priceRow.price_b2c) : null;
+  return { item: { sku, name, qty: null, isExtra: true, category: meta.category, imageUrl: meta.imageUrl, priceB2c } };
 }
 
 // ── Daily report ("Báo cáo") ────────────────────────────────────────────────
@@ -976,6 +991,7 @@ export type ShopDailyReport = {
   stockCountedCount: number;
   stockTotalCount: number;
   stockCounted: boolean;
+  stockValuationTotal: number;
   losses: ShopLossDailyRecapProduct[];
   lossesTotalQty: number;
   lossesReportCount: number;
@@ -989,6 +1005,9 @@ async function fetchDailyReport(shopName: string): Promise<ShopDailyReport> {
   const latestSessionSeq = sessions.length ? sessions[sessions.length - 1].seq : 1;
   const stockLines = await fetchStockCountList(shopName, latestSessionSeq);
   const stockCountedCount = stockLines.filter(l => l.qty !== null).length;
+  // Somme qty x prix de vente sur les lignes reellement comptees (qty null = pas encore compte,
+  // ne compte pas comme 0 dans la valorisation).
+  const stockValuationTotal = stockLines.reduce((s, l) => s + (l.qty ?? 0) * (l.priceB2c ?? 0), 0);
   const lossRecap = await fetchDailyLossRecap(shopName);
   const todayLoss = lossRecap.find(r => r.date === today);
   return {
@@ -997,6 +1016,7 @@ async function fetchDailyReport(shopName: string): Promise<ShopDailyReport> {
     stockCountedCount,
     stockTotalCount: stockLines.length,
     stockCounted: stockCountedCount > 0,
+    stockValuationTotal,
     losses: todayLoss?.products ?? [],
     lossesTotalQty: todayLoss?.totalQty ?? 0,
     lossesReportCount: todayLoss?.reportCount ?? 0,
