@@ -451,7 +451,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = Number(url.searchParams.get('id'));
   const action = url.searchParams.get('action') ?? 'inspect';
-  const idlessActions = new Set(['sopicking', 'productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat', 'reasontags', 'reasontagcreate', 'states']);
+  const idlessActions = new Set(['sopicking', 'productname', 'fields', 'reporder', 'testprefill', 'lablocation', 'modulecheck', 'invcheck', 'invset', 'invbatch', 'labquants', 'saleablecat', 'reasontags', 'reasontagcreate', 'states', 'billsfind', 'billlines']);
   if (!id && !idlessActions.has(action)) return NextResponse.json({ error: 'Missing ?id=' }, { status: 400 });
 
   try {
@@ -868,6 +868,44 @@ export async function GET(req: Request) {
         start, end, sliceSize: slice.length, grandTotal: INVENTORY_TARGETS.length,
         total: results.length, succeeded: results.length - failed.length, failed, results,
       });
+    }
+    if (action === 'billsfind') {
+      // Read-only (2026-09-05, Axel: negotiated a 35% rebate with vendor "Happy True Market"
+      // covering all of August's bills — needs the exact bill list + amounts confirmed before
+      // any write, per the standing rule of verifying against real Odoo data first).
+      const q = url.searchParams.get('partner') ?? 'Happy True Market';
+      const month = url.searchParams.get('month') ?? '08';
+      const year = url.searchParams.get('year') ?? '2026';
+      const partners = await odooExecuteWrite<any[]>('res.partner', 'search_read', [
+        ['|', ['name', 'ilike', q], ['display_name', 'ilike', q]],
+      ], { fields: ['id', 'name', 'display_name'] });
+      if (!partners.length) return NextResponse.json({ error: `No partner matching "${q}"`, partners });
+      const partnerIds = partners.map((p: any) => p.id);
+      const start = `${year}-${month}-01`;
+      const endDate = new Date(Number(year), Number(month), 1); // first day of next month
+      const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-01`;
+      const bills = await odooExecuteWrite<any[]>('account.move', 'search_read', [[
+        ['partner_id', 'in', partnerIds],
+        ['move_type', 'in', ['in_invoice', 'in_refund']],
+        ['invoice_date', '>=', start],
+        ['invoice_date', '<', end],
+      ]], { fields: ['id', 'name', 'ref', 'state', 'invoice_date', 'partner_id', 'amount_untaxed', 'amount_tax', 'amount_total', 'payment_state'] });
+      const byState: Record<string, number> = {};
+      for (const b of bills) byState[b.state] = (byState[b.state] ?? 0) + 1;
+      const sumTotal = bills.reduce((s: number, b: any) => s + (b.amount_total || 0), 0);
+      return NextResponse.json({ partners, count: bills.length, byState, sumTotal, bills });
+    }
+    if (action === 'billlines') {
+      // Read-only: full line detail for one bill (or a comma-separated list of ids), to see
+      // whether account.move.line already exposes a 'discount' field on this Odoo instance
+      // before deciding how to apply the 35%.
+      const idsParam = url.searchParams.get('ids') ?? '';
+      const ids = idsParam.split(',').map(s => Number(s.trim())).filter(Boolean);
+      if (!ids.length) return NextResponse.json({ error: 'Missing ?ids=' }, { status: 400 });
+      const lines = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [
+        [['move_id', 'in', ids], ['display_type', '=', false]],
+      ], { fields: ['id', 'move_id', 'name', 'quantity', 'price_unit', 'discount', 'price_subtotal', 'price_total'] });
+      return NextResponse.json({ ids, lines });
     }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e: any) {
