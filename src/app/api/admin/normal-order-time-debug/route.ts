@@ -34,11 +34,21 @@ export async function GET(req: Request) {
     const since = url.searchParams.get('since') ?? '2026-07-15 00:00:00';
     const cutoffHour = Number(url.searchParams.get('cutoff') ?? '14');
 
+    const includeAll = url.searchParams.get('all') === '1';
+
     const repls = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
       [[['create_date', '>=', since], ['state', '!=', 'cancel']]],
       { fields: ['name', 'create_date', 'delivery_date', 'state', 'warehouse_id'], limit: 2000 });
 
-    const rows = repls.map((r: any) => {
+    // Default scope matches the report's own "our shops" set (La Paris Tây Hồ/TQT/Tasco/Bà
+    // Triệu/Time City/Long Biên) — Winmart branches replenish through the same Odoo model but
+    // are a reseller, not one of our own shops, and their staff aren't the ones the 2pm-cutoff
+    // discipline point is about. ?all=1 includes them.
+    const filtered = includeAll
+      ? repls
+      : repls.filter((r: any) => !String(r.warehouse_id?.[1] ?? '').toLowerCase().includes('winmart'));
+
+    const rows = filtered.map((r: any) => {
       const local = odooDateTimeToLocal(r.create_date);
       const hour = local.time ? Number(local.time.split(':')[0]) : null;
       return {
