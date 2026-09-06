@@ -9,7 +9,7 @@ import {
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
-import { sendShopPush, sendAdminPush, type PushPayload } from '@/lib/push-notify';
+import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -285,8 +285,7 @@ export async function confirmReceiptAction(input: {
     if (isCompleteNow) {
       const viPayload: PushPayload = { title: auth.shopName, body: `🚚 Đã nhận đủ hàng — đơn #${header.order_ref} (${name})` };
       const enPayload: PushPayload = { title: auth.shopName, body: `🚚 Delivery fully received — order #${header.order_ref} (${name})` };
-      sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
-      sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
+      await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
     }
   }
 
@@ -952,8 +951,7 @@ export async function finishStockCountAction(input: {
     const money = new Intl.NumberFormat('vi-VN').format(Math.round(valuation)) + ' ₫';
     const viPayload: PushPayload = { title: auth.shopName, body: `📋 Kiểm kho đợt ${sess.seq} đã hoàn tất — ${skus.length} SP · ${money} (${name})` };
     const enPayload: PushPayload = { title: auth.shopName, body: `📋 Stock count #${sess.seq} finished — ${skus.length} SKUs · ${money} (${name})` };
-    sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
-    sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
+    await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
   }
   return { ok: true, skuCount: skus.length, valuation, alreadyDone };
 }

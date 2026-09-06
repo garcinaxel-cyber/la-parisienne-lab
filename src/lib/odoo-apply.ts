@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 import { nowLabStamp } from '@/lib/odoo';
 import { ensureDeliveryOrderChecklist } from '@/lib/delivery-check';
-import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
+import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 
 const TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'];
 
@@ -376,7 +376,7 @@ async function createLineAndCard(
       // donc pas besoin d'un sendAdminPush separe ici (double notif sinon).
       const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🆕 Odoo thêm SP mới vào đơn ${orderRef}: ${name} x${cardQty}`, url: `/station/${team}` };
       const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🆕 Odoo added new product to order ${orderRef}: ${name} x${cardQty}`, url: `/station/${team}` };
-      sendTeamPush(supabase, team, viPayload, enPayload).catch(() => {});
+      await awaitPush(sendTeamPush(supabase, team, viPayload, enPayload));
     }
   }
 

@@ -25,6 +25,22 @@ export function pushConfigured(): boolean {
 
 export type PushPayload = { title: string; body: string; url?: string };
 
+// Wait for a push send to actually finish before the server action / sync returns — capped so
+// a slow push service can never hold up the user's own action for long.
+//
+// BUG FIX 2026-09-07 (Axel: "0 notif entre 17h et minuit" while 5 exceptional orders came in
+// from 3 shops at 17:00, 19:25 and 20:48): every call site fired the push as
+// `sendXxxPush(...).catch(() => {})` and returned immediately. On Vercel the function is frozen
+// as soon as the response is sent, so a push still in flight (Apple/Google round-trip ~0.3-1 s)
+// was silently dropped — sometimes delivered, often not, and never logged since the promise
+// never got to settle. Awaiting through this helper keeps the send inside the request lifetime.
+export function awaitPush<T>(p: Promise<T>, ms = 4000): Promise<T | undefined> {
+  return Promise.race([
+    p.catch(() => undefined),
+    new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), ms)),
+  ]);
+}
+
 // BUG FIX 2026-09-05 (Axel: aucune visibilite quand un envoi echoue — decouvert en diagnostiquant
 // pourquoi son propre abonnement expire n'avait rien remonte nulle part avant qu'on aille
 // fouiller directement Supabase). Toute erreur d'envoi finissait auparavant dans un `catch` vide
@@ -45,11 +61,21 @@ async function sendToSubs(
   const failures: PushFailure[] = [];
   await Promise.all(subs.map(async (s) => {
     const payload = s.lang === 'en' && payloadEn ? payloadEn : payloadVi;
+    const send = () => webpush.sendNotification(
+      { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+      JSON.stringify(payload),
+    );
     try {
-      await webpush.sendNotification(
-        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(payload),
-      );
+      try {
+        await send();
+      } catch (first: any) {
+        // One retry after 1.5 s for transient transport errors only (no HTTP status = socket /
+        // TLS / DNS blip, e.g. the 2026-09-06 20:30 Apple TLS disconnect that lost a whole team's
+        // reminder). A real 4xx/5xx from the push service is not retried.
+        if (first?.statusCode) throw first;
+        await new Promise(r => setTimeout(r, 1500));
+        await send();
+      }
     } catch (e: any) {
       const statusCode = e?.statusCode as number | undefined;
       if (statusCode === 404 || statusCode === 410) deadIds.push(s.id);

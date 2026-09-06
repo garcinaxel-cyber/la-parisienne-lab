@@ -3,7 +3,7 @@ import { runOdooSync } from '@/lib/odoo-sync';
 import { consolidateLines } from '@/lib/excel-parser';
 import { persistImportsFromLines } from '@/lib/import-persist';
 import { applyOdooChanges } from '@/lib/odoo-apply';
-import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
+import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 
 export interface AutoSyncResult {
   created_imports: number;
@@ -338,7 +338,7 @@ async function runAutoOdooSyncLocked(supabase: SupabaseClient): Promise<AutoSync
         : (teamCount > 1 ? `${teamCount} new orders arrived` : 'A new order arrived');
       const viPayload: PushPayload = { title: 'La Parisienne Lab', body: viBody, url: `/station/${t}` };
       const enPayload: PushPayload = { title: 'La Parisienne Lab', body: enBody, url: `/station/${t}` };
-      sendTeamPush(supabase, t, viPayload, enPayload).catch(() => {});
+      await awaitPush(sendTeamPush(supabase, t, viPayload, enPayload));
     }
   }
 

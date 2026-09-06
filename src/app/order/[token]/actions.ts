@@ -1,7 +1,7 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
-import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
+import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 
 // Public shop order form — server actions.
 // No session here: the token in the URL is the access key, checked on EVERY call.
@@ -277,7 +277,7 @@ export async function submitShopOrderAction(token: string, input: {
     const rest = items.length > 3 ? ` +${items.length - 3}` : '';
     const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Đơn đặc biệt: ${shown}${rest}`, url: `/station/${team}` };
     const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Exceptional order: ${shown}${rest}`, url: `/station/${team}` };
-    sendTeamPush(supabaseForPush, team, viPayload, enPayload).catch(() => {});
+    await awaitPush(sendTeamPush(supabaseForPush, team, viPayload, enPayload));
   }
 
   return { ok: true };
