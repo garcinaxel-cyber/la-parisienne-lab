@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2 } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -21,6 +21,9 @@ const NAV = [
   // du lab") — same visibility as the other operational items above, no adminOnly.
   { href: '/lab-scrap', icon: Trash2,         labelVi: 'Hao hụt Lab', labelEn: 'Lab scrap' },
   { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques' },
+  // Online-sales interface (2026-09-06): admin entry point to the online seller's space
+  // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).
+  { href: '/online-orders', icon: ShoppingBag,     labelVi: 'Bán hàng online', labelEn: 'Ventes en ligne', adminOnly: true },
   // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
   // assistants need to open a chef's station view same as a chef would, e.g. to check what's
   // showing on their tablet). The page itself has no role gate of its own, just this sidebar
