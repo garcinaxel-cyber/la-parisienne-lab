@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Minus, X, Loader2, Bell } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
+import { thumb } from '@/lib/img-thumb';
 import { useI18n } from '@/lib/i18n';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
@@ -16,7 +17,27 @@ const INK_LIGHT = '#6B7280';
 const BORDER = '#E0D49A';
 const TABBAR = '#163D29';
 
-const CHANNEL_SUGGESTIONS = ['Hoàn Kiếm', 'Moon Flower', 'Website', 'Page Merci'];
+// Online orders are always fulfilled by a shop — the Lab itself is never a valid target
+// (Axel review 2026-09-06). Server-side guard in submitOnlineOrderAction mirrors this.
+const ONLINE_SHOPS = SHOP_NAMES_ALL.filter(s => s !== 'Lab');
+
+// Client-side downscale before any upload (design photo or payment screenshot): a phone
+// screenshot is 2–5 MB, the same picture at 1200px JPEG is ~100–250 KB. Keeps Supabase
+// storage/egress flat and the upload instant on shop wifi. Falls back to the original file
+// if the browser can't decode it.
+async function compressImage(file: File, maxSide = 1200, quality = 0.72): Promise<File> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); if (!ctx) return file;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch { return file; }
+}
 
 // ── Bilingual labels (Axel, 2026-09-06: "met son interface anglais viet aussi") — same
 // localStorage-backed toggle as the rest of the app (useI18n), default VI for her, EN for Axel.
@@ -79,6 +100,13 @@ const L = {
     byCat: 'CA theo danh mục sản phẩm',
     byChannel: 'CA theo kênh bán hàng',
     noData: 'Chưa có dữ liệu.',
+    channelAdd: 'Thêm kênh mới...',
+    priceLabel: 'Giá bán (₫)',
+    listPrice: 'Giá niêm yết',
+    lineNote: 'Ghi chú cho sản phẩm này...',
+    payProof: 'Ảnh chuyển khoản',
+    payProofDrop: '📎 Kéo thả hoặc chọn ảnh chuyển khoản',
+    uploading: 'Đang tải ảnh...',
   },
   en: {
     titleOrder: 'Online orders',
@@ -138,6 +166,13 @@ const L = {
     byCat: 'Revenue by product category',
     byChannel: 'Revenue by sales channel',
     noData: 'No data yet.',
+    channelAdd: 'Add a new channel...',
+    priceLabel: 'Price (₫)',
+    listPrice: 'List price',
+    lineNote: 'Note for this item...',
+    payProof: 'Payment screenshot',
+    payProofDrop: '📎 Drop or pick the payment screenshot',
+    uploading: 'Uploading...',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -156,7 +191,7 @@ function fmtCompactVnd(v: number): string {
   return `${Math.round(v)} ₫`;
 }
 
-type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean };
+type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
 type Tab = 'order' | 'track' | 'stats';
 
 export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: string; isAdmin: boolean }) {
@@ -164,8 +199,26 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   const [tab, setTab] = useState<Tab>('order');
   const today = new Date().toISOString().slice(0, 10);
   // ── Order form state ──
-  const [shop, setShop] = useState(SHOP_NAMES_ALL[0]);
+  const [shop, setShop] = useState(ONLINE_SHOPS[0]);
   const [channel, setChannel] = useState('');
+  const [channels, setChannels] = useState<string[]>([]);
+  const [newChannel, setNewChannel] = useState('');
+  async function loadChannels() {
+    const res = await actions.listOnlineChannelsAction();
+    if (res.channels) setChannels(res.channels);
+  }
+  useEffect(() => { loadChannels(); }, []);
+  async function addChannel() {
+    const n = newChannel.trim();
+    if (!n) return;
+    await actions.addOnlineChannelAction(n);
+    setNewChannel(''); setChannel(n); loadChannels();
+  }
+  async function deleteChannel(n: string) {
+    await actions.deleteOnlineChannelAction(n);
+    if (channel === n) setChannel('');
+    loadChannels();
+  }
   const [deliveryDate, setDeliveryDate] = useState(today);
   const [readyTime, setReadyTime] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -198,9 +251,9 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
       const existing = prev.find(l => l.key === key);
       if (existing) return prev.map(l => l.key === key ? { ...l, qty: l.qty + 1 } : l);
       return [...prev, {
-        key, ficheId: p.ficheId, variantId: p.variantId, qty: 1, unitPrice: 0,
-        message: null, designNotes: null, designPhotoUrl: null,
-        nameVi: p.nameVi, imageUrl: p.imageUrl, isCake: p.isCake,
+        key, ficheId: p.ficheId, variantId: p.variantId, qty: 1, unitPrice: p.price ?? 0,
+        message: null, designNotes: null, designPhotoUrl: null, lineNote: null,
+        nameVi: p.nameVi, imageUrl: p.imageUrl, isCake: p.isCake, listPrice: p.price,
       }];
     });
     setQuery(''); setResults([]);
@@ -212,7 +265,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
     setCart(prev => prev.filter(l => l.key !== key));
   }
   async function onDesignPhoto(key: string, file: File) {
-    const fd = new FormData(); fd.append('file', file);
+    const fd = new FormData(); fd.append('file', await compressImage(file));
     const res = await actions.uploadOnlineDesignPhotoAction(fd);
     if (res.url) updateLine(key, { designPhotoUrl: res.url });
   }
@@ -229,7 +282,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
       customerName: customerName || null, customerPhone: customerPhone || null,
       deliveryAddress: deliveryAddress || null, notes: notes || null,
       deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
-      items: cart.map(({ key, nameVi, imageUrl, isCake, ...rest }) => rest),
+      items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
     });
     setSubmitting(false);
     if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
@@ -247,6 +300,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
           {tab === 'order' && (
             <OrderTab
               shop={shop} setShop={setShop} channel={channel} setChannel={setChannel}
+              channels={channels} newChannel={newChannel} setNewChannel={setNewChannel} addChannel={addChannel} deleteChannel={deleteChannel}
               deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
               readyTime={readyTime} setReadyTime={setReadyTime}
               customerName={customerName} setCustomerName={setCustomerName}
@@ -346,7 +400,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function OrderTab(props: any) {
   const {
-    shop, setShop, channel, setChannel, deliveryDate, setDeliveryDate, readyTime, setReadyTime,
+    shop, setShop, channel, setChannel, channels, newChannel, setNewChannel, addChannel, deleteChannel,
+    deliveryDate, setDeliveryDate, readyTime, setReadyTime,
     customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress,
     notes, setNotes, deliveryFee, setDeliveryFee, paymentStatus, setPaymentStatus, amountPaid, setAmountPaid,
     cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart,
@@ -357,15 +412,30 @@ function OrderTab(props: any) {
   return (
     <div>
       <SectionLabel>{tr('channelLabel')}</SectionLabel>
-      <input list="channel-suggestions" value={channel} onChange={e => setChannel(e.target.value)}
-        placeholder="Hoàn Kiếm, Website, Page Merci..."
-        className="w-full mb-1 px-3 py-2 rounded-lg text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }} />
-      <datalist id="channel-suggestions">{CHANNEL_SUGGESTIONS.map((c: string) => <option key={c} value={c} />)}</datalist>
+      <div className="flex flex-wrap gap-2 mb-2">
+        {channels.map((c: string) => (
+          <span key={c} className="inline-flex items-center rounded-full overflow-hidden"
+            style={{ border: channel === c ? 'none' : `1px solid ${BORDER}`, backgroundColor: channel === c ? NAVY : '#fff' }}>
+            <button onClick={() => setChannel(c)}
+              style={{ color: channel === c ? '#FFFAEE' : INK, fontSize: 12.5, fontWeight: channel === c ? 600 : 500, padding: '7px 6px 7px 14px' }}>{c}</button>
+            <button onClick={() => deleteChannel(c)} aria-label="remove"
+              style={{ color: channel === c ? '#F0D98A' : INK_LIGHT, padding: '7px 9px 7px 3px', lineHeight: 0 }}><X size={11} /></button>
+          </span>
+        ))}
+        <span className="inline-flex items-center rounded-full" style={{ border: `1px dashed ${BORDER}`, backgroundColor: '#fff' }}>
+          <input value={newChannel} onChange={(e: any) => setNewChannel(e.target.value)}
+            onKeyDown={(e: any) => { if (e.key === 'Enter') { e.preventDefault(); addChannel(); } }}
+            placeholder={tr('channelAdd')} className="text-sm outline-none bg-transparent"
+            style={{ padding: '7px 4px 7px 14px', width: 150, fontSize: 12.5 }} />
+          <button onClick={addChannel} disabled={!newChannel.trim()} aria-label="add"
+            style={{ color: newChannel.trim() ? NAVY : INK_LIGHT, padding: '7px 10px 7px 4px', lineHeight: 0 }}><Plus size={13} /></button>
+        </span>
+      </div>
       <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 16 }}>{tr('channelHint')}</div>
 
       <SectionLabel>{tr('shopLabel')}</SectionLabel>
       <div className="flex flex-wrap gap-2 mb-4">
-        {SHOP_NAMES_ALL.map((s: string) => (
+        {ONLINE_SHOPS.map((s: string) => (
           <button key={s} onClick={() => setShop(s)}
             style={{
               backgroundColor: shop === s ? NAVY : '#fff', color: shop === s ? '#FFFAEE' : INK,
@@ -406,7 +476,11 @@ function OrderTab(props: any) {
                 </div>
                 <button onClick={() => removeLine(l.key)}><X size={14} color={INK_LIGHT} /></button>
               </div>
-              <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center justify-between mt-2" style={{ fontSize: 11, color: INK_LIGHT }}>
+                <span>{tr('priceLabel')}</span>
+                {l.listPrice != null && <span>{tr('listPrice')}: <b style={{ color: INK }}>{fmtVnd(l.listPrice)}</b></span>}
+              </div>
+              <div className="flex items-center gap-3 mt-1">
                 <div className="flex items-center gap-2">
                   <button onClick={() => updateLine(l.key, { qty: Math.max(1, l.qty - 1) })}
                     style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: CREAM }} className="flex items-center justify-center"><Minus size={12} color={NAVY} /></button>
@@ -418,6 +492,9 @@ function OrderTab(props: any) {
                   placeholder={tr('unitPrice')} className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 64, textAlign: 'right' }}>{fmtCompactVnd(l.qty * (Number(l.unitPrice) || 0))}</div>
               </div>
+              <input value={l.lineNote ?? ''} onChange={e => updateLine(l.key, { lineNote: e.target.value })}
+                placeholder={tr('lineNote')} maxLength={300}
+                className="w-full px-2 py-1.5 rounded text-sm mt-2" style={{ border: `1px solid ${BORDER}` }} />
               {l.isCake && (
                 <div className="mt-2 space-y-2">
                   <input value={l.message ?? ''} onChange={e => updateLine(l.key, { message: e.target.value })}
@@ -528,6 +605,15 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
     await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
     load();
   }
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  async function onProof(o: OnlineOrderSummary, file: File | undefined) {
+    if (!file || !file.type.startsWith('image/')) return;
+    setUploadingFor(o.orderBatchId);
+    const fd = new FormData(); fd.append('file', await compressImage(file));
+    await actions.uploadPaymentProofAction(o.orderBatchId, fd);
+    setUploadingFor(null);
+    load();
+  }
   async function cyclePayment(o: OnlineOrderSummary) {
     const next = o.paymentStatus === 'unpaid' ? 'partial' : o.paymentStatus === 'partial' ? 'paid' : 'unpaid';
     await actions.setPaymentStatusAction(o.orderBatchId, next, next === 'paid' ? o.total + o.deliveryFee : o.amountPaid);
@@ -572,6 +658,19 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
                 }}>
                   {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
                 </button>
+              </div>
+              <div className="flex items-center gap-2 mb-2"
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); onProof(o, e.dataTransfer.files?.[0]); }}>
+                {o.paymentProofUrl && (
+                  <a href={o.paymentProofUrl} target="_blank" rel="noreferrer" className="shrink-0">
+                    <img src={thumb(o.paymentProofUrl, 128)} alt={tr('payProof')} loading="lazy" className="w-10 h-10 rounded-md object-cover" style={{ border: `1px solid ${BORDER}` }} />
+                  </a>
+                )}
+                <label className="flex-1 text-center py-1.5 rounded-lg cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT, fontSize: 11.5, backgroundColor: '#FFFDF5' }}>
+                  {uploadingFor === o.orderBatchId ? tr('uploading') : (o.paymentProofUrl ? `✓ ${tr('payProof')}` : tr('payProofDrop'))}
+                  <input type="file" accept="image/*" className="hidden" onChange={e => onProof(o, e.target.files?.[0])} />
+                </label>
               </div>
               <div style={{ height: 1, backgroundColor: CREAM_DARK, marginBottom: 9 }} />
               <div className="flex gap-2">

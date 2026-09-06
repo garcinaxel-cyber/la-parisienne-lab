@@ -48,6 +48,9 @@ const clean = (s: string | null | undefined, max: number) => {
 export type OnlineProduct = {
   ficheId: string; variantId: string | null; sku: string | null;
   nameVi: string; imageUrl: string | null; isCake: boolean; hasTeam: boolean;
+  // Official selling price (product_variants.price_b2c — the same price the B2B/Odoo push and
+  // the shop stock valuation use). Prefilled in the cart, still editable per order.
+  price: number | null;
 };
 
 export async function searchOnlineProductsAction(query: string): Promise<{ products?: OnlineProduct[]; error?: string }> {
@@ -74,6 +77,11 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
     : { data: [] as any[] };
   const nameBySku: Record<string, string> = {};
   for (const r of nameRows ?? []) if (r.product_sku && r.product_name_vi && !nameBySku[r.product_sku]) nameBySku[r.product_sku] = r.product_name_vi;
+  const { data: priceRows } = skus.length
+    ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
+    : { data: [] as any[] };
+  const priceBySku: Record<string, number> = {};
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku[r.sku] = Number(r.price_b2c);
 
   const all: OnlineProduct[] = (vars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
@@ -87,6 +95,7 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
       nameVi, imageUrl: (v.image_url ?? f.image_url ?? null) as string | null,
       isCake: f.category === 'Birthday cake',
       hasTeam: TEAMS.includes((f.teams ?? [])[0] ?? ''),
+      price: v.sku ? (priceBySku[v.sku] ?? null) : null,
     }];
   });
 
@@ -121,6 +130,9 @@ export async function uploadOnlineDesignPhotoAction(formData: FormData): Promise
 export type OnlineOrderItem = {
   ficheId: string; variantId: string | null; qty: number; unitPrice: number;
   message: string | null; designNotes: string | null; designPhotoUrl: string | null;
+  // Free per-line note (any product, Axel review 2026-09-06) — lands in lab_manual_cakes.notes
+  // of that line, shown on /exceptional-orders and the chef card like any other note.
+  lineNote?: string | null;
 };
 
 // One submission = one order = one order_batch_id = one Odoo document, created SYNCHRONOUSLY
@@ -141,6 +153,8 @@ export async function submitOnlineOrderAction(input: {
   if (!supabase) return { error: 'Server not configured' };
 
   if (!SHOPS.includes(input.shop)) return { error: 'Invalid shop' };
+  // Axel review 2026-09-06: online orders are always fulfilled by a shop, never by the Lab itself.
+  if (input.shop === 'Lab') return { error: 'Lab cannot handle online orders' };
   const channel = clean(input.channel, 60);
   if (!channel) return { error: 'Missing channel' };
   const items = Array.isArray(input.items) ? input.items : [];
@@ -153,7 +167,7 @@ export async function submitOnlineOrderAction(input: {
     ficheId: string; variantId: string | null; sku: string | null; team: string;
     nameVi: string; nameEn: string; imageUrl: string | null; variantLabel: string;
     qty: number; unitPrice: number; message: string | null; isCake: boolean;
-    designNotes: string | null; designPhotoUrl: string | null;
+    designNotes: string | null; designPhotoUrl: string | null; lineNote: string | null;
   };
   const resolved: Resolved[] = [];
   for (const item of items) {
@@ -189,6 +203,7 @@ export async function submitOnlineOrderAction(input: {
       message: isCake ? clean(item.message, 200) : null,
       designNotes: isCake ? clean(item.designNotes, 400) : null,
       designPhotoUrl: isCake ? photoUrl : null,
+      lineNote: clean(item.lineNote, 300),
     });
   }
 
@@ -237,7 +252,8 @@ export async function submitOnlineOrderAction(input: {
       team: r.team, qty: r.qty, unit_price: r.unitPrice, delivery_date: input.deliveryDate,
       ready_time: readyTime, delivered_by: input.shop, delivery_address: deliveryAddress,
       message: r.message, design_notes: r.designNotes, design_photo_url: r.designPhotoUrl,
-      customer_name: customerName, customer_phone: customerPhone, notes,
+      customer_name: customerName, customer_phone: customerPhone,
+      notes: [r.lineNote, notes].filter(Boolean).join(' · ') || null,
       shop_name: input.shop, channel, created_by: auth.userId, created_by_name: `${auth.fullName} (online)`,
       needs_odoo: true, assignment_id: asg.id, import_id: importId, order_batch_id: orderBatchId,
     }).select('id').single();
@@ -282,6 +298,7 @@ export async function submitOnlineOrderAction(input: {
 // ── Suivi (tracking) ──
 export type OnlineOrderSummary = {
   orderBatchId: string; shopName: string; channel: string | null; orderRef: string | null;
+  paymentProofUrl: string | null;
   createdAt: string; deliveryDate: string;
   customerName: string | null; customerPhone: string | null;
   items: { nameVi: string; qty: number; unitPrice: number | null }[];
@@ -332,6 +349,7 @@ export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderS
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: orderRef ? labDeliveredRefs.has(orderRef) : false,
       shopDelivered: o.shop_delivered, cancelled: ls.length > 0 && ls.every((l: any) => l.cancelled_at),
+      paymentProofUrl: o.payment_proof_url ?? null,
     };
   });
   return { orders: result };
@@ -376,6 +394,66 @@ export async function setPaymentStatusAction(orderBatchId: string, status: 'paid
   if (error) return { error: error.message };
   revalidatePath('/online-orders');
   return { ok: true };
+}
+
+// ── Sales channels (editable list, lab_v70) ──
+export async function listOnlineChannelsAction(): Promise<{ channels?: string[]; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_online_channels').select('name').order('created_at');
+  if (error) return { error: error.message };
+  return { channels: (data ?? []).map((r: any) => r.name as string) };
+}
+
+export async function addOnlineChannelAction(name: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const n = clean(name, 60);
+  if (!n) return { error: 'Empty name' };
+  const { error } = await supabase.from('lab_online_channels').upsert({ name: n, created_by: auth.userId }, { onConflict: 'name', ignoreDuplicates: true });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function deleteOnlineChannelAction(name: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  // Only the suggestion list is touched — past orders keep the channel text they were saved with.
+  const { error } = await supabase.from('lab_online_channels').delete().eq('name', name);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// ── Payment screenshot (lab_v71) ──
+// The browser downsizes the image to ~1200px JPEG before calling this (see OnlineOrdersView),
+// so a typical bank-app screenshot lands at 100–250 KB instead of 2–5 MB — negligible for
+// storage, and it is only ever rendered as a next/image thumbnail on demand (egress-cached).
+export async function uploadPaymentProofAction(orderBatchId: string, formData: FormData): Promise<{ url?: string; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const denied = await assertOwnsOrder(supabase, orderBatchId, auth);
+  if (denied) return { error: denied };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only images are allowed' };
+  if (file.size > 1.5 * 1024 * 1024) return { error: 'Image too large — max 1.5MB after compression' };
+  const ext = (file.type.split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';
+  const path = `payments/${new Date().toISOString().slice(0, 10)}/${orderBatchId}.${ext}`;
+  const buf = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await supabase.storage.from('lab-design-photos').upload(path, buf, { contentType: file.type, upsert: true });
+  if (upErr) return { error: upErr.message };
+  const { data } = supabase.storage.from('lab-design-photos').getPublicUrl(path);
+  const { error } = await supabase.from('lab_online_orders').update({ payment_proof_url: data.publicUrl }).eq('order_batch_id', orderBatchId);
+  if (error) return { error: error.message };
+  return { url: data.publicUrl };
 }
 
 // ── Analytic ──
