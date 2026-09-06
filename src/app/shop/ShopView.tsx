@@ -172,6 +172,10 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [stockName, setStockName] = useState('');
   const [stockSaving, setStockSaving] = useState(false);
   const [stockMsg, setStockMsg] = useState<string | null>(null);
+  // Explicit "Hoàn tất kiểm kho" (Axel, 2026-09-06): two taps (arm, then confirm) — no browser
+  // confirm() dialog — because this is what fires the shop + admin notification.
+  const [finishArmed, setFinishArmed] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const [stockSearchQuery, setStockSearchQuery] = useState('');
   const [stockSearchResults, setStockSearchResults] = useState<ShopStockSearchProduct[]>([]);
   const [stockSearching, setStockSearching] = useState(false);
@@ -652,6 +656,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
     setStockSaving(false);
     if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
     setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    setFinishArmed(false);
     if (res.sessionSeq) setStockSessionSeq(res.sessionSeq);
     setStockLatestSessionSeq(prev => Math.max(prev, res.sessionSeq ?? prev));
     setStockSessions(prev => {
@@ -659,8 +664,23 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       const now = new Date().toISOString();
       const existing = prev.find(s => s.seq === seq);
       if (existing) return prev.map(s => s.seq === seq ? { ...s, savedCount: res.saved ?? s.savedCount, updatedAt: now, updatedByNames: Array.from(new Set([...s.updatedByNames, trimmedName])) } : s);
-      return [...prev, { seq, savedCount: res.saved ?? 0, updatedAt: now, updatedByNames: [trimmedName] }].sort((a, b) => a.seq - b.seq);
+      return [...prev, { seq, savedCount: res.saved ?? 0, updatedAt: now, updatedByNames: [trimmedName], finishedAt: null, finishedByName: null }].sort((a, b) => a.seq - b.seq);
     });
+  }
+
+  async function finishStockCount() {
+    const trimmedName = stockName.trim();
+    if (!trimmedName) { setStockMsg('Nhập tên người kiểm kho trước'); return; }
+    if (!finishArmed) { setFinishArmed(true); return; }
+    setFinishArmed(false); setFinishing(true); setStockMsg(null);
+    const actions = await import('./actions');
+    const res = await actions.finishStockCountAction({ sessionSeq: stockSessionSeq, finishedByName: trimmedName, ...(readOnly ? { shopName } : {}) });
+    setFinishing(false);
+    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
+    const money = new Intl.NumberFormat('vi-VN').format(Math.round(res.valuation ?? 0)) + ' ₫';
+    setStockMsg(res.alreadyDone ? `Đợt ${stockSessionSeq} đã được hoàn tất trước đó · cập nhật ${res.skuCount} SP · ${money}` : `✅ Đã hoàn tất đợt ${stockSessionSeq} — ${res.skuCount} SP · ${money}`);
+    const now = new Date().toISOString();
+    setStockSessions(prev => prev.map(x => x.seq === stockSessionSeq ? { ...x, finishedAt: x.finishedAt ?? now, finishedByName: x.finishedByName ?? trimmedName } : x));
   }
 
   async function loadReport() {
@@ -1561,6 +1581,28 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               {stockSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               Lưu kiểm kho
             </button>
+            {(() => {
+              const cur = stockSessions.find(x => x.seq === stockSessionSeq);
+              const hasData = !!cur && cur.savedCount > 0;
+              const isCurrent = stockSessionSeq >= stockLatestSessionSeq;
+              if (!hasData || !isCurrent) return null;
+              if (cur?.finishedAt) {
+                const t = new Date(cur.finishedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                return (
+                  <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
+                    <CheckCircle2 size={14} /> Đợt {stockSessionSeq} đã hoàn tất lúc {t}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
+                  </div>
+                );
+              }
+              return (
+                <button onClick={finishStockCount} disabled={finishing || stockSaving || !stockName.trim()}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
+                  style={finishArmed ? { backgroundColor: '#047857', color: '#fff' } : { backgroundColor: '#fff', color: '#047857', border: '1.5px solid #047857' }}>
+                  {finishing ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                  {finishArmed ? `Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)` : `✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`}
+                </button>
+              );
+            })()}
             {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
           </div>
         ) : tab === 'report' ? (

@@ -814,7 +814,7 @@ async function fetchStockCountList(shopName: string, sessionSeq: number): Promis
 // comptage" in the UI starts current+1 with a blank checklist, which locks the previous one
 // simply by no longer being the target of new saves. Derived entirely from saved rows — no
 // separate "sessions" table needed.
-export type ShopStockCountSession = { seq: number; savedCount: number; updatedAt: string; updatedByNames: string[] };
+export type ShopStockCountSession = { seq: number; savedCount: number; updatedAt: string; updatedByNames: string[]; finishedAt: string | null; finishedByName: string | null };
 
 async function fetchStockSessions(shopName: string, date: string): Promise<ShopStockCountSession[]> {
   const supabase = service();
@@ -831,8 +831,16 @@ async function fetchStockSessions(shopName: string, date: string): Promise<ShopS
     if ((row.updated_at as string) > cur.latestAt) cur.latestAt = row.updated_at as string;
     bySession.set(seq, cur);
   }
+  // Explicit "Hoàn tất" marks (lab_v72) — one per session, set by finishStockCountAction.
+  const { data: done } = await supabase.from('lab_shop_stock_sessions_done')
+    .select('session_seq, finished_at, finished_by_name').eq('shop_name', shopName).eq('count_date', date);
+  const doneBySeq = new Map<number, { at: string; by: string | null }>();
+  for (const d of done ?? []) doneBySeq.set(Number(d.session_seq), { at: d.finished_at as string, by: (d.finished_by_name as string | null) ?? null });
   return Array.from(bySession.entries())
-    .map(([seq, v]) => ({ seq, savedCount: v.count, updatedAt: v.latestAt, updatedByNames: Array.from(v.names) }))
+    .map(([seq, v]) => ({
+      seq, savedCount: v.count, updatedAt: v.latestAt, updatedByNames: Array.from(v.names),
+      finishedAt: doneBySeq.get(seq)?.at ?? null, finishedByName: doneBySeq.get(seq)?.by ?? null,
+    }))
     .sort((a, b) => a.seq - b.seq);
 }
 
@@ -893,49 +901,61 @@ export async function saveStockCountAction(input: {
     }));
   if (!rows.length) return { error: 'No valid data' };
 
-  // Completion detection (phase 4, 2026-09-05: "notif pour les shops lorsque l'inventaire est
-  // fait") — computed BEFORE the upsert below so we can tell whether THIS save is the one that
-  // covers the last remaining SKU, rather than re-notifying on every later re-save of an
-  // already-complete session.
-  //
-  // BUG FIX 2026-09-05 (Axel, shop managers reporting zero "stock count completed" notifs ever):
-  // this used to require every SKU in `entries` — the FULL shared production catalog (231 SKUs
-  // across every product La Paris makes) — before considering a count "complete". No real shop
-  // stocks the whole catalog, so that bar was unreachable: checked the full history and no shop
-  // had EVER cleared 105/231 (~45%). Completion is now judged against this SHOP's own checklist
-  // — every SKU it has recorded a count for in any PAST session (a proxy for what it actually
-  // carries, converging as they keep counting) — rather than the global catalog. A shop's very
-  // first-ever count has no history to compare against, so any non-empty save completes it.
-  const { data: historyRows } = await supabase.from('lab_shop_stock_counts')
-    .select('sku').eq('shop_name', auth.shopName)
-    // Exclude only THIS exact session (today + sessionSeq) — an earlier, already-finished
-    // session from today (a shop that ran "Đợt mới" twice in one day) still counts as real
-    // history, so the baseline doesn't just chase whatever this session happens to save.
-    .or(`count_date.neq.${today},session_seq.neq.${sessionSeq}`);
-  const checklist = new Set((historyRows ?? []).map((r: any) => r.sku as string));
-
-  const { data: existingSkuRows } = await supabase.from('lab_shop_stock_counts')
-    .select('sku').eq('shop_name', auth.shopName).eq('count_date', today).eq('session_seq', sessionSeq);
-  const skusBefore = new Set((existingSkuRows ?? []).map((r: any) => r.sku as string));
-  const wasComplete = checklist.size > 0 && Array.from(checklist).every(sku => skusBefore.has(sku));
-
   const { error } = await supabase.from('lab_shop_stock_counts').upsert(rows, { onConflict: 'shop_name,sku,count_date,session_seq' });
   if (error) return { error: error.message };
 
-  if (!wasComplete) {
-    for (const r of rows) skusBefore.add(r.sku);
-    const isCompleteNow = checklist.size > 0
-      ? Array.from(checklist).every(sku => skusBefore.has(sku))
-      : skusBefore.size > 0; // first-ever count for this shop — nothing to compare against yet
-    if (isCompleteNow) {
-      const viPayload: PushPayload = { title: auth.shopName, body: `📋 Kiểm kho đợt ${sessionSeq} đã hoàn tất (${name})` };
-      const enPayload: PushPayload = { title: auth.shopName, body: `📋 Stock count #${sessionSeq} completed (${name})` };
-      sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
-      sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
-    }
-  }
+  // No automatic "completed" notification any more (Axel, 2026-09-06): the previous heuristic
+  // (every SKU this shop ever counted) never fired in practice. The shop now declares the end
+  // of a count explicitly — see finishStockCountAction below.
 
   return { ok: true, saved: rows.length, sessionSeq };
+}
+
+// Explicit end of a count (Axel, 2026-09-06: "un bouton explicite Hoàn tất kiểm kho"). Marks the
+// session done (lab_v72), then pushes the shop + admin with the real numbers (SKU count and
+// valuation at price_b2c, same convention as the end-of-day report). Idempotent: re-tapping only
+// refreshes the numbers, it never re-notifies.
+export async function finishStockCountAction(input: {
+  sessionSeq: number;
+  finishedByName: string;
+  shopName?: string;
+}): Promise<{ ok?: boolean; skuCount?: number; valuation?: number; alreadyDone?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const name = (input.finishedByName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Name required' };
+
+  const today = vnDateStr();
+  const sessions = await fetchStockSessions(auth.shopName, today);
+  const sess = sessions.find(x => x.seq === Number(input.sessionSeq));
+  if (!sess || sess.savedCount === 0) return { error: 'Chưa có dữ liệu kiểm kho để hoàn tất' };
+
+  const { data: countRows } = await supabase.from('lab_shop_stock_counts')
+    .select('sku, qty').eq('shop_name', auth.shopName).eq('count_date', today).eq('session_seq', sess.seq);
+  const skus = Array.from(new Set((countRows ?? []).map((r: any) => r.sku as string)));
+  const { data: priceRows } = skus.length ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus) : { data: [] as any[] };
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+  const valuation = (countRows ?? []).reduce((acc: number, r: any) => acc + (Number(r.qty) || 0) * (priceBySku.get(r.sku) ?? 0), 0);
+
+  const alreadyDone = !!sess.finishedAt;
+  const { error } = await supabase.from('lab_shop_stock_sessions_done').upsert({
+    shop_name: auth.shopName, count_date: today, session_seq: sess.seq,
+    finished_by_name: name, sku_count: skus.length, valuation,
+    ...(alreadyDone ? {} : { finished_at: new Date().toISOString() }),
+  }, { onConflict: 'shop_name,count_date,session_seq' });
+  if (error) return { error: error.message };
+
+  if (!alreadyDone) {
+    const money = new Intl.NumberFormat('vi-VN').format(Math.round(valuation)) + ' ₫';
+    const viPayload: PushPayload = { title: auth.shopName, body: `📋 Kiểm kho đợt ${sess.seq} đã hoàn tất — ${skus.length} SP · ${money} (${name})` };
+    const enPayload: PushPayload = { title: auth.shopName, body: `📋 Stock count #${sess.seq} finished — ${skus.length} SKUs · ${money} (${name})` };
+    sendShopPush(supabase, auth.shopName, viPayload).catch(() => {});
+    sendAdminPush(supabase, viPayload, enPayload).catch(() => {});
+  }
+  return { ok: true, skuCount: skus.length, valuation, alreadyDone };
 }
 
 // "Add a product" search for the stock-count checklist — unfiltered production catalog
