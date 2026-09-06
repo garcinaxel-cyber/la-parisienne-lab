@@ -254,7 +254,10 @@ export async function submitOnlineOrderAction(input: {
   }
 
   // ── Synchronous Odoo document creation, tagged "Online order" ──
-  const odooResult = await createOdooOrderForSelection(supabase, createdCakeIds, { note: `Online order — ${channel}` });
+  // Axel, 2026-09-06 (review): online orders only ever originate from the app, so the "online"
+  // marking lives in the app (channel + created_by_name '(online)', ONLINE badge on
+  // /exceptional-orders) — nothing is written into Odoo's note fields on purpose.
+  const odooResult = await createOdooOrderForSelection(supabase, createdCakeIds);
 
   // ── Order-level fields (money, payment, who) ──
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
@@ -380,6 +383,7 @@ export type OnlineAnalytics = {
   todayTotal: number; todayCount: number; monthTotal: number; monthCount: number;
   byShop: { shop: string; total: number }[];
   byCategory: { category: string; total: number }[];
+  byChannel: { channel: string; total: number }[];
   daily: { date: string; total: number }[];
 };
 
@@ -394,11 +398,11 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], daily: [] };
+  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
   const { data: lines } = await supabase.from('lab_manual_cakes')
-    .select('order_batch_id, qty, unit_price, shop_name, product_sku, cancelled_at, created_at')
+    .select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at')
     .in('order_batch_id', batchIds).is('cancelled_at', null);
 
   const skus = Array.from(new Set((lines ?? []).map((l: any) => l.product_sku).filter(Boolean))) as string[];
@@ -419,6 +423,7 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
   const todayBatches = new Set<string>(), monthBatches = new Set<string>();
   const byShop = new Map<string, number>();
   const byCategory = new Map<string, number>();
+  const byChannel = new Map<string, number>();
   const byDay = new Map<string, number>();
 
   for (const l of lines ?? []) {
@@ -432,6 +437,8 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
     const ficheId = l.product_sku ? ficheIdBySku.get(l.product_sku) : null;
     const cat = ficheId ? (categoryByFiche.get(ficheId) ?? 'Khác') : 'Khác';
     byCategory.set(cat, (byCategory.get(cat) ?? 0) + lineTotal);
+    const ch = (l.channel ?? '').trim() || '—';
+    byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
   }
 
@@ -446,6 +453,7 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
       todayTotal, todayCount: todayBatches.size, monthTotal, monthCount: monthBatches.size,
       byShop: Array.from(byShop.entries()).map(([shop, total]) => ({ shop, total })).sort((a, b) => b.total - a.total),
       byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total),
+      byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
       daily,
     },
   };

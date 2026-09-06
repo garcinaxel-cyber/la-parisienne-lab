@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Minus, X, Loader2, Bell } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
+import { useI18n } from '@/lib/i18n';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
 import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics } from './actions';
@@ -17,6 +18,135 @@ const TABBAR = '#163D29';
 
 const CHANNEL_SUGGESTIONS = ['Hoàn Kiếm', 'Moon Flower', 'Website', 'Page Merci'];
 
+// ── Bilingual labels (Axel, 2026-09-06: "met son interface anglais viet aussi") — same
+// localStorage-backed toggle as the rest of the app (useI18n), default VI for her, EN for Axel.
+const L = {
+  vi: {
+    titleOrder: 'Đơn hàng Online',
+    titleTrack: 'Theo dõi đơn hàng',
+    titleStats: 'Thống kê doanh thu',
+    tabOrder: 'Đặt hàng',
+    tabTrack: 'Theo dõi',
+    tabStats: 'Thống kê',
+    items: 'SP',
+    bell: 'Thông báo',
+    channelLabel: 'Kênh bán hàng',
+    channelHint: 'Nguồn khách hàng — dùng để thống kê, không quyết định shop xử lý đơn.',
+    shopLabel: 'Shop xử lý đơn (tạo trên Odoo)',
+    addProduct: 'Thêm sản phẩm',
+    searchPh: 'Tìm sản phẩm theo tên...',
+    unitPrice: 'Đơn giá (₫)',
+    cakeMsg: 'Lời nhắn trên bánh (ví dụ: Happy Birthday Linh)',
+    designNotes: 'Ghi chú thiết kế bánh...',
+    designPhoto: 'Ảnh thiết kế mẫu',
+    customerInfo: 'Thông tin khách hàng',
+    custName: 'Tên khách hàng',
+    custPhone: 'Số điện thoại',
+    address: 'Địa chỉ giao hàng',
+    extraNotes: 'Ghi chú thêm...',
+    payment: 'Thanh toán',
+    deliveryFee: 'Phí giao hàng',
+    total: 'Tổng cộng',
+    paid: '✓ Đã TT',
+    unpaid: 'Chưa TT',
+    partial: 'Cọc 1 phần',
+    depositAmount: 'Số tiền đã cọc (₫)',
+    creating: 'Đang tạo đơn...',
+    submit: 'Tạo đơn & gửi Odoo',
+    errChannel: 'Chọn hoặc nhập kênh bán hàng',
+    errEmpty: 'Giỏ hàng trống',
+    okOdoo: 'Đã tạo đơn Odoo: ',
+    okSaved: 'Đã lưu đơn hàng',
+    fAll: 'Tất cả',
+    fUndelivered: 'Chưa giao',
+    fLate: '⚠ Trễ hạn',
+    noOrders: 'Chưa có đơn hàng nào.',
+    noOdoo: 'Chưa có Odoo',
+    latePay: '⚠ Trễ thanh toán',
+    walkIn: 'Khách lẻ',
+    paidFull: '✓ Đã thanh toán',
+    unpaidFull: 'Chưa thanh toán',
+    labDelivered: '✓ Lab đã giao',
+    labNot: 'Lab chưa giao',
+    shopDelivered: '✓ Shop đã giao',
+    shopNot: 'Shop chưa giao',
+    today: 'Hôm nay',
+    thisMonth: 'Tháng này',
+    orders: 'đơn',
+    last14: 'Doanh thu 14 ngày qua',
+    trendAria: 'Xu hướng doanh thu 14 ngày',
+    byShop: 'CA theo shop',
+    byCat: 'CA theo danh mục sản phẩm',
+    byChannel: 'CA theo kênh bán hàng',
+    noData: 'Chưa có dữ liệu.',
+  },
+  en: {
+    titleOrder: 'Online orders',
+    titleTrack: 'Order tracking',
+    titleStats: 'Revenue stats',
+    tabOrder: 'Order',
+    tabTrack: 'Track',
+    tabStats: 'Stats',
+    items: 'items',
+    bell: 'Notifications',
+    channelLabel: 'Sales channel',
+    channelHint: 'Where the customer came from — for reporting only; it does not decide which shop handles the order.',
+    shopLabel: 'Shop handling the order (Odoo document)',
+    addProduct: 'Add products',
+    searchPh: 'Search a product by name...',
+    unitPrice: 'Unit price (₫)',
+    cakeMsg: 'Message on the cake (e.g. Happy Birthday Linh)',
+    designNotes: 'Cake design notes...',
+    designPhoto: 'Reference design photo',
+    customerInfo: 'Customer',
+    custName: 'Customer name',
+    custPhone: 'Phone number',
+    address: 'Delivery address',
+    extraNotes: 'Additional notes...',
+    payment: 'Payment',
+    deliveryFee: 'Delivery fee',
+    total: 'Total',
+    paid: '✓ Paid',
+    unpaid: 'Unpaid',
+    partial: 'Deposit',
+    depositAmount: 'Deposit amount (₫)',
+    creating: 'Creating order...',
+    submit: 'Create order & send to Odoo',
+    errChannel: 'Pick or type a sales channel',
+    errEmpty: 'Cart is empty',
+    okOdoo: 'Odoo order created: ',
+    okSaved: 'Order saved',
+    fAll: 'All',
+    fUndelivered: 'Not delivered',
+    fLate: '⚠ Overdue',
+    noOrders: 'No orders yet.',
+    noOdoo: 'No Odoo doc',
+    latePay: '⚠ Late payment',
+    walkIn: 'Walk-in customer',
+    paidFull: '✓ Paid',
+    unpaidFull: 'Unpaid',
+    labDelivered: '✓ Lab delivered',
+    labNot: 'Lab not delivered',
+    shopDelivered: '✓ Shop delivered',
+    shopNot: 'Shop not delivered',
+    today: 'Today',
+    thisMonth: 'This month',
+    orders: 'orders',
+    last14: 'Revenue, last 14 days',
+    trendAria: '14-day revenue trend',
+    byShop: 'Revenue by shop',
+    byCat: 'Revenue by product category',
+    byChannel: 'Revenue by sales channel',
+    noData: 'No data yet.',
+  },
+} as const;
+type LKey = keyof typeof L.vi;
+function useL() {
+  const { lang, setLang } = useI18n();
+  const d = (lang === 'en' ? L.en : L.vi) as Record<LKey, string>;
+  return { tr: (k: LKey) => d[k], lang, setLang };
+}
+
 function fmtVnd(v: number): string {
   return `${Math.round(v).toLocaleString('vi-VN')} ₫`;
 }
@@ -30,10 +160,9 @@ type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: strin
 type Tab = 'order' | 'track' | 'stats';
 
 export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: string; isAdmin: boolean }) {
+  const { tr } = useL();
   const [tab, setTab] = useState<Tab>('order');
   const today = new Date().toISOString().slice(0, 10);
-  const dateLabel = new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
-
   // ── Order form state ──
   const [shop, setShop] = useState(SHOP_NAMES_ALL[0]);
   const [channel, setChannel] = useState('');
@@ -92,8 +221,8 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   const grandTotal = cartTotal + (Number(deliveryFee) || 0);
 
   async function handleSubmit() {
-    if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: 'Chọn hoặc nhập kênh bán hàng' }); return; }
-    if (!cart.length) { setSubmitMsg({ kind: 'error', text: 'Giỏ hàng trống' }); return; }
+    if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: tr('errChannel') }); return; }
+    if (!cart.length) { setSubmitMsg({ kind: 'error', text: tr('errEmpty') }); return; }
     setSubmitting(true); setSubmitMsg(null);
     const res = await actions.submitOnlineOrderAction({
       shop, channel: channel.trim(), deliveryDate, readyTime: readyTime || null,
@@ -105,7 +234,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
     setSubmitting(false);
     if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
     if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
-    else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `Đã tạo đơn Odoo: ${res.orderRef}` : 'Đã lưu đơn hàng' });
+    else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
     setCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes('');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
   }
@@ -143,7 +272,8 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
 }
 
 function Header({ fullName, count, tab }: { fullName: string; count: number; tab: Tab }) {
-  const dateLabel = new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+  const { tr, lang, setLang } = useL();
+  const dateLabel = new Date().toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
   const [bellState, setBellState] = useState<'off' | 'on' | 'busy'>('off');
   useEffect(() => {
     getExistingPushSubscription().then(sub => setBellState(sub ? 'on' : 'off'));
@@ -161,7 +291,7 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
     if (result.ok) { await actions.subscribeOnlinePushAction(result.subscription); setBellState('on'); }
     else setBellState('off');
   }
-  const titles: Record<Tab, string> = { order: 'Đơn hàng Online', track: 'Theo dõi đơn hàng', stats: 'Thống kê doanh thu' };
+  const titles: Record<Tab, string> = { order: tr('titleOrder'), track: tr('titleTrack'), stats: tr('titleStats') };
   return (
     <div style={{ backgroundColor: NAVY, color: '#FFFAEE' }} className="px-4 pt-3.5 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-2.5">
@@ -171,23 +301,32 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
           <div style={{ fontSize: 11, color: '#F0D98A', marginTop: 1 }}>{dateLabel}{fullName ? ` · ${fullName}` : ''}</div>
         </div>
         {tab === 'order' && count > 0 && (
-          <div style={{ backgroundColor: GOLD, color: NAVY, fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999 }}>{count} SP</div>
+          <div style={{ backgroundColor: GOLD, color: NAVY, fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999 }}>{count} {tr('items')}</div>
         )}
         {pushSupport() !== 'unsupported' && (
-          <button onClick={toggleBell} style={{ color: bellState === 'on' ? GOLD : 'rgba(255,255,255,0.5)' }} aria-label="Thông báo">
+          <button onClick={toggleBell} style={{ color: bellState === 'on' ? GOLD : 'rgba(255,255,255,0.5)' }} aria-label={tr('bell')}>
             {bellState === 'busy' ? <Loader2 size={18} className="animate-spin" /> : <Bell size={18} fill={bellState === 'on' ? GOLD : 'none'} />}
           </button>
         )}
+        <div className="flex rounded-md overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.25)' }} aria-label="Language">
+          {(['vi', 'en'] as const).map(lg => (
+            <button key={lg} onClick={() => setLang(lg)} style={{
+              fontSize: 10.5, fontWeight: 700, padding: '3px 7px', letterSpacing: '.03em',
+              backgroundColor: lang === lg ? GOLD : 'transparent', color: lang === lg ? NAVY : 'rgba(255,255,255,0.7)',
+            }}>{lg.toUpperCase()}</button>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
 function TabBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
+  const { tr } = useL();
   const items: { key: Tab; icon: string; label: string }[] = [
-    { key: 'order', icon: '🧾', label: 'Đặt hàng' },
-    { key: 'track', icon: '📦', label: 'Theo dõi' },
-    { key: 'stats', icon: '📊', label: 'Thống kê' },
+    { key: 'order', icon: '🧾', label: tr('tabOrder') },
+    { key: 'track', icon: '📦', label: tr('tabTrack') },
+    { key: 'stats', icon: '📊', label: tr('tabStats') },
   ];
   return (
     <div style={{ backgroundColor: TABBAR }} className="flex fixed bottom-0 left-0 right-0 z-10">
@@ -213,17 +352,18 @@ function OrderTab(props: any) {
     cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart,
     cartTotal, grandTotal, submitting, submitMsg, onSubmit,
   } = props;
+  const { tr } = useL();
 
   return (
     <div>
-      <SectionLabel>Kênh bán hàng</SectionLabel>
+      <SectionLabel>{tr('channelLabel')}</SectionLabel>
       <input list="channel-suggestions" value={channel} onChange={e => setChannel(e.target.value)}
         placeholder="Hoàn Kiếm, Website, Page Merci..."
         className="w-full mb-1 px-3 py-2 rounded-lg text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }} />
       <datalist id="channel-suggestions">{CHANNEL_SUGGESTIONS.map((c: string) => <option key={c} value={c} />)}</datalist>
-      <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 16 }}>Nguồn khách hàng — dùng để thống kê, không quyết định shop xử lý đơn.</div>
+      <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 16 }}>{tr('channelHint')}</div>
 
-      <SectionLabel>Shop xử lý đơn (tạo trên Odoo)</SectionLabel>
+      <SectionLabel>{tr('shopLabel')}</SectionLabel>
       <div className="flex flex-wrap gap-2 mb-4">
         {SHOP_NAMES_ALL.map((s: string) => (
           <button key={s} onClick={() => setShop(s)}
@@ -235,11 +375,11 @@ function OrderTab(props: any) {
         ))}
       </div>
 
-      <SectionLabel>Thêm sản phẩm</SectionLabel>
+      <SectionLabel>{tr('addProduct')}</SectionLabel>
       <div className="relative mb-3">
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
           <Search size={14} color={INK_LIGHT} />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm sản phẩm theo tên..."
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('searchPh')}
             className="flex-1 text-sm outline-none" />
           {searching && <Loader2 size={14} className="animate-spin" color={INK_LIGHT} />}
         </div>
@@ -275,20 +415,20 @@ function OrderTab(props: any) {
                     style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: CREAM }} className="flex items-center justify-center"><Plus size={12} color={NAVY} /></button>
                 </div>
                 <input type="number" min={0} value={l.unitPrice} onChange={e => updateLine(l.key, { unitPrice: Number(e.target.value) })}
-                  placeholder="Đơn giá (₫)" className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                  placeholder={tr('unitPrice')} className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 64, textAlign: 'right' }}>{fmtCompactVnd(l.qty * (Number(l.unitPrice) || 0))}</div>
               </div>
               {l.isCake && (
                 <div className="mt-2 space-y-2">
                   <input value={l.message ?? ''} onChange={e => updateLine(l.key, { message: e.target.value })}
-                    placeholder="Lời nhắn trên bánh (ví dụ: Happy Birthday Linh)" maxLength={200}
+                    placeholder={tr('cakeMsg')} maxLength={200}
                     className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
                   <textarea value={l.designNotes ?? ''} onChange={e => updateLine(l.key, { designNotes: e.target.value })}
-                    placeholder="Ghi chú thiết kế bánh..." maxLength={400} rows={2}
+                    placeholder={tr('designNotes')} maxLength={400} rows={2}
                     className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT }}>
-                      🖼️ Ảnh thiết kế mẫu
+                      🖼️ {tr('designPhoto')}
                       <input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onDesignPhoto(l.key, f); }} />
                     </label>
                     {l.designPhotoUrl && <img src={l.designPhotoUrl} className="w-8 h-8 rounded object-cover" />}
@@ -300,13 +440,13 @@ function OrderTab(props: any) {
         </div>
       )}
 
-      <SectionLabel>Thông tin khách hàng</SectionLabel>
+      <SectionLabel>{tr('customerInfo')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4 space-y-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-        <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder="Tên khách hàng"
+        <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder={tr('custName')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
-        <input value={customerPhone} onChange={(e: any) => setCustomerPhone(e.target.value)} placeholder="Số điện thoại"
+        <input value={customerPhone} onChange={(e: any) => setCustomerPhone(e.target.value)} placeholder={tr('custPhone')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
-        <input value={deliveryAddress} onChange={(e: any) => setDeliveryAddress(e.target.value)} placeholder="Địa chỉ giao hàng"
+        <input value={deliveryAddress} onChange={(e: any) => setDeliveryAddress(e.target.value)} placeholder={tr('address')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
         <div className="flex gap-2">
           <input type="date" value={deliveryDate} onChange={(e: any) => setDeliveryDate(e.target.value)}
@@ -314,19 +454,19 @@ function OrderTab(props: any) {
           <input type="time" value={readyTime} onChange={(e: any) => setReadyTime(e.target.value)}
             className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
         </div>
-        <textarea value={notes} onChange={(e: any) => setNotes(e.target.value)} placeholder="Ghi chú thêm..." rows={2}
+        <textarea value={notes} onChange={(e: any) => setNotes(e.target.value)} placeholder={tr('extraNotes')} rows={2}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
       </div>
 
-      <SectionLabel>Thanh toán</SectionLabel>
+      <SectionLabel>{tr('payment')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <div className="flex justify-between items-center mb-2">
-          <span style={{ fontSize: 13, color: INK_LIGHT }}>Phí giao hàng</span>
+          <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('deliveryFee')}</span>
           <input type="number" min={0} value={deliveryFee} onChange={(e: any) => setDeliveryFee(e.target.value)}
             className="w-28 px-2 py-1 rounded text-sm text-right" style={{ border: `1px solid ${BORDER}` }} />
         </div>
         <div className="flex justify-between items-center mb-3">
-          <span style={{ fontSize: 14.5, fontWeight: 700 }}>Tổng cộng</span>
+          <span style={{ fontSize: 14.5, fontWeight: 700 }}>{tr('total')}</span>
           <span style={{ fontSize: 17, fontWeight: 700, color: NAVY }}>{fmtVnd(grandTotal)}</span>
         </div>
         <div className="flex gap-2 mb-2">
@@ -337,13 +477,13 @@ function OrderTab(props: any) {
                 backgroundColor: paymentStatus === s ? '#047857' : CREAM, color: paymentStatus === s ? '#fff' : INK_LIGHT,
                 border: paymentStatus === s ? 'none' : `1px solid ${BORDER}`,
               }}>
-              {s === 'paid' ? '✓ Đã TT' : s === 'unpaid' ? 'Chưa TT' : 'Cọc 1 phần'}
+              {s === 'paid' ? tr('paid') : s === 'unpaid' ? tr('unpaid') : tr('partial')}
             </button>
           ))}
         </div>
         {paymentStatus === 'partial' && (
           <input type="number" min={0} value={amountPaid} onChange={(e: any) => setAmountPaid(e.target.value)}
-            placeholder="Số tiền đã cọc (₫)" className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+            placeholder={tr('depositAmount')} className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
         )}
       </div>
 
@@ -357,13 +497,14 @@ function OrderTab(props: any) {
       <button onClick={onSubmit} disabled={submitting || !cart.length}
         style={{ backgroundColor: GOLD, color: NAVY, opacity: submitting || !cart.length ? 0.6 : 1 }}
         className="w-full text-center text-[15px] font-bold py-3.5 rounded-xl mb-4">
-        {submitting ? 'Đang tạo đơn...' : 'Tạo đơn & gửi Odoo'}
+        {submitting ? tr('creating') : tr('submit')}
       </button>
     </div>
   );
 }
 
 function TrackTab({ isAdmin }: { isAdmin: boolean }) {
+  const { tr } = useL();
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
   const [filter, setFilter] = useState<'all' | 'undelivered' | 'unpaid' | 'late'>('all');
 
@@ -396,14 +537,14 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
   return (
     <div>
       <div className="flex gap-2 mb-3 overflow-x-auto">
-        {([['all', 'Tất cả'], ['undelivered', 'Chưa giao'], ['unpaid', 'Chưa TT'], ['late', '⚠ Trễ hạn']] as const).map(([k, label]) => (
+        {([['all', tr('fAll')], ['undelivered', tr('fUndelivered')], ['unpaid', tr('unpaid')], ['late', tr('fLate')]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
             backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FFFAEE' : INK,
             border: filter === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}
       </div>
-      {filtered.length === 0 && <div className="text-center py-10 text-sm" style={{ color: INK_LIGHT }}>Chưa có đơn hàng nào.</div>}
+      {filtered.length === 0 && <div className="text-center py-10 text-sm" style={{ color: INK_LIGHT }}>{tr('noOrders')}</div>}
       <div className="space-y-2.5">
         {filtered.map(o => {
           const late = isLate(o);
@@ -415,13 +556,13 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
                   {o.orderRef ? (
                     <span style={{ backgroundColor: CREAM, color: '#8a7326', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.orderRef}</span>
                   ) : (
-                    <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>Chưa có Odoo</span>
+                    <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('noOdoo')}</span>
                   )}
                   {o.channel && <span style={{ color: INK_LIGHT, fontSize: 10.5 }}>{o.channel}</span>}
                 </div>
-                {late && <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>⚠ Trễ thanh toán</span>}
+                {late && <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('latePay')}</span>}
               </div>
-              <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.customerName || 'Khách lẻ'}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</div>
               <div style={{ fontSize: 12, color: INK_LIGHT, marginBottom: 9 }}>{o.items.map(i => `${i.nameVi} ×${i.qty}`).join(', ')}</div>
               <div className="flex justify-between items-center mb-2">
                 <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
@@ -429,7 +570,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
                   backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
                   color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
                 }}>
-                  {o.paymentStatus === 'paid' ? '✓ Đã thanh toán' : o.paymentStatus === 'partial' ? 'Cọc 1 phần' : 'Chưa thanh toán'}
+                  {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
                 </button>
               </div>
               <div style={{ height: 1, backgroundColor: CREAM_DARK, marginBottom: 9 }} />
@@ -437,11 +578,11 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
                 <div className="flex-1 text-center py-1.5 rounded-lg" style={{
                   backgroundColor: o.labDelivered ? '#F0FDF4' : CREAM, color: o.labDelivered ? '#047857' : INK_LIGHT,
                   border: o.labDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.labDelivered ? 700 : 600,
-                }}>{o.labDelivered ? '✓ Lab đã giao' : 'Lab chưa giao'}</div>
+                }}>{o.labDelivered ? tr('labDelivered') : tr('labNot')}</div>
                 <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
                   backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
                   border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                }}>{o.shopDelivered ? '✓ Shop đã giao' : 'Shop chưa giao'}</button>
+                }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
               </div>
             </div>
           );
@@ -452,6 +593,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
 }
 
 function StatsTab() {
+  const { tr } = useL();
   const [data, setData] = useState<OnlineAnalytics | null>(null);
   useEffect(() => { actions.getOnlineAnalyticsAction().then(res => setData(res.data ?? null)); }, []);
   if (!data) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
@@ -460,33 +602,34 @@ function StatsTab() {
   const points = data.daily.map((d, i) => `${(i / 13) * 320},${68 - (d.total / maxDaily) * 60}`).join(' ');
   const maxShop = Math.max(1, ...data.byShop.map(s => s.total));
   const maxCat = Math.max(1, ...data.byCategory.map(c => c.total));
+  const maxChannel = Math.max(1, ...data.byChannel.map(c => c.total));
   const SHOP_HUES = [NAVY, '#2D6A4F', '#5C9179', '#8CB4A2', '#BBD4C7'];
 
   return (
     <div>
       <div className="grid grid-cols-2 gap-2.5 mb-4">
         <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-          <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>Hôm nay</div>
+          <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>{tr('today')}</div>
           <div style={{ fontSize: 19, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(data.todayTotal)}</div>
-          <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.todayCount} đơn</div>
+          <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.todayCount} {tr('orders')}</div>
         </div>
         <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-          <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>Tháng này</div>
+          <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>{tr('thisMonth')}</div>
           <div style={{ fontSize: 19, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(data.monthTotal)}</div>
-          <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.monthCount} đơn</div>
+          <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.monthCount} {tr('orders')}</div>
         </div>
       </div>
 
       <div className="rounded-xl p-3.5 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-        <SectionLabel>Doanh thu 14 ngày qua</SectionLabel>
-        <svg viewBox="0 0 320 70" width="100%" height={70} role="img" aria-label="Xu hướng doanh thu 14 ngày">
+        <SectionLabel>{tr('last14')}</SectionLabel>
+        <svg viewBox="0 0 320 70" width="100%" height={70} role="img" aria-label={tr('trendAria')}>
           <polyline points={points} fill="none" stroke={GOLD} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
 
-      <SectionLabel>CA theo shop</SectionLabel>
+      <SectionLabel>{tr('byShop')}</SectionLabel>
       <div className="rounded-xl p-3.5 mb-4 space-y-2.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-        {data.byShop.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>Chưa có dữ liệu.</div>}
+        {data.byShop.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
         {data.byShop.map((s, i) => (
           <div key={s.shop}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
@@ -500,9 +643,9 @@ function StatsTab() {
         ))}
       </div>
 
-      <SectionLabel>CA theo danh mục sản phẩm</SectionLabel>
+      <SectionLabel>{tr('byCat')}</SectionLabel>
       <div className="rounded-xl p-3.5 mb-4 space-y-2.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-        {data.byCategory.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>Chưa có dữ liệu.</div>}
+        {data.byCategory.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
         {data.byCategory.map((c, i) => (
           <div key={c.category}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
@@ -511,6 +654,22 @@ function StatsTab() {
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
               <div style={{ width: `${(c.total / maxCat) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <SectionLabel>{tr('byChannel')}</SectionLabel>
+      <div className="rounded-xl p-3.5 mb-4 space-y-2.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+        {data.byChannel.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
+        {data.byChannel.map((c, i) => (
+          <div key={c.channel}>
+            <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
+              <span style={{ fontWeight: 600 }}>{c.channel}</span>
+              <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtCompactVnd(c.total)}</span>
+            </div>
+            <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
+              <div style={{ width: `${(c.total / maxChannel) * 100}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />
             </div>
           </div>
         ))}

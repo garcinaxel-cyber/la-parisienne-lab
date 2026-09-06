@@ -20,7 +20,7 @@ export default async function ExceptionalOrdersPage() {
 
   // 1. All manual orders of the last 30 days + upcoming (matched ones kept for history)
   const { data: manual } = await supabase.from('lab_manual_cakes')
-    .select('id, fiche_id, product_name_vi, product_name_en, product_sku, image_url, team, qty, delivery_date, ready_time, delivered_by, delivery_address, message, design_notes, design_photo_url, notes, customer_name, customer_phone, shop_name, needs_odoo, matched_order_ref, matched_at, cancelled_at, cancelled_by_name, cancel_reason, rejected_order_refs, assignment_id, created_by_name, created_at')
+    .select('id, fiche_id, product_name_vi, product_name_en, product_sku, image_url, team, qty, delivery_date, ready_time, delivered_by, delivery_address, message, design_notes, design_photo_url, notes, customer_name, customer_phone, shop_name, channel, needs_odoo, matched_order_ref, matched_at, cancelled_at, cancelled_by_name, cancel_reason, rejected_order_refs, assignment_id, created_by_name, created_at')
     .gte('delivery_date', since)
     .order('delivery_date', { ascending: false })
     .order('created_at', { ascending: false });
@@ -132,6 +132,10 @@ export default async function ExceptionalOrdersPage() {
       customerPhone: o.customer_phone ?? '',
       source: o.shop_name ? `${o.shop_name}` : (o.created_by_name ?? ''),
       fromShop: !!o.shop_name,
+      // Online-sales interface (2026-09-06): rows created from /online-orders carry a channel;
+      // shown as ONLINE · canal instead of the SHOP badge so assistants can tell them apart.
+      channel: o.channel ?? null,
+      fromOnline: !!o.channel || /\(online\)$/.test(o.created_by_name ?? ''),
       // '__pending_create__' is a transient claim set while an Odoo document is being
       // created for this row (race guard in createOdooOrderForSelection) — treat it as still
       // "to enter", never as a real matched ref, so a page refresh mid-creation can't show a

@@ -15,7 +15,7 @@ type Order = {
   id: string; name: string; sku: string | null; imageUrl: string | null; team: string | null;
   qty: number; deliveryDate: string; readyTime: string; deliveredBy: string; deliveryAddress: string;
   message: string; notes: string; customerName: string; customerPhone: string;
-  source: string; fromShop: boolean;
+  source: string; fromShop: boolean; channel: string | null; fromOnline: boolean;
   needsOdoo: boolean; matchedRef: string | null; claimPending: boolean;
   cancelledAt: string | null; cancelledByName: string | null; cancelReason: string | null;
   designNotes: string | null; designPhotoUrl: string | null;
@@ -367,7 +367,9 @@ Link anyway?`;
                         <span className="inline-flex items-center gap-1">
                           {o.fromShop ? <Store size={12} /> : <User size={12} />}
                           {o.source || (vi ? 'Trợ lý' : 'Assistant')}
-                          {o.fromShop && <span className="text-[9px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>SHOP</span>}
+                          {o.fromOnline
+                            ? <span className="text-[9px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }} title={vi ? 'Đơn bán hàng online (tạo từ app, đã có Odoo)' : 'Online sale (created in the app, Odoo already created)'}>🛍 ONLINE{o.channel ? ` · ${o.channel}` : ''}</span>
+                            : o.fromShop && <span className="text-[9px] font-bold px-1 py-0.5 rounded" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9' }}>SHOP</span>}
                         </span>
                         {o.readyTime && <span className="inline-flex items-center gap-1"><Clock size={12} /> {o.readyTime.slice(0, 5)}</span>}
                         {o.deliveredBy && <span className="inline-flex items-center gap-1"><Truck size={12} /> {o.deliveredBy}</span>}
