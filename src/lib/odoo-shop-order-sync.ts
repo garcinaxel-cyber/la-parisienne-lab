@@ -106,6 +106,7 @@ async function resolveSoLineUomField(): Promise<string | null> {
 export async function createOdooOrderForSelection(
   supabase: SupabaseClient,
   manualCakeIds: string[],
+  opts?: { note?: string },
 ): Promise<CreateOrderResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
   if (!manualCakeIds.length) return { ok: false, error: 'No order selected' };
@@ -172,6 +173,13 @@ export async function createOdooOrderForSelection(
       const orderId = await tmo(odooExecuteWrite<number>('sale.order', 'create', [{
         partner_id: partnerId,
         commitment_date: labLocalToOdooUtc(deliveryDate, readyTime),
+        // Online-sales interface (Axel, 2026-09-06): "creer la commande odoo avec une note
+        // Online order" — the note field is standard on sale.order, safe to set unconditionally
+        // when provided. Not attempted on replenishment requests below: that custom model's
+        // field list isn't confirmed to include one, so a mismatched write there would fail the
+        // whole document creation for no good reason — the app-side screens already make the
+        // "online order" origin clear to staff.
+        ...(opts?.note ? { note: opts.note } : {}),
       }]), 25000, 'create sale.order');
 
       try {

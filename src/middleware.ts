@@ -17,6 +17,9 @@ export function middleware(req: NextRequest) {
   // ran — caught by checking net._http_response's captured body after the 22:15 VN run.
   if (pathname.startsWith('/api/odoo/cron')) return NextResponse.next();
   if (pathname.startsWith('/api/odoo/confirm-mos')) return NextResponse.next();
+  // Online-sales late-payment alert cron (2026-09-06), secret-gated itself — see
+  // src/app/api/odoo/online-order-payment-alert/route.ts.
+  if (pathname.startsWith('/api/odoo/online-order-payment-alert')) return NextResponse.next();
   // Same treatment as confirm-mos above — learned the hard way on 2026-08-05 (see comment
   // above): any new cron endpoint MUST be exempted here, or pg_cron's call gets silently
   // redirected to /login (200 OK, no error) and the job never actually runs.

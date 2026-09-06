@@ -18,6 +18,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // same treatment as chef/worker below, redirected to their own space before anything else.
   if (profile?.role === 'shop') redirect('/shop');
 
+  // Online-sales account (2026-09-06) — same treatment: her own space, never the admin app.
+  if (profile?.role === 'online_sales') redirect('/online-orders');
+
   // Only lab roles can access the app — catalogue-only users get bounced to login
   const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
   if (!profile || !LAB_ROLES.includes(profile.role)) redirect('/login');
