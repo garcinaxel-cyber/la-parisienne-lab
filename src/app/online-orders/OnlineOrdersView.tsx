@@ -235,7 +235,12 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
 
+  const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
+    // Empty query = closed list (Axel, 2026-09-06: the dropdown used to list the whole catalogue
+    // and there was no way out of it). Results only appear once she types, and close on
+    // Escape / tap outside / pick.
+    if (!query.trim()) { setResults([]); setSearching(false); return; }
     const t = setTimeout(async () => {
       setSearching(true);
       const res = await actions.searchOnlineProductsAction(query);
@@ -256,7 +261,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
         nameVi: p.nameVi, imageUrl: p.imageUrl, isCake: p.isCake, listPrice: p.price,
       }];
     });
-    setQuery(''); setResults([]);
+    setQuery(''); setResults([]); setSearchOpen(false);
   }
   function updateLine(key: string, patch: Partial<CartLine>) {
     setCart(prev => prev.map(l => l.key === key ? { ...l, ...patch } : l));
@@ -312,6 +317,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
               amountPaid={amountPaid} setAmountPaid={setAmountPaid}
               cart={cart} updateLine={updateLine} removeLine={removeLine} onDesignPhoto={onDesignPhoto}
               query={query} setQuery={setQuery} results={results} searching={searching} addToCart={addToCart}
+              searchOpen={searchOpen} setSearchOpen={setSearchOpen}
               cartTotal={cartTotal} grandTotal={grandTotal}
               submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
             />
@@ -404,7 +410,7 @@ function OrderTab(props: any) {
     deliveryDate, setDeliveryDate, readyTime, setReadyTime,
     customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress,
     notes, setNotes, deliveryFee, setDeliveryFee, paymentStatus, setPaymentStatus, amountPaid, setAmountPaid,
-    cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart,
+    cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart, searchOpen, setSearchOpen,
     cartTotal, grandTotal, submitting, submitMsg, onSubmit,
   } = props;
   const { tr } = useL();
@@ -449,14 +455,20 @@ function OrderTab(props: any) {
       <div className="relative mb-3">
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
           <Search size={14} color={INK_LIGHT} />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('searchPh')}
+          <input value={query} onChange={e => { setQuery(e.target.value); setSearchOpen(true); }} placeholder={tr('searchPh')}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+            onKeyDown={e => { if (e.key === 'Escape') { setQuery(''); setSearchOpen(false); (e.target as HTMLInputElement).blur(); } }}
             className="flex-1 text-sm outline-none" />
           {searching && <Loader2 size={14} className="animate-spin" color={INK_LIGHT} />}
+          {!searching && query && (
+            <button onMouseDown={e => e.preventDefault()} onClick={() => { setQuery(''); setSearchOpen(false); }} aria-label="clear"><X size={14} color={INK_LIGHT} /></button>
+          )}
         </div>
-        {results.length > 0 && (
+        {searchOpen && query.trim() && results.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg shadow-lg max-h-64 overflow-y-auto" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
             {results.map((p: OnlineProduct) => (
-              <button key={`${p.ficheId}:${p.variantId}`} onClick={() => addToCart(p)}
+              <button key={`${p.ficheId}:${p.variantId}`} onMouseDown={e => e.preventDefault()} onClick={() => addToCart(p)}
                 className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50" style={{ borderBottom: `1px solid ${CREAM_DARK}` }}>
                 {p.imageUrl ? <img src={p.imageUrl} className="w-8 h-8 rounded object-cover" /> : <div className="w-8 h-8 rounded" style={{ backgroundColor: CREAM }} />}
                 <span>{p.nameVi}{p.isCake ? ' 🎂' : ''}</span>
