@@ -59,7 +59,8 @@ const L = {
     unitPrice: 'Đơn giá (₫)',
     cakeMsg: 'Lời nhắn trên bánh (ví dụ: Happy Birthday Linh)',
     designNotes: 'Ghi chú thiết kế bánh...',
-    designPhoto: 'Ảnh thiết kế mẫu',
+    designPhoto: 'Ảnh thiết kế khác',
+    designPhotoHint: 'Mẫu gốc ở trên. Chỉ thêm ảnh tham khảo nếu khách muốn thiết kế KHÁC mẫu gốc.',
     customerInfo: 'Thông tin khách hàng',
     custName: 'Tên khách hàng',
     custPhone: 'Số điện thoại',
@@ -125,7 +126,8 @@ const L = {
     unitPrice: 'Unit price (₫)',
     cakeMsg: 'Message on the cake (e.g. Happy Birthday Linh)',
     designNotes: 'Cake design notes...',
-    designPhoto: 'Reference design photo',
+    designPhoto: 'Different design photo',
+    designPhotoHint: 'Original design shown above. Add a reference photo only if the customer wants a DIFFERENT design.',
     customerInfo: 'Customer',
     custName: 'Customer name',
     custPhone: 'Phone number',
@@ -482,8 +484,11 @@ function OrderTab(props: any) {
         <div className="rounded-xl overflow-hidden mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
           {cart.map((l: CartLine) => (
             <div key={l.key} className="p-3" style={{ borderBottom: `1px solid ${CREAM_DARK}` }}>
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
+              <div className="flex items-center gap-2.5">
+                {l.imageUrl
+                  ? <img src={thumb(l.imageUrl, 112)} alt="" loading="lazy" className="w-12 h-12 rounded-lg object-cover shrink-0" style={{ border: `1px solid ${BORDER}` }} />
+                  : <div className="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: CREAM }}>{l.isCake ? '🎂' : '🥐'}</div>}
+                <div className="flex-1 min-w-0">
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>{l.nameVi}</div>
                 </div>
                 <button onClick={() => removeLine(l.key)}><X size={14} color={INK_LIGHT} /></button>
@@ -515,12 +520,13 @@ function OrderTab(props: any) {
                   <textarea value={l.designNotes ?? ''} onChange={e => updateLine(l.key, { designNotes: e.target.value })}
                     placeholder={tr('designNotes')} maxLength={400} rows={2}
                     className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                  <div style={{ fontSize: 11, color: INK_LIGHT }}>{tr('designPhotoHint')}</div>
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT }}>
                       🖼️ {tr('designPhoto')}
                       <input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onDesignPhoto(l.key, f); }} />
                     </label>
-                    {l.designPhotoUrl && <img src={l.designPhotoUrl} className="w-8 h-8 rounded object-cover" />}
+                    {l.designPhotoUrl && <img src={thumb(l.designPhotoUrl, 112)} className="w-10 h-10 rounded object-cover" style={{ border: `1px solid ${BORDER}` }} />}
                   </div>
                 </div>
               )}
@@ -596,6 +602,9 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
   const { tr } = useL();
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
   const [filter, setFilter] = useState<'all' | 'undelivered' | 'unpaid' | 'late'>('all');
+  // Every hook stays above the early `if (!orders) return` below (Rules of Hooks — the payment
+  // proof hook briefly sat after it and crashed the tab once orders loaded, 2026-09-06).
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
   async function load() {
     const res = await actions.getMyOnlineOrdersAction();
@@ -617,7 +626,6 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
     await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
     load();
   }
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   async function onProof(o: OnlineOrderSummary, file: File | undefined) {
     if (!file || !file.type.startsWith('image/')) return;
     setUploadingFor(o.orderBatchId);
