@@ -34,9 +34,10 @@ export async function GET(req: Request) {
     const pickingsByOrigin = await odooExecute<any[]>('stock.picking', 'search_read',
       [[['origin', 'ilike', '01354']]],
       { fields: ['name', 'state', 'scheduled_date', 'date_done', 'origin', 'partner_id', 'location_id', 'location_dest_id'], limit: 10 });
-    const pickingId = pickings[0]?.id ?? pickingsByOrigin[0]?.id;
-    const pickingMoves = pickingId ? await odooExecute<any[]>('stock.move', 'search_read',
-      [[['picking_id', '=', pickingId]]], { fields: ['product_id', 'product_qty', 'quantity', 'state'], limit: 50 }) : [];
+    const chumPickingIds = pickingsByOrigin.filter((p: any) => p.origin === 'REP/2026/01354').map((p: any) => p.id);
+    const pickingMoves = chumPickingIds.length ? await odooExecute<any[]>('stock.move', 'search_read',
+      [[['picking_id', 'in', chumPickingIds]]],
+      { fields: ['picking_id', 'product_id', 'product_qty', 'quantity', 'state', 'date'], limit: 50 }) : [];
     const saleOrders = await odooExecute<any[]>('sale.order', 'search_read',
       [[['name', 'ilike', '01354']]], { fields: ['name', 'state', 'partner_id', 'date_order'], limit: 10 }).catch(() => []);
 
