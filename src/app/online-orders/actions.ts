@@ -136,6 +136,23 @@ export type OnlineOrderItem = {
   lineNote?: string | null;
 };
 
+// Extra fee (nến sinh nhật, nón sinh nhật...) added on top of the cart — never a catalogue
+// product, so it never touches lab_fiche_meta/production/Odoo (Axel, 2026-09-07: "ca prend
+// uniquement en compte le produit"). Lands as a plain lab_online_sale_lines row regardless of
+// whether the order itself is 'lab' or 'shop_stock' — see buildFeeLineRows below.
+export type ExtraFeeLineInput = { emoji?: string | null; label: string; qty: number; unitPrice: number };
+
+function buildFeeLineRows(fees: ExtraFeeLineInput[] | undefined): { fiche_id: null; variant_id: null; sku: null; product_name_vi: string; category: string; qty: number; unit_price: number; line_note: null; is_fee: true }[] {
+  return (fees ?? [])
+    .map(f => ({ label: clean(f.label, 60), emoji: clean(f.emoji ?? '', 4) || null, qty: Math.round(Number(f.qty)), unitPrice: Math.max(0, Number(f.unitPrice) || 0) }))
+    .filter(f => f.label && f.qty > 0)
+    .map(f => ({
+      fiche_id: null, variant_id: null, sku: null,
+      product_name_vi: (f.emoji ? `${f.emoji} ${f.label}` : f.label) as string, category: 'Khác',
+      qty: f.qty, unit_price: f.unitPrice, line_note: null, is_fee: true as const,
+    }));
+}
+
 // One submission = one order = one order_batch_id = one Odoo document, created SYNCHRONOUSLY
 // (Axel, 2026-09-06: "une fois validé ça crée la commande odoo"), unlike the shop token flow
 // (which defers Odoo creation to an admin batching several exceptional orders together). If the
@@ -146,7 +163,7 @@ export async function submitOnlineOrderAction(input: {
   shop: string; channel: string; deliveryDate: string; readyTime: string | null;
   customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
-  items: OnlineOrderItem[];
+  items: OnlineOrderItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderRef?: string | null; warning?: string; error?: string }> {
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
@@ -292,11 +309,20 @@ export async function submitOnlineOrderAction(input: {
     return { ok: true, orderRef: odooResult.order_ref ?? null, warning: `Đơn đã lưu nhưng lỗi ghi thông tin thanh toán: ${ooErr.message}` };
   }
 
+  // Extra fees (nến, nón...): never touch Odoo/production — a plain revenue line alongside the
+  // real order. Failure here is non-fatal (the order itself already succeeded).
+  const feeRows = buildFeeLineRows(input.fees);
+  let feeWarning: string | null = null;
+  if (feeRows.length) {
+    const { error: feeErr } = await supabase.from('lab_online_sale_lines').insert(feeRows.map(r => ({ ...r, order_batch_id: orderBatchId })));
+    if (feeErr) feeWarning = `Đơn đã lưu nhưng lỗi ghi phụ phí: ${feeErr.message}`;
+  }
+
   revalidatePath('/online-orders');
   if (!odooResult.ok) {
-    return { ok: true, orderRef: null, warning: `Đơn đã lưu, sản xuất đã lên lịch, nhưng tạo đơn Odoo thất bại (${odooResult.error}) — admin sẽ tạo thủ công.` };
+    return { ok: true, orderRef: null, warning: feeWarning ?? `Đơn đã lưu, sản xuất đã lên lịch, nhưng tạo đơn Odoo thất bại (${odooResult.error}) — admin sẽ tạo thủ công.` };
   }
-  return { ok: true, orderRef: odooResult.order_ref ?? null };
+  return { ok: true, orderRef: odooResult.order_ref ?? null, warning: feeWarning ?? undefined };
 }
 
 
@@ -315,7 +341,7 @@ export async function submitShopStockSaleAction(input: {
   shop: string; channel: string; saleDate: string;
   customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
-  items: ShopStockSaleItem[];
+  items: ShopStockSaleItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderBatchId?: string; warning?: string; error?: string }> {
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
@@ -371,7 +397,8 @@ export async function submitShopStockSaleAction(input: {
     created_by: auth.userId,
   });
   if (ooErr) return { error: ooErr.message };
-  const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(rows.map(r => ({ ...r, order_batch_id: orderBatchId })));
+  const allRows = [...rows, ...buildFeeLineRows(input.fees)];
+  const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(allRows.map(r => ({ ...r, order_batch_id: orderBatchId })));
   if (lErr) {
     await supabase.from('lab_online_orders').delete().eq('order_batch_id', orderBatchId);
     return { error: lErr.message };
@@ -412,20 +439,24 @@ export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderS
   if (!orders?.length) return { orders: [] };
 
   const labBatchIds = orders.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
-  const stockBatchIds = orders.filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
+  const allBatchIds = orders.map((o: any) => o.order_batch_id);
+  // sale_lines queried for every order (not just shop_stock) — a 'lab' order's extra-fee lines
+  // (never in lab_manual_cakes, see buildFeeLineRows) only live here.
   const [{ data: lines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
       ? supabase.from('lab_manual_cakes')
           .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
           .in('order_batch_id', labBatchIds)
       : Promise.resolve({ data: [] as any[] }),
-    stockBatchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', stockBatchIds)
+    allBatchIds.length
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', allBatchIds)
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
   const linesByBatch = new Map<string, any[]>();
-  for (const l of [...(lines ?? []), ...(stockLines ?? [])]) {
+  // Tag origin so "cancelled" below only judges the real production lines (lab_manual_cakes) —
+  // a fee line from lab_online_sale_lines has no cancelled_at at all and must not count against it.
+  for (const l of [...(lines ?? []).map((l: any) => ({ ...l, _mc: true })), ...(stockLines ?? []).map((l: any) => ({ ...l, _mc: false }))]) {
     const arr = linesByBatch.get(l.order_batch_id) ?? [];
     arr.push(l); linesByBatch.set(l.order_batch_id, arr);
   }
@@ -452,7 +483,7 @@ export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderS
       items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price })),
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
-      shopDelivered: o.shop_delivered, cancelled: source === 'lab' && ls.length > 0 && ls.every((l: any) => l.cancelled_at),
+      shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
       paymentProofUrl: o.payment_proof_url ?? null,
     };
   });
@@ -534,6 +565,61 @@ export async function deleteOnlineChannelAction(name: string): Promise<{ ok?: bo
   return { ok: true };
 }
 
+// ── Extra fees (configurable, lab_v75) — shared by anyone with online-orders access, same
+// posture as sales channels above. Never touches Odoo/production (see buildFeeLineRows).
+export type ExtraFeeType = { id: string; emoji: string | null; label: string; defaultPrice: number };
+
+export async function listExtraFeeTypesAction(): Promise<{ fees?: ExtraFeeType[]; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_online_extra_fees')
+    .select('id, emoji, label, default_price').eq('active', true).order('created_at');
+  if (error) return { error: error.message };
+  return { fees: (data ?? []).map((r: any) => ({ id: r.id, emoji: r.emoji ?? null, label: r.label, defaultPrice: Number(r.default_price) })) };
+}
+
+export async function addExtraFeeTypeAction(input: { emoji?: string | null; label: string; defaultPrice: number }): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const label = clean(input.label, 60);
+  if (!label) return { error: 'Empty name' };
+  const emoji = clean(input.emoji ?? '', 4) || null;
+  const defaultPrice = Math.max(0, Number(input.defaultPrice) || 0);
+  const { error } = await supabase.from('lab_online_extra_fees').insert({ emoji, label, default_price: defaultPrice, created_by: auth.userId });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function updateExtraFeeTypeAction(input: { id: string; emoji?: string | null; label?: string; defaultPrice?: number }): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const patch: Record<string, unknown> = {};
+  if (input.label != null) { const l = clean(input.label, 60); if (!l) return { error: 'Empty name' }; patch.label = l; }
+  if (input.emoji != null) patch.emoji = clean(input.emoji, 4) || null;
+  if (input.defaultPrice != null) patch.default_price = Math.max(0, Number(input.defaultPrice) || 0);
+  if (!Object.keys(patch).length) return { ok: true };
+  const { error } = await supabase.from('lab_online_extra_fees').update(patch).eq('id', input.id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function deleteExtraFeeTypeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  // Soft delete: past orders keep the fee line text/price they were saved with regardless.
+  const { error } = await supabase.from('lab_online_extra_fees').update({ active: false }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
 // ── Payment screenshot (lab_v71) ──
 // The browser downsizes the image to ~1200px JPEG before calling this (see OnlineOrdersView),
 // so a typical bank-app screenshot lands at 100–250 KB instead of 2–5 MB — negligible for
@@ -592,24 +678,28 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   if (!batchIds.length) return { data: empty };
 
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
-  const stockIds = (orders ?? []).filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
+  // sale_lines is queried for EVERY batch, not just shop_stock ones — a 'lab' order can also
+  // carry extra-fee lines there (fees never touch lab_manual_cakes/production, see
+  // buildFeeLineRows), so its fee lines only show up via this table regardless of source.
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labIds.length
       ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
-    stockIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at').in('order_batch_id', stockIds).limit(20000)
+    batchIds.length
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at').in('order_batch_id', batchIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const orderById = new Map<string, any>();
   for (const o of orders ?? []) orderById.set(o.order_batch_id, o);
-  // Normalise both line shapes: shop-stock lines take shop/channel from their order header and
-  // already carry a category (no fiche lookup needed).
+  // Normalise both line shapes: sale_lines rows take shop/channel/source from their order header
+  // (they already carry a category — no fiche lookup needed) so a fee line reports under
+  // whichever source its order actually is, not a hardcoded 'shop_stock'.
   const lines: any[] = [
     ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null })),
     ...(stockLines ?? []).map((l: any) => {
       const o = orderById.get(l.order_batch_id);
-      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, source: 'shop_stock' as const, category: l.category as string | null };
+      const source: 'lab' | 'shop_stock' = o?.source === 'shop_stock' ? 'shop_stock' : 'lab';
+      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, source, category: l.category as string | null };
     }),
   ];
 

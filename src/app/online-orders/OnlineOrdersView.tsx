@@ -1,12 +1,12 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, Minus, X, Loader2, Bell } from 'lucide-react';
+import { Search, Plus, Minus, X, Loader2, Bell, Settings } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { thumb } from '@/lib/img-thumb';
 import { useI18n } from '@/lib/i18n';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
-import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics } from './actions';
+import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType } from './actions';
 
 const NAVY = '#1A4731';
 const GOLD = '#C9A84C';
@@ -126,6 +126,16 @@ const L = {
     rangeTotal: 'Doanh thu trong kỳ',
     revenueTrend: 'Doanh thu theo thời gian',
     perWeek: 'theo tuần', perMonth: 'theo tháng', perDay: 'theo ngày',
+    feesLabel: 'Phụ phí thêm',
+    manageFees: 'Quản lý',
+    feesRow: 'Phụ phí',
+    feeBadge: 'Phụ phí',
+    addFeeType: 'Loại khác',
+    manageFeesTitle: 'Quản lý phụ phí',
+    manageFeesHint: 'Danh sách dùng chung cho mọi người có quyền vào Đặt hàng Online — thêm, đổi giá hoặc xoá bất cứ lúc nào.',
+    newFeeNamePh: 'Tên phụ phí mới...',
+    newFeePricePh: 'Giá',
+    addBtn: 'Thêm',
   },
   en: {
     titleOrder: 'Online orders',
@@ -211,6 +221,16 @@ const L = {
     rangeTotal: 'Revenue in period',
     revenueTrend: 'Revenue over time',
     perWeek: 'weekly', perMonth: 'monthly', perDay: 'daily',
+    feesLabel: 'Extra fees',
+    manageFees: 'Manage',
+    feesRow: 'Extra fees',
+    feeBadge: 'Fee',
+    addFeeType: 'Other',
+    manageFeesTitle: 'Manage extra fees',
+    manageFeesHint: 'Shared with everyone who has access to online orders — add, reprice, or remove anytime.',
+    newFeeNamePh: 'New fee name...',
+    newFeePricePh: 'Price',
+    addBtn: 'Add',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -260,6 +280,52 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
     if (channel === n) setChannel('');
     loadChannels();
   }
+  // ── Extra fees (nến, nón...) — shared list, never touches Odoo/production (lab_v75) ──
+  const [feeTypes, setFeeTypes] = useState<ExtraFeeType[]>([]);
+  async function loadFeeTypes() {
+    const res = await actions.listExtraFeeTypesAction();
+    if (res.fees) setFeeTypes(res.fees);
+  }
+  useEffect(() => { loadFeeTypes(); }, []);
+  type FeeLine = { key: string; feeTypeId: string | null; emoji: string | null; label: string; qty: number; unitPrice: number };
+  const [feeCart, setFeeCart] = useState<FeeLine[]>([]);
+  function addFeeToCart(f: ExtraFeeType) {
+    setFeeCart(prev => {
+      const existing = prev.find(l => l.feeTypeId === f.id);
+      if (existing) return prev.map(l => l.feeTypeId === f.id ? { ...l, qty: l.qty + 1 } : l);
+      return [...prev, { key: f.id, feeTypeId: f.id, emoji: f.emoji, label: f.label, qty: 1, unitPrice: f.defaultPrice }];
+    });
+  }
+  function updateFeeLine(key: string, patch: Partial<FeeLine>) {
+    setFeeCart(prev => prev.map(l => l.key === key ? { ...l, ...patch } : l));
+  }
+  function removeFeeLine(key: string) {
+    setFeeCart(prev => prev.filter(l => l.key !== key));
+  }
+  const [manageFeesOpen, setManageFeesOpen] = useState(false);
+  const [newFeeEmoji, setNewFeeEmoji] = useState('🎁');
+  const [newFeeLabel, setNewFeeLabel] = useState('');
+  const [newFeePrice, setNewFeePrice] = useState('');
+  async function addFeeType() {
+    const label = newFeeLabel.trim();
+    if (!label) return;
+    await actions.addExtraFeeTypeAction({ emoji: newFeeEmoji.trim() || null, label, defaultPrice: Number(newFeePrice) || 0 });
+    setNewFeeLabel(''); setNewFeePrice(''); loadFeeTypes();
+  }
+  async function updateFeeTypePrice(id: string, price: number) {
+    setFeeTypes(prev => prev.map(f => f.id === id ? { ...f, defaultPrice: price } : f));
+    await actions.updateExtraFeeTypeAction({ id, defaultPrice: price });
+  }
+  async function updateFeeTypeLabel(id: string, label: string) {
+    setFeeTypes(prev => prev.map(f => f.id === id ? { ...f, label } : f));
+    await actions.updateExtraFeeTypeAction({ id, label });
+  }
+  async function deleteFeeType(id: string) {
+    setFeeTypes(prev => prev.filter(f => f.id !== id));
+    setFeeCart(prev => prev.filter(l => l.feeTypeId !== id));
+    await actions.deleteExtraFeeTypeAction(id);
+  }
+
   const [deliveryDate, setDeliveryDate] = useState(today);
   const [readyTime, setReadyTime] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -317,7 +383,8 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   }
 
   const cartTotal = useMemo(() => cart.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0), [cart]);
-  const grandTotal = cartTotal + (Number(deliveryFee) || 0);
+  const feesTotal = useMemo(() => feeCart.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0), [feeCart]);
+  const grandTotal = cartTotal + feesTotal + (Number(deliveryFee) || 0);
 
   async function handleSubmit() {
     if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: tr('errChannel') }); return; }
@@ -330,6 +397,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
         deliveryAddress: deliveryAddress || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
         items: cart.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, lineNote: l.lineNote ?? null })),
+        fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
       });
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
@@ -341,13 +409,14 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
         deliveryAddress: deliveryAddress || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
         items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
+        fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
       });
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
       if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
       else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
     }
-    setCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes('');
+    setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes('');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
   }
 
@@ -373,7 +442,12 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
               cart={cart} updateLine={updateLine} removeLine={removeLine} onDesignPhoto={onDesignPhoto}
               query={query} setQuery={setQuery} results={results} searching={searching} addToCart={addToCart}
               searchOpen={searchOpen} setSearchOpen={setSearchOpen}
-              cartTotal={cartTotal} grandTotal={grandTotal}
+              feeTypes={feeTypes} feeCart={feeCart} addFeeToCart={addFeeToCart} updateFeeLine={updateFeeLine} removeFeeLine={removeFeeLine}
+              manageFeesOpen={manageFeesOpen} setManageFeesOpen={setManageFeesOpen}
+              newFeeEmoji={newFeeEmoji} setNewFeeEmoji={setNewFeeEmoji} newFeeLabel={newFeeLabel} setNewFeeLabel={setNewFeeLabel}
+              newFeePrice={newFeePrice} setNewFeePrice={setNewFeePrice} addFeeType={addFeeType}
+              updateFeeTypePrice={updateFeeTypePrice} updateFeeTypeLabel={updateFeeTypeLabel} deleteFeeType={deleteFeeType}
+              cartTotal={cartTotal} feesTotal={feesTotal} grandTotal={grandTotal}
               submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
             />
           )}
@@ -467,7 +541,10 @@ function OrderTab(props: any) {
     customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress,
     notes, setNotes, deliveryFee, setDeliveryFee, paymentStatus, setPaymentStatus, amountPaid, setAmountPaid,
     cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart, searchOpen, setSearchOpen,
-    cartTotal, grandTotal, submitting, submitMsg, onSubmit,
+    feeTypes, feeCart, addFeeToCart, updateFeeLine, removeFeeLine, manageFeesOpen, setManageFeesOpen,
+    newFeeEmoji, setNewFeeEmoji, newFeeLabel, setNewFeeLabel, newFeePrice, setNewFeePrice, addFeeType,
+    updateFeeTypePrice, updateFeeTypeLabel, deleteFeeType,
+    cartTotal, feesTotal, grandTotal, submitting, submitMsg, onSubmit,
   } = props;
   const { tr } = useL();
 
@@ -605,6 +682,89 @@ function OrderTab(props: any) {
         </div>
       )}
 
+      <div className="flex items-center justify-between mb-2">
+        <SectionLabel>{tr('feesLabel')}</SectionLabel>
+        <button onClick={() => setManageFeesOpen(true)} className="inline-flex items-center gap-1 rounded-full"
+          style={{ color: NAVY, backgroundColor: CREAM, fontSize: 11, fontWeight: 700, padding: '4px 9px 4px 8px', marginBottom: 8 }}>
+          <Settings size={11} />{tr('manageFees')}
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {feeTypes.map((f: ExtraFeeType) => (
+          <button key={f.id} onClick={() => addFeeToCart(f)} className="inline-flex items-center gap-1.5 rounded-full"
+            style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', fontSize: 12.5, fontWeight: 600, padding: '7px 12px', color: INK }}>
+            {f.emoji ? `${f.emoji} ` : ''}{f.label} <span style={{ color: INK_LIGHT, fontWeight: 500 }}>+{fmtCompactVnd(f.defaultPrice)}</span>
+          </button>
+        ))}
+        <button onClick={() => setManageFeesOpen(true)} className="inline-flex items-center gap-1 rounded-full"
+          style={{ border: `1px dashed ${BORDER}`, fontSize: 12.5, fontWeight: 600, padding: '7px 12px 7px 10px', color: INK_LIGHT }}>
+          <Plus size={12} />{tr('addFeeType')}
+        </button>
+      </div>
+
+      {feeCart.length > 0 && (
+        <div className="rounded-xl overflow-hidden mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+          {feeCart.map((l: any) => (
+            <div key={l.key} className="p-3" style={{ borderBottom: `1px solid ${CREAM_DARK}` }}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: CREAM }}>{l.emoji ?? '🎁'}</div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{l.label}</div>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9C7C2C', backgroundColor: CREAM, borderRadius: 5, padding: '2px 6px' }}>{tr('feeBadge')}</span>
+                </div>
+                <button onClick={() => removeFeeLine(l.key)}><X size={14} color={INK_LIGHT} /></button>
+              </div>
+              <div className="flex items-center gap-3 mt-2">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => updateFeeLine(l.key, { qty: Math.max(1, l.qty - 1) })}
+                    style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: CREAM }} className="flex items-center justify-center"><Minus size={12} color={NAVY} /></button>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, width: 18, textAlign: 'center' }}>{l.qty}</span>
+                  <button onClick={() => updateFeeLine(l.key, { qty: l.qty + 1 })}
+                    style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: CREAM }} className="flex items-center justify-center"><Plus size={12} color={NAVY} /></button>
+                </div>
+                <input type="number" min={0} value={l.unitPrice} onChange={(e: any) => updateFeeLine(l.key, { unitPrice: Number(e.target.value) })}
+                  className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 64, textAlign: 'right' }}>{fmtCompactVnd(l.qty * (Number(l.unitPrice) || 0))}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {manageFeesOpen && (
+        <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,0.42)' }} onClick={() => setManageFeesOpen(false)}>
+          <div onClick={(e: any) => e.stopPropagation()} className="w-full max-w-xl rounded-t-2xl p-4" style={{ backgroundColor: '#FFFEFB', maxHeight: '82vh', overflowY: 'auto' }}>
+            <div className="flex items-center justify-between mb-1">
+              <span style={{ fontSize: 14.5, fontWeight: 700 }}>⚙ {tr('manageFeesTitle')}</span>
+              <button onClick={() => setManageFeesOpen(false)}><X size={16} color={INK_LIGHT} /></button>
+            </div>
+            <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 12 }}>{tr('manageFeesHint')}</div>
+            {feeTypes.map((f: ExtraFeeType) => (
+              <div key={f.id} className="flex items-center gap-2 py-2" style={{ borderBottom: `1px solid ${CREAM_DARK}` }}>
+                <span style={{ fontSize: 17, width: 22, textAlign: 'center' }}>{f.emoji ?? '🎁'}</span>
+                <input value={f.label} onChange={(e: any) => updateFeeTypeLabel(f.id, e.target.value)}
+                  className="flex-1 px-2 py-1.5 rounded text-sm min-w-0" style={{ border: `1px solid ${BORDER}` }} />
+                <input type="number" value={f.defaultPrice} onChange={(e: any) => updateFeeTypePrice(f.id, Number(e.target.value) || 0)}
+                  className="px-2 py-1.5 rounded text-sm text-right" style={{ border: `1px solid ${BORDER}`, width: 84 }} />
+                <button onClick={() => deleteFeeType(f.id)}><X size={14} color={INK_LIGHT} /></button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: `1px dashed ${BORDER}` }}>
+              <input value={newFeeEmoji} onChange={(e: any) => setNewFeeEmoji(e.target.value)} maxLength={4}
+                className="px-2 py-1.5 rounded text-sm text-center" style={{ border: `1px solid ${BORDER}`, width: 44 }} />
+              <input value={newFeeLabel} onChange={(e: any) => setNewFeeLabel(e.target.value)} placeholder={tr('newFeeNamePh')}
+                className="flex-1 px-2 py-1.5 rounded text-sm min-w-0" style={{ border: `1px solid ${BORDER}` }} />
+              <input type="number" value={newFeePrice} onChange={(e: any) => setNewFeePrice(e.target.value)} placeholder={tr('newFeePricePh')}
+                className="px-2 py-1.5 rounded text-sm text-right" style={{ border: `1px solid ${BORDER}`, width: 84 }} />
+              <button onClick={addFeeType} disabled={!newFeeLabel.trim()}
+                style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12.5, fontWeight: 700, padding: '8px 12px', borderRadius: 8, opacity: newFeeLabel.trim() ? 1 : 0.4 }}>
+                + {tr('addBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SectionLabel>{tr('customerInfo')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4 space-y-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder={tr('custName')}
@@ -625,6 +785,12 @@ function OrderTab(props: any) {
 
       <SectionLabel>{tr('payment')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+        {feesTotal > 0 && (
+          <div className="flex justify-between items-center mb-2">
+            <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('feesRow')}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtVnd(feesTotal)}</span>
+          </div>
+        )}
         <div className="flex justify-between items-center mb-2">
           <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('deliveryFee')}</span>
           <input type="number" min={0} value={deliveryFee} onChange={(e: any) => setDeliveryFee(e.target.value)}
