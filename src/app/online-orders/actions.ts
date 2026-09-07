@@ -3,6 +3,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { SHOP_ODOO_MAP, createOdooOrderForSelection } from '@/lib/odoo-shop-order-sync';
 import { ONLINE_PUSH_KEY } from '@/lib/online-sales';
+import { sendShopPush, sendAdminPush, awaitPush, type PushPayload } from '@/lib/push-notify';
 import { revalidatePath } from 'next/cache';
 
 // Online-sales interface (Axel, 2026-09-06) — her own space, replacing her personal Google
@@ -278,6 +279,9 @@ export async function submitOnlineOrderAction(input: {
   // ── Order-level fields (money, payment, who) ──
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
     order_batch_id: orderBatchId,
+    source: 'lab',
+    shop_name: input.shop, channel, delivery_date: input.deliveryDate,
+    customer_name: customerName, customer_phone: customerPhone, delivery_address: deliveryAddress, notes,
     delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
@@ -295,9 +299,99 @@ export async function submitOnlineOrderAction(input: {
   return { ok: true, orderRef: odooResult.order_ref ?? null };
 }
 
+
+// ── Sale served from SHOP STOCK (Axel, 2026-09-07) ──
+// The product is already on the shop's shelf (delivered by that morning's REP): the online
+// seller records the sale for her own tracking/analytics and the shop hands it over. HARD RULE
+// (Axel: "aucun impact odoo ou production"): this path touches ONLY lab_online_orders +
+// lab_online_sale_lines. It never writes lab_manual_cakes / lab_assignments / lab_imports and
+// never imports anything from the Odoo modules — so no chef card, nothing on
+// /exceptional-orders, no Odoo document, no sync. The shop still rings the sale in its POS;
+// revenue analysis stays on Odoo SOs — this is an attribution view only.
+export type ShopStockSaleItem = {
+  ficheId: string; variantId: string | null; qty: number; unitPrice: number; lineNote?: string | null;
+};
+export async function submitShopStockSaleAction(input: {
+  shop: string; channel: string; saleDate: string;
+  customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
+  deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
+  items: ShopStockSaleItem[];
+}): Promise<{ ok?: boolean; orderBatchId?: string; warning?: string; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  if (!SHOPS.includes(input.shop) || input.shop === 'Lab') return { error: 'Invalid shop' };
+  const channel = clean(input.channel, 60);
+  if (!channel) return { error: 'Missing channel' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.saleDate ?? '')) return { error: 'Invalid date' };
+  const items = Array.isArray(input.items) ? input.items.slice(0, 50) : [];
+  if (!items.length) return { error: 'Empty cart' };
+  if (!['paid', 'unpaid', 'partial'].includes(input.paymentStatus)) return { error: 'Invalid payment status' };
+
+  // Resolve names/categories server-side from the catalogue (never trust the client's labels).
+  const ficheIds = Array.from(new Set(items.map(i => i.ficheId).filter(Boolean)));
+  const { data: fiches } = await supabase.from('lab_fiche_meta').select('id, name_vi, category').in('id', ficheIds).eq('is_active', true);
+  const ficheById = new Map<string, any>();
+  for (const f of fiches ?? []) ficheById.set(f.id, f);
+  const variantIds = Array.from(new Set(items.map(i => i.variantId).filter((v): v is string => !!v)));
+  const { data: variants } = variantIds.length ? await supabase.from('lab_fiche_variants').select('id, fiche_id, sku, label').in('id', variantIds) : { data: [] as any[] };
+  const variantById = new Map<string, any>();
+  for (const v of variants ?? []) variantById.set(v.id, v);
+
+  const rows: any[] = [];
+  for (const it of items) {
+    const f = ficheById.get(it.ficheId);
+    if (!f) return { error: 'Product not found' };
+    const qty = Math.round(Number(it.qty));
+    if (!qty || qty < 1 || qty > 500) return { error: 'Invalid quantity' };
+    const v = it.variantId ? variantById.get(it.variantId) : null;
+    if (it.variantId && (!v || v.fiche_id !== f.id)) return { error: 'Product variant not found' };
+    const label = v?.label && v.label !== 'Standard' ? ` · ${v.label}` : '';
+    rows.push({
+      fiche_id: f.id, variant_id: v?.id ?? null, sku: v?.sku ?? null,
+      product_name_vi: `${f.name_vi ?? v?.sku ?? 'Sản phẩm'}${label}`, category: f.category ?? null,
+      qty, unit_price: Math.max(0, Number(it.unitPrice) || 0), line_note: clean(it.lineNote, 300),
+    });
+  }
+
+  const orderBatchId = crypto.randomUUID();
+  const customerName = clean(input.customerName, 80);
+  const customerPhone = clean(input.customerPhone, 30);
+  const { error: ooErr } = await supabase.from('lab_online_orders').insert({
+    order_batch_id: orderBatchId,
+    source: 'shop_stock',
+    shop_name: input.shop, channel, delivery_date: input.saleDate,
+    customer_name: customerName, customer_phone: customerPhone,
+    delivery_address: clean(input.deliveryAddress, 300), notes: clean(input.notes, 500),
+    delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
+    payment_status: input.paymentStatus,
+    amount_paid: Math.max(0, Number(input.amountPaid) || 0),
+    created_by: auth.userId,
+  });
+  if (ooErr) return { error: ooErr.message };
+  const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(rows.map(r => ({ ...r, order_batch_id: orderBatchId })));
+  if (lErr) {
+    await supabase.from('lab_online_orders').delete().eq('order_batch_id', orderBatchId);
+    return { error: lErr.message };
+  }
+
+  // Tell the shop it has something to hand over from its own shelf (+ admin copy).
+  const summary = rows.slice(0, 3).map(r => r.qty > 1 ? `${r.product_name_vi} ×${r.qty}` : r.product_name_vi).join(', ') + (rows.length > 3 ? ` +${rows.length - 3}` : '');
+  const who = [customerName, customerPhone].filter(Boolean).join(' ');
+  const viPayload: PushPayload = { title: `🛍 Online bán từ kho ${input.shop}`, body: `${summary}${who ? ` — ${who}` : ''} (${channel})` };
+  const enPayload: PushPayload = { title: `🛍 Online sale from ${input.shop} stock`, body: `${summary}${who ? ` — ${who}` : ''} (${channel})` };
+  await awaitPush(Promise.all([sendShopPush(supabase, input.shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+
+  revalidatePath('/online-orders');
+  return { ok: true, orderBatchId };
+}
+
 // ── Suivi (tracking) ──
 export type OnlineOrderSummary = {
   orderBatchId: string; shopName: string; channel: string | null; orderRef: string | null;
+  source: 'lab' | 'shop_stock';
   paymentProofUrl: string | null;
   createdAt: string; deliveryDate: string;
   customerName: string | null; customerPhone: string | null;
@@ -317,13 +411,21 @@ export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderS
   const { data: orders } = await oq;
   if (!orders?.length) return { orders: [] };
 
-  const batchIds = orders.map((o: any) => o.order_batch_id);
-  const { data: lines } = await supabase.from('lab_manual_cakes')
-    .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
-    .in('order_batch_id', batchIds);
+  const labBatchIds = orders.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
+  const stockBatchIds = orders.filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
+  const [{ data: lines }, { data: stockLines }] = await Promise.all([
+    labBatchIds.length
+      ? supabase.from('lab_manual_cakes')
+          .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
+          .in('order_batch_id', labBatchIds)
+      : Promise.resolve({ data: [] as any[] }),
+    stockBatchIds.length
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', stockBatchIds)
+      : Promise.resolve({ data: [] as any[] }),
+  ]);
 
   const linesByBatch = new Map<string, any[]>();
-  for (const l of lines ?? []) {
+  for (const l of [...(lines ?? []), ...(stockLines ?? [])]) {
     const arr = linesByBatch.get(l.order_batch_id) ?? [];
     arr.push(l); linesByBatch.set(l.order_batch_id, arr);
   }
@@ -341,14 +443,16 @@ export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderS
     const first = ls[0];
     const total = ls.reduce((s: number, l: any) => s + (l.qty ?? 0) * (l.unit_price ?? 0), 0);
     const orderRef = ls.find((l: any) => l.matched_order_ref && l.matched_order_ref !== '__pending_create__')?.matched_order_ref ?? null;
+    const source: 'lab' | 'shop_stock' = o.source === 'shop_stock' ? 'shop_stock' : 'lab';
     return {
-      orderBatchId: o.order_batch_id, shopName: first?.shop_name ?? '', channel: first?.channel ?? null,
-      orderRef, createdAt: o.created_at, deliveryDate: first?.delivery_date ?? '',
-      customerName: first?.customer_name ?? null, customerPhone: first?.customer_phone ?? null,
+      orderBatchId: o.order_batch_id, source,
+      shopName: o.shop_name ?? first?.shop_name ?? '', channel: o.channel ?? first?.channel ?? null,
+      orderRef, createdAt: o.created_at, deliveryDate: o.delivery_date ?? first?.delivery_date ?? '',
+      customerName: o.customer_name ?? first?.customer_name ?? null, customerPhone: o.customer_phone ?? first?.customer_phone ?? null,
       items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price })),
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
-      labDelivered: orderRef ? labDeliveredRefs.has(orderRef) : false,
-      shopDelivered: o.shop_delivered, cancelled: ls.length > 0 && ls.every((l: any) => l.cancelled_at),
+      labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
+      shopDelivered: o.shop_delivered, cancelled: source === 'lab' && ls.length > 0 && ls.every((l: any) => l.cancelled_at),
       paymentProofUrl: o.payment_proof_url ?? null,
     };
   });
@@ -462,6 +566,7 @@ export type OnlineAnalytics = {
   byShop: { shop: string; total: number }[];
   byCategory: { category: string; total: number }[];
   byChannel: { channel: string; total: number }[];
+  bySource: { source: 'lab' | 'shop_stock'; total: number; count: number }[];
   daily: { date: string; total: number }[];
 };
 
@@ -472,16 +577,34 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
   if (!supabase) return { error: 'Server not configured' };
 
   const since = new Date(Date.now() - 60 * 86400000).toISOString();
-  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at').gte('created_at', since);
+  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, source, shop_name, channel').gte('created_at', since);
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], daily: [] };
+  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], bySource: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
-  const { data: lines } = await supabase.from('lab_manual_cakes')
-    .select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at')
-    .in('order_batch_id', batchIds).is('cancelled_at', null);
+  const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
+  const stockIds = (orders ?? []).filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
+  const [{ data: labLines }, { data: stockLines }] = await Promise.all([
+    labIds.length
+      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null)
+      : Promise.resolve({ data: [] as any[] }),
+    stockIds.length
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, created_at').in('order_batch_id', stockIds)
+      : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const orderById = new Map<string, any>();
+  for (const o of orders ?? []) orderById.set(o.order_batch_id, o);
+  // Normalise both line shapes: shop-stock lines take shop/channel from their order header and
+  // already carry a category (no fiche lookup needed).
+  const lines: any[] = [
+    ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null })),
+    ...(stockLines ?? []).map((l: any) => {
+      const o = orderById.get(l.order_batch_id);
+      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, created_at: l.created_at, source: 'shop_stock' as const, category: l.category as string | null };
+    }),
+  ];
 
   const skus = Array.from(new Set((lines ?? []).map((l: any) => l.product_sku).filter(Boolean))) as string[];
   const { data: variants } = skus.length ? await supabase.from('lab_fiche_variants').select('sku, fiche_id').in('sku', skus) : { data: [] as any[] };
@@ -502,6 +625,7 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
   const byShop = new Map<string, number>();
   const byCategory = new Map<string, number>();
   const byChannel = new Map<string, number>();
+  const bySource = new Map<'lab' | 'shop_stock', { total: number; batches: Set<string> }>();
   const byDay = new Map<string, number>();
 
   for (const l of lines ?? []) {
@@ -513,11 +637,14 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
     const shop = l.shop_name ?? 'Khác';
     byShop.set(shop, (byShop.get(shop) ?? 0) + lineTotal);
     const ficheId = l.product_sku ? ficheIdBySku.get(l.product_sku) : null;
-    const cat = ficheId ? (categoryByFiche.get(ficheId) ?? 'Khác') : 'Khác';
+    const cat = l.category ?? (ficheId ? (categoryByFiche.get(ficheId) ?? 'Khác') : 'Khác');
     byCategory.set(cat, (byCategory.get(cat) ?? 0) + lineTotal);
     const ch = (l.channel ?? '').trim() || '—';
     byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
+    const src = (l.source ?? 'lab') as 'lab' | 'shop_stock';
+    const cur = bySource.get(src) ?? { total: 0, batches: new Set<string>() };
+    cur.total += lineTotal; cur.batches.add(l.order_batch_id); bySource.set(src, cur);
   }
 
   const daily: { date: string; total: number }[] = [];
@@ -532,6 +659,7 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
       byShop: Array.from(byShop.entries()).map(([shop, total]) => ({ shop, total })).sort((a, b) => b.total - a.total),
       byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total),
       byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
+      bySource: (['lab', 'shop_stock'] as const).map(source => ({ source, total: bySource.get(source)?.total ?? 0, count: bySource.get(source)?.batches.size ?? 0 })),
       daily,
     },
   };

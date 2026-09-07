@@ -108,6 +108,19 @@ const L = {
     payProof: 'Ảnh chuyển khoản',
     payProofDrop: '📎 Kéo thả hoặc chọn ảnh chuyển khoản',
     uploading: 'Đang tải ảnh...',
+    sourceLabel: 'Nguồn hàng',
+    srcLab: '🏭 Đặt lab (tạo Odoo)',
+    srcStock: '🏪 Kho shop (không Odoo)',
+    srcLabHint: 'Lab sản xuất → giao shop → shop giao khách. Tạo đơn Odoo + thẻ sản xuất.',
+    srcStockHint: 'Hàng đã có sẵn tại shop (nhận từ REP). KHÔNG tạo Odoo, KHÔNG sản xuất — shop lấy từ kho giao khách và vẫn bấm bán tại quầy như bình thường.',
+    submitStock: 'Lưu đơn bán từ kho',
+    savingStock: 'Đang lưu...',
+    okStock: 'Đã lưu đơn bán từ kho — shop đã được thông báo',
+    stockBadge: '🏪 Kho shop',
+    saleDate: 'Ngày bán',
+    bySource: 'Đặt lab / Kho shop',
+    srcLabShort: 'Đặt lab',
+    srcStockShort: 'Kho shop',
   },
   en: {
     titleOrder: 'Online orders',
@@ -175,6 +188,19 @@ const L = {
     payProof: 'Payment screenshot',
     payProofDrop: '📎 Drop or pick the payment screenshot',
     uploading: 'Uploading...',
+    sourceLabel: 'Stock source',
+    srcLab: '🏭 Lab order (creates Odoo)',
+    srcStock: '🏪 Shop stock (no Odoo)',
+    srcLabHint: 'Lab produces → delivers to the shop → shop delivers the customer. Creates the Odoo document + production card.',
+    srcStockHint: 'Product already on the shop shelf (from the REP). NO Odoo document, NO production — the shop hands it over from its stock and still rings it in the POS as usual.',
+    submitStock: 'Save shop-stock sale',
+    savingStock: 'Saving...',
+    okStock: 'Shop-stock sale saved — the shop has been notified',
+    stockBadge: '🏪 Shop stock',
+    saleDate: 'Sale date',
+    bySource: 'Lab orders / Shop stock',
+    srcLabShort: 'Lab orders',
+    srcStockShort: 'Shop stock',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -202,6 +228,9 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   const today = new Date().toISOString().slice(0, 10);
   // ── Order form state ──
   const [shop, setShop] = useState(ONLINE_SHOPS[0]);
+  // 'lab' = existing flow (Odoo doc + production card); 'shop_stock' = sale served from the shop's
+  // own shelf — records only, zero Odoo/production (Axel, 2026-09-07).
+  const [source, setSource] = useState<'lab' | 'shop_stock'>('lab');
   const [channel, setChannel] = useState('');
   const [channels, setChannels] = useState<string[]>([]);
   const [newChannel, setNewChannel] = useState('');
@@ -284,17 +313,30 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
     if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: tr('errChannel') }); return; }
     if (!cart.length) { setSubmitMsg({ kind: 'error', text: tr('errEmpty') }); return; }
     setSubmitting(true); setSubmitMsg(null);
-    const res = await actions.submitOnlineOrderAction({
-      shop, channel: channel.trim(), deliveryDate, readyTime: readyTime || null,
-      customerName: customerName || null, customerPhone: customerPhone || null,
-      deliveryAddress: deliveryAddress || null, notes: notes || null,
-      deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
-      items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
-    });
-    setSubmitting(false);
-    if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
-    if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
-    else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
+    if (source === 'shop_stock') {
+      const res = await actions.submitShopStockSaleAction({
+        shop, channel: channel.trim(), saleDate: deliveryDate,
+        customerName: customerName || null, customerPhone: customerPhone || null,
+        deliveryAddress: deliveryAddress || null, notes: notes || null,
+        deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
+        items: cart.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, lineNote: l.lineNote ?? null })),
+      });
+      setSubmitting(false);
+      if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
+      setSubmitMsg({ kind: 'ok', text: tr('okStock') });
+    } else {
+      const res = await actions.submitOnlineOrderAction({
+        shop, channel: channel.trim(), deliveryDate, readyTime: readyTime || null,
+        customerName: customerName || null, customerPhone: customerPhone || null,
+        deliveryAddress: deliveryAddress || null, notes: notes || null,
+        deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
+        items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
+      });
+      setSubmitting(false);
+      if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
+      if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
+      else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
+    }
     setCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes('');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
   }
@@ -306,6 +348,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
         <div className="max-w-xl mx-auto px-4 py-4">
           {tab === 'order' && (
             <OrderTab
+              source={source} setSource={setSource}
               shop={shop} setShop={setShop} channel={channel} setChannel={setChannel}
               channels={channels} newChannel={newChannel} setNewChannel={setNewChannel} addChannel={addChannel} deleteChannel={deleteChannel}
               deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
@@ -408,6 +451,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function OrderTab(props: any) {
   const {
+    source, setSource,
     shop, setShop, channel, setChannel, channels, newChannel, setNewChannel, addChannel, deleteChannel,
     deliveryDate, setDeliveryDate, readyTime, setReadyTime,
     customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress,
@@ -417,8 +461,24 @@ function OrderTab(props: any) {
   } = props;
   const { tr } = useL();
 
+  const isStock = source === 'shop_stock';
   return (
     <div>
+      <SectionLabel>{tr('sourceLabel')}</SectionLabel>
+      <div className="grid grid-cols-2 gap-2 mb-1.5">
+        {([['lab', tr('srcLab')], ['shop_stock', tr('srcStock')]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setSource(k)}
+            style={{
+              backgroundColor: source === k ? (k === 'shop_stock' ? '#B45309' : NAVY) : '#fff',
+              color: source === k ? '#FFFAEE' : INK, border: source === k ? 'none' : `1px solid ${BORDER}`,
+              fontSize: 12.5, fontWeight: source === k ? 700 : 500, padding: '9px 8px', borderRadius: 10,
+            }}>{label}</button>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: isStock ? '#B45309' : INK_LIGHT, marginBottom: 16, fontWeight: isStock ? 600 : 400 }}>
+        {isStock ? tr('srcStockHint') : tr('srcLabHint')}
+      </div>
+
       <SectionLabel>{tr('channelLabel')}</SectionLabel>
       <div className="flex flex-wrap gap-2 mb-2">
         {channels.map((c: string) => (
@@ -512,7 +572,7 @@ function OrderTab(props: any) {
               <input value={l.lineNote ?? ''} onChange={e => updateLine(l.key, { lineNote: e.target.value })}
                 placeholder={tr('lineNote')} maxLength={300}
                 className="w-full px-2 py-1.5 rounded text-sm mt-2" style={{ border: `1px solid ${BORDER}` }} />
-              {l.isCake && (
+              {l.isCake && !isStock && (
                 <div className="mt-2 space-y-2">
                   <input value={l.message ?? ''} onChange={e => updateLine(l.key, { message: e.target.value })}
                     placeholder={tr('cakeMsg')} maxLength={200}
@@ -546,8 +606,8 @@ function OrderTab(props: any) {
         <div className="flex gap-2">
           <input type="date" value={deliveryDate} onChange={(e: any) => setDeliveryDate(e.target.value)}
             className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
-          <input type="time" value={readyTime} onChange={(e: any) => setReadyTime(e.target.value)}
-            className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          {!isStock && <input type="time" value={readyTime} onChange={(e: any) => setReadyTime(e.target.value)}
+            className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />}
         </div>
         <textarea value={notes} onChange={(e: any) => setNotes(e.target.value)} placeholder={tr('extraNotes')} rows={2}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
@@ -590,9 +650,9 @@ function OrderTab(props: any) {
       )}
 
       <button onClick={onSubmit} disabled={submitting || !cart.length}
-        style={{ backgroundColor: GOLD, color: NAVY, opacity: submitting || !cart.length ? 0.6 : 1 }}
+        style={{ backgroundColor: isStock ? '#B45309' : GOLD, color: isStock ? '#fff' : NAVY, opacity: submitting || !cart.length ? 0.6 : 1 }}
         className="w-full text-center text-[15px] font-bold py-3.5 rounded-xl mb-4">
-        {submitting ? tr('creating') : tr('submit')}
+        {submitting ? (isStock ? tr('savingStock') : tr('creating')) : (isStock ? tr('submitStock') : tr('submit'))}
       </button>
     </div>
   );
@@ -659,7 +719,9 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               <div className="flex justify-between items-start mb-2">
                 <div className="flex gap-1.5 items-center flex-wrap">
                   <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
-                  {o.orderRef ? (
+                  {o.source === 'shop_stock' ? (
+                    <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('stockBadge')}</span>
+                  ) : o.orderRef ? (
                     <span style={{ backgroundColor: CREAM, color: '#8a7326', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.orderRef}</span>
                   ) : (
                     <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('noOdoo')}</span>
@@ -694,10 +756,10 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div style={{ height: 1, backgroundColor: CREAM_DARK, marginBottom: 9 }} />
               <div className="flex gap-2">
-                <div className="flex-1 text-center py-1.5 rounded-lg" style={{
+                {o.source !== 'shop_stock' && <div className="flex-1 text-center py-1.5 rounded-lg" style={{
                   backgroundColor: o.labDelivered ? '#F0FDF4' : CREAM, color: o.labDelivered ? '#047857' : INK_LIGHT,
                   border: o.labDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.labDelivered ? 700 : 600,
-                }}>{o.labDelivered ? tr('labDelivered') : tr('labNot')}</div>
+                }}>{o.labDelivered ? tr('labDelivered') : tr('labNot')}</div>}
                 <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
                   backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
                   border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
@@ -744,6 +806,17 @@ function StatsTab() {
         <svg viewBox="0 0 320 70" width="100%" height={70} role="img" aria-label={tr('trendAria')}>
           <polyline points={points} fill="none" stroke={GOLD} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         </svg>
+      </div>
+
+      <SectionLabel>{tr('bySource')}</SectionLabel>
+      <div className="grid grid-cols-2 gap-2.5 mb-4">
+        {data.bySource.map(sv => (
+          <div key={sv.source} className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+            <div style={{ fontSize: 11, color: sv.source === 'shop_stock' ? '#B45309' : INK_LIGHT, fontWeight: 700, marginBottom: 4 }}>{sv.source === 'shop_stock' ? tr('srcStockShort') : tr('srcLabShort')}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(sv.total)}</div>
+            <div style={{ fontSize: 11, color: INK_LIGHT, marginTop: 2 }}>{sv.count} {tr('orders')}</div>
+          </div>
+        ))}
       </div>
 
       <SectionLabel>{tr('byShop')}</SectionLabel>

@@ -21,17 +21,20 @@ export async function GET(req: Request) {
 
   const { data: pending } = await supabase
     .from('lab_online_orders')
-    .select('order_batch_id, shop_delivered, shop_delivered_at, created_at')
+    .select('order_batch_id, shop_delivered, shop_delivered_at, created_at, source, customer_name')
     .neq('payment_status', 'paid')
     .is('payment_alert_sent_at', null);
   if (!pending?.length) return NextResponse.json({ ok: true, checked: 0, alerted: 0 });
 
   const batchIds = pending.map(p => p.order_batch_id);
-  const { data: lines } = await supabase.from('lab_manual_cakes')
-    .select('order_batch_id, product_name_vi, matched_order_ref, customer_name')
-    .in('order_batch_id', batchIds);
+  // Lab orders keep their lines in lab_manual_cakes; shop-stock sales (lab_v73) in
+  // lab_online_sale_lines — the latter have no Odoo ref / lab delivery, only the shop toggle.
+  const [{ data: lines }, { data: stockLines }] = await Promise.all([
+    supabase.from('lab_manual_cakes').select('order_batch_id, product_name_vi, matched_order_ref, customer_name').in('order_batch_id', batchIds),
+    supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi').in('order_batch_id', batchIds),
+  ]);
   const linesByBatch = new Map<string, any[]>();
-  for (const l of lines ?? []) {
+  for (const l of [...(lines ?? []), ...(stockLines ?? [])]) {
     const arr = linesByBatch.get(l.order_batch_id) ?? [];
     arr.push(l); linesByBatch.set(l.order_batch_id, arr);
   }
@@ -57,7 +60,8 @@ export async function GET(req: Request) {
     if (Date.now() - deliveredAt < 24 * HOUR_MS) continue;
 
     const label = ls[0]?.product_name_vi ? `${ls[0].product_name_vi}${ls.length > 1 ? ` +${ls.length - 1}` : ''}` : 'đơn hàng';
-    const who = ls[0]?.customer_name ? ` (${ls[0].customer_name})` : '';
+    const customer = (o as any).customer_name ?? ls[0]?.customer_name;
+    const who = customer ? ` (${customer})` : '';
     const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `⚠ Đơn ${orderRef ?? ''} ${label}${who} chưa thanh toán sau 24h giao hàng`, url: '/online-orders' };
     const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `⚠ Order ${orderRef ?? ''} ${label}${who} still unpaid 24h after delivery`, url: '/online-orders' };
     await sendShopPush(supabase, ONLINE_PUSH_KEY, viPayload);
