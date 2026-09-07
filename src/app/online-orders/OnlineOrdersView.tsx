@@ -786,6 +786,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
 function StatsTab() {
   const { tr } = useL();
   const [range, setRange] = useState<14 | 30 | 90 | 365>(14);
+  const [openCat, setOpenCat] = useState<string | null>(null);
   const [data, setData] = useState<OnlineAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
   useEffect(() => {
@@ -894,17 +895,32 @@ function StatsTab() {
       <SectionLabel>{tr('byCat')}</SectionLabel>
       <div className="rounded-xl p-3.5 mb-4 space-y-2.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         {data.byCategory.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
-        {data.byCategory.map((c, i) => (
+        {data.byCategory.map((c, i) => {
+          const open = openCat === c.category;
+          return (
           <div key={c.category}>
-            <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
-              <span style={{ fontWeight: 600 }}>{c.category}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumCat)}</span></span>
-            </div>
-            <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
-              <div style={{ width: `${(c.total / maxCat) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
-            </div>
+            <button onClick={() => setOpenCat(open ? null : c.category)} className="w-full text-left">
+              <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
+                <span style={{ fontWeight: 600 }}>{open ? '▾' : '▸'} {c.category} <span style={{ color: INK_LIGHT, fontWeight: 500, fontSize: 11 }}>({c.products.length})</span></span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumCat)}</span></span>
+              </div>
+              <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
+                <div style={{ width: `${(c.total / maxCat) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
+              </div>
+            </button>
+            {open && (
+              <div className="mt-2 mb-1 rounded-lg" style={{ backgroundColor: '#FFFDF5', border: `1px solid ${CREAM_DARK}` }}>
+                {c.products.map((p, j) => (
+                  <div key={`${p.sku ?? p.name}-${j}`} className="flex justify-between items-center px-2.5 py-1.5" style={{ fontSize: 12, borderTop: j ? `1px solid ${CREAM_DARK}` : 'none' }}>
+                    <span className="min-w-0 truncate" style={{ paddingRight: 8 }}>{p.name}{p.sku ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {p.sku}</span> : null}</span>
+                    <span className="shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}>×{p.qty} · <b>{fmtCompactVnd(p.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11 }}>· {pct(p.total, c.total || 1)}</span></span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <SectionLabel>{tr('byChannel')}</SectionLabel>

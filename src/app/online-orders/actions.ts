@@ -564,7 +564,7 @@ export async function uploadPaymentProofAction(orderBatchId: string, formData: F
 export type OnlineAnalytics = {
   todayTotal: number; todayCount: number; monthTotal: number; monthCount: number;
   byShop: { shop: string; total: number }[];
-  byCategory: { category: string; total: number }[];
+  byCategory: { category: string; total: number; products: { name: string; sku: string | null; qty: number; total: number }[] }[];
   byChannel: { channel: string; total: number }[];
   bySource: { source: 'lab' | 'shop_stock'; total: number; count: number }[];
   // Selected range (Axel, 2026-09-07: 'analyser sur une durée plus longue'): every breakdown
@@ -595,10 +595,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const stockIds = (orders ?? []).filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labIds.length
-      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
     stockIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, created_at').in('order_batch_id', stockIds).limit(20000)
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at').in('order_batch_id', stockIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const orderById = new Map<string, any>();
@@ -609,7 +609,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null })),
     ...(stockLines ?? []).map((l: any) => {
       const o = orderById.get(l.order_batch_id);
-      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, created_at: l.created_at, source: 'shop_stock' as const, category: l.category as string | null };
+      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, source: 'shop_stock' as const, category: l.category as string | null };
     }),
   ];
 
@@ -631,6 +631,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const todayBatches = new Set<string>(), monthBatches = new Set<string>();
   const byShop = new Map<string, number>();
   const byCategory = new Map<string, number>();
+  const productsByCategory = new Map<string, Map<string, { name: string; sku: string | null; qty: number; total: number }>>();
   const byChannel = new Map<string, number>();
   const bySource = new Map<'lab' | 'shop_stock', { total: number; batches: Set<string> }>();
   const byDay = new Map<string, number>();
@@ -650,6 +651,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const ficheId = l.product_sku ? ficheIdBySku.get(l.product_sku) : null;
     const cat = l.category ?? (ficheId ? (categoryByFiche.get(ficheId) ?? 'Khác') : 'Khác');
     byCategory.set(cat, (byCategory.get(cat) ?? 0) + lineTotal);
+    const pkey = l.product_sku ?? l.product_name_vi ?? '?';
+    const pm = productsByCategory.get(cat) ?? new Map();
+    const pe = pm.get(pkey) ?? { name: l.product_name_vi ?? l.product_sku ?? '?', sku: l.product_sku ?? null, qty: 0, total: 0 };
+    pe.qty += l.qty ?? 0; pe.total += lineTotal; pm.set(pkey, pe); productsByCategory.set(cat, pm);
     const ch = (l.channel ?? '').trim() || '—';
     byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
@@ -698,7 +703,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     data: {
       todayTotal, todayCount: todayBatches.size, monthTotal, monthCount: monthBatches.size,
       byShop: Array.from(byShop.entries()).map(([shop, total]) => ({ shop, total })).sort((a, b) => b.total - a.total),
-      byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total),
+      byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({
+        category, total,
+        products: Array.from((productsByCategory.get(category) ?? new Map()).values()).sort((a: any, b: any) => b.total - a.total),
+      })).sort((a, b) => b.total - a.total),
       byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
       bySource: (['lab', 'shop_stock'] as const).map(source => ({ source, total: bySource.get(source)?.total ?? 0, count: bySource.get(source)?.batches.size ?? 0 })),
       rangeDays, rangeTotal, rangeCount: rangeBatches.size, series,
