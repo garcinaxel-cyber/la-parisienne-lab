@@ -10,6 +10,8 @@ import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
 import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/push-notify';
+import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
+import { SHOP_NAMES_ALL } from '@/lib/shops';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -1391,4 +1393,246 @@ export async function unsubscribeShopPushAction(endpoint: string, shopName?: str
   if (!supabase || !endpoint) return { ok: true };
   await supabase.from('lab_shop_push_subscriptions').delete().eq('endpoint', endpoint).eq('shop_name', auth.shopName);
   return { ok: true };
+}
+
+// ── Inter-shop stock transfers (Axel, 2026-09-07) ───────────────────────────────────────────
+// A La Paris shop sends products to another La Paris shop. Odoo gets ONE internal transfer
+// (see src/lib/odoo-shop-transfer.ts): created when the sending manager confirms with the PIN,
+// validated when the receiving shop confirms the quantities it really got. lab_shop_transfers /
+// lab_shop_transfer_lines are the portal's view + history; the Odoo picking is the stock truth.
+// Sending needs the manager PIN (it moves stock); receiving may be done by any staff member of
+// the destination shop, like a lab delivery. Same session model as everything else here: the
+// shop's own login, or staff acting as a shop from the admin dashboard (readOnly mode).
+
+export type ShopTransferStatus = 'sent' | 'received' | 'cancelled';
+export type ShopTransferLine = {
+  id: string; sku: string; name: string; category: string | null; imageUrl: string | null;
+  qtySent: number; qtyReceived: number | null; note: string | null;
+};
+export type ShopTransfer = {
+  id: string; ref: string; fromShop: string; toShop: string; status: ShopTransferStatus;
+  odooPickingName: string | null; sentByName: string | null; sentAt: string;
+  receivedByName: string | null; receivedAt: string | null; cancelledByName: string | null; cancelledAt: string | null;
+  note: string | null; lineCount: number; unitCount: number; lines: ShopTransferLine[];
+  fromIsVirtual: boolean; toIsVirtual: boolean;
+};
+
+const shortShop = (s: string) => s.replace(/^La Paris\s+/i, '');
+
+// Shops this shop may transfer to: every other shop with an Odoo warehouse. canTransfer=false
+// for a shop without one (Moon Flower) — the tab then explains instead of offering peers.
+export async function getTransferPeersAction(shopName?: string): Promise<{ shopName?: string; canTransfer?: boolean; peers?: string[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const canTransfer = transferEligible(auth.shopName);
+  const peers = SHOP_NAMES_ALL.filter(s => s !== auth.shopName && transferEligible(s));
+  return { shopName: auth.shopName, canTransfer, peers };
+}
+
+function mapTransferRow(t: any, lines: any[]): ShopTransfer {
+  return {
+    id: t.id, ref: t.ref, fromShop: t.from_shop, toShop: t.to_shop, status: t.status,
+    odooPickingName: t.odoo_picking_name ?? null, sentByName: t.sent_by_name ?? null, sentAt: t.sent_at,
+    receivedByName: t.received_by_name ?? null, receivedAt: t.received_at ?? null,
+    cancelledByName: t.cancelled_by_name ?? null, cancelledAt: t.cancelled_at ?? null,
+    note: t.note ?? null, lineCount: Number(t.line_count ?? 0), unitCount: Number(t.unit_count ?? 0),
+    fromIsVirtual: isVirtualTransferShop(t.from_shop), toIsVirtual: isVirtualTransferShop(t.to_shop),
+    lines: lines.map((l: any) => ({
+      id: l.id, sku: l.sku, name: l.product_name_vi, category: l.category ?? null, imageUrl: l.image_url ?? null,
+      qtySent: Number(l.qty_sent), qtyReceived: l.qty_received == null ? null : Number(l.qty_received), note: l.line_note ?? null,
+    })),
+  };
+}
+
+// Outgoing + incoming transfers of this shop, last 30 days (plus anything still 'sent' whatever
+// its age, so an unreceived transfer never silently drops off the list).
+export async function getMyShopTransfersAction(shopName?: string): Promise<{ shopName?: string; transfers?: ShopTransfer[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+  const { data: rows, error } = await supabase.from('lab_shop_transfers').select('*')
+    .or(`from_shop.eq.${JSON.stringify(auth.shopName)},to_shop.eq.${JSON.stringify(auth.shopName)}`)
+    .or(`sent_at.gte.${since},status.eq.sent`)
+    .order('sent_at', { ascending: false }).limit(200);
+  if (error) return { error: error.message };
+  const ids = (rows ?? []).map((r: any) => r.id);
+  const { data: lineRows } = ids.length
+    ? await supabase.from('lab_shop_transfer_lines').select('*').in('transfer_id', ids).order('product_name_vi').limit(5000)
+    : { data: [] as any[] };
+  const linesByTransfer = new Map<string, any[]>();
+  for (const l of lineRows ?? []) { const arr = linesByTransfer.get(l.transfer_id) ?? []; arr.push(l); linesByTransfer.set(l.transfer_id, arr); }
+  return { shopName: auth.shopName, transfers: (rows ?? []).map((t: any) => mapTransferRow(t, linesByTransfer.get(t.id) ?? [])) };
+}
+
+// The stock-moving step on the sending side: PIN re-verified server-side, Odoo picking created
+// and confirmed, then the app rows. If the app rows cannot be written after Odoo succeeded, the
+// picking is cancelled again so Odoo and the app never disagree.
+export async function submitShopTransferAction(input: {
+  pin: string;
+  shopName?: string;
+  toShop: string;
+  sentByName: string;
+  note?: string;
+  lines: { sku: string; name: string; qty: number; note?: string; category?: string | null; imageUrl?: string | null }[];
+}): Promise<{ transfer?: ShopTransfer; assigned?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const manager = await resolveManager(auth.shopName, input.pin);
+  if (!manager) return { error: 'Mã PIN không đúng' };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const toShop = String(input.toShop ?? '').trim();
+  if (!transferEligible(auth.shopName)) return { error: `${auth.shopName} không thể chuyển kho` };
+  if (!transferEligible(toShop)) return { error: 'Kho nhận không hợp lệ' };
+  if (toShop === auth.shopName) return { error: 'Kho nhận phải khác kho gửi' };
+  if (isVirtualTransferShop(auth.shopName) && isVirtualTransferShop(toShop)) return { error: 'Cần ít nhất một bên có kho Odoo thật' };
+  const fromCode = transferRefCode(auth.shopName);
+  const toCode = transferRefCode(toShop);
+  const sentByName = String(input.sentByName ?? '').trim().slice(0, 80);
+  if (!sentByName) return { error: 'Chọn tên người gửi' };
+
+  const merged = new Map<string, { sku: string; name: string; qty: number; note?: string; category: string | null; imageUrl: string | null }>();
+  for (const l of input.lines ?? []) {
+    const sku = String(l.sku ?? '').trim(); const qty = Math.floor(Number(l.qty));
+    if (!sku || !(qty > 0)) continue;
+    const cur = merged.get(sku);
+    if (cur) { cur.qty += qty; if (!cur.note && l.note?.trim()) cur.note = l.note.trim(); }
+    else merged.set(sku, { sku, name: String(l.name ?? sku).trim(), qty, note: l.note?.trim() || undefined, category: l.category ?? null, imageUrl: l.imageUrl ?? null });
+  }
+  const lines = Array.from(merged.values());
+  if (!lines.length) return { error: 'Chưa có sản phẩm nào' };
+
+  const { data: seq, error: seqErr } = await supabase.rpc('lab_shop_transfer_next_seq');
+  if (seqErr || seq == null) return { error: `Không tạo được mã chuyển kho: ${seqErr?.message ?? 'seq'}` };
+  const ref = `TRF-${fromCode}-${toCode}-${String(seq).padStart(4, '0')}`;
+  const note = input.note?.trim().slice(0, 500) || undefined;
+
+  const odoo = await createInterShopTransfer(auth.shopName, toShop, lines, ref, note);
+  if (!odoo.ok || !odoo.pickingId) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+
+  const units = lines.reduce((a, l) => a + l.qty, 0);
+  const { data: inserted, error: insErr } = await supabase.from('lab_shop_transfers').insert({
+    ref, from_shop: auth.shopName, to_shop: toShop, status: 'sent',
+    odoo_picking_id: odoo.pickingId, odoo_picking_name: odoo.pickingName ?? null,
+    sent_by_name: sentByName, sent_by_manager_id: manager.id, note: note ?? null,
+    line_count: lines.length, unit_count: units,
+  }).select('*').single();
+  if (insErr || !inserted) {
+    await cancelInterShopTransfer(odoo.pickingId).catch(() => {});
+    return { error: `Không lưu được phiếu chuyển kho: ${insErr?.message ?? 'insert'}` };
+  }
+  const { data: lineRows, error: lineErr } = await supabase.from('lab_shop_transfer_lines').insert(lines.map(l => ({
+    transfer_id: inserted.id, sku: l.sku, product_name_vi: l.name, category: l.category, image_url: l.imageUrl,
+    qty_sent: l.qty, line_note: l.note ?? null, odoo_move_id: odoo.moveIdBySku?.[l.sku] ?? null,
+  }))).select('*');
+  if (lineErr) {
+    await supabase.from('lab_shop_transfers').delete().eq('id', inserted.id);
+    await cancelInterShopTransfer(odoo.pickingId).catch(() => {});
+    return { error: `Không lưu được dòng chuyển kho: ${lineErr.message}` };
+  }
+
+  const who = `${manager.name}${sentByName && sentByName !== manager.name ? ` / ${sentByName}` : ''}`;
+  const viPayload: PushPayload = { title: toShop, body: `🔁 Chuyển kho từ ${shortShop(auth.shopName)} → ${shortShop(toShop)} ${ref}: ${lines.length} SP · ${units} cái (${who}) — vào tab Chuyển kho để nhận` };
+  const enPayload: PushPayload = { title: toShop, body: `🔁 Stock transfer ${shortShop(auth.shopName)} → ${shortShop(toShop)} ${ref}: ${lines.length} SKUs · ${units} units (${who})` };
+  await awaitPush(Promise.all([sendShopPush(supabase, toShop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+
+  return { transfer: mapTransferRow(inserted, lineRows ?? []), assigned: odoo.assigned };
+}
+
+// Receiving side: writes the real quantities on the Odoo picking and validates it (stock moves
+// A -> B now), then records who received what. Odoo first: if it refuses, nothing changes in the
+// app and the error is shown as-is.
+export async function receiveShopTransferAction(input: {
+  shopName?: string;
+  transferId: string;
+  receivedByName: string;
+  lines: { sku: string; qtyReceived: number }[];
+}): Promise<{ transfer?: ShopTransfer; warning?: string; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const receivedByName = String(input.receivedByName ?? '').trim().slice(0, 80);
+  if (!receivedByName) return { error: 'Chọn tên người nhận' };
+
+  const { data: t } = await supabase.from('lab_shop_transfers').select('*').eq('id', input.transferId).maybeSingle();
+  if (!t) return { error: 'Phiếu chuyển kho không tìm thấy' };
+  if (t.to_shop !== auth.shopName) return { error: 'Phiếu này không gửi cho kho của bạn' };
+  if (t.status === 'received') return { error: 'Phiếu này đã được nhận' };
+  if (t.status === 'cancelled') return { error: 'Phiếu này đã bị huỷ' };
+  if (!t.odoo_picking_id) return { error: 'Phiếu chưa có mã Odoo — liên hệ quản lý' };
+
+  const { data: lineRows } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id);
+  const sentBySku: Record<string, number> = {};
+  for (const l of lineRows ?? []) sentBySku[l.sku] = Number(l.qty_sent);
+  const received: Record<string, number> = {};
+  for (const l of input.lines ?? []) {
+    const sku = String(l.sku ?? '').trim();
+    if (!(sku in sentBySku)) return { error: `Sản phẩm ${sku} không có trên phiếu` };
+    const q = Math.floor(Number(l.qtyReceived));
+    if (!(q >= 0)) return { error: `Số lượng nhận không hợp lệ (${sku})` };
+    if (q > sentBySku[sku]) return { error: `Không thể nhận nhiều hơn số đã gửi (${sku}: ${q} > ${sentBySku[sku]})` };
+    received[sku] = q;
+  }
+  for (const sku of Object.keys(sentBySku)) if (!(sku in received)) received[sku] = 0;
+  if (!Object.values(received).some(q => q > 0)) return { error: 'Không có sản phẩm nào được nhận — nếu không nhận được gì, kho gửi cần huỷ phiếu' };
+
+  const odoo = await receiveInterShopTransfer(Number(t.odoo_picking_id), Object.entries(received).map(([sku, qtyReceived]) => ({ sku, qtyReceived })));
+  if (!odoo.ok) {
+    const viPayload: PushPayload = { title: auth.shopName, body: `⚠️ Nhận chuyển kho ${t.ref} thất bại trên Odoo: ${odoo.error ?? '?'}` };
+    await awaitPush(sendAdminPush(supabase, viPayload, { title: auth.shopName, body: `⚠️ Transfer ${t.ref} reception failed on Odoo: ${odoo.error ?? '?'}` }));
+    return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+  }
+
+  const now = new Date().toISOString();
+  for (const [sku, q] of Object.entries(received)) {
+    await supabase.from('lab_shop_transfer_lines').update({ qty_received: q }).eq('transfer_id', t.id).eq('sku', sku);
+  }
+  const { data: updated } = await supabase.from('lab_shop_transfers')
+    .update({ status: 'received', received_by_name: receivedByName, received_at: now })
+    .eq('id', t.id).select('*').single();
+  const { data: freshLines } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id).order('product_name_vi');
+
+  const diffs = (freshLines ?? []).filter((l: any) => Number(l.qty_received ?? 0) !== Number(l.qty_sent))
+    .map((l: any) => `${l.product_name_vi} ${Number(l.qty_received ?? 0) - Number(l.qty_sent)}`);
+  const unitsRecv = Object.values(received).reduce((a, b) => a + b, 0);
+  const shortfallNote = isVirtualTransferShop(t.from_shop)
+    ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(t.to_shop)}`
+    : `phần thiếu vẫn nằm trong kho ${shortShop(t.from_shop)} trên Odoo — nếu mất hàng, ${shortShop(t.from_shop)} cần ghi hao hụt`;
+  const diffTxt = diffs.length ? ` — ⚠ chênh lệch: ${diffs.join(', ')} (${shortfallNote})` : '';
+  const viPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} đã nhận chuyển kho ${t.ref}: ${unitsRecv} cái (${receivedByName})${diffTxt}` };
+  const enPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} received transfer ${t.ref}: ${unitsRecv} units (${receivedByName})${diffs.length ? ` — ⚠ differences: ${diffs.join(', ')}` : ''}` };
+  await awaitPush(Promise.all([sendShopPush(supabase, t.from_shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+
+  return { transfer: mapTransferRow(updated ?? { ...t, status: 'received', received_by_name: receivedByName, received_at: now }, freshLines ?? []), warning: odoo.backorderWarning };
+}
+
+// Sending shop may cancel while the destination has not received yet: Odoo picking cancelled
+// first, then the app row. Anyone at the sending shop may cancel (no PIN — it undoes, never moves stock).
+export async function cancelShopTransferAction(input: { shopName?: string; transferId: string; byName: string }): Promise<{ transfer?: ShopTransfer; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const byName = String(input.byName ?? '').trim().slice(0, 80);
+  if (!byName) return { error: 'Chọn tên của bạn' };
+  const { data: t } = await supabase.from('lab_shop_transfers').select('*').eq('id', input.transferId).maybeSingle();
+  if (!t) return { error: 'Phiếu chuyển kho không tìm thấy' };
+  if (t.from_shop !== auth.shopName) return { error: 'Chỉ kho gửi mới huỷ được phiếu này' };
+  if (t.status !== 'sent') return { error: t.status === 'received' ? 'Phiếu đã được nhận — không thể huỷ' : 'Phiếu đã bị huỷ' };
+  if (t.odoo_picking_id) {
+    const odoo = await cancelInterShopTransfer(Number(t.odoo_picking_id));
+    if (!odoo.ok) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+  }
+  const now = new Date().toISOString();
+  const { data: updated } = await supabase.from('lab_shop_transfers')
+    .update({ status: 'cancelled', cancelled_by_name: byName, cancelled_at: now }).eq('id', t.id).select('*').single();
+  const { data: lineRows } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id).order('product_name_vi');
+  const viPayload: PushPayload = { title: t.to_shop, body: `✖ ${shortShop(t.from_shop)} đã huỷ chuyển kho ${t.ref} (${byName})` };
+  const enPayload: PushPayload = { title: t.to_shop, body: `✖ ${shortShop(t.from_shop)} cancelled transfer ${t.ref} (${byName})` };
+  await awaitPush(Promise.all([sendShopPush(supabase, t.to_shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+  return { transfer: mapTransferRow(updated ?? { ...t, status: 'cancelled' }, lineRows ?? []) };
 }

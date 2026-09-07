@@ -58,6 +58,24 @@ export async function GET(req: Request) {
     linesEn.push(`${mark} ${shortName(shop)}: ${c.skus.size} SKUs${sessEn}${finished > 0 ? '' : ' (not marked finished)'}`);
   }
 
+  // Inter-shop transfers today (Axel, 2026-09-07): sent / received today, plus anything still
+  // waiting for its destination shop whatever the day it was sent.
+  try {
+    const dayStartUtc = new Date(`${today}T00:00:00+07:00`).toISOString();
+    const [{ data: sentToday }, { data: recvToday }, { data: pending }] = await Promise.all([
+      supabase.from('lab_shop_transfers').select('id').gte('sent_at', dayStartUtc).neq('status', 'cancelled'),
+      supabase.from('lab_shop_transfers').select('id').gte('received_at', dayStartUtc).eq('status', 'received'),
+      supabase.from('lab_shop_transfers').select('ref, from_shop, to_shop').eq('status', 'sent').limit(50),
+    ]);
+    const nSent = sentToday?.length ?? 0, nRecv = recvToday?.length ?? 0, nPend = pending?.length ?? 0;
+    if (nSent || nRecv || nPend) {
+      const short = (x: string) => x.replace(/^La Paris\s+/i, '');
+      const pendTxt = (pending ?? []).slice(0, 3).map((p: any) => `${p.ref} ${short(p.from_shop)}→${short(p.to_shop)}`).join(', ');
+      linesVi.push(`🔁 Chuyển kho: ${nSent} gửi · ${nRecv} nhận · ${nPend} chờ nhận${nPend ? ` (${pendTxt}${nPend > 3 ? '…' : ''})` : ''}`);
+      linesEn.push(`🔁 Transfers: ${nSent} sent · ${nRecv} received · ${nPend} pending${nPend ? ` (${pendTxt}${nPend > 3 ? '…' : ''})` : ''}`);
+    }
+  } catch { /* recap stays useful without this line */ }
+
   const viPayload: PushPayload = { title: `📋 Kiểm kho hôm nay${missing ? ` — ${missing} shop chưa làm` : ' — đủ'}`, body: linesVi.join('\n') };
   const enPayload: PushPayload = { title: `📋 Stock counts today${missing ? ` — ${missing} shop(s) missing` : ' — all done'}`, body: linesEn.join('\n') };
   await sendAdminPush(supabase, viPayload, enPayload);

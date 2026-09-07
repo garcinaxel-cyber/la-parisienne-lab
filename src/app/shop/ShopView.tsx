@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell, ArrowRightLeft } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer } from './actions';
+import ShopTransfersTab from './ShopTransfersTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
@@ -81,7 +82,7 @@ function groupStockByCategory(lines: ShopStockCountLine[]): { category: string; 
 // Falls back to showing the current value as its own option if it isn't in the list yet (e.g. a
 // name remembered from localStorage from before this picker existed) so nothing gets silently
 // blanked out for someone who already had a name saved.
-function NamePicker({ value, onChange, names, onManage }: {
+export function NamePicker({ value, onChange, names, onManage }: {
   value: string; onChange: (v: string) => void; names: ShopStaffName[] | null; onManage: () => void;
 }) {
   return (
@@ -111,7 +112,21 @@ function NamePicker({ value, onChange, names, onManage }: {
 // `shopName` via a staff session" rather than "cannot write".
 export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'>('deliveries');
+  // Inter-shop transfers (Axel, 2026-09-07) — loaded here (not only inside the tab) so the tab
+  // button can show how many incoming transfers are waiting for this shop.
+  const [transfers, setTransfers] = useState<ShopTransfer[] | null>(null);
+  const loadTransfers = useCallback(async () => {
+    const actions = await import('./actions');
+    const res = await actions.getMyShopTransfersAction(readOnly ? shopName : undefined);
+    if (res.transfers) setTransfers(res.transfers);
+  }, [readOnly, shopName]);
+  useEffect(() => {
+    loadTransfers();
+    const id = setInterval(loadTransfers, 60_000);
+    return () => clearInterval(id);
+  }, [loadTransfers]);
+  const pendingIncomingTransfers = (transfers ?? []).filter(t => t.toShop === shopName && t.status === 'sent').length;
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);
   // ── Pertes (daily loss/scrap) — loaded lazily, only when the tab is first opened, so
@@ -1083,6 +1098,16 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             style={{ backgroundColor: tab === 'order' ? '#1f2937' : 'white', color: tab === 'order' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Package2 size={16} /> Đặt hàng
           </button>
+          <button onClick={() => setTab('transfer')}
+            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
+            style={{ backgroundColor: tab === 'transfer' ? '#1f2937' : 'white', color: tab === 'transfer' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            <ArrowRightLeft size={16} /> Chuyển kho
+            {pendingIncomingTransfers > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center" style={{ backgroundColor: '#DC2626' }}>
+                {pendingIncomingTransfers}
+              </span>
+            )}
+          </button>
         </div>
 
         {loading ? (
@@ -1686,6 +1711,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
             )}
             {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
           </div>
+        ) : tab === 'transfer' ? (
+          <ShopTransfersTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)}
+            setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
         ) : tab === 'order' ? (
           <div className="space-y-3">
             {orderResult ? (
