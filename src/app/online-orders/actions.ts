@@ -379,6 +379,10 @@ export async function submitShopStockSaleAction(input: {
       fiche_id: f.id, variant_id: v?.id ?? null, sku: v?.sku ?? null,
       product_name_vi: `${f.name_vi ?? v?.sku ?? 'Sản phẩm'}${label}`, category: f.category ?? null,
       qty, unit_price: Math.max(0, Number(it.unitPrice) || 0), line_note: clean(it.lineNote, 300),
+      // Explicit false, not omitted: a single insert() call mixing this row shape with
+      // buildFeeLineRows' is_fee:true rows makes PostgREST fill any row missing the key with a
+      // literal NULL instead of the column default, which trips the NOT NULL constraint.
+      is_fee: false,
     });
   }
 
