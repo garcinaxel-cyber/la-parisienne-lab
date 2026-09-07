@@ -121,6 +121,11 @@ const L = {
     bySource: 'Đặt lab / Kho shop',
     srcLabShort: 'Đặt lab',
     srcStockShort: 'Kho shop',
+    period: 'Khoảng thời gian',
+    p14: '14 ngày', p30: '30 ngày', p90: '90 ngày', p365: '12 tháng',
+    rangeTotal: 'Doanh thu trong kỳ',
+    revenueTrend: 'Doanh thu theo thời gian',
+    perWeek: 'theo tuần', perMonth: 'theo tháng', perDay: 'theo ngày',
   },
   en: {
     titleOrder: 'Online orders',
@@ -201,6 +206,11 @@ const L = {
     bySource: 'Lab orders / Shop stock',
     srcLabShort: 'Lab orders',
     srcStockShort: 'Shop stock',
+    period: 'Period',
+    p14: '14 days', p30: '30 days', p90: '90 days', p365: '12 months',
+    rangeTotal: 'Revenue in period',
+    revenueTrend: 'Revenue over time',
+    perWeek: 'weekly', perMonth: 'monthly', perDay: 'daily',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -775,15 +785,33 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
 
 function StatsTab() {
   const { tr } = useL();
+  const [range, setRange] = useState<14 | 30 | 90 | 365>(14);
   const [data, setData] = useState<OnlineAnalytics | null>(null);
-  useEffect(() => { actions.getOnlineAnalyticsAction().then(res => setData(res.data ?? null)); }, []);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    actions.getOnlineAnalyticsAction(range).then(res => { if (alive) { setData(res.data ?? null); setLoading(false); } });
+    return () => { alive = false; };
+  }, [range]);
   if (!data) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
 
-  const maxDaily = Math.max(1, ...data.daily.map(d => d.total));
-  const points = data.daily.map((d, i) => `${(i / 13) * 320},${68 - (d.total / maxDaily) * 60}`).join(' ');
   const maxShop = Math.max(1, ...data.byShop.map(s => s.total));
   const maxCat = Math.max(1, ...data.byCategory.map(c => c.total));
   const maxChannel = Math.max(1, ...data.byChannel.map(c => c.total));
+  const sumShop = data.byShop.reduce((a, s) => a + s.total, 0) || 1;
+  const sumCat = data.byCategory.reduce((a, c) => a + c.total, 0) || 1;
+  const sumChannel = data.byChannel.reduce((a, c) => a + c.total, 0) || 1;
+  const pct = (v: number, sum: number) => `${Math.round((v / sum) * 100)}%`;
+  // Bar chart geometry (viewBox 320×110): bars + baseline + first/mid/last labels + max label.
+  const series = data.series;
+  const maxSeries = Math.max(1, ...series.map(d => d.total));
+  const CH = { w: 320, h: 110, top: 14, bottom: 22, left: 2, right: 2 };
+  const plotH = CH.h - CH.top - CH.bottom;
+  const slot = (CH.w - CH.left - CH.right) / Math.max(1, series.length);
+  const barW = Math.max(2, slot * 0.62);
+  const labelIdx = new Set([0, Math.floor((series.length - 1) / 2), series.length - 1]);
+  const granularity = data.rangeDays <= 30 ? tr('perDay') : data.rangeDays <= 90 ? tr('perWeek') : tr('perMonth');
   const SHOP_HUES = [NAVY, '#2D6A4F', '#5C9179', '#8CB4A2', '#BBD4C7'];
 
   return (
@@ -801,10 +829,38 @@ function StatsTab() {
         </div>
       </div>
 
-      <div className="rounded-xl p-3.5 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-        <SectionLabel>{tr('last14')}</SectionLabel>
-        <svg viewBox="0 0 320 70" width="100%" height={70} role="img" aria-label={tr('trendAria')}>
-          <polyline points={points} fill="none" stroke={GOLD} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+      <SectionLabel>{tr('period')}</SectionLabel>
+      <div className="flex gap-2 mb-3 overflow-x-auto">
+        {([[14, tr('p14')], [30, tr('p30')], [90, tr('p90')], [365, tr('p365')]] as const).map(([d, label]) => (
+          <button key={d} onClick={() => setRange(d)} style={{
+            backgroundColor: range === d ? NAVY : '#fff', color: range === d ? '#FFFAEE' : INK,
+            border: range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
+          }}>{label}</button>
+        ))}
+        {loading && <Loader2 size={14} className="animate-spin self-center" color={INK_LIGHT} />}
+      </div>
+
+      <div className="rounded-xl p-3.5 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', opacity: loading ? 0.6 : 1 }}>
+        <div className="flex justify-between items-baseline mb-1">
+          <SectionLabel>{tr('revenueTrend')} · {granularity}</SectionLabel>
+          <div style={{ fontSize: 11, color: INK_LIGHT }}>{tr('rangeTotal')}: <b style={{ color: NAVY }}>{fmtVnd(data.rangeTotal)}</b> · {data.rangeCount} {tr('orders')}</div>
+        </div>
+        <svg viewBox={`0 0 ${CH.w} ${CH.h}`} width="100%" height={CH.h} role="img" aria-label={tr('trendAria')}>
+          <text x={CH.left} y={9} fontSize={8.5} fill={INK_LIGHT}>{fmtCompactVnd(maxSeries)}</text>
+          <line x1={CH.left} x2={CH.w - CH.right} y1={CH.top} y2={CH.top} stroke={CREAM_DARK} strokeDasharray="2 3" />
+          <line x1={CH.left} x2={CH.w - CH.right} y1={CH.top + plotH} y2={CH.top + plotH} stroke={BORDER} />
+          {series.map((d, i) => {
+            const h = (d.total / maxSeries) * plotH;
+            const x = CH.left + i * slot + (slot - barW) / 2;
+            return (
+              <g key={d.key}>
+                <rect x={x} y={CH.top + plotH - h} width={barW} height={h} rx={1.5} fill={d.total > 0 ? GOLD : CREAM_DARK} />
+                {labelIdx.has(i) && (
+                  <text x={x + barW / 2} y={CH.h - 8} fontSize={8.5} fill={INK_LIGHT} textAnchor={i === 0 ? 'start' : i === series.length - 1 ? 'end' : 'middle'}>{d.label}</text>
+                )}
+              </g>
+            );
+          })}
         </svg>
       </div>
 
@@ -813,7 +869,7 @@ function StatsTab() {
         {data.bySource.map(sv => (
           <div key={sv.source} className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
             <div style={{ fontSize: 11, color: sv.source === 'shop_stock' ? '#B45309' : INK_LIGHT, fontWeight: 700, marginBottom: 4 }}>{sv.source === 'shop_stock' ? tr('srcStockShort') : tr('srcLabShort')}</div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(sv.total)}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(sv.total)} <span style={{ fontSize: 12, color: INK_LIGHT, fontWeight: 600 }}>· {pct(sv.total, data.rangeTotal || 1)}</span></div>
             <div style={{ fontSize: 11, color: INK_LIGHT, marginTop: 2 }}>{sv.count} {tr('orders')}</div>
           </div>
         ))}
@@ -826,7 +882,7 @@ function StatsTab() {
           <div key={s.shop}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
               <span style={{ fontWeight: 600 }}>{s.shop}</span>
-              <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtCompactVnd(s.total)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(s.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(s.total, sumShop)}</span></span>
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
               <div style={{ width: `${(s.total / maxShop) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
@@ -842,7 +898,7 @@ function StatsTab() {
           <div key={c.category}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
               <span style={{ fontWeight: 600 }}>{c.category}</span>
-              <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtCompactVnd(c.total)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumCat)}</span></span>
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
               <div style={{ width: `${(c.total / maxCat) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
@@ -858,7 +914,7 @@ function StatsTab() {
           <div key={c.channel}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
               <span style={{ fontWeight: 600 }}>{c.channel}</span>
-              <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtCompactVnd(c.total)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumChannel)}</span></span>
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
               <div style={{ width: `${(c.total / maxChannel) * 100}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />

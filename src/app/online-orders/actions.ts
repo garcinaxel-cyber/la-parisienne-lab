@@ -567,31 +567,38 @@ export type OnlineAnalytics = {
   byCategory: { category: string; total: number }[];
   byChannel: { channel: string; total: number }[];
   bySource: { source: 'lab' | 'shop_stock'; total: number; count: number }[];
+  // Selected range (Axel, 2026-09-07: 'analyser sur une durée plus longue'): every breakdown
+  // above is computed over rangeDays; today/month tiles are absolute.
+  rangeDays: number; rangeTotal: number; rangeCount: number;
+  series: { key: string; label: string; total: number }[]; // day / week / month buckets
   daily: { date: string; total: number }[];
 };
 
-export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalytics; error?: string }> {
+export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise<{ data?: OnlineAnalytics; error?: string }> {
+  const rangeDays = [14, 30, 90, 365].includes(Number(rangeDaysInput)) ? Number(rangeDaysInput) : 14;
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const since = new Date(Date.now() - 60 * 86400000).toISOString();
-  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, source, shop_name, channel').gte('created_at', since);
+  // Fetch enough for both the selected range and the absolute month tile.
+  const since = new Date(Date.now() - Math.max(rangeDays, 60) * 86400000).toISOString();
+  // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
+  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, source, shop_name, channel').gte('created_at', since).limit(5000);
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], bySource: [], daily: [] };
+  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], bySource: [], rangeDays, rangeTotal: 0, rangeCount: 0, series: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
   const stockIds = (orders ?? []).filter((o: any) => o.source === 'shop_stock').map((o: any) => o.order_batch_id);
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labIds.length
-      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null)
+      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
     stockIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, created_at').in('order_batch_id', stockIds)
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, created_at').in('order_batch_id', stockIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const orderById = new Map<string, any>();
@@ -627,6 +634,8 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
   const byChannel = new Map<string, number>();
   const bySource = new Map<'lab' | 'shop_stock', { total: number; batches: Set<string> }>();
   const byDay = new Map<string, number>();
+  const rangeStart = new Date(Date.now() - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
+  let rangeTotal = 0; const rangeBatches = new Set<string>();
 
   for (const l of lines ?? []) {
     const lineTotal = (l.qty ?? 0) * (l.unit_price ?? 0);
@@ -634,6 +643,8 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
     const day = (createdAt ?? '').slice(0, 10);
     if (day === todayStr) { todayTotal += lineTotal; todayBatches.add(l.order_batch_id); }
     if (day.slice(0, 7) === monthStr) { monthTotal += lineTotal; monthBatches.add(l.order_batch_id); }
+    if (day < rangeStart) continue; // breakdowns below are scoped to the selected range
+    rangeTotal += lineTotal; rangeBatches.add(l.order_batch_id);
     const shop = l.shop_name ?? 'Khác';
     byShop.set(shop, (byShop.get(shop) ?? 0) + lineTotal);
     const ficheId = l.product_sku ? ficheIdBySku.get(l.product_sku) : null;
@@ -652,6 +663,36 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
     const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
     daily.push({ date: d, total: byDay.get(d) ?? 0 });
   }
+  // Time series for the chart: daily up to 30 days, weekly up to 90, monthly for a year.
+  const series: { key: string; label: string; total: number }[] = [];
+  const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  if (rangeDays <= 30) {
+    for (let i = rangeDays - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      series.push({ key: d, label: dd(d), total: byDay.get(d) ?? 0 });
+    }
+  } else if (rangeDays <= 90) {
+    const weeks = Math.ceil(rangeDays / 7);
+    for (let w = weeks - 1; w >= 0; w--) {
+      let t = 0; let firstDay = '';
+      for (let i = w * 7 + 6; i >= w * 7; i--) {
+        if (i > rangeDays - 1) continue;
+        const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+        if (!firstDay) firstDay = d;
+        t += byDay.get(d) ?? 0;
+      }
+      series.push({ key: `w${w}`, label: dd(firstDay), total: t });
+    }
+  } else {
+    const byMonth = new Map<string, number>();
+    Array.from(byDay.entries()).forEach(([d, t]) => { if (d >= rangeStart) byMonth.set(d.slice(0, 7), (byMonth.get(d.slice(0, 7)) ?? 0) + t); });
+    const now = new Date();
+    for (let m = 11; m >= 0; m--) {
+      const dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - m, 1));
+      const key = dt.toISOString().slice(0, 7);
+      series.push({ key, label: `${key.slice(5, 7)}/${key.slice(2, 4)}`, total: byMonth.get(key) ?? 0 });
+    }
+  }
 
   return {
     data: {
@@ -660,6 +701,7 @@ export async function getOnlineAnalyticsAction(): Promise<{ data?: OnlineAnalyti
       byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total),
       byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
       bySource: (['lab', 'shop_stock'] as const).map(source => ({ source, total: bySource.get(source)?.total ?? 0, count: bySource.get(source)?.batches.size ?? 0 })),
+      rangeDays, rangeTotal, rangeCount: rangeBatches.size, series,
       daily,
     },
   };
