@@ -761,20 +761,29 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     daily.push({ date: d, total: byDay.get(d) ?? 0 });
   }
   // Time series for the chart: daily up to 30 days, weekly up to 90, monthly for a year.
+  // Extended forward past "today" when a delivery already booked lands later than the window's
+  // end (Axel, 2026-09-07): an order taken now for a delivery next week must show up on that
+  // future day instead of being invisible until it arrives.
+  const futureDays = Array.from(byDay.keys()).filter(d => d > todayStr).sort();
+  const seriesEnd = futureDays.length ? futureDays[futureDays.length - 1] : todayStr;
+  const startDate = new Date(rangeStart + 'T00:00:00Z');
+  const endDate = new Date(seriesEnd + 'T00:00:00Z');
+  const totalSpanDays = Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+  const dateAt = (i: number) => { const d = new Date(startDate); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); };
+
   const series: { key: string; label: string; total: number }[] = [];
   const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
   if (rangeDays <= 30) {
-    for (let i = rangeDays - 1; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    for (let i = 0; i < totalSpanDays; i++) {
+      const d = dateAt(i);
       series.push({ key: d, label: dd(d), total: byDay.get(d) ?? 0 });
     }
   } else if (rangeDays <= 90) {
-    const weeks = Math.ceil(rangeDays / 7);
-    for (let w = weeks - 1; w >= 0; w--) {
+    const weeks = Math.ceil(totalSpanDays / 7);
+    for (let w = 0; w < weeks; w++) {
       let t = 0; let firstDay = '';
-      for (let i = w * 7 + 6; i >= w * 7; i--) {
-        if (i > rangeDays - 1) continue;
-        const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      for (let i = w * 7; i < Math.min(w * 7 + 7, totalSpanDays); i++) {
+        const d = dateAt(i);
         if (!firstDay) firstDay = d;
         t += byDay.get(d) ?? 0;
       }
@@ -784,8 +793,9 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const byMonth = new Map<string, number>();
     Array.from(byDay.entries()).forEach(([d, t]) => { if (d >= rangeStart) byMonth.set(d.slice(0, 7), (byMonth.get(d.slice(0, 7)) ?? 0) + t); });
     const now = new Date();
+    const anchor = endDate > now ? endDate : now;
     for (let m = 11; m >= 0; m--) {
-      const dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - m, 1));
+      const dt = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - m, 1));
       const key = dt.toISOString().slice(0, 7);
       series.push({ key, label: `${key.slice(5, 7)}/${key.slice(2, 4)}`, total: byMonth.get(key) ?? 0 });
     }
