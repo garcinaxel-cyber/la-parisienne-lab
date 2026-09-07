@@ -83,6 +83,10 @@ const L = {
     fUndelivered: 'Chưa giao',
     fLate: '⚠ Trễ hạn',
     noOrders: 'Chưa có đơn hàng nào.',
+    deliveryDateGroup: 'Giao ngày',
+    noDeliveryDate: 'Chưa có ngày giao',
+    tomorrow: 'Ngày mai',
+    overdue: 'Trễ hạn giao',
     noOdoo: 'Chưa có Odoo',
     latePay: '⚠ Trễ thanh toán',
     walkIn: 'Khách lẻ',
@@ -178,6 +182,10 @@ const L = {
     fUndelivered: 'Not delivered',
     fLate: '⚠ Overdue',
     noOrders: 'No orders yet.',
+    deliveryDateGroup: 'Delivery',
+    noDeliveryDate: 'No delivery date',
+    tomorrow: 'Tomorrow',
+    overdue: 'Overdue',
     noOdoo: 'No Odoo doc',
     latePay: '⚠ Late payment',
     walkIn: 'Walk-in customer',
@@ -242,6 +250,12 @@ function useL() {
 
 function fmtVnd(v: number): string {
   return `${Math.round(v).toLocaleString('vi-VN')} ₫`;
+}
+function fmtDayLabel(key: string, lang: 'vi' | 'en'): string {
+  // key is 'YYYY-MM-DD'; build the Date via local components to avoid UTC off-by-one.
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  return dt.toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' });
 }
 function fmtCompactVnd(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M ₫`;
@@ -835,7 +849,7 @@ function OrderTab(props: any) {
 }
 
 function TrackTab({ isAdmin }: { isAdmin: boolean }) {
-  const { tr } = useL();
+  const { tr, lang } = useL();
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
   const [filter, setFilter] = useState<'all' | 'undelivered' | 'unpaid' | 'late'>('all');
   // Every hook stays above the early `if (!orders) return` below (Rules of Hooks — the payment
@@ -857,6 +871,31 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
     if (filter === 'late') return isLate(o);
     return true;
   });
+
+  // Group by delivery date so orders shipping on different days are never mixed in one
+  // undifferentiated list — the tracking tab was previously sorted only by created_at, which
+  // hid which day each order actually needs to go out.
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const tomorrowKey = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const groups = new Map<string, OnlineOrderSummary[]>();
+  for (const o of filtered) {
+    const key = (o.deliveryDate || '').slice(0, 10);
+    const arr = groups.get(key) ?? [];
+    arr.push(o); groups.set(key, arr);
+  }
+  const groupKeys = Array.from(groups.keys()).sort((a, b) => {
+    if (!a && !b) return 0;
+    if (!a) return 1; // no-date group always last
+    if (!b) return -1;
+    return a.localeCompare(b);
+  });
+  function groupLabel(key: string): string {
+    if (!key) return tr('noDeliveryDate');
+    if (key === todayKey) return `${tr('today')} · ${fmtDayLabel(key, lang)}`;
+    if (key === tomorrowKey) return `${tr('tomorrow')} · ${fmtDayLabel(key, lang)}`;
+    if (key < todayKey) return `${tr('overdue')} · ${fmtDayLabel(key, lang)}`;
+    return fmtDayLabel(key, lang);
+  }
 
   async function toggleShopDelivered(o: OnlineOrderSummary) {
     await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
@@ -887,11 +926,22 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
         ))}
       </div>
       {filtered.length === 0 && <div className="text-center py-10 text-sm" style={{ color: INK_LIGHT }}>{tr('noOrders')}</div>}
-      <div className="space-y-2.5">
-        {filtered.map(o => {
-          const late = isLate(o);
-          return (
-            <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff' }}>
+      <div className="space-y-4">
+        {groupKeys.map(key => (
+          <div key={key || '__none__'}>
+            <div className="flex items-center gap-2 mb-2 px-0.5">
+              <span style={{
+                fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase',
+                color: key && key < todayKey ? '#dc2626' : INK_LIGHT,
+              }}>{groupLabel(key)}</span>
+              <span style={{ height: 1, flex: 1, backgroundColor: CREAM_DARK }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: INK_LIGHT }}>{groups.get(key)!.length}</span>
+            </div>
+            <div className="space-y-2.5">
+              {groups.get(key)!.map(o => {
+                const late = isLate(o);
+                return (
+                  <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff' }}>
               <div className="flex justify-between items-start mb-2">
                 <div className="flex gap-1.5 items-center flex-wrap">
                   <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
@@ -940,10 +990,13 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
                   backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
                   border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
                 }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
-              </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -955,6 +1008,7 @@ function StatsTab() {
   const [openCat, setOpenCat] = useState<string | null>(null);
   const [data, setData] = useState<OnlineAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -970,14 +1024,25 @@ function StatsTab() {
   const sumCat = data.byCategory.reduce((a, c) => a + c.total, 0) || 1;
   const sumChannel = data.byChannel.reduce((a, c) => a + c.total, 0) || 1;
   const pct = (v: number, sum: number) => `${Math.round((v / sum) * 100)}%`;
-  // Bar chart geometry (viewBox 320×110): bars + baseline + first/mid/last labels + max label.
+  // Bar chart geometry (viewBox 320×110). A sqrt scale (not linear) keeps ordinary days
+  // legible even when one outlier day dwarfs the rest — a single 3.3M day used to crush every
+  // ~50k day down to an invisible sliver. Hover/tap a bar (or read the callout, defaulted to
+  // the peak day) to see its exact date and amount.
   const series = data.series;
   const maxSeries = Math.max(1, ...series.map(d => d.total));
-  const CH = { w: 320, h: 110, top: 14, bottom: 22, left: 2, right: 2 };
+  const CH = { w: 320, h: 116, top: 20, bottom: 22, left: 2, right: 2 };
   const plotH = CH.h - CH.top - CH.bottom;
   const slot = (CH.w - CH.left - CH.right) / Math.max(1, series.length);
   const barW = Math.max(2, slot * 0.62);
-  const labelIdx = new Set([0, Math.floor((series.length - 1) / 2), series.length - 1]);
+  const barH = (v: number) => v <= 0 ? 0 : Math.max(2.5, Math.sqrt(v / maxSeries) * plotH);
+  const MAX_LABELS = 6;
+  const labelStep = Math.max(1, Math.ceil(series.length / MAX_LABELS));
+  const labelIdx = new Set<number>();
+  for (let i = 0; i < series.length; i += labelStep) labelIdx.add(i);
+  if (series.length > 0) labelIdx.add(series.length - 1);
+  const peakIdx = series.length ? series.reduce((best, d, i) => d.total > series[best].total ? i : best, 0) : -1;
+  const shownIdx = activeIdx ?? (peakIdx >= 0 && series[peakIdx]?.total > 0 ? peakIdx : null);
+  const shownDay = shownIdx !== null ? series[shownIdx] : null;
   const granularity = data.rangeDays <= 30 ? tr('perDay') : data.rangeDays <= 90 ? tr('perWeek') : tr('perMonth');
   const SHOP_HUES = [NAVY, '#2D6A4F', '#5C9179', '#8CB4A2', '#BBD4C7'];
 
@@ -1012,18 +1077,29 @@ function StatsTab() {
           <SectionLabel>{tr('revenueTrend')} · {granularity}</SectionLabel>
           <div style={{ fontSize: 11, color: INK_LIGHT }}>{tr('rangeTotal')}: <b style={{ color: NAVY }}>{fmtVnd(data.rangeTotal)}</b> · {data.rangeCount} {tr('orders')}</div>
         </div>
-        <svg viewBox={`0 0 ${CH.w} ${CH.h}`} width="100%" height={CH.h} role="img" aria-label={tr('trendAria')}>
-          <text x={CH.left} y={9} fontSize={8.5} fill={INK_LIGHT}>{fmtCompactVnd(maxSeries)}</text>
-          <line x1={CH.left} x2={CH.w - CH.right} y1={CH.top} y2={CH.top} stroke={CREAM_DARK} strokeDasharray="2 3" />
+        <div style={{ fontSize: 11.5, color: shownDay ? NAVY : INK_LIGHT, fontWeight: 700, marginBottom: 3, minHeight: 15 }}>
+          {shownDay ? `${shownDay.label} — ${fmtVnd(shownDay.total)}` : ' '}
+        </div>
+        <svg viewBox={`0 0 ${CH.w} ${CH.h}`} width="100%" height={CH.h} role="img" aria-label={tr('trendAria')}
+          onMouseLeave={() => setActiveIdx(null)}>
           <line x1={CH.left} x2={CH.w - CH.right} y1={CH.top + plotH} y2={CH.top + plotH} stroke={BORDER} />
           {series.map((d, i) => {
-            const h = (d.total / maxSeries) * plotH;
+            const h = barH(d.total);
             const x = CH.left + i * slot + (slot - barW) / 2;
+            const isShown = shownIdx === i;
             return (
-              <g key={d.key}>
-                <rect x={x} y={CH.top + plotH - h} width={barW} height={h} rx={1.5} fill={d.total > 0 ? GOLD : CREAM_DARK} />
+              <g key={d.key}
+                onMouseEnter={() => setActiveIdx(i)}
+                onClick={() => setActiveIdx(cur => cur === i ? null : i)}
+                style={{ cursor: 'pointer' }}>
+                {/* Wider invisible hit-area so short/zero bars are still easy to hover/tap. */}
+                <rect x={CH.left + i * slot} y={CH.top} width={slot} height={plotH} fill="transparent" />
+                <rect x={x} y={CH.top + plotH - h} width={barW} height={h} rx={1.5}
+                  fill={d.total > 0 ? (isShown ? NAVY : GOLD) : CREAM_DARK} />
                 {labelIdx.has(i) && (
-                  <text x={x + barW / 2} y={CH.h - 8} fontSize={8.5} fill={INK_LIGHT} textAnchor={i === 0 ? 'start' : i === series.length - 1 ? 'end' : 'middle'}>{d.label}</text>
+                  <text x={x + barW / 2} y={CH.h - 8} fontSize={8.5}
+                    fill={isShown ? NAVY : INK_LIGHT} fontWeight={isShown ? 700 : 400}
+                    textAnchor={i === 0 ? 'start' : i === series.length - 1 ? 'end' : 'middle'}>{d.label}</text>
                 )}
               </g>
             );
