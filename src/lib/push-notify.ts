@@ -23,7 +23,7 @@ export function pushConfigured(): boolean {
   return ensureConfigured();
 }
 
-export type PushPayload = { title: string; body: string; url?: string };
+export type PushPayload = { title: string; body: string; url?: string; tag?: string }; // tag: optional — when set, a newer push with the same tag replaces the one still showing (see public/sw.js)
 
 // Wait for a push send to actually finish before the server action / sync returns — capped so
 // a slow push service can never hold up the user's own action for long.
