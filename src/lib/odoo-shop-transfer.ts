@@ -57,11 +57,12 @@ export function transferWarehouseCode(shopName: string): string | null {
   return cfg.warehouseCode;
 }
 
-// Any portal shop may use "Chuyển kho" — the 4 La Paris shops via their real warehouse, plus a
-// partner-type portal shop (Moon Flower) via the virtual mechanism above. Lab is excluded
-// (portalAccount:false), and Lab is not reachable through this shop-portal flow anyway.
+// Real-warehouse shops only for now (Axel, 2026-09-07: "je veux eviter les ajustements
+// d'inventaire pour le moment" — keep the Moon Flower virtual-location mechanism built but
+// dormant). To turn it on later, change this back to `!!SHOP_CONFIG[shopName]?.portalAccount`
+// (the virtual-location code path below is already complete and typechecked for that case).
 export function transferEligible(shopName: string): boolean {
-  return !!SHOP_CONFIG[shopName]?.portalAccount;
+  return !!transferWarehouseCode(shopName);
 }
 
 // true for a shop that participates via the virtual location (no real Odoo warehouse) — used to
