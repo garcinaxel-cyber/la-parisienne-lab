@@ -174,7 +174,7 @@ function buildPlan(
 // skip_backorder + cancel_backorder are still passed too (harmless, may still help Odoo skip the
 // wizard cleanly), and a post-validate check re-reads the picking list to confirm nothing new
 // showed up anyway — belt-and-suspenders after two earlier fixes each silently failed once.
-async function writeQuantitiesAndValidatePicking(
+export async function writeQuantitiesAndValidatePicking(
   pickingId: number, plan: PlannedWrite[],
 ): Promise<{ ok: true; backorderWarning?: string } | { ok: false; error: string }> {
   for (const p of plan) {
