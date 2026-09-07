@@ -11,9 +11,20 @@ import { writeQuantitiesAndValidatePicking, type PlannedWrite } from '@/lib/odoo
 // invoice, no stock.replenishment.request, so nothing here can ever reach the lab's production
 // queue (odoo-sync.ts reads SO/REP only) or the shop's POS revenue.
 //
-// Scope: the four La Paris shops (SHOP_CONFIG entries with a warehouseCode). Moon Flower is an
-// external partner with no Odoo warehouse and is refused on both sides. Every warehouse / type /
-// product id is resolved dynamically by code — never hard-coded (same rule as odoo-scrap.ts).
+// Scope: every portal shop (SHOP_CONFIG.portalAccount) — the four La Paris shops with a real Odoo
+// warehouse, PLUS a partner-type shop like Moon Flower that has none (Axel, 2026-09-07: "Moon est
+// un client mais en réalité un de nos shops qui transfert de temps en temps du stock à d'autres
+// shops"). Moon Flower never appears anywhere in Odoo's stock — its sales are sale.order lines
+// fulfilled from the LAB's stock, so by the time goods physically sit at Moon Flower, Odoo has
+// already "consumed" them (same reason its losses never create an Odoo scrap, see odoo-scrap.ts).
+// So a transfer touching Moon Flower is NOT a normal internal transfer on that side: there is no
+// Odoo quant to move away from or into. Instead, that side uses Odoo's own standard "Inventory
+// Adjustment" virtual location (usage='inventory') — the exact mechanism Odoo itself uses when a
+// human edits an on-hand quantity by hand. Moon Flower → real shop CREATES stock at the real
+// shop (goods becoming visible to Odoo for the first time); real shop → Moon Flower REMOVES stock
+// from the real shop with nothing booked on the other end (goods leaving Odoo's tracked world,
+// same posture as Moon Flower's untracked losses). Every warehouse / type / location / product id
+// is resolved dynamically by code — never hard-coded (same rule as odoo-scrap.ts).
 //
 // Auth is the caller's job (src/app/shop/actions.ts checks the manager PIN before creating, and
 // the shop session before receiving/cancelling) — this module trusts its caller.
@@ -36,11 +47,65 @@ export interface TransferCreateResult {
 }
 
 type Warehouse = { id: number; name: string; code: string; stockLocationId: number; intTypeId: number | null };
+type TransferEndpoint =
+  | { kind: 'warehouse'; warehouse: Warehouse; label: string }
+  | { kind: 'virtual'; locationId: number; label: string };
 
 export function transferWarehouseCode(shopName: string): string | null {
   const cfg = SHOP_CONFIG[shopName];
   if (!cfg || cfg.docType !== 'replenishment' || !cfg.warehouseCode) return null;
   return cfg.warehouseCode;
+}
+
+// Any portal shop may use "Chuyển kho" — the 4 La Paris shops via their real warehouse, plus a
+// partner-type portal shop (Moon Flower) via the virtual mechanism above. Lab is excluded
+// (portalAccount:false), and Lab is not reachable through this shop-portal flow anyway.
+export function transferEligible(shopName: string): boolean {
+  return !!SHOP_CONFIG[shopName]?.portalAccount;
+}
+
+// true for a shop that participates via the virtual location (no real Odoo warehouse) — used to
+// pick the right wording when reporting a reception shortfall (see actions.ts).
+export function isVirtualTransferShop(shopName: string): boolean {
+  return transferEligible(shopName) && !transferWarehouseCode(shopName);
+}
+
+// Short, human-readable code for the transfer's ref (TRF-<from>-<to>-nnnn) — the real warehouse
+// code when there is one, else the shop's own name reduced to letters (Moon Flower -> MOON).
+export function transferRefCode(shopName: string): string {
+  return transferWarehouseCode(shopName) ?? (shopName.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'SHOP');
+}
+
+let virtualInventoryLocationCache: number | null | undefined;
+
+// Odoo's own "Inventory Adjustment" virtual location (usage='inventory') — company-wide,
+// resolved once and cached. This is not something we invent: it is the same location Odoo uses
+// internally whenever a human edits a quant's on-hand quantity by hand.
+async function resolveVirtualInventoryLocation(): Promise<number | { error: string }> {
+  const err = { error: `Emplacement Odoo "Ajustement d'inventaire" introuvable` };
+  if (virtualInventoryLocationCache !== undefined) {
+    return virtualInventoryLocationCache === null ? err : (virtualInventoryLocationCache as number);
+  }
+  const rows = await tmo(odooExecute<any[]>('stock.location', 'search_read',
+    [[['usage', '=', 'inventory']]], { fields: ['id', 'name'], limit: 1 }), 15000, 'virtual location');
+  const id: number | null = rows[0]?.id ?? null;
+  virtualInventoryLocationCache = id;
+  return id === null ? err : id;
+}
+
+async function resolveEndpoint(shopName: string): Promise<TransferEndpoint | { error: string }> {
+  if (isVirtualTransferShop(shopName)) {
+    const loc = await resolveVirtualInventoryLocation();
+    if (typeof loc !== 'number') return loc;
+    return { kind: 'virtual', locationId: loc, label: shopName };
+  }
+  const wh = await resolveWarehouse(shopName);
+  if ('error' in wh) return wh;
+  return { kind: 'warehouse', warehouse: wh, label: wh.name };
+}
+
+function endpointLocationId(e: TransferEndpoint): number {
+  return e.kind === 'warehouse' ? e.warehouse.stockLocationId : e.locationId;
 }
 
 async function resolveWarehouse(shopName: string): Promise<Warehouse | { error: string }> {
@@ -94,12 +159,23 @@ export async function createInterShopTransfer(
   if (!odooWriteConfigured()) return { ok: false, error: 'Tài khoản Odoo ghi chưa được cấu hình' };
   if (fromShop === toShop) return { ok: false, error: 'Kho gửi và kho nhận phải khác nhau' };
 
-  const [src, dst] = await Promise.all([resolveWarehouse(fromShop), resolveWarehouse(toShop)]);
+  const [src, dst] = await Promise.all([resolveEndpoint(fromShop), resolveEndpoint(toShop)]);
   if ('error' in src) return { ok: false, error: src.error };
   if ('error' in dst) return { ok: false, error: dst.error };
+  if (src.kind === 'virtual' && dst.kind === 'virtual') {
+    return { ok: false, error: 'Cần ít nhất một bên có kho Odoo thật' };
+  }
 
-  const type = await resolveInternalPickingType(src);
+  // The Internal Transfers operation type always comes from whichever side has a real warehouse
+  // — the source's when it has one (matches a normal shop-to-shop transfer), otherwise the
+  // destination's (Moon Flower sending: there is no source warehouse to own a type).
+  const typeOwner = src.kind === 'warehouse' ? src : (dst.kind === 'warehouse' ? dst : null);
+  if (!typeOwner) return { ok: false, error: 'Cần ít nhất một bên có kho Odoo thật' };
+  const type = await resolveInternalPickingType(typeOwner.warehouse);
   if ('error' in type) return { ok: false, error: type.error };
+
+  const srcLocationId = endpointLocationId(src);
+  const dstLocationId = endpointLocationId(dst);
 
   // One move per SKU — merge duplicates so the reception plan is always unambiguous.
   const merged = new Map<string, TransferLineInput>();
@@ -122,8 +198,8 @@ export async function createInterShopTransfer(
   try {
     pickingId = await tmo(odooExecuteWrite<number>('stock.picking', 'create', [{
       picking_type_id: type.id,
-      location_id: src.stockLocationId,
-      location_dest_id: dst.stockLocationId,
+      location_id: srcLocationId,
+      location_dest_id: dstLocationId,
       origin: ref,
       ...(note?.trim() ? { note: note.trim() } : {}),
     }], { context: NO_MAIL_CONTEXT }), 25000, 'create picking');
@@ -139,8 +215,8 @@ export async function createInterShopTransfer(
         product_uom_qty: l.qty,
         picking_id: pickingId,
         picking_type_id: type.id,
-        location_id: src.stockLocationId,
-        location_dest_id: dst.stockLocationId,
+        location_id: srcLocationId,
+        location_dest_id: dstLocationId,
         ...(lineNote ? { description_picking: lineNote } : {}),
       }], { context: NO_MAIL_CONTEXT }), 20000, 'create move');
       moveIdBySku[l.sku] = moveId;
@@ -151,7 +227,9 @@ export async function createInterShopTransfer(
 
     // Reservation is best-effort: a shop whose Odoo stock is short still sends the physical
     // goods; the picking just stays "confirmed" (waiting) until reception, where the real
-    // quantities are written. Surfaced as assigned:false, never as a failure.
+    // quantities are written. A virtual location (Moon Flower on either side) always reserves
+    // instantly — Odoo treats non-internal-usage locations as having unlimited availability.
+    // Surfaced as assigned:false, never as a failure.
     let assigned = true;
     try {
       await tmo(odooExecuteWrite('stock.picking', 'action_assign', [[pickingId]], { context: NO_MAIL_CONTEXT }), 25000, 'assign picking');

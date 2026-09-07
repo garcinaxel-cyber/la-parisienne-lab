@@ -10,7 +10,7 @@ import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
 import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/push-notify';
-import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode } from '@/lib/odoo-shop-transfer';
+import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
@@ -1414,6 +1414,7 @@ export type ShopTransfer = {
   odooPickingName: string | null; sentByName: string | null; sentAt: string;
   receivedByName: string | null; receivedAt: string | null; cancelledByName: string | null; cancelledAt: string | null;
   note: string | null; lineCount: number; unitCount: number; lines: ShopTransferLine[];
+  fromIsVirtual: boolean; toIsVirtual: boolean;
 };
 
 const shortShop = (s: string) => s.replace(/^La Paris\s+/i, '');
@@ -1423,8 +1424,8 @@ const shortShop = (s: string) => s.replace(/^La Paris\s+/i, '');
 export async function getTransferPeersAction(shopName?: string): Promise<{ shopName?: string; canTransfer?: boolean; peers?: string[]; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
-  const canTransfer = !!transferWarehouseCode(auth.shopName);
-  const peers = SHOP_NAMES_ALL.filter(s => s !== auth.shopName && !!transferWarehouseCode(s));
+  const canTransfer = transferEligible(auth.shopName);
+  const peers = SHOP_NAMES_ALL.filter(s => s !== auth.shopName && transferEligible(s));
   return { shopName: auth.shopName, canTransfer, peers };
 }
 
@@ -1435,6 +1436,7 @@ function mapTransferRow(t: any, lines: any[]): ShopTransfer {
     receivedByName: t.received_by_name ?? null, receivedAt: t.received_at ?? null,
     cancelledByName: t.cancelled_by_name ?? null, cancelledAt: t.cancelled_at ?? null,
     note: t.note ?? null, lineCount: Number(t.line_count ?? 0), unitCount: Number(t.unit_count ?? 0),
+    fromIsVirtual: isVirtualTransferShop(t.from_shop), toIsVirtual: isVirtualTransferShop(t.to_shop),
     lines: lines.map((l: any) => ({
       id: l.id, sku: l.sku, name: l.product_name_vi, category: l.category ?? null, imageUrl: l.image_url ?? null,
       qtySent: Number(l.qty_sent), qtyReceived: l.qty_received == null ? null : Number(l.qty_received), note: l.line_note ?? null,
@@ -1482,12 +1484,13 @@ export async function submitShopTransferAction(input: {
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const fromCode = transferWarehouseCode(auth.shopName);
   const toShop = String(input.toShop ?? '').trim();
-  const toCode = transferWarehouseCode(toShop);
-  if (!fromCode) return { error: `${auth.shopName} không có kho Odoo — không thể chuyển kho` };
-  if (!toCode) return { error: 'Kho nhận không hợp lệ' };
+  if (!transferEligible(auth.shopName)) return { error: `${auth.shopName} không thể chuyển kho` };
+  if (!transferEligible(toShop)) return { error: 'Kho nhận không hợp lệ' };
   if (toShop === auth.shopName) return { error: 'Kho nhận phải khác kho gửi' };
+  if (isVirtualTransferShop(auth.shopName) && isVirtualTransferShop(toShop)) return { error: 'Cần ít nhất một bên có kho Odoo thật' };
+  const fromCode = transferRefCode(auth.shopName);
+  const toCode = transferRefCode(toShop);
   const sentByName = String(input.sentByName ?? '').trim().slice(0, 80);
   if (!sentByName) return { error: 'Chọn tên người gửi' };
 
@@ -1596,7 +1599,10 @@ export async function receiveShopTransferAction(input: {
   const diffs = (freshLines ?? []).filter((l: any) => Number(l.qty_received ?? 0) !== Number(l.qty_sent))
     .map((l: any) => `${l.product_name_vi} ${Number(l.qty_received ?? 0) - Number(l.qty_sent)}`);
   const unitsRecv = Object.values(received).reduce((a, b) => a + b, 0);
-  const diffTxt = diffs.length ? ` — ⚠ chênh lệch: ${diffs.join(', ')} (phần thiếu vẫn nằm trong kho ${shortShop(t.from_shop)} trên Odoo — nếu mất hàng, ${shortShop(t.from_shop)} cần ghi hao hụt)` : '';
+  const shortfallNote = isVirtualTransferShop(t.from_shop)
+    ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(t.to_shop)}`
+    : `phần thiếu vẫn nằm trong kho ${shortShop(t.from_shop)} trên Odoo — nếu mất hàng, ${shortShop(t.from_shop)} cần ghi hao hụt`;
+  const diffTxt = diffs.length ? ` — ⚠ chênh lệch: ${diffs.join(', ')} (${shortfallNote})` : '';
   const viPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} đã nhận chuyển kho ${t.ref}: ${unitsRecv} cái (${receivedByName})${diffTxt}` };
   const enPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} received transfer ${t.ref}: ${unitsRecv} units (${receivedByName})${diffs.length ? ` — ⚠ differences: ${diffs.join(', ')}` : ''}` };
   await awaitPush(Promise.all([sendShopPush(supabase, t.from_shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));

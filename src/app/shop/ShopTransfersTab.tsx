@@ -173,7 +173,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
   if (!canTransfer && peers !== null) {
     return (
       <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
-        Chuyển kho chỉ dùng cho các cửa hàng La Paris có kho trên Odoo.
+        Cửa hàng của bạn chưa được bật tính năng chuyển kho.
       </div>
     );
   }
@@ -471,7 +471,9 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
             {recvConfirm.lines.some(l => recvValue(recvConfirm, l.sku, l.qtySent) !== l.qtySent) && (
               <div className="flex items-start gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
                 <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                <span>Có chênh lệch: phần thiếu vẫn nằm trong kho {shortShop(recvConfirm.fromShop)} trên Odoo — {shortShop(recvConfirm.fromShop)} sẽ được báo để ghi hao hụt nếu hàng bị mất.</span>
+                <span>Có chênh lệch: {recvConfirm.fromIsVirtual
+                  ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(recvConfirm.toShop)}`
+                  : `phần thiếu vẫn nằm trong kho ${shortShop(recvConfirm.fromShop)} trên Odoo — ${shortShop(recvConfirm.fromShop)} sẽ được báo để ghi hao hụt nếu hàng bị mất`}.</span>
               </div>
             )}
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Người nhận: <b>{receiverName}</b>. Tồn kho Odoo của hai cửa hàng sẽ đổi ngay khi bấm xác nhận — không thể hoàn tác trong app.</div>
