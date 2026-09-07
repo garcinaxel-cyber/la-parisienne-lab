@@ -670,7 +670,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Fetch enough for both the selected range and the absolute month tile.
   const since = new Date(Date.now() - Math.max(rangeDays, 60) * 86400000).toISOString();
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
-  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, source, shop_name, channel').gte('created_at', since).limit(5000);
+  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel').gte('created_at', since).limit(5000);
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
@@ -712,8 +712,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const categoryByFiche = new Map<string, string>();
   for (const f of fiches ?? []) categoryByFiche.set(f.id, f.category ?? 'Khác');
 
-  const createdAtByBatch = new Map<string, string>();
-  for (const o of orders ?? []) createdAtByBatch.set(o.order_batch_id, o.created_at);
+  // Bucketed by delivery_date, not created_at: a cake ordered today for delivery in 3 days is
+  // revenue on the delivery day, not the order day (Axel, 2026-09-07).
+  const deliveryDateByBatch = new Map<string, string>();
+  for (const o of orders ?? []) deliveryDateByBatch.set(o.order_batch_id, o.delivery_date ?? o.created_at);
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const monthStr = todayStr.slice(0, 7);
@@ -730,8 +732,8 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
 
   for (const l of lines ?? []) {
     const lineTotal = (l.qty ?? 0) * (l.unit_price ?? 0);
-    const createdAt = createdAtByBatch.get(l.order_batch_id) ?? l.created_at;
-    const day = (createdAt ?? '').slice(0, 10);
+    const deliveryDate = deliveryDateByBatch.get(l.order_batch_id) ?? l.created_at;
+    const day = (deliveryDate ?? '').slice(0, 10);
     if (day === todayStr) { todayTotal += lineTotal; todayBatches.add(l.order_batch_id); }
     if (day.slice(0, 7) === monthStr) { monthTotal += lineTotal; monthBatches.add(l.order_batch_id); }
     if (day < rangeStart) continue; // breakdowns below are scoped to the selected range
