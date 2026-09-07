@@ -26,10 +26,10 @@ export async function GET(req: Request) {
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const tomorrow = tomorrowLabDate();
 
-  // Only the La Paris shops actually use the Đặt hàng replenishment flow — Moon Flower/Lab are
-  // quotation-type external partners with no manager-order tab.
+  // Every shop with a portal login has the Đặt hàng tab (Axel, 2026-09-07: Moon Flower too —
+  // its order becomes a confirmed sale.order instead of a REP). Lab itself has no portal.
   const shopNames = Object.entries(SHOP_CONFIG)
-    .filter(([, cfg]) => cfg.docType === 'replenishment')
+    .filter(([, cfg]) => cfg.portalAccount)
     .map(([name]) => name);
 
   const { data: drafts } = await supabase

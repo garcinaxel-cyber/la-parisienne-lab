@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooConfigured, odooWriteConfigured } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate } from '@/lib/odoo-manager-order';
+import { sendShopPush, sendAdminPush, type PushPayload } from '@/lib/push-notify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -73,6 +74,13 @@ export async function GET(req: Request) {
         auto_submitted: true,
       });
       results.push({ id: draft.id, shopName: draft.shop_name, ok: true, orderRef: res.orderRef });
+      // Same "order sent" notification as a manual PIN confirmation, flagged as automatic.
+      const units = lines.reduce((a: number, l: any) => a + (Number(l.qty) || 0), 0);
+      const dd = `${String(res.deliveryDate).slice(8, 10)}/${String(res.deliveryDate).slice(5, 7)}`;
+      const viPayload: PushPayload = { title: draft.shop_name, body: `📦 Tự động gửi đơn đặt hàng ${dd} (14h00): ${res.orderRef} — ${lines.length} SP · ${units} cái` };
+      const enPayload: PushPayload = { title: draft.shop_name, body: `📦 Order for ${dd} auto-sent (14:00): ${res.orderRef} — ${lines.length} SKUs · ${units} units` };
+      await sendShopPush(supabase, draft.shop_name, viPayload);
+      await sendAdminPush(supabase, viPayload, enPayload);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       await supabase.from('lab_shop_manager_order_drafts').update({ submit_error: msg }).eq('id', draft.id);

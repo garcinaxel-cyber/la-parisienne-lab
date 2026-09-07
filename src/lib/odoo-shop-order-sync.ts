@@ -54,7 +54,7 @@ const partnerIdCache = new Map<string, number | null>();
 // Exact '=' search came back empty even for a partner visibly named "LAB" in the UI
 // (verified 07-28, id 347) — safer to match case/whitespace-insensitively via ilike then
 // filter in JS, rather than trust Odoo's exact-match semantics on this field.
-async function resolvePartnerId(name: string): Promise<number | null> {
+export async function resolvePartnerId(name: string): Promise<number | null> {
   if (partnerIdCache.has(name)) return partnerIdCache.get(name)!;
   const rows = await tmo(odooExecute<any[]>('res.partner', 'search_read',
     [[['name', 'ilike', name]]], { fields: ['id', 'name'], limit: 20 }), 15000, 'partner');
@@ -88,7 +88,7 @@ async function resolveProducts(skus: string[]): Promise<Record<string, { id: num
 // 'product_uom' on others (confirmed the hard way — 07-28 test run against this instance
 // failed on 'product_uom_id' not existing). Discovered once, cached for the process lifetime.
 let soLineUomField: string | null | undefined; // undefined = not yet resolved
-async function resolveSoLineUomField(): Promise<string | null> {
+export async function resolveSoLineUomField(): Promise<string | null> {
   if (soLineUomField !== undefined) return soLineUomField;
   const fields = await tmo(odooExecute<any>('sale.order.line', 'fields_get', [[]], { attributes: ['type'] }), 15000, 'sol fields');
   soLineUomField = ['product_uom_id', 'product_uom'].find(f => fields[f]) ?? null;

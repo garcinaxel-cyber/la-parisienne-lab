@@ -495,6 +495,16 @@ export async function recordShopLossAction(input: {
     reported_by_name: name, reported_at: new Date().toISOString(),
   });
   if (error) return { error: error.message };
+
+  // Notify the shop's manager + admin of every loss entry (Axel, 2026-09-07: "une notif
+  // concernant les saisies des scraps"). The Odoo sync status is part of the message so an
+  // unsynced entry (e.g. Moon Flower, no Odoo warehouse) is visible without opening the app.
+  const syncTag = odooScrapId ? '' : (auth.shopName === 'Moon Flower' ? '' : ' ⚠ chưa đồng bộ Odoo');
+  const syncTagEn = odooScrapId ? '' : (auth.shopName === 'Moon Flower' ? '' : ' ⚠ not synced to Odoo');
+  const viPayload: PushPayload = { title: auth.shopName, body: `🗑 Hao hụt: ${productName} ×${qty} — ${input.reasonTagName ?? ''}${input.note ? ` · ${input.note.slice(0, 60)}` : ''} (${name})${syncTag}` };
+  const enPayload: PushPayload = { title: auth.shopName, body: `🗑 Loss: ${productName} ×${qty} — ${input.reasonTagName ?? ''}${input.note ? ` · ${input.note.slice(0, 60)}` : ''} (${name})${syncTagEn}` };
+  await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+
   return { ok: true, odooSynced: !!odooScrapId, odooError: odooSyncError ?? undefined };
 }
 
@@ -1328,6 +1338,17 @@ export async function submitManagerOrderAction(input: {
         .update({ status: 'submitted', submitted_order_ref: res.orderRef, submitted_at: new Date().toISOString() })
         .eq('id', draft.id);
     }
+  }
+
+  // Notify the shop (its other devices / manager) + admin that tomorrow's order is in (Axel,
+  // 2026-09-07: "une notification lorsqu'ils créent la commande du jour").
+  if (supabase) {
+    const units = lines.reduce((a, l) => a + l.qty, 0);
+    const ddate = String(res.deliveryDate ?? input.deliveryDate ?? '');
+    const dd = `${ddate.slice(8, 10)}/${ddate.slice(5, 7)}`;
+    const viPayload: PushPayload = { title: auth.shopName, body: `📦 Đã gửi đơn đặt hàng ${dd}: ${res.orderRef} — ${lines.length} SP · ${units} cái (${manager.name})` };
+    const enPayload: PushPayload = { title: auth.shopName, body: `📦 Order for ${dd} sent: ${res.orderRef} — ${lines.length} SKUs · ${units} units (${manager.name})` };
+    await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
   }
 
   return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: manager.name };

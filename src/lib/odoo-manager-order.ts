@@ -1,5 +1,6 @@
 import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labLocalToOdooUtc, LAB_TZ } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
+import { resolvePartnerId, resolveSoLineUomField } from '@/lib/odoo-shop-order-sync';
 
 // Phase 3 of the shop portal plan (Axel, 2026-09-03): a shop manager places a real stock
 // replenishment (REP) order directly from the portal, PIN-gated (verifyManagerPinAction /
@@ -115,12 +116,12 @@ async function resolveWarehouseId(code: string): Promise<{ id: number; name: str
   return w;
 }
 
-async function resolveProducts(skus: string[]): Promise<Record<string, { id: number }>> {
+async function resolveProducts(skus: string[]): Promise<Record<string, { id: number; uom_id: number }>> {
   if (!skus.length) return {};
   const rows = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['default_code', 'in', skus]]], { fields: ['id', 'default_code'], limit: 2000 }), 20000, 'products');
-  const out: Record<string, { id: number }> = {};
-  for (const p of rows) if (p.default_code) out[p.default_code] = { id: p.id };
+    [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'], limit: 2000 }), 20000, 'products');
+  const out: Record<string, { id: number; uom_id: number }> = {};
+  for (const p of rows) if (p.default_code) out[p.default_code] = { id: p.id, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
   return out;
 }
 
@@ -158,17 +159,12 @@ export async function createManagerReplenishment(
   if (!validLines.length) return { ok: false, error: 'Aucune ligne valide dans la commande' };
 
   const map = SHOP_CONFIG[shopName];
-  if (!map || map.docType !== 'replenishment' || !map.warehouseCode) {
-    return { ok: false, error: `Boutique "${shopName}" non configurée pour les commandes de réapprovisionnement` };
+  if (!map || !map.portalAccount) {
+    return { ok: false, error: `Boutique "${shopName}" non configurée pour les commandes` };
   }
 
-  const wh = await resolveWarehouseId(map.warehouseCode);
-  if (!wh) return { ok: false, error: `Entrepôt Odoo "${map.warehouseCode}" introuvable` };
-  const sourceWh = await resolveWarehouseId('LAB');
-  if (!sourceWh) return { ok: false, error: 'Entrepôt source Odoo "LAB" introuvable' };
-
   const skus = Array.from(new Set(validLines.map(l => l.sku)));
-  let products: Record<string, { id: number }>;
+  let products: Record<string, { id: number; uom_id: number }>;
   try {
     products = await resolveProducts(skus);
   } catch (e: any) {
@@ -176,6 +172,57 @@ export async function createManagerReplenishment(
   }
   const missing = skus.filter(s => !products[s]);
   if (missing.length) return { ok: false, error: `Produit(s) introuvable(s) dans Odoo : ${missing.join(', ')}` };
+
+  // Quotation-type partner (Moon Flower — Axel, 2026-09-07: "pour Moon Flower ça doit créer une
+  // SO et non une REP"): one sale.order for the partner, confirmed immediately (action_confirm,
+  // the same transition odoo-order-lock.ts applies to tomorrow's SOs at the 16h deadline).
+  // Line notes go into the sale.order.line description (the standard per-line text field on SO).
+  if (map.docType === 'quotation') {
+    if (!map.partnerName) return { ok: false, error: `Partenaire Odoo non configuré pour "${shopName}"` };
+    const partnerId = await resolvePartnerId(map.partnerName);
+    if (!partnerId) return { ok: false, error: `Partenaire Odoo "${map.partnerName}" introuvable` };
+    const uomField = await resolveSoLineUomField();
+    let soId: number | undefined;
+    let confirmed = false;
+    try {
+      soId = await tmo(odooExecuteWrite<number>('sale.order', 'create', [{
+        partner_id: partnerId,
+        commitment_date: labLocalToOdooUtc(deliveryDate, time),
+      }], { context: NO_MAIL_CONTEXT }), 25000, 'create sale.order');
+      for (const l of validLines) {
+        const p = products[l.sku];
+        const note = l.note?.trim();
+        await tmo(odooExecuteWrite('sale.order.line', 'create', [{
+          order_id: soId, product_id: p.id, product_uom_qty: l.qty,
+          ...(uomField ? { [uomField]: p.uom_id } : {}),
+          name: note ? `${l.name || l.sku}\n${note}` : (l.name || l.sku),
+        }], { context: NO_MAIL_CONTEXT }), 20000, 'create sale.order.line');
+      }
+      await tmo(odooExecuteWrite('sale.order', 'action_confirm', [[soId]], { context: NO_MAIL_CONTEXT }), 25000, 'confirm sale.order');
+      confirmed = true;
+      const [so] = await tmo(odooExecuteWrite<any[]>('sale.order', 'read', [[soId]], { fields: ['name'] }), 15000, 'read sale.order');
+      if (!so?.name) return { ok: false, error: `Commande créée et confirmée dans Odoo (id ${soId}) mais référence introuvable — vérifier manuellement dans Odoo` };
+      return { ok: true, orderRef: so.name, deliveryDate, deliveryTime: time };
+    } catch (e: any) {
+      const baseError = String(e?.message ?? e);
+      if (soId && !confirmed) {
+        try { await odooExecuteWrite('sale.order', 'unlink', [[soId]]); } catch { /* best-effort */ }
+        return { ok: false, error: baseError };
+      }
+      if (soId && confirmed) {
+        return { ok: false, error: `Erreur après confirmation de la commande Odoo id ${soId} — vérifier manuellement avant de recommencer. Détail : ${baseError}` };
+      }
+      return { ok: false, error: baseError };
+    }
+  }
+
+  if (map.docType !== 'replenishment' || !map.warehouseCode) {
+    return { ok: false, error: `Boutique "${shopName}" non configurée pour les commandes de réapprovisionnement` };
+  }
+  const wh = await resolveWarehouseId(map.warehouseCode);
+  if (!wh) return { ok: false, error: `Entrepôt Odoo "${map.warehouseCode}" introuvable` };
+  const sourceWh = await resolveWarehouseId('LAB');
+  if (!sourceWh) return { ok: false, error: 'Entrepôt source Odoo "LAB" introuvable' };
 
   let reqId: number | undefined;
   let submitted = false; // true once action_submit has actually gone through — see doc comment above
