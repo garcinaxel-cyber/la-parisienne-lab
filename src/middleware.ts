@@ -48,6 +48,7 @@ export function middleware(req: NextRequest) {
   // Same treatment — read-only vendor-bill lookup (2026-09-05), secret-gated itself, called by
   // hand (no session). Read-only, never a write.
   if (pathname.startsWith('/api/admin/vendor-bill-debug')) return NextResponse.next();
+  if (pathname.startsWith('/api/admin/hung-dup-debug')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
