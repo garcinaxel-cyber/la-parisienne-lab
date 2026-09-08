@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, Minus, X, Loader2, Bell, Settings } from 'lucide-react';
+import { Search, Plus, Minus, X, Loader2, Bell, Settings, CalendarDays } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { thumb } from '@/lib/img-thumb';
 import { useI18n } from '@/lib/i18n';
@@ -85,6 +85,8 @@ const L = {
     noOrders: 'Chưa có đơn hàng nào.',
     deliveryDateGroup: 'Giao ngày',
     noDeliveryDate: 'Chưa có ngày giao',
+    jumpToDate: 'Đi tới ngày',
+    clearDate: 'Xem gần đây',
     tomorrow: 'Ngày mai',
     overdue: 'Trễ hạn giao',
     noOdoo: 'Chưa có Odoo',
@@ -184,6 +186,8 @@ const L = {
     noOrders: 'No orders yet.',
     deliveryDateGroup: 'Delivery',
     noDeliveryDate: 'No delivery date',
+    jumpToDate: 'Jump to date',
+    clearDate: 'Show recent',
     tomorrow: 'Tomorrow',
     overdue: 'Overdue',
     noOdoo: 'No Odoo doc',
@@ -855,12 +859,16 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
   // Every hook stays above the early `if (!orders) return` below (Rules of Hooks — the payment
   // proof hook briefly sat after it and crashed the tab once orders loaded, 2026-09-06).
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  // Calendar jump (Axel, 2026-09-08): default view stays the last-200-by-created_at list exactly
+  // as before; picking a date here re-queries that single delivery_date only, so finding a given
+  // day no longer means scrolling past a long, growing history (imports included).
+  const [jumpDate, setJumpDate] = useState('');
 
-  async function load() {
-    const res = await actions.getMyOnlineOrdersAction();
+  async function load(deliveryDate?: string) {
+    const res = await actions.getMyOnlineOrdersAction(deliveryDate ? { deliveryDate } : undefined);
     setOrders(res.orders ?? []);
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(jumpDate || undefined); }, [jumpDate]);
 
   if (!orders) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
 
@@ -899,7 +907,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
 
   async function toggleShopDelivered(o: OnlineOrderSummary) {
     await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
-    load();
+    load(jumpDate || undefined);
   }
   async function onProof(o: OnlineOrderSummary, file: File | undefined) {
     if (!file || !file.type.startsWith('image/')) return;
@@ -907,16 +915,30 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
     const fd = new FormData(); fd.append('file', await compressImage(file));
     await actions.uploadPaymentProofAction(o.orderBatchId, fd);
     setUploadingFor(null);
-    load();
+    load(jumpDate || undefined);
   }
   async function cyclePayment(o: OnlineOrderSummary) {
     const next = o.paymentStatus === 'unpaid' ? 'partial' : o.paymentStatus === 'partial' ? 'paid' : 'unpaid';
     await actions.setPaymentStatusAction(o.orderBatchId, next, next === 'paid' ? o.total + o.deliveryFee : o.amountPaid);
-    load();
+    load(jumpDate || undefined);
   }
 
   return (
     <div>
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+          <CalendarDays size={14} style={{ color: INK_LIGHT, flexShrink: 0 }} />
+          <input type="date" value={jumpDate} onChange={e => setJumpDate(e.target.value)}
+            aria-label={tr('jumpToDate')}
+            style={{ border: 'none', outline: 'none', fontSize: 12.5, fontWeight: 600, color: INK, background: 'transparent' }} />
+        </div>
+        {jumpDate && (
+          <button onClick={() => setJumpDate('')} style={{
+            fontSize: 11.5, fontWeight: 700, color: '#8a7326', backgroundColor: CREAM, border: `1px solid ${BORDER}`,
+            padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap',
+          }}>{tr('clearDate')}</button>
+        )}
+      </div>
       <div className="flex gap-2 mb-3 overflow-x-auto">
         {([['all', tr('fAll')], ['undelivered', tr('fUndelivered')], ['unpaid', tr('unpaid')], ['late', tr('fLate')]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} style={{

@@ -431,13 +431,21 @@ export type OnlineOrderSummary = {
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
 };
 
-export async function getMyOnlineOrdersAction(): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
+export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  let oq = supabase.from('lab_online_orders').select('*').order('created_at', { ascending: false }).limit(200);
+  // Default (no deliveryDate): unchanged behaviour — most recent 200 by created_at, exactly as
+  // before. When a specific day is picked (calendar jump, Axel 2026-09-08 — growing history made
+  // the single created_at-ordered list impractical to scroll through), fetch that day only, no cap.
+  let oq = supabase.from('lab_online_orders').select('*');
+  if (opts?.deliveryDate) {
+    oq = oq.eq('delivery_date', opts.deliveryDate).order('created_at', { ascending: false });
+  } else {
+    oq = oq.order('created_at', { ascending: false }).limit(200);
+  }
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   if (!orders?.length) return { orders: [] };
