@@ -7,16 +7,20 @@ export type ShopRecap = {
   shop: string;
   reception: {
     totalLines: number; confirmedLines: number; lastConfirmedAt: string | null; confirmedBy: string[];
+    // Discrepancies kept for the flag count only -- the cell itself now shows just the two
+    // totals (Axel, 2026-09-08: "juste le comparatif total quantite recu vs quantite check").
     discrepancies: { sku: string | null; product: string; expected: number; received: number }[];
+    totalExpectedQty: number; totalReceivedQty: number;
   } | null;
   count: { sessionsCount: number; finishedAt: string; finishedBy: string; skuCount: number; valuation: number } | null;
   orders: { ref: string; placedAt: string | null; placedBy: string | null; odooDirect: boolean }[];
-  losses: { sku: string | null; product: string | null; qty: number; reason: string | null; by: string; at: string }[];
+  losses: { count: number; totalQty: number };
   transfers: { direction: 'in' | 'out'; otherShop: string; ref: string; status: string; by: string; at: string; units: number }[];
 };
 
 const AMBER = '#B45309';
 const RED = '#B42318';
+const GREEN = '#15803D';
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '—';
@@ -26,10 +30,9 @@ function fmtVnd(n: number): string {
   return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' ₫';
 }
 
-// Loss/transfer lists can grow long on a busy day and would otherwise stretch the whole row —
-// cap what's shown inline and fold the rest behind a plain count, matching the "synthétique"
-// brief (Axel: "un ecran assez synthetique... une vue global directement").
-const MAX_ROWS_SHOWN = 3;
+// Commande/Transferts lists can still grow long on a busy day -- cap what's shown inline and
+// fold the rest behind a plain count (Axel: "un ecran assez synthetique").
+const MAX_ROWS_SHOWN = 2;
 
 export default function ShopProcessView({ date, which, recaps }: { date: string; which: 'today' | 'yesterday'; recaps: ShopRecap[] }) {
   const { lang } = useI18n();
@@ -39,12 +42,12 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
     weekday: 'long', day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh',
   });
 
-  // Every red/amber border rendered below funnels into this one number — kept in lockstep with
-  // the Cell flags so the header total never quietly under-counts what the table is showing.
+  // Every red/amber signal rendered below funnels into this one number -- kept in lockstep
+  // with the cells so the header total never quietly under-counts what the table is showing.
   const flagCount = recaps.reduce((n, r) => {
     let f = 0;
     if (r.reception && r.reception.confirmedLines < r.reception.totalLines) f++;
-    if (r.reception?.discrepancies.length) f++;
+    if (r.reception && r.reception.confirmedLines === r.reception.totalLines && r.reception.totalReceivedQty !== r.reception.totalExpectedQty) f++;
     if (r.count == null) f++;
     if (r.orders.some(o => o.odooDirect)) f++;
     return n + f;
@@ -91,46 +94,47 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 1080, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+          <table className="w-full text-sm" style={{ minWidth: 980, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
             <thead>
               <tr className="bg-cream/40">
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-ink-light" style={{ width: 150 }}>
+                <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-ink-light" style={{ width: 148 }}>
                   {vi ? 'Cửa hàng' : 'Shop'}
                 </th>
-                <Th icon={Truck} label={vi ? 'Nhận hàng' : 'Réception'} />
-                <Th icon={PackageCheck} label={vi ? 'Kiểm kê' : 'Comptage'} />
+                <Th icon={Truck} label={vi ? 'Nhận hàng' : 'Réception'} width={168} />
+                <Th icon={PackageCheck} label={vi ? 'Kiểm kê' : 'Comptage'} width={168} />
                 <Th icon={ShoppingBag} label={vi ? 'Đặt hàng' : 'Commande'} />
-                <Th icon={Trash2} label={vi ? 'Hao hụt' : 'Pertes'} />
+                <Th icon={Trash2} label={vi ? 'Hao hụt' : 'Pertes'} width={128} />
                 <Th icon={ArrowLeftRight} label={vi ? 'Chuyển kho' : 'Transferts'} />
               </tr>
             </thead>
             <tbody>
-              {recaps.map((r, ri) => (
+              {recaps.map((r, ri) => {
+                const fullyConfirmed = !!r.reception && r.reception.confirmedLines === r.reception.totalLines;
+                const qtyMismatch = fullyConfirmed && r.reception!.totalReceivedQty !== r.reception!.totalExpectedQty;
+                return (
                 <tr key={r.shop} style={{ backgroundColor: ri % 2 === 1 ? 'rgba(255,244,204,0.18)' : undefined }}>
-                  <td className="px-4 py-3.5 font-bold text-navy text-[13px] whitespace-nowrap align-middle border-t border-border-soft">
+                  <td className="px-4 py-3 font-bold text-navy text-[13px] whitespace-nowrap align-middle border-t border-border-soft">
                     {r.shop}
                   </td>
 
-                  {/* Réception */}
-                  <Cell anomaly={!!r.reception?.discrepancies.length} missing={!!r.reception && r.reception.confirmedLines < r.reception.totalLines}>
+                  {/* Réception — status + a single qty-comparison line, no more per-line list */}
+                  <Cell anomaly={qtyMismatch} missing={!!r.reception && !fullyConfirmed}>
                     {!r.reception ? <None vi={vi} label={vi ? 'Không có giao hàng' : 'Pas de livraison'} /> : (
                       <div className="space-y-1">
                         {r.reception.confirmedLines > 0 ? (
-                          <div className="font-semibold text-[11.5px] text-ink">
+                          <div className="font-semibold text-[11.5px] text-ink truncate">
                             {fmtTime(r.reception.lastConfirmedAt)}
                             {r.reception.confirmedBy.length > 0 && <span className="text-ink-light font-medium"> · {r.reception.confirmedBy.join(', ')}</span>}
                           </div>
                         ) : (
                           <div className="font-semibold text-[11.5px]" style={{ color: RED }}>{vi ? 'Chưa xác nhận' : 'Non confirmé'}</div>
                         )}
-                        <div className="text-[11px] tabular-nums" style={{ color: r.reception.confirmedLines < r.reception.totalLines ? RED : '#6B7280' }}>
-                          {r.reception.confirmedLines}/{r.reception.totalLines} {vi ? 'dòng đã xác nhận' : 'lignes confirmées'}
-                        </div>
-                        <List items={r.reception.discrepancies} vi={vi} render={(d, i) => (
-                          <div key={i} className="text-[11px] font-semibold" style={{ color: AMBER }}>
-                            {d.sku ? `${d.sku} — ` : ''}{d.product}: {d.received}/{d.expected} {vi ? 'nhận' : 'reçu'} ⚠
-                          </div>
-                        )} />
+                        <Ratio
+                          a={r.reception.confirmedLines} b={r.reception.totalLines}
+                          suffix={vi ? 'dòng' : 'lignes'} color={!fullyConfirmed ? RED : '#6B7280'} />
+                        <Ratio
+                          a={r.reception.totalReceivedQty} b={r.reception.totalExpectedQty}
+                          suffix={vi ? 'sp nhận' : 'sp reçus'} color={qtyMismatch ? AMBER : '#6B7280'} warn={qtyMismatch} />
                       </div>
                     )}
                   </Cell>
@@ -139,7 +143,7 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                   <Cell missing={r.count == null}>
                     {!r.count ? <None vi={vi} label={vi ? 'Chưa kiểm kê' : 'Non compté'} bad /> : (
                       <div className="space-y-0.5">
-                        <div className="font-semibold text-[11.5px] text-ink">
+                        <div className="font-semibold text-[11.5px] text-ink truncate">
                           {fmtTime(r.count.finishedAt)} <span className="text-ink-light font-medium">· {r.count.finishedBy}</span>
                         </div>
                         <div className="text-[11px] text-ink-light tabular-nums">
@@ -154,7 +158,7 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                   <Cell anomaly={r.orders.some(o => o.odooDirect)}>
                     {r.orders.length === 0 ? <None vi={vi} label={vi ? 'Không có đơn' : 'Aucune commande'} /> : (
                       <List items={r.orders} vi={vi} render={(o, i) => (
-                        <div key={i} className="text-[11px]">
+                        <div key={i} className="text-[11px] truncate">
                           {o.odooDirect ? (
                             <span className="font-semibold" style={{ color: AMBER }}>
                               {o.ref} · {vi ? 'tạo trực tiếp trên Odoo ⚠' : 'créée directement dans Odoo ⚠'}
@@ -170,17 +174,14 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                     )}
                   </Cell>
 
-                  {/* Pertes */}
+                  {/* Pertes — one number, no more per-line list */}
                   <Cell>
-                    {r.losses.length === 0 ? <None vi={vi} label={vi ? 'Không có' : 'Aucune'} ok /> : (
-                      <List items={r.losses} vi={vi} render={(l, i) => (
-                        <div key={i} className="text-[11px] text-ink">
-                          <span className="font-semibold">{fmtTime(l.at)}</span>
-                          <span className="text-ink-light"> · {l.by} · </span>
-                          {l.sku ? `${l.sku} — ` : ''}{l.product ?? ''} ×{l.qty}
-                          {l.reason && <span className="text-ink-light"> ({l.reason})</span>}
-                        </div>
-                      )} />
+                    {r.losses.totalQty === 0 ? <None vi={vi} label={vi ? 'Không có' : 'Aucune'} ok /> : (
+                      <div>
+                        <span className="font-bold text-[13px] tabular-nums" style={{ color: AMBER }}>{r.losses.totalQty}</span>
+                        <span className="text-[11px] text-ink-light"> {vi ? 'sp hao hụt' : 'unités perdues'}</span>
+                        <div className="text-[10.5px] text-ink-light">{r.losses.count} {vi ? 'lần báo cáo' : 'signalement(s)'}</div>
+                      </div>
                     )}
                   </Cell>
 
@@ -188,7 +189,7 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                   <Cell>
                     {r.transfers.length === 0 ? <None vi={vi} label={vi ? 'Không có' : 'Aucun'} ok /> : (
                       <List items={r.transfers} vi={vi} render={(t, i) => (
-                        <div key={i} className="text-[11px] text-ink">
+                        <div key={i} className="text-[11px] text-ink truncate">
                           <span className="font-semibold">{fmtTime(t.at)}</span>
                           <span className="text-ink-light"> · {t.by} · </span>
                           {t.direction === 'out' ? '→' : '←'} {t.otherShop} · {t.units} u
@@ -197,7 +198,7 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                     )}
                   </Cell>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -212,9 +213,9 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
   );
 }
 
-function Th({ icon: Icon, label }: { icon: any; label: string }) {
+function Th({ icon: Icon, label, width }: { icon: any; label: string; width?: number }) {
   return (
-    <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-ink-light">
+    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-ink-light" style={width ? { width } : undefined}>
       <span className="inline-flex items-center gap-1"><Icon size={12} />{label}</span>
     </th>
   );
@@ -222,11 +223,21 @@ function Th({ icon: Icon, label }: { icon: any; label: string }) {
 
 function Cell({ anomaly, missing, children }: { anomaly?: boolean; missing?: boolean; children: React.ReactNode }) {
   const style: React.CSSProperties = missing
-    ? { borderLeft: `3px solid ${RED}`, backgroundColor: 'rgba(253,242,242,0.55)' }
+    ? { borderLeft: `2.5px solid ${RED}`, backgroundColor: 'rgba(253,242,242,0.5)' }
     : anomaly
-    ? { borderLeft: `3px solid ${AMBER}`, backgroundColor: 'rgba(255,251,235,0.55)' }
-    : { borderLeft: '3px solid transparent' };
-  return <td className="px-4 py-3.5 align-middle border-t border-border-soft" style={style}>{children}</td>;
+    ? { borderLeft: `2.5px solid ${AMBER}`, backgroundColor: 'rgba(255,251,235,0.5)' }
+    : { borderLeft: '2.5px solid transparent' };
+  return <td className="px-4 py-2.5 align-middle border-t border-border-soft" style={style}>{children}</td>;
+}
+
+// Compact "a/b unit" line shared by the two quantity comparisons in Réception -- replaces what
+// used to be a per-line discrepancy list with one glance-able ratio.
+function Ratio({ a, b, suffix, color, warn }: { a: number; b: number; suffix: string; color: string; warn?: boolean }) {
+  return (
+    <div className="text-[11px] tabular-nums" style={{ color }}>
+      <span className={warn ? 'font-bold' : undefined}>{a}/{b}</span> {suffix}{warn ? ' ⚠' : ''}
+    </div>
+  );
 }
 
 // Caps a busy shop's list to MAX_ROWS_SHOWN lines + a plain "+N" so one loaded shop never
@@ -238,15 +249,15 @@ function List<T>({ items, render, vi }: { items: T[]; render: (item: T, i: numbe
     <div className="space-y-1">
       {shown.map(render)}
       {hidden > 0 && (
-        <div className="text-[11px] text-ink-light font-medium">+{hidden} {vi ? 'dòng khác' : 'autre(s)'}</div>
+        <div className="text-[10.5px] text-ink-light font-medium">+{hidden} {vi ? 'dòng khác' : 'autre(s)'}</div>
       )}
     </div>
   );
 }
 
 function None({ vi, label, bad, ok }: { vi: boolean; label: string; bad?: boolean; ok?: boolean }) {
-  const color = bad ? RED : ok ? '#6B7280' : '#B9B29A';
-  return <span className={`text-[11px] ${bad ? 'font-semibold' : 'italic'}`} style={{ color }}>{label}</span>;
+  const color = bad ? RED : ok ? GREEN : '#B9B29A';
+  return <span className={`text-[11px] ${bad ? 'font-semibold' : ok ? 'font-medium' : 'italic'}`} style={{ color }}>{label}</span>;
 }
 
 function Legend({ swatch, label }: { swatch: string; label: string }) {

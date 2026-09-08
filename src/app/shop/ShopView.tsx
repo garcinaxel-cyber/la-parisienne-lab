@@ -1745,13 +1745,21 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     <input type="time" value={orderDeliveryTime} onChange={e => setOrderDeliveryTime(e.target.value)}
                       className="w-[92px] shrink-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
                   </div>
-                  <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
-                    {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
-                      ? (orderTomorrowOpen
+                  {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen ? (
+                    // Late-order warning (Axel, 2026-09-08): ordering for tomorrow past 14h00 is
+                    // still allowed — a manager can confirm it with their PIN — but it goes
+                    // against process, so this has to be impossible to miss rather than a quiet
+                    // grey hint.
+                    <div className="rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' }}>
+                      ⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH và có thể ảnh hưởng đến sản xuất/giao hàng. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.
+                    </div>
+                  ) : (
+                    <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
+                      {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
                         ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — nếu chưa ai xác nhận, đơn sẽ tự động gửi lúc 14h00.'
-                        : 'Đã hết giờ đặt cho ngày mai (trước 14h00) — vui lòng chọn từ ngày kia trở đi.')
-                      : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
-                  </div>
+                        : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
+                    </div>
+                  )}
                   {orderDraftLoaded && (
                     <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FEF9C3' }}>
                       <span className="text-[11px] font-semibold truncate" style={{ color: '#854D0E' }}>
@@ -1873,7 +1881,9 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                     {orderDraftSaving ? <Loader2 size={14} className="animate-spin" /> : null}
                     Lưu nháp
                   </button>
-                  <button onClick={openOrderConfirm} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting || (orderDeliveryDate === orderMinDate && !orderTomorrowOpen)}
+                  {/* Late (post-14h00) tomorrow orders are no longer blocked here -- the red
+                      banner above is the deterrent now, not a disabled button (Axel, 2026-09-08). */}
+                  <button onClick={openOrderConfirm} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting}
                     className="flex-[2] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
                     style={{ backgroundColor: '#1f2937' }}>
                     {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}

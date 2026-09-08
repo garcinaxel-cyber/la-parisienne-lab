@@ -93,10 +93,16 @@ export default async function ShopProcessPage({ searchParams }: { searchParams: 
       }));
     const confirmedAts = linesWithReceipt.filter(x => x.receipt).map(x => x.receipt.confirmed_at as string).sort();
     const confirmers = Array.from(new Set(linesWithReceipt.filter(x => x.receipt).map(x => x.receipt.confirmed_by_name as string)));
+    // Totals only (Axel, 2026-09-08: itemized per-line discrepancies made the cell too tall --
+    // "juste le comparatif total quantite recu vs quantite check"). Expected is summed over
+    // every line regardless of confirmation state; received only over lines actually confirmed
+    // so far, so a still-in-progress reception reads as "42/60", not a false mismatch.
+    const totalExpectedQty = shopLines.reduce((s, l) => s + Number(l.qty_checked ?? l.qty_expected ?? 0), 0);
+    const totalReceivedQty = linesWithReceipt.reduce((s, x) => s + (x.receipt ? Number(x.receipt.qty_received ?? 0) : 0), 0);
     const reception: ShopRecap['reception'] = shopLines.length === 0 ? null : {
       totalLines: shopLines.length, confirmedLines: confirmedCount,
       lastConfirmedAt: confirmedAts.length ? confirmedAts[confirmedAts.length - 1] : null,
-      confirmedBy: confirmers, discrepancies,
+      confirmedBy: confirmers, discrepancies, totalExpectedQty, totalReceivedQty,
     };
 
     // ── Comptage ──
@@ -117,12 +123,10 @@ export default async function ShopProcessPage({ searchParams }: { searchParams: 
         : { ref: ref as string, placedAt: null, placedBy: null, odooDirect: true };
     });
 
-    // ── Pertes ──
+    // ── Pertes ── total qty only (Axel, 2026-09-08: "juste le total scrap" -- itemized loss
+    // lines made the cell too tall; the total is what she actually scans this table for).
     const shopLosses = (losses ?? []).filter(l => l.shop_name === shop);
-    const lossesOut: ShopRecap['losses'] = shopLosses.map(l => ({
-      sku: l.sku as string | null, product: l.product_name as string | null, qty: Number(l.qty ?? 0),
-      reason: l.reason_tag_name as string | null, by: l.reported_by_name as string, at: l.reported_at as string,
-    }));
+    const lossesOut: ShopRecap['losses'] = { count: shopLosses.length, totalQty: shopLosses.reduce((s, l) => s + Number(l.qty ?? 0), 0) };
 
     // ── Transferts ──
     const shopTransfers = (transfers ?? []).filter(t => t.from_shop === shop || t.to_shop === shop);

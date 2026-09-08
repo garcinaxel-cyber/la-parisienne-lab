@@ -89,20 +89,21 @@ export function isManagerOrderWindowOpenForTomorrow(): boolean {
 
 // Validates a manager-picked delivery date server-side — never trust the client's
 // <input type="date"> min attribute alone. Must be a real 'YYYY-MM-DD' at or after tomorrow,
-// within the sanity backstop above, and if it's specifically tomorrow, still within 14h00.
-function validateDeliveryDate(date: string, skipWindowCheck = false): { ok: true } | { ok: false; error: string } {
+// within the sanity backstop above.
+//
+// The 14h00 cutoff for a tomorrow delivery is NO LONGER a hard block (Axel, 2026-09-08:
+// "je voudrais que tu laisse la possibilite de commander apres 2 pm ... mais je veux un bon
+// texte en rouge leur disant qu'ils ne respectent pas le process"). A manager can still submit
+// after 14h00 with their PIN — the client shows a prominent red warning instead of refusing the
+// order (see ShopView.tsx's orderTomorrowOpen banner). isManagerOrderWindowOpenForTomorrow()
+// stays exported purely for that UI warning and for nudging the date picker's default away from
+// tomorrow once it's past cutoff; it no longer gates anything here.
+function validateDeliveryDate(date: string, _skipWindowCheck = false): { ok: true } | { ok: false; error: string } {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Ngày giao không hợp lệ' };
   const min = tomorrowLabDate();
   const max = labDateOffset(MAX_DELIVERY_DAYS_AHEAD);
   if (date < min) return { ok: false, error: 'Không thể đặt giao cho hôm nay hoặc ngày đã qua — chọn từ ngày mai trở đi' };
   if (date > max) return { ok: false, error: `Ngày giao quá xa (tối đa ${MAX_DELIVERY_DAYS_AHEAD} ngày) — vui lòng liên hệ quản lý` };
-  // skipWindowCheck: the 14h00 auto-submit job (Axel, 2026-09-05) deliberately fires AT/AFTER
-  // the cutoff on behalf of a manager who left a draft unconfirmed — the whole point is to
-  // still go through right at 14h00, so the ordinary "too late" rejection below must not apply
-  // to that one trusted server-side caller (src/app/api/odoo/auto-submit-manager-orders/route.ts).
-  if (date === min && !skipWindowCheck && !isManagerOrderWindowOpenForTomorrow()) {
-    return { ok: false, error: `Đã hết giờ đặt hàng cho ngày mai (chỉ nhận trước ${ORDER_CUTOFF_HOUR}h00) — vui lòng chọn từ ngày kia trở đi hoặc quay lại vào sáng mai` };
-  }
   return { ok: true };
 }
 
