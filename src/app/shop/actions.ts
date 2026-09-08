@@ -1297,10 +1297,12 @@ export async function discardManagerOrderDraftAction(deliveryDate: string, shopN
 
 // The real, order-creating action — the one moment a manager's PIN is actually required.
 // Re-verifies the PIN server-side (see comment above), then hands off to
-// createManagerReplenishment (src/lib/odoo-manager-order.ts) — creates the Odoo document, adds
-// every line, and immediately confirms it. On success, logs an audit row
-// (lab_shop_manager_orders) and closes out any matching draft — both best-effort, never block
-// the manager from seeing their order reference just because a local log write failed.
+// createManagerReplenishment (src/lib/odoo-manager-order.ts) — creates the Odoo document and
+// adds every line, LEFT IN DRAFT (Axel, 2026-09-08: shop orders should not auto-validate) — the
+// 16h/23:59 lockTomorrowOrders cron (src/lib/odoo-order-lock.ts) confirms it later. On success,
+// logs an audit row (lab_shop_manager_orders) and closes out any matching draft — both
+// best-effort, never block the manager from seeing their order reference just because a local
+// log write failed.
 export async function submitManagerOrderAction(input: {
   pin: string;
   shopName?: string;

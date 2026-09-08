@@ -174,8 +174,10 @@ export async function createManagerReplenishment(
   if (missing.length) return { ok: false, error: `Produit(s) introuvable(s) dans Odoo : ${missing.join(', ')}` };
 
   // Quotation-type partner (Moon Flower — Axel, 2026-09-07: "pour Moon Flower ça doit créer une
-  // SO et non une REP"): one sale.order for the partner, confirmed immediately (action_confirm,
-  // the same transition odoo-order-lock.ts applies to tomorrow's SOs at the 16h deadline).
+  // SO et non une REP"): one sale.order for the partner. Left in DRAFT on purpose (Axel,
+  // 2026-09-08: shop orders should not auto-validate in Odoo) — odoo-order-lock.ts's 16h/23:59
+  // cron (lockTomorrowOrders) is what calls action_confirm, the same transition it already
+  // applies to any other draft/sent SO due tomorrow.
   // Line notes go into the sale.order.line description (the standard per-line text field on SO).
   if (map.docType === 'quotation') {
     if (!map.partnerName) return { ok: false, error: `Partenaire Odoo non configuré pour "${shopName}"` };
@@ -183,7 +185,6 @@ export async function createManagerReplenishment(
     if (!partnerId) return { ok: false, error: `Partenaire Odoo "${map.partnerName}" introuvable` };
     const uomField = await resolveSoLineUomField();
     let soId: number | undefined;
-    let confirmed = false;
     try {
       soId = await tmo(odooExecuteWrite<number>('sale.order', 'create', [{
         partner_id: partnerId,
@@ -198,19 +199,16 @@ export async function createManagerReplenishment(
           name: note ? `${l.name || l.sku}\n${note}` : (l.name || l.sku),
         }], { context: NO_MAIL_CONTEXT }), 20000, 'create sale.order.line');
       }
-      await tmo(odooExecuteWrite('sale.order', 'action_confirm', [[soId]], { context: NO_MAIL_CONTEXT }), 25000, 'confirm sale.order');
-      confirmed = true;
+      // Deliberately NOT calling action_confirm here — left in draft, confirmed later by
+      // odoo-order-lock.ts's 16h/23:59 cron (Axel, 2026-09-08).
       const [so] = await tmo(odooExecuteWrite<any[]>('sale.order', 'read', [[soId]], { fields: ['name'] }), 15000, 'read sale.order');
-      if (!so?.name) return { ok: false, error: `Commande créée et confirmée dans Odoo (id ${soId}) mais référence introuvable — vérifier manuellement dans Odoo` };
+      if (!so?.name) return { ok: false, error: `Commande créée dans Odoo (id ${soId}, brouillon) mais référence introuvable — vérifier manuellement dans Odoo` };
       return { ok: true, orderRef: so.name, deliveryDate, deliveryTime: time };
     } catch (e: any) {
       const baseError = String(e?.message ?? e);
-      if (soId && !confirmed) {
+      if (soId) {
+        // Still a draft (creation always leaves it there now) — clean up on any failure.
         try { await odooExecuteWrite('sale.order', 'unlink', [[soId]]); } catch { /* best-effort */ }
-        return { ok: false, error: baseError };
-      }
-      if (soId && confirmed) {
-        return { ok: false, error: `Erreur après confirmation de la commande Odoo id ${soId} — vérifier manuellement avant de recommencer. Détail : ${baseError}` };
       }
       return { ok: false, error: baseError };
     }
@@ -225,7 +223,6 @@ export async function createManagerReplenishment(
   if (!sourceWh) return { ok: false, error: 'Entrepôt source Odoo "LAB" introuvable' };
 
   let reqId: number | undefined;
-  let submitted = false; // true once action_submit has actually gone through — see doc comment above
   try {
     reqId = await tmo(odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
       warehouse_id: wh.id,
@@ -244,33 +241,18 @@ export async function createManagerReplenishment(
       }], { context: NO_MAIL_CONTEXT }), 20000, 'create replenishment line');
     }
 
-    // Confirm immediately — see the function doc comment above for why this differs from the
-    // exceptional-orders flow, which deliberately leaves the document in draft.
-    await tmo(odooExecuteWrite('stock.replenishment.request', 'action_submit', [[reqId]], { context: NO_MAIL_CONTEXT }), 20000, 'submit replenishment');
-    submitted = true;
-    await tmo(odooExecuteWrite('stock.replenishment.request', 'action_approve', [[reqId]], { context: NO_MAIL_CONTEXT }), 20000, 'approve replenishment');
-
+    // Deliberately NOT calling action_submit/action_approve here — left in draft, confirmed
+    // later by odoo-order-lock.ts's 16h/23:59 cron (Axel, 2026-09-08), same as the SO branch above.
     const [req] = await tmo(odooExecuteWrite<any[]>('stock.replenishment.request', 'read', [[reqId]], { fields: ['name'] }), 15000, 'read replenishment');
     const orderRef = req?.name;
-    if (!orderRef) return { ok: false, error: `Commande créée et confirmée dans Odoo (id ${reqId}) mais référence introuvable — vérifier manuellement dans Odoo` };
+    if (!orderRef) return { ok: false, error: `Commande créée dans Odoo (id ${reqId}, brouillon) mais référence introuvable — vérifier manuellement dans Odoo` };
 
     return { ok: true, orderRef, deliveryDate, deliveryTime: time };
   } catch (e: any) {
     const baseError = String(e?.message ?? e);
-    if (reqId && !submitted) {
-      // Still safely a draft (or line creation failed before submit was even attempted) — clean up.
+    if (reqId) {
+      // Still a draft (creation always leaves it there now) — clean up on any failure.
       try { await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]); } catch { /* best-effort */ }
-      return { ok: false, error: baseError };
-    }
-    if (reqId && submitted) {
-      // Already submitted (maybe approved) in Odoo — never delete real stock demand. Surface
-      // its current ref/state so this never looks like "nothing happened" when something did.
-      try {
-        const [cur] = await tmo(odooExecute<any[]>('stock.replenishment.request', 'read', [[reqId]], { fields: ['name', 'state'] }), 15000, 'read state after failure');
-        return { ok: false, error: `Erreur après confirmation partielle de ${cur?.name ?? `id ${reqId}`} (état actuel : ${cur?.state ?? 'inconnu'}) — la commande existe peut-être déjà dans Odoo, vérifier avant de recommencer. Détail : ${baseError}` };
-      } catch {
-        return { ok: false, error: `Erreur après confirmation partielle de la commande id ${reqId} dans Odoo — vérifier manuellement avant de recommencer. Détail : ${baseError}` };
-      }
     }
     return { ok: false, error: baseError };
   }
