@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   for (const c of CANDIDATES) {
     const { start, end } = labDayUtcRange(c.date);
     const { data: transfers, error: tErr } = await supabase.from('lab_stock_transfers')
-      .select('id, team, created_at, sent_by_name, status')
+      .select('id, team, created_at, created_by_name, status')
       .eq('team', c.team).gte('created_at', start).lt('created_at', end)
       .order('created_at', { ascending: true });
     if (tErr) { out.push({ ...c, error: tErr.message }); continue; }
@@ -114,7 +114,7 @@ export async function GET(req: Request) {
       transferCount: transfers?.length ?? 0,
       duplicateGroups: dupGroups.map(([sig, arr]) => ({
         sig, count: arr.length,
-        transfers: arr.map((t: any) => ({ id: t.id, created_at: t.created_at, sent_by_name: t.sent_by_name, status: t.status })),
+        transfers: arr.map((t: any) => ({ id: t.id, created_at: t.created_at, created_by_name: t.created_by_name, status: t.status })),
       })),
       skuComparison,
     });
