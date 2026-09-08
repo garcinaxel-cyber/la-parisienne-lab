@@ -17,15 +17,57 @@ export interface TransferLineInput {
 // Chef hands finished products off to stock. Creates one transfer note (bon) with lines,
 // and flags the source cards as transferred (so they can't be sent twice). RLS restricts
 // this to the chef's own team.
+//
+// 2026-09-08 fix: two different accounts on the same team ("hung") each submitted the exact
+// same production within ~2 minutes of each other (each thinking they were the first), and
+// nothing server-side ever re-checked what had actually been sent in between. The screen only
+// disables ITS OWN send button while ITS OWN request is in flight, and it computes "what's left
+// to send" from whatever it loaded when the page opened — if that's stale by even a minute, the
+// second device still shows the full quantity as available. Both requests then landed, both
+// created a transfer note, and both pushed a real Odoo manufacturing order — the Lab genuinely
+// over-produced. The actual source of truth for "how much of this card is left to send" is
+// lab_assignments.qty_sent_total, so we now re-read it fresh from the database at the moment of
+// insert (not trusting the client's numbers) and drop or shrink any line that's already been
+// covered by a transfer nobody's screen knew about yet.
 export async function submitStockTransferAction(
   team: string,
   lines: TransferLineInput[],
-): Promise<{ ok?: boolean; transferId?: string; error?: string }> {
+): Promise<{ ok?: boolean; transferId?: string; error?: string; blocked?: { productNameVi: string; productNameEn: string }[] }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
-  const clean = (lines ?? []).filter(l => l.assignmentId && l.qtySent > 0);
+  let clean = (lines ?? []).filter(l => l.assignmentId && l.qtySent > 0);
   if (!clean.length) return { error: 'No products selected' };
+
+  // Re-verify against the current DB state — this is the actual anti-duplicate guard. A card
+  // already fully sent (by anyone, on any device, since this screen last loaded) is dropped;
+  // a partially-covered card is clamped to what's genuinely still left.
+  const checkIds = Array.from(new Set(clean.map(l => l.assignmentId)));
+  const { data: freshCards } = await supabase
+    .from('lab_assignments').select('id, qty_produced, total_qty, qty_sent_total').in('id', checkIds);
+  const remainingById: Record<string, number> = {};
+  for (const c of freshCards ?? []) {
+    const target = c.qty_produced || c.total_qty || 0;
+    remainingById[c.id] = Math.max(0, target - (c.qty_sent_total ?? 0));
+  }
+  const blocked: { productNameVi: string; productNameEn: string }[] = [];
+  const adjusted: TransferLineInput[] = [];
+  for (const l of clean) {
+    const remaining = remainingById[l.assignmentId] ?? l.qtySent;
+    if (remaining <= 0) { blocked.push({ productNameVi: l.productNameVi, productNameEn: l.productNameEn }); continue; }
+    const qty = Math.min(l.qtySent, remaining);
+    remainingById[l.assignmentId] = remaining - qty; // a card can appear twice in one submission
+    adjusted.push({ ...l, qtySent: qty });
+  }
+  clean = adjusted;
+  if (!clean.length) {
+    return {
+      error: blocked.length
+        ? 'Already sent — someone else already sent this batch to stock a moment ago. Refresh the page.'
+        : 'No products selected',
+      blocked: blocked.length ? blocked : undefined,
+    };
+  }
 
   const { data: profile } = await supabase
     .from('profiles').select('full_name').eq('id', session.user.id).maybeSingle();
@@ -102,5 +144,5 @@ export async function submitStockTransferAction(
     } catch { /* truly best-effort — never block the chef, even if logging itself fails */ }
   }
 
-  return { ok: true, transferId: transfer.id };
+  return { ok: true, transferId: transfer.id, blocked: blocked.length ? blocked : undefined };
 }

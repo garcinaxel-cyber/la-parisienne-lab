@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
-import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, CalendarDays } from 'lucide-react';
+import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, CalendarDays, X } from 'lucide-react';
 import { thumb } from '@/lib/img-thumb';
 
 type RecapRow = { team: string; name: string; sku: string | null; variant: string | null; sent: number; received: number; pending: number };
@@ -45,6 +45,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
   const [savingLine, setSavingLine] = useState<string | null>(null);
   const [savingBon, setSavingBon] = useState<string | null>(null);
   const [doneBons, setDoneBons] = useState<Set<string>>(new Set());
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -113,6 +114,21 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
     })));
     setSavingBon(null);
     if (res.ok) setDoneBons(p => new Set(p).add(bon.id));
+  }
+
+  // Void a note nobody has started reconciling yet — e.g. a duplicate sent by mistake
+  // (see stock-actions.ts 2026-09-08 fix for why this could happen in the first place).
+  async function cancelBon(bon: Bon) {
+    const msg = vi
+      ? `Huỷ phiếu #${bon.id.slice(0, 6).toUpperCase()}? Sản phẩm sẽ có thể gửi lại.`
+      : `Cancel note #${bon.id.slice(0, 6).toUpperCase()}? The products become sendable again.`;
+    if (!window.confirm(msg)) return;
+    setCancellingId(bon.id);
+    const { cancelStockTransferAction } = await import('./actions');
+    const res = await cancelStockTransferAction(bon.id);
+    setCancellingId(null);
+    if (res.ok) setDoneBons(p => new Set(p).add(bon.id));
+    else window.alert(res.error ?? (vi ? 'Không huỷ được' : 'Could not cancel'));
   }
 
   const visible = bons.filter(b => !doneBons.has(b.id));
@@ -231,11 +247,20 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
                   {vi ? 'Phiếu' : 'Note'} #{bon.id.slice(0, 6).toUpperCase()}
                   <span className="text-ink-light font-normal"> · {bon.created_by_name ?? '—'} · {meta ? (vi ? meta.vi : meta.en) : bon.team} · {time}</span>
                 </div>
-                <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-                  {received.size > 0 && remaining.length > 0 && remaining.length < bon.lines.length
-                    ? `${bon.lines.length - remaining.length}/${bon.lines.length}`
-                    : (vi ? 'chờ' : 'pending')}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                    {received.size > 0 && remaining.length > 0 && remaining.length < bon.lines.length
+                      ? `${bon.lines.length - remaining.length}/${bon.lines.length}`
+                      : (vi ? 'chờ' : 'pending')}
+                  </span>
+                  {remaining.length === bon.lines.length && (
+                    <button onClick={() => cancelBon(bon)} disabled={cancellingId === bon.id}
+                      title={vi ? 'Huỷ phiếu (gửi nhầm)' : 'Cancel note (sent by mistake)'}
+                      className="text-ink-light hover:text-red-600 disabled:opacity-40">
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-12 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/40">

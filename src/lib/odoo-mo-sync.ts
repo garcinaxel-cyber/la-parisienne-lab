@@ -18,7 +18,7 @@ export interface SentToStock {
 export async function sentToStockBySku(supabase: SupabaseClient, date: string): Promise<SentToStock> {
   const { start, end } = labDayUtcRange(date);
   const { data: transfers } = await supabase.from('lab_stock_transfers')
-    .select('id').gte('created_at', start).lt('created_at', end);
+    .select('id').gte('created_at', start).lt('created_at', end).neq('status', 'cancelled');
   const tids = (transfers ?? []).map((t: any) => t.id);
   if (!tids.length) return { bySku: {}, missingSku: [] };
   const { data: lines } = await supabase.from('lab_stock_transfer_lines')

@@ -94,3 +94,43 @@ export async function receiveTransferLineAction(
   revalidatePath('/dashboard');
   return { ok: true, closed };
 }
+
+// Void a transfer note that hasn't been touched yet (still fully "pending" — nothing received
+// or reconciled against it). Added 2026-09-08 after a real duplicate note ("Phiếu #8EE131" /
+// "#D6B25B") had no way to be cancelled in the app once created — Axel had to fix Odoo by hand.
+// Also un-flags the source production cards so the same stock can be sent again correctly, and
+// excludes the note from syncStockToOdoo's totals (see lab/odoo-mo-sync.ts) going forward.
+export async function cancelStockTransferAction(
+  transferId: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  const { supabase, ok, name } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+
+  const { data: t } = await supabase.from('lab_stock_transfers').select('id, status').eq('id', transferId).maybeSingle();
+  if (!t) return { error: 'Transfer note not found' };
+  if (t.status !== 'pending') {
+    return { error: t.status === 'received' ? 'Already received — cannot cancel' : 'Already cancelled' };
+  }
+
+  const { data: lines } = await supabase.from('lab_stock_transfer_lines')
+    .select('assignment_id, qty_sent').eq('transfer_id', transferId);
+
+  const { error } = await supabase.from('lab_stock_transfers')
+    .update({ status: 'cancelled', cancelled_by_name: name, cancelled_at: new Date().toISOString() })
+    .eq('id', transferId);
+  if (error) return { error: error.message };
+
+  // Roll back qty_sent_total on every card this note touched, so the real remaining quantity
+  // becomes sendable again instead of looking already-covered forever.
+  for (const l of lines ?? []) {
+    if (!l.assignment_id) continue;
+    const { data: card } = await supabase.from('lab_assignments')
+      .select('qty_sent_total').eq('id', l.assignment_id).maybeSingle();
+    const newTotal = Math.max(0, (card?.qty_sent_total ?? 0) - (l.qty_sent ?? 0));
+    await supabase.from('lab_assignments').update({ qty_sent_total: newTotal, transferred: false }).eq('id', l.assignment_id);
+  }
+
+  revalidatePath('/reception');
+  revalidatePath('/dashboard');
+  return { ok: true };
+}
