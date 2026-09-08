@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, Minus, X, Loader2, Bell, Settings, CalendarDays } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Search, Plus, Minus, X, Loader2, Bell, Settings, CalendarDays, LogOut } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { thumb } from '@/lib/img-thumb';
 import { useI18n } from '@/lib/i18n';
@@ -51,6 +52,8 @@ const L = {
     tabStats: 'Thống kê',
     items: 'SP',
     bell: 'Thông báo',
+    logout: 'Đăng xuất',
+    logoutConfirm: 'Đăng xuất khỏi tài khoản này?',
     channelLabel: 'Kênh bán hàng',
     channelHint: 'Nguồn khách hàng — dùng để thống kê, không quyết định shop xử lý đơn.',
     shopLabel: 'Shop xử lý đơn (tạo trên Odoo)',
@@ -164,6 +167,8 @@ const L = {
     tabStats: 'Stats',
     items: 'items',
     bell: 'Notifications',
+    logout: 'Log out',
+    logoutConfirm: 'Log out of this account?',
     channelLabel: 'Sales channel',
     channelHint: 'Where the customer came from — for reporting only; it does not decide which shop handles the order.',
     shopLabel: 'Shop handling the order (Odoo document)',
@@ -504,11 +509,21 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
 
 function Header({ fullName, count, tab }: { fullName: string; count: number; tab: Tab }) {
   const { tr, lang, setLang } = useL();
+  const router = useRouter();
   const dateLabel = new Date().toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
   const [bellState, setBellState] = useState<'off' | 'on' | 'busy'>('off');
   useEffect(() => {
     getExistingPushSubscription().then(sub => setBellState(sub ? 'on' : 'off'));
   }, []);
+  // Axel, 2026-09-08: this page is its own top-level route (not under the admin Sidebar), so an
+  // admin who opens it to check on online sales had no way back except clearing cookies -- add an
+  // explicit sign-out here, same signOut()+redirect pattern as Sidebar/ShopView/StationView.
+  async function logout() {
+    if (!window.confirm(tr('logoutConfirm'))) return;
+    const { createClient } = await import('@/lib/supabase-browser');
+    await createClient().auth.signOut();
+    router.push('/login');
+  }
   async function toggleBell() {
     if (bellState === 'busy') return;
     setBellState('busy');
@@ -547,6 +562,9 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
             }}>{lg.toUpperCase()}</button>
           ))}
         </div>
+        <button onClick={logout} title={tr('logout')} aria-label={tr('logout')} style={{ color: 'rgba(255,255,255,0.6)' }}>
+          <LogOut size={18} />
+        </button>
       </div>
     </div>
   );
