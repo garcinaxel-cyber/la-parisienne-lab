@@ -100,6 +100,8 @@ const L = {
     shopNot: 'Shop chưa giao',
     today: 'Hôm nay',
     thisMonth: 'Tháng này',
+    merchLabel: 'Hàng hóa',
+    grandLabel: 'Tổng cộng (kèm phí)',
     orders: 'đơn',
     last14: 'Doanh thu 14 ngày qua',
     trendAria: 'Xu hướng doanh thu 14 ngày',
@@ -138,7 +140,8 @@ const L = {
     saleDate: 'Ngày bán',
     period: 'Khoảng thời gian',
     p14: '14 ngày', p30: '30 ngày', p90: '90 ngày', p365: '12 tháng',
-    rangeTotal: 'Doanh thu trong kỳ',
+    rangeTotal: 'Doanh thu trong kỳ (hàng hóa)',
+    rangeGrandTotal: 'kèm phí',
     revenueTrend: 'Doanh thu theo thời gian',
     perWeek: 'theo tuần', perMonth: 'theo tháng', perDay: 'theo ngày',
     feesLabel: 'Phụ phí thêm',
@@ -210,6 +213,8 @@ const L = {
     shopNot: 'Shop not delivered',
     today: 'Today',
     thisMonth: 'This month',
+    merchLabel: 'Merchandise',
+    grandLabel: 'Total (with fees)',
     orders: 'orders',
     last14: 'Revenue, last 14 days',
     trendAria: '14-day revenue trend',
@@ -248,7 +253,8 @@ const L = {
     saleDate: 'Sale date',
     period: 'Period',
     p14: '14 days', p30: '30 days', p90: '90 days', p365: '12 months',
-    rangeTotal: 'Revenue in period',
+    rangeTotal: 'Revenue in period (merchandise)',
+    rangeGrandTotal: 'with fees',
     revenueTrend: 'Revenue over time',
     perWeek: 'weekly', perMonth: 'monthly', perDay: 'daily',
     feesLabel: 'Extra fees',
@@ -1218,12 +1224,18 @@ function StatsTab() {
       <div className="grid grid-cols-2 gap-2.5 mb-4">
         <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
           <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>{tr('today')}</div>
+          <div style={{ fontSize: 9.5, color: INK_LIGHT, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{tr('merchLabel')}</div>
           <div style={{ fontSize: 19, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(data.todayTotal)}</div>
+          <div style={{ fontSize: 9.5, color: INK_LIGHT, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 3 }}>{tr('grandLabel')}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>{fmtCompactVnd(data.todayGrandTotal)}</div>
           <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.todayCount} {tr('orders')}</div>
         </div>
         <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
           <div style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, marginBottom: 4 }}>{tr('thisMonth')}</div>
+          <div style={{ fontSize: 9.5, color: INK_LIGHT, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{tr('merchLabel')}</div>
           <div style={{ fontSize: 19, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(data.monthTotal)}</div>
+          <div style={{ fontSize: 9.5, color: INK_LIGHT, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 3 }}>{tr('grandLabel')}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>{fmtCompactVnd(data.monthGrandTotal)}</div>
           <div style={{ fontSize: 11, color: '#047857', fontWeight: 600, marginTop: 2 }}>{data.monthCount} {tr('orders')}</div>
         </div>
       </div>
@@ -1242,7 +1254,7 @@ function StatsTab() {
       <div className="rounded-xl p-3.5 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', opacity: loading ? 0.6 : 1 }}>
         <div className="flex justify-between items-baseline mb-1">
           <SectionLabel>{tr('revenueTrend')} · {granularity}</SectionLabel>
-          <div style={{ fontSize: 11, color: INK_LIGHT }}>{tr('rangeTotal')}: <b style={{ color: NAVY }}>{fmtVnd(data.rangeTotal)}</b> · {data.rangeCount} {tr('orders')}</div>
+          <div style={{ fontSize: 11, color: INK_LIGHT }}>{tr('rangeTotal')}: <b style={{ color: NAVY }}>{fmtVnd(data.rangeTotal)}</b> ({tr('rangeGrandTotal')} <b style={{ color: INK }}>{fmtVnd(data.rangeGrandTotal)}</b>) · {data.rangeCount} {tr('orders')}</div>
         </div>
         <div style={{ fontSize: 11.5, color: shownDay ? NAVY : INK_LIGHT, fontWeight: 700, marginBottom: 3, minHeight: 15 }}>
           {shownDay ? `${shownDay.label} — ${fmtVnd(shownDay.total)}` : ' '}

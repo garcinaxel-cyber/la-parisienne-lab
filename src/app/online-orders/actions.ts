@@ -701,13 +701,18 @@ export async function uploadPaymentProofAction(orderBatchId: string, formData: F
 
 // ── Analytic ──
 export type OnlineAnalytics = {
-  todayTotal: number; todayCount: number; monthTotal: number; monthCount: number;
+  // Axel, 2026-09-08: "afficher les 2 montants" -- todayTotal/monthTotal/rangeTotal are the
+  // merchandise-only amount (product lines, no delivery fee, no line-level fee charges).
+  // The matching *GrandTotal field adds delivery_fee + fee-lines on top -- what the customer
+  // actually paid.
+  todayTotal: number; todayGrandTotal: number; todayCount: number;
+  monthTotal: number; monthGrandTotal: number; monthCount: number;
   byShop: { shop: string; total: number }[];
   byCategory: { category: string; total: number; products: { name: string; sku: string | null; qty: number; total: number }[] }[];
   byChannel: { channel: string; total: number }[];
   // Selected range (Axel, 2026-09-07: 'analyser sur une durée plus longue'): every breakdown
   // above is computed over rangeDays; today/month tiles are absolute.
-  rangeDays: number; rangeTotal: number; rangeCount: number;
+  rangeDays: number; rangeTotal: number; rangeGrandTotal: number; rangeCount: number;
   series: { key: string; label: string; total: number }[]; // day / week / month buckets
   daily: { date: string; total: number }[];
 };
@@ -722,11 +727,11 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Fetch enough for both the selected range and the absolute month tile.
   const since = new Date(Date.now() - Math.max(rangeDays, 60) * 86400000).toISOString();
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
-  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel').gte('created_at', since).limit(5000);
+  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).limit(5000);
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays, rangeTotal: 0, rangeCount: 0, series: [], daily: [] };
+  const empty: OnlineAnalytics = { todayTotal: 0, todayGrandTotal: 0, todayCount: 0, monthTotal: 0, monthGrandTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays, rangeTotal: 0, rangeGrandTotal: 0, rangeCount: 0, series: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
@@ -738,7 +743,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
       ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
     batchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at').in('order_batch_id', batchIds).limit(20000)
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at, is_fee').in('order_batch_id', batchIds).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const orderById = new Map<string, any>();
@@ -747,10 +752,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // (they already carry a category — no fiche lookup needed) so a fee line reports under
   // whichever source its order actually is, not a hardcoded 'shop_stock'.
   const lines: any[] = [
-    ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null })),
+    ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null, is_fee: false })),
     ...(stockLines ?? []).map((l: any) => {
       const o = orderById.get(l.order_batch_id);
-      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, category: l.category as string | null };
+      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, category: l.category as string | null, is_fee: !!l.is_fee };
     }),
   ];
 
@@ -770,7 +775,9 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const monthStr = todayStr.slice(0, 7);
-  let todayTotal = 0, monthTotal = 0;
+  // todayTotal/monthTotal/rangeTotal: merchandise only (is_fee lines excluded).
+  // todayGrandTotal/monthGrandTotal/rangeGrandTotal: merchandise + fee-lines + delivery_fee.
+  let todayTotal = 0, todayGrandTotal = 0, monthTotal = 0, monthGrandTotal = 0;
   const todayBatches = new Set<string>(), monthBatches = new Set<string>();
   const byShop = new Map<string, number>();
   const byCategory = new Map<string, number>();
@@ -778,16 +785,16 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const byChannel = new Map<string, number>();
   const byDay = new Map<string, number>();
   const rangeStart = new Date(Date.now() - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
-  let rangeTotal = 0; const rangeBatches = new Set<string>();
+  let rangeTotal = 0, rangeGrandTotal = 0; const rangeBatches = new Set<string>();
 
   for (const l of lines ?? []) {
     const lineTotal = (l.qty ?? 0) * (l.unit_price ?? 0);
     const deliveryDate = deliveryDateByBatch.get(l.order_batch_id) ?? l.created_at;
     const day = (deliveryDate ?? '').slice(0, 10);
-    if (day === todayStr) { todayTotal += lineTotal; todayBatches.add(l.order_batch_id); }
-    if (day.slice(0, 7) === monthStr) { monthTotal += lineTotal; monthBatches.add(l.order_batch_id); }
+    if (day === todayStr) { todayGrandTotal += lineTotal; todayBatches.add(l.order_batch_id); if (!l.is_fee) todayTotal += lineTotal; }
+    if (day.slice(0, 7) === monthStr) { monthGrandTotal += lineTotal; monthBatches.add(l.order_batch_id); if (!l.is_fee) monthTotal += lineTotal; }
     if (day < rangeStart) continue; // breakdowns below are scoped to the selected range
-    rangeTotal += lineTotal; rangeBatches.add(l.order_batch_id);
+    rangeGrandTotal += lineTotal; if (!l.is_fee) rangeTotal += lineTotal; rangeBatches.add(l.order_batch_id);
     const shop = l.shop_name ?? 'Khác';
     byShop.set(shop, (byShop.get(shop) ?? 0) + lineTotal);
     const ficheId = l.product_sku ? ficheIdBySku.get(l.product_sku) : null;
@@ -800,6 +807,17 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const ch = (l.channel ?? '').trim() || '—';
     byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
+  }
+
+  // delivery_fee lives on the order header, once per order (not per line) -- add it to the
+  // grand totals in its own pass so an order with several sale lines doesn't get it multiplied.
+  for (const o of orders ?? []) {
+    const fee = Number(o.delivery_fee ?? 0);
+    if (!fee) continue;
+    const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
+    if (day === todayStr) todayGrandTotal += fee;
+    if (day.slice(0, 7) === monthStr) monthGrandTotal += fee;
+    if (day >= rangeStart) rangeGrandTotal += fee;
   }
 
   const daily: { date: string; total: number }[] = [];
@@ -864,7 +882,8 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
 
   return {
     data: {
-      todayTotal, todayCount: todayBatches.size, monthTotal, monthCount: monthBatches.size,
+      todayTotal, todayGrandTotal, todayCount: todayBatches.size,
+      monthTotal, monthGrandTotal, monthCount: monthBatches.size,
       byShop: Array.from(byShop.entries()).map(([shop, total]) => ({ shop, total })).sort((a, b) => b.total - a.total),
       byCategory: Array.from(byCategory.entries()).map(([category, total]) => ({
         category, total,
@@ -875,7 +894,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
       // regardless of how an order was recorded (live app order vs backfilled excel_import
       // history). No per-source breakdown in the analytics; `source` is still tracked per-order
       // for the reconstruction feature, just not split out here.
-      rangeDays, rangeTotal, rangeCount: rangeBatches.size, series,
+      rangeDays, rangeTotal, rangeGrandTotal, rangeCount: rangeBatches.size, series,
       daily,
     },
   };
