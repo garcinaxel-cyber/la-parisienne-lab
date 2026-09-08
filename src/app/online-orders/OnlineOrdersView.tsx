@@ -1293,7 +1293,7 @@ function StatsTab() {
           <div key={s.shop}>
             <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
               <span style={{ fontWeight: 600 }}>{s.shop}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(s.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(s.total, sumShop)}</span></span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtVnd(s.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(s.total, sumShop)}</span></span>
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
               <div style={{ width: `${(s.total / maxShop) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
