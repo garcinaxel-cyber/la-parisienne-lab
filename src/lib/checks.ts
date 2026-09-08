@@ -157,6 +157,44 @@ export async function checkProductionToStock(supabase: SupabaseClient, from: str
   return issues;
 }
 
+// ── 2b. Envoyé en stock > quantité réellement produite (hors extra) ─────────
+// Direct symptom of a duplicate/stray transfer note (see station/[team]/stock-actions.ts
+// 2026-09-08 fix) — each card is its own island tied to one delivery date, so a chef producing
+// TODAY for TOMORROW's card is already correctly represented by that card's own produced/sent
+// totals and can never trigger this on its own; only sending strictly more than was actually
+// made can. Extra/buffer cards are excluded — "extra" means producing beyond what was asked
+// for, so there is no single target to compare against for them.
+export interface OverSentIssue {
+  date: string; team: string; product: string; produced: number; sent: number; over: number; card_id: string;
+}
+
+export async function checkOverSentToStock(supabase: SupabaseClient, from: string, to: string): Promise<OverSentIssue[]> {
+  const { data: imports } = await supabase.from('lab_imports')
+    .select('id, delivery_date').eq('status', 'published').gte('delivery_date', from).lte('delivery_date', to);
+  const importIds = (imports ?? []).map((i: any) => i.id);
+  if (!importIds.length) return [];
+  const dateByImport: Record<string, string> = {};
+  for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
+
+  const { data: rows } = await supabase.from('lab_assignments')
+    .select('id, team, product_name_vi, qty_produced, total_qty, qty_sent_total, cancelled, is_extra, import_id')
+    .in('import_id', importIds);
+
+  const issues: OverSentIssue[] = [];
+  for (const a of rows ?? []) {
+    if (a.cancelled || a.is_extra) continue;
+    const produced = a.qty_produced || a.total_qty || 0;
+    const sent = a.qty_sent_total || 0;
+    if (sent > produced) {
+      issues.push({
+        date: dateByImport[a.import_id], team: a.team, product: a.product_name_vi,
+        produced, sent, over: sent - produced, card_id: a.id,
+      });
+    }
+  }
+  return issues.sort((x, y) => y.over - x.over);
+}
+
 // ── 3. Stock → Odoo ──────────────────────────────────────────────────────────
 // Reuses syncStockToOdoo() in dry-run — it already computes exactly this comparison (sum sent
 // to stock per SKU/day vs sum of Odoo MOs) for the real-time sync and the manual resync route;
@@ -533,6 +571,7 @@ export interface AllChecksResult {
   checkRangeTo: string;
   deliveryCoverage: DeliveryCoverageIssue[];
   productionStock: ProductionStockIssue[];
+  overSentStock: OverSentIssue[];
   stockOdoo: StockOdooIssue[];
   odooVolume: OdooVolume;
   lateDeliveries: LateDeliveryIssue[];
@@ -554,10 +593,11 @@ export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksR
     ]);
     return { snapshot, safetyStock, orphanStock };
   })();
-  const [reconciliation, deliveryCoverage, productionStock, stockOdoo, odooVolume, lateDeliveries, stock, scrapSync] = await Promise.all([
+  const [reconciliation, deliveryCoverage, productionStock, overSentStock, stockOdoo, odooVolume, lateDeliveries, stock, scrapSync] = await Promise.all([
     runReconciliationCheck(supabase),
     checkDeliveryCoverage(supabase, from, to),
     checkProductionToStock(supabase, from, to),
+    checkOverSentToStock(supabase, from, to),
     checkStockToOdoo(supabase, from, to),
     measureOdooFetchVolume(),
     checkLateDeliveries(supabase).catch((): LateDeliveryIssue[] => []),
@@ -565,7 +605,7 @@ export async function runAllChecks(supabase: SupabaseClient): Promise<AllChecksR
     checkScrapSync(supabase).catch((): ScrapSyncIssue[] => []),
   ]);
   return {
-    reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, stockOdoo, odooVolume,
+    reconciliation, checkRangeFrom: from, checkRangeTo: to, deliveryCoverage, productionStock, overSentStock, stockOdoo, odooVolume,
     lateDeliveries, stockSnapshot: stock.snapshot, safetyStock: stock.safetyStock, orphanStock: stock.orphanStock, scrapSync,
   };
 }

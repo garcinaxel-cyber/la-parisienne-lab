@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -43,6 +43,10 @@ const ADMIN_NAV = [
   // only, deliberately excluded from lab_manager per Axel's explicit request. Renamed "Check"
   // 2026-08-20 — URL kept as /admin/reconciliation on purpose (zero churn).
   { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true },
+  // Per-shop process recap (2026-09-08, Axel: "recap du respect du process des shops") —
+  // control/audit tool over the shops' own workflow (réception, comptage, commande, pertes,
+  // transferts), read-only, today/yesterday only. Same admin-only posture as Check.
+  { href: '/admin/shop-process', icon: ClipboardListShops, labelVi: 'Theo dõi cửa hàng', labelEn: 'Suivi shops', adminOnly: true },
 ];
 
 export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {

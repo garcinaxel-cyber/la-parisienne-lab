@@ -9,6 +9,7 @@ import { runCheckNowAction, fixStockOdooIssueAction } from './actions';
 type ReconciliationIssue = { date: string; team: string; variantLabel: string; name: string; needed: number; tracked: number; gap: number };
 type DeliveryCoverageIssue = { kind: 'not_materialized' | 'qty_drift'; date: string; order_ref: string; sku?: string; expected_odoo?: number; expected_app?: number };
 type ProductionStockIssue = { date: string; team: string; product: string; produced: number; sent: number; gap: number; is_extra: boolean; card_id: string };
+type OverSentIssue = { date: string; team: string; product: string; produced: number; sent: number; over: number; card_id: string };
 type StockOdooIssue = { date: string; kind: 'not_synced' | 'drifted' | 'no_odoo_product' | 'missing_sku' | 'error'; sku?: string; product?: string; qty?: number; mo?: string; from?: number; to?: number; detail?: string };
 type LateDeliveryIssue = { date: string; order_ref: string; shop: string | null; kind: 'never_opened' | 'not_validated' | 'not_pushed'; push_error?: string | null; doneOnOdoo?: boolean };
 type SafetyStockIssue = { sku: string; name: string; category: string; qty: number; threshold: number };
@@ -28,6 +29,7 @@ type Run = {
   check_range_from: string | null; check_range_to: string | null;
   delivery_coverage_issues: DeliveryCoverageIssue[]; delivery_coverage_count: number;
   production_stock_issues: ProductionStockIssue[]; production_stock_count: number;
+  over_sent_stock_issues: OverSentIssue[]; over_sent_stock_count: number;
   stock_odoo_issues: StockOdooIssue[]; stock_odoo_count: number;
   odoo_volume?: OdooVolume | null;
   late_delivery_issues?: LateDeliveryIssue[] | null; late_delivery_count?: number | null;
@@ -42,7 +44,7 @@ type OdooVolume =
   | { error: string; measured_at: string };
 
 function totalOf(r: Run): number {
-  return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.stock_odoo_count ?? 0)
+  return r.issue_count + (r.delivery_coverage_count ?? 0) + (r.production_stock_count ?? 0) + (r.over_sent_stock_count ?? 0) + (r.stock_odoo_count ?? 0)
     + (r.late_delivery_count ?? 0) + (r.safety_stock_count ?? 0) + (r.orphan_stock_count ?? 0) + (r.scrap_sync_count ?? 0);
 }
 
@@ -533,6 +535,34 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
                     </div>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B45309', backgroundColor: '#FFFBEB' }}>
                       {vi ? 'Đã làm' : 'Made'} {iss.produced} · {vi ? 'đã gửi' : 'sent'} {iss.sent}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+
+          {/* 3b. Envoyé en stock > produit réellement (hors extra) — symptôme direct d'un
+              phiếu en double, comme le 2026-09-07 "hung" corrigé à la main dans Odoo */}
+          <Section
+            icon={ArrowLeftRight}
+            title={vi ? 'Gửi kho > đã sản xuất' : 'Envoyé en stock > produit'}
+            subtitle={vi ? 'Có thể do gửi phiếu 2 lần (không tính hàng extra)' : "Signe d'un phiếu envoyé deux fois (hors production extra)"}
+            count={latest.over_sent_stock_count ?? 0} vi={vi}>
+            {(latest.over_sent_stock_issues ?? []).length > 0 && (
+              <div className="divide-y divide-border-soft">
+                {(latest.over_sent_stock_issues ?? []).map((iss, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5 gap-3 text-sm">
+                    <div className="text-navy min-w-0 truncate">
+                      {iss.date} ·{' '}
+                      <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full"
+                        style={{ color: TEAM_LABELS[iss.team as Team]?.color, backgroundColor: TEAM_LABELS[iss.team as Team]?.bg }}>
+                        {teamLabel(iss.team)}
+                      </span>{' '}
+                      {iss.product}
+                    </div>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ color: '#B42318', backgroundColor: '#FDF2F2' }}>
+                      {vi ? 'Đã làm' : 'Produit'} {iss.produced} · {vi ? 'đã gửi' : 'envoyé'} {iss.sent} · +{iss.over}
                     </span>
                   </div>
                 ))}
