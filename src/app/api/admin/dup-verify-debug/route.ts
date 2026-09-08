@@ -107,7 +107,8 @@ export async function GET(req: Request) {
         overageVsCorrect: odoo - correct,
         odooMos: odooBySku[sku]?.names ?? [],
       };
-    }).filter(x => x.actualQtySentInSupabase > x.correctQtyShouldHaveBeenSent || x.overageVsCorrect > 0);
+    });
+    const debugAll = url.searchParams.get('all') === '1' ? skuComparison : skuComparison.filter(x => x.actualQtySentInSupabase > x.correctQtyShouldHaveBeenSent || x.overageVsCorrect > 0);
 
     out.push({
       team: c.team, date: c.date,
@@ -116,7 +117,7 @@ export async function GET(req: Request) {
         sig, count: arr.length,
         transfers: arr.map((t: any) => ({ id: t.id, created_at: t.created_at, created_by_name: t.created_by_name, status: t.status })),
       })),
-      skuComparison,
+      skuComparison: debugAll,
     });
   }
 
