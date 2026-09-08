@@ -136,10 +136,6 @@ const L = {
     reconstructOriginalTotal: 'Tổng tiền gốc: ',
     reconstructMismatch: 'Tổng hiện tại khác tổng gốc — kiểm tra lại đơn giá trước khi lưu',
     saleDate: 'Ngày bán',
-    bySource: 'Đặt lab / Kho shop / Lịch sử',
-    srcLabShort: 'Đặt lab',
-    srcStockShort: 'Kho shop',
-    srcImportShort: 'Lịch sử nhập',
     period: 'Khoảng thời gian',
     p14: '14 ngày', p30: '30 ngày', p90: '90 ngày', p365: '12 tháng',
     rangeTotal: 'Doanh thu trong kỳ',
@@ -250,10 +246,6 @@ const L = {
     reconstructOriginalTotal: 'Original total: ',
     reconstructMismatch: "Current total doesn't match the original — double-check the price before saving",
     saleDate: 'Sale date',
-    bySource: 'Lab orders / Shop stock / Imported',
-    srcLabShort: 'Lab orders',
-    srcStockShort: 'Shop stock',
-    srcImportShort: 'Imported history',
     period: 'Period',
     p14: '14 days', p30: '30 days', p90: '90 days', p365: '12 months',
     rangeTotal: 'Revenue in period',
@@ -1280,21 +1272,6 @@ function StatsTab() {
             );
           })}
         </svg>
-      </div>
-
-      <SectionLabel>{tr('bySource')}</SectionLabel>
-      <div className="grid grid-cols-2 gap-2.5 mb-4">
-        {data.bySource.map(sv => {
-          const label = sv.source === 'shop_stock' ? tr('srcStockShort') : sv.source === 'excel_import' ? tr('srcImportShort') : tr('srcLabShort');
-          const color = sv.source === 'shop_stock' ? '#B45309' : sv.source === 'excel_import' ? '#6D28D9' : INK_LIGHT;
-          return (
-            <div key={sv.source} className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-              <div style={{ fontSize: 11, color, fontWeight: 700, marginBottom: 4 }}>{label}</div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: NAVY }}>{fmtCompactVnd(sv.total)} <span style={{ fontSize: 12, color: INK_LIGHT, fontWeight: 600 }}>· {pct(sv.total, data.rangeTotal || 1)}</span></div>
-              <div style={{ fontSize: 11, color: INK_LIGHT, marginTop: 2 }}>{sv.count} {tr('orders')}</div>
-            </div>
-          );
-        })}
       </div>
 
       <SectionLabel>{tr('byShop')}</SectionLabel>

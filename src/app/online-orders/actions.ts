@@ -705,7 +705,6 @@ export type OnlineAnalytics = {
   byShop: { shop: string; total: number }[];
   byCategory: { category: string; total: number; products: { name: string; sku: string | null; qty: number; total: number }[] }[];
   byChannel: { channel: string; total: number }[];
-  bySource: { source: 'lab' | 'shop_stock' | 'excel_import'; total: number; count: number }[];
   // Selected range (Axel, 2026-09-07: 'analyser sur une durée plus longue'): every breakdown
   // above is computed over rangeDays; today/month tiles are absolute.
   rangeDays: number; rangeTotal: number; rangeCount: number;
@@ -727,7 +726,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], bySource: [], rangeDays, rangeTotal: 0, rangeCount: 0, series: [], daily: [] };
+  const empty: OnlineAnalytics = { todayTotal: 0, todayCount: 0, monthTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays, rangeTotal: 0, rangeCount: 0, series: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
@@ -751,8 +750,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     ...(labLines ?? []).map((l: any) => ({ ...l, source: 'lab' as const, category: null as string | null })),
     ...(stockLines ?? []).map((l: any) => {
       const o = orderById.get(l.order_batch_id);
-      const source: 'lab' | 'shop_stock' | 'excel_import' = o?.source === 'shop_stock' ? 'shop_stock' : o?.source === 'excel_import' ? 'excel_import' : 'lab';
-      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, source, category: l.category as string | null };
+      return { order_batch_id: l.order_batch_id, qty: l.qty, unit_price: l.unit_price, shop_name: o?.shop_name ?? null, channel: o?.channel ?? null, product_sku: l.sku, product_name_vi: l.product_name_vi, created_at: l.created_at, category: l.category as string | null };
     }),
   ];
 
@@ -778,7 +776,6 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const byCategory = new Map<string, number>();
   const productsByCategory = new Map<string, Map<string, { name: string; sku: string | null; qty: number; total: number }>>();
   const byChannel = new Map<string, number>();
-  const bySource = new Map<'lab' | 'shop_stock' | 'excel_import', { total: number; batches: Set<string> }>();
   const byDay = new Map<string, number>();
   const rangeStart = new Date(Date.now() - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
   let rangeTotal = 0; const rangeBatches = new Set<string>();
@@ -803,9 +800,6 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const ch = (l.channel ?? '').trim() || '—';
     byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
-    const src = (l.source ?? 'lab') as 'lab' | 'shop_stock' | 'excel_import';
-    const cur = bySource.get(src) ?? { total: 0, batches: new Set<string>() };
-    cur.total += lineTotal; cur.batches.add(l.order_batch_id); bySource.set(src, cur);
   }
 
   const daily: { date: string; total: number }[] = [];
@@ -877,12 +871,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
         products: Array.from((productsByCategory.get(category) ?? new Map()).values()).sort((a: any, b: any) => b.total - a.total),
       })).sort((a, b) => b.total - a.total),
       byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
-      // Historical excel-imported revenue kept out of the 'lab' bucket -- lumping it in there
-      // made "Lab orders" look like ongoing production volume when most of it was one-time
-      // imported history (Axel, 2026-09-08: noticed the total looked off).
-      bySource: (['lab', 'shop_stock', 'excel_import'] as const)
-        .map(source => ({ source, total: bySource.get(source)?.total ?? 0, count: bySource.get(source)?.batches.size ?? 0 }))
-        .filter(sv => sv.total > 0 || sv.count > 0),
+      // Axel, 2026-09-08: "on comptabilise tout ensemble" -- one combined online-orders total
+      // regardless of how an order was recorded (live app order vs backfilled excel_import
+      // history). No per-source breakdown in the analytics; `source` is still tracked per-order
+      // for the reconstruction feature, just not split out here.
       rangeDays, rangeTotal, rangeCount: rangeBatches.size, series,
       daily,
     },
