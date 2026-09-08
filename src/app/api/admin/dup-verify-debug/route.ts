@@ -62,14 +62,11 @@ export async function GET(req: Request) {
     for (const t of withSig) {
       for (const l of t.lines) actualSentBySku[l.sku] = (actualSentBySku[l.sku] ?? 0) + l.qty_sent;
     }
+    // Count each distinct signature ONCE regardless of how many times it was submitted
+    // (a real duplicate has the exact same sku:qty lines re-sent) — this is the correct total.
     for (const [sig, arr] of Object.entries(bySig)) {
       const first = arr[0];
       for (const l of first.lines) correctBySku[l.sku] = (correctBySku[l.sku] ?? 0) + l.qty_sent;
-    }
-    for (const t of withSig) {
-      if (bySig[t.sig]?.length === 1) {
-        for (const l of t.lines) correctBySku[l.sku] = (correctBySku[l.sku] ?? 0) + l.qty_sent;
-      }
     }
 
     const skus = Array.from(new Set(lines.map((l: any) => l.sku).filter(Boolean)));
