@@ -132,6 +132,8 @@ const L = {
     reconstructCancel: 'Huỷ',
     reconstructSaving: 'Đang lưu...',
     reconstructEmpty: 'Chưa chọn sản phẩm nào',
+    reconstructOriginalTotal: 'Tổng tiền gốc: ',
+    reconstructMismatch: 'Tổng hiện tại khác tổng gốc — kiểm tra lại đơn giá trước khi lưu',
     saleDate: 'Ngày bán',
     bySource: 'Đặt lab / Kho shop',
     srcLabShort: 'Đặt lab',
@@ -242,6 +244,8 @@ const L = {
     reconstructCancel: 'Cancel',
     reconstructSaving: 'Saving...',
     reconstructEmpty: 'No product picked yet',
+    reconstructOriginalTotal: 'Original total: ',
+    reconstructMismatch: "Current total doesn't match the original — double-check the price before saving",
     saleDate: 'Sale date',
     bySource: 'Lab orders / Shop stock',
     srcLabShort: 'Lab orders',
@@ -884,6 +888,14 @@ function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSumma
   const [lines, setLines] = useState<ReconstructLine[]>([]);
   const [saving, setSaving] = useState(false);
   const originalText = order.items.map(i => i.nameVi).join(', ');
+  // Preserve the revenue the historical row already carried -- excel_import orders land with
+  // exactly one generic no-SKU line, so order.total IS that original amount. Used both to
+  // prefill a sane price (instead of a catalog price that may not exist) and to flag any
+  // mismatch before saving (Axel, 2026-09-08: a reconstruction silently zeroed an order's total
+  // because the picked product had no catalog price and nothing caught it).
+  const originalTotal = order.total;
+  const newTotal = lines.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0);
+  const mismatch = lines.length > 0 && newTotal !== originalTotal;
 
   useEffect(() => {
     const q = query.trim();
@@ -898,7 +910,13 @@ function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSumma
   }, [query]);
 
   function addLine(p: OnlineProduct) {
-    setLines(ls => [...ls, { key: `${p.ficheId}:${p.variantId}:${ls.length}`, ficheId: p.ficheId, variantId: p.variantId, sku: p.sku, nameVi: p.nameVi, qty: 1, unitPrice: p.price ?? 0 }]);
+    setLines(ls => {
+      // First line and no catalog price to go on -- default to the original order's total
+      // rather than 0, so leaving the price field untouched can't silently zero the order.
+      const fallback = ls.length === 0 ? originalTotal : 0;
+      const unitPrice = p.price ?? fallback;
+      return [...ls, { key: `${p.ficheId}:${p.variantId}:${ls.length}`, ficheId: p.ficheId, variantId: p.variantId, sku: p.sku, nameVi: p.nameVi, qty: 1, unitPrice }];
+    });
     setQuery('');
   }
   function removeLine(key: string) { setLines(ls => ls.filter(l => l.key !== key)); }
@@ -954,10 +972,14 @@ function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSumma
         </div>
       )}
 
+      <div style={{ fontSize: 11.5, marginBottom: 6, fontWeight: mismatch ? 700 : 400, color: mismatch ? '#B91C1C' : INK_LIGHT }}>
+        {tr('reconstructOriginalTotal')}{fmtCompactVnd(originalTotal)} · {fmtCompactVnd(newTotal)}
+        {mismatch ? ` — ${tr('reconstructMismatch')}` : ''}
+      </div>
       <div className="flex gap-2">
         <button onClick={onCancel} style={{ fontSize: 12, fontWeight: 600, color: INK_LIGHT, padding: '6px 12px' }}>{tr('reconstructCancel')}</button>
         <button onClick={save} disabled={!lines.length || saving}
-          style={{ fontSize: 12, fontWeight: 700, color: '#fff', backgroundColor: '#6D28D9', padding: '6px 14px', borderRadius: 8, opacity: !lines.length || saving ? 0.5 : 1 }}>
+          style={{ fontSize: 12, fontWeight: 700, color: '#fff', backgroundColor: mismatch ? '#B91C1C' : '#6D28D9', padding: '6px 14px', borderRadius: 8, opacity: !lines.length || saving ? 0.5 : 1 }}>
           {saving ? tr('reconstructSaving') : tr('reconstructSave')}
         </button>
       </div>
