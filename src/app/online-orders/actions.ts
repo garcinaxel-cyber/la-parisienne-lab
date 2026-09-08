@@ -422,11 +422,15 @@ export async function submitShopStockSaleAction(input: {
 // ── Suivi (tracking) ──
 export type OnlineOrderSummary = {
   orderBatchId: string; shopName: string; channel: string | null; orderRef: string | null;
-  source: 'lab' | 'shop_stock';
+  // 'excel_import': historical row backfilled from the seller's old Excel tracker (Axel,
+  // 2026-09-08) -- revenue-only, never touches lab_manual_cakes/Odoo. Kept as its own source
+  // value (not folded into 'shop_stock') specifically so it stays visually distinguishable from
+  // anything entered live in the app, per Axel's request.
+  source: 'lab' | 'shop_stock' | 'excel_import';
   paymentProofUrl: string | null;
   createdAt: string; deliveryDate: string;
   customerName: string | null; customerPhone: string | null;
-  items: { nameVi: string; qty: number; unitPrice: number | null }[];
+  items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null }[];
   total: number; deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
 };
@@ -461,7 +465,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
           .in('order_batch_id', labBatchIds)
       : Promise.resolve({ data: [] as any[] }),
     allBatchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', allBatchIds)
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', allBatchIds)
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -486,13 +490,14 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
     const first = ls[0];
     const total = ls.reduce((s: number, l: any) => s + (l.qty ?? 0) * (l.unit_price ?? 0), 0);
     const orderRef = ls.find((l: any) => l.matched_order_ref && l.matched_order_ref !== '__pending_create__')?.matched_order_ref ?? null;
-    const source: 'lab' | 'shop_stock' = o.source === 'shop_stock' ? 'shop_stock' : 'lab';
+    const source: 'lab' | 'shop_stock' | 'excel_import' =
+      o.source === 'shop_stock' ? 'shop_stock' : o.source === 'excel_import' ? 'excel_import' : 'lab';
     return {
       orderBatchId: o.order_batch_id, source,
       shopName: o.shop_name ?? first?.shop_name ?? '', channel: o.channel ?? first?.channel ?? null,
       orderRef, createdAt: o.created_at, deliveryDate: o.delivery_date ?? first?.delivery_date ?? '',
       customerName: o.customer_name ?? first?.customer_name ?? null, customerPhone: o.customer_phone ?? first?.customer_phone ?? null,
-      items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price })),
+      items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price, sku: l.sku ?? null })),
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
       shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
@@ -500,6 +505,42 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
     };
   });
   return { orders: result };
+}
+
+// Reconstruction (Axel, 2026-09-08): a historical excel_import order whose product text
+// couldn't be auto-matched to a real SKU lands with ONE generic no-SKU revenue line (original
+// Excel text kept verbatim as product_name_vi). This lets the seller replace that single line
+// with real catalog items if she still remembers the order -- purely descriptive, never touches
+// lab_manual_cakes/Odoo, and is refused for any order that isn't an import (a live lab/shop_stock
+// order's lines are wired into other flows and must never be rewritten from here).
+export async function replaceOnlineOrderLinesAction(
+  orderBatchId: string,
+  items: { ficheId: string | null; variantId: string | null; sku: string | null; nameVi: string; qty: number; unitPrice: number }[],
+): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const ownErr = await assertOwnsOrder(supabase, orderBatchId, auth);
+  if (ownErr) return { error: ownErr };
+  if (!items.length) return { error: 'Empty' };
+
+  const { data: order } = await supabase.from('lab_online_orders').select('source').eq('order_batch_id', orderBatchId).maybeSingle();
+  if (!order || order.source !== 'excel_import') return { error: 'Not an imported order' };
+
+  // Only the non-fee product line(s) are replaced -- a delivery-fee line (is_fee: true) is
+  // unrelated to "what was sold" and is never touched here.
+  const { error: delErr } = await supabase.from('lab_online_sale_lines').delete().eq('order_batch_id', orderBatchId).eq('is_fee', false);
+  if (delErr) return { error: delErr.message };
+
+  const rows = items.map(it => ({
+    order_batch_id: orderBatchId, fiche_id: it.ficheId, variant_id: it.variantId, sku: it.sku,
+    product_name_vi: it.nameVi, qty: Math.max(1, Math.round(it.qty)), unit_price: Math.max(0, it.unitPrice), is_fee: false,
+  }));
+  const { error: insErr } = await supabase.from('lab_online_sale_lines').insert(rows);
+  if (insErr) return { error: insErr.message };
+  revalidatePath('/online-orders');
+  return { ok: true };
 }
 
 async function assertOwnsOrder(supabase: NonNullable<ReturnType<typeof service>>, orderBatchId: string, auth: { userId: string; isAdmin: boolean }): Promise<string | null> {

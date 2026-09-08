@@ -123,6 +123,15 @@ const L = {
     savingStock: 'Đang lưu...',
     okStock: 'Đã lưu đơn bán từ kho — shop đã được thông báo',
     stockBadge: '🏪 Kho shop',
+    importBadge: '📥 Nhập từ lịch sử',
+    needsItemsBadge: '✏️ Cần bổ sung chi tiết',
+    reconstructTitle: 'Bổ sung chi tiết đơn hàng cũ',
+    reconstructHint: 'Văn bản gốc: ',
+    reconstructSearchPh: 'Tìm sản phẩm để thay thế...',
+    reconstructSave: 'Lưu chi tiết',
+    reconstructCancel: 'Huỷ',
+    reconstructSaving: 'Đang lưu...',
+    reconstructEmpty: 'Chưa chọn sản phẩm nào',
     saleDate: 'Ngày bán',
     bySource: 'Đặt lab / Kho shop',
     srcLabShort: 'Đặt lab',
@@ -224,6 +233,15 @@ const L = {
     savingStock: 'Saving...',
     okStock: 'Shop-stock sale saved — the shop has been notified',
     stockBadge: '🏪 Shop stock',
+    importBadge: '📥 Imported (history)',
+    needsItemsBadge: '✏️ Detail needed',
+    reconstructTitle: 'Fill in this historical order',
+    reconstructHint: 'Original text: ',
+    reconstructSearchPh: 'Search a product to replace it...',
+    reconstructSave: 'Save detail',
+    reconstructCancel: 'Cancel',
+    reconstructSaving: 'Saving...',
+    reconstructEmpty: 'No product picked yet',
     saleDate: 'Sale date',
     bySource: 'Lab orders / Shop stock',
     srcLabShort: 'Lab orders',
@@ -852,6 +870,101 @@ function OrderTab(props: any) {
   );
 }
 
+// Reconstruction panel (Axel, 2026-09-08): lets the seller replace a historical import's single
+// generic no-SKU revenue line with real catalog items, if she still remembers the order. Reuses
+// the same product search as the order-creation tab; deliberately minimal (no delivery-date,
+// shop, cake-message fields -- this only ever edits WHAT was sold, never re-triggers anything).
+type ReconstructLine = { key: string; ficheId: string; variantId: string | null; sku: string | null; nameVi: string; qty: number; unitPrice: number };
+
+function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSummary; onDone: () => void; onCancel: () => void }) {
+  const { tr } = useL();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<OnlineProduct[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [lines, setLines] = useState<ReconstructLine[]>([]);
+  const [saving, setSaving] = useState(false);
+  const originalText = order.items.map(i => i.nameVi).join(', ');
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const res = await actions.searchOnlineProductsAction(q);
+      setResults(res.products ?? []);
+      setSearching(false);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  function addLine(p: OnlineProduct) {
+    setLines(ls => [...ls, { key: `${p.ficheId}:${p.variantId}:${ls.length}`, ficheId: p.ficheId, variantId: p.variantId, sku: p.sku, nameVi: p.nameVi, qty: 1, unitPrice: p.price ?? 0 }]);
+    setQuery('');
+  }
+  function removeLine(key: string) { setLines(ls => ls.filter(l => l.key !== key)); }
+  function updateQty(key: string, qty: number) { setLines(ls => ls.map(l => l.key === key ? { ...l, qty: Math.max(1, qty) } : l)); }
+  function updatePrice(key: string, unitPrice: number) { setLines(ls => ls.map(l => l.key === key ? { ...l, unitPrice: Math.max(0, unitPrice) } : l)); }
+
+  async function save() {
+    if (!lines.length) return;
+    setSaving(true);
+    await actions.replaceOnlineOrderLinesAction(order.orderBatchId, lines.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, sku: l.sku, nameVi: l.nameVi, qty: l.qty, unitPrice: l.unitPrice })));
+    setSaving(false);
+    onDone();
+  }
+
+  return (
+    <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE' }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#6D28D9', marginBottom: 4 }}>{tr('reconstructTitle')}</div>
+      <div style={{ fontSize: 11.5, color: INK_LIGHT, marginBottom: 8, fontStyle: 'italic' }}>{tr('reconstructHint')}{originalText}</div>
+
+      <div className="relative mb-2">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+          <Search size={13} color={INK_LIGHT} />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('reconstructSearchPh')}
+            className="flex-1 text-sm outline-none" style={{ fontSize: 12.5 }} />
+          {searching && <Loader2 size={13} className="animate-spin" color={INK_LIGHT} />}
+        </div>
+        {query.trim() && results.length > 0 && (
+          <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg shadow-lg max-h-56 overflow-y-auto" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+            {results.map(p => (
+              <button key={`${p.ficheId}:${p.variantId}`} onMouseDown={e => e.preventDefault()} onClick={() => addLine(p)}
+                className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-gray-50" style={{ borderBottom: `1px solid ${CREAM_DARK}`, fontSize: 12.5 }}>
+                {p.nameVi}{p.isCake ? ' 🎂' : ''}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {lines.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: INK_LIGHT, marginBottom: 8 }}>{tr('reconstructEmpty')}</div>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {lines.map(l => (
+            <div key={l.key} className="flex items-center gap-2 rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+              <span className="flex-1 min-w-0 truncate" style={{ fontSize: 12 }}>{l.nameVi}</span>
+              <input type="number" min={1} value={l.qty} onChange={e => updateQty(l.key, Number(e.target.value))}
+                className="text-center rounded" style={{ width: 36, fontSize: 12, border: `1px solid ${BORDER}`, padding: '2px 0' }} />
+              <input type="number" min={0} value={l.unitPrice} onChange={e => updatePrice(l.key, Number(e.target.value))}
+                className="text-right rounded" style={{ width: 76, fontSize: 12, border: `1px solid ${BORDER}`, padding: '2px 4px' }} />
+              <button onClick={() => removeLine(l.key)}><X size={13} color={INK_LIGHT} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button onClick={onCancel} style={{ fontSize: 12, fontWeight: 600, color: INK_LIGHT, padding: '6px 12px' }}>{tr('reconstructCancel')}</button>
+        <button onClick={save} disabled={!lines.length || saving}
+          style={{ fontSize: 12, fontWeight: 700, color: '#fff', backgroundColor: '#6D28D9', padding: '6px 14px', borderRadius: 8, opacity: !lines.length || saving ? 0.5 : 1 }}>
+          {saving ? tr('reconstructSaving') : tr('reconstructSave')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TrackTab({ isAdmin }: { isAdmin: boolean }) {
   const { tr, lang } = useL();
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
@@ -863,6 +976,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
   // as before; picking a date here re-queries that single delivery_date only, so finding a given
   // day no longer means scrolling past a long, growing history (imports included).
   const [jumpDate, setJumpDate] = useState('');
+  const [reconstructing, setReconstructing] = useState<string | null>(null);
 
   async function load(deliveryDate?: string) {
     const res = await actions.getMyOnlineOrdersAction(deliveryDate ? { deliveryDate } : undefined);
@@ -967,7 +1081,9 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               <div className="flex justify-between items-start mb-2">
                 <div className="flex gap-1.5 items-center flex-wrap">
                   <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
-                  {o.source === 'shop_stock' ? (
+                  {o.source === 'excel_import' ? (
+                    <span style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('importBadge')}</span>
+                  ) : o.source === 'shop_stock' ? (
                     <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('stockBadge')}</span>
                   ) : o.orderRef ? (
                     <span style={{ backgroundColor: CREAM, color: '#8a7326', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.orderRef}</span>
@@ -980,6 +1096,16 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</div>
               <div style={{ fontSize: 12, color: INK_LIGHT, marginBottom: 9 }}>{o.items.map(i => `${i.nameVi} ×${i.qty}`).join(', ')}</div>
+              {o.source === 'excel_import' && o.items.length > 0 && o.items.every(i => !i.sku) && (
+                <button onClick={() => setReconstructing(reconstructing === o.orderBatchId ? null : o.orderBatchId)}
+                  className="mb-2" style={{
+                    display: 'inline-flex', alignItems: 'center', backgroundColor: '#EDE9FE', color: '#6D28D9',
+                    fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, border: 'none',
+                  }}>{tr('needsItemsBadge')}</button>
+              )}
+              {reconstructing === o.orderBatchId && (
+                <ReconstructPanel order={o} onDone={() => { setReconstructing(null); load(jumpDate || undefined); }} onCancel={() => setReconstructing(null)} />
+              )}
               <div className="flex justify-between items-center mb-2">
                 <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
                 <button onClick={() => cyclePayment(o)} style={{
