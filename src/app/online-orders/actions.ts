@@ -450,7 +450,11 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   } else {
     oq = oq.order('created_at', { ascending: false }).limit(200);
   }
-  if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
+  // Axel, 2026-09-08: "elle doit pouvoir voir toute la page au complet" -- the online-sales role
+  // is shared across whoever takes orders (plus historical excel imports created under Axel's own
+  // account), so it must see every order here, not just the ones it personally created. The
+  // created_by scoping stays for editing/cancelling (assertOwnsOrder below) -- this is read-only.
+  void auth.isAdmin;
   const { data: orders } = await oq;
   if (!orders?.length) return { orders: [] };
 
@@ -727,8 +731,10 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Fetch enough for both the selected range and the absolute month tile.
   const since = new Date(Date.now() - Math.max(rangeDays, 60) * 86400000).toISOString();
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
-  let oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).limit(5000);
-  if (!auth.isAdmin) oq = oq.eq('created_by', auth.userId);
+  // Axel, 2026-09-08: see the note in getMyOnlineOrdersAction -- analytics must reflect every
+  // online order (imports included), not just the ones this account created.
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).limit(5000);
+  void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
   const empty: OnlineAnalytics = { todayTotal: 0, todayGrandTotal: 0, todayCount: 0, monthTotal: 0, monthGrandTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays, rangeTotal: 0, rangeGrandTotal: 0, rangeCount: 0, series: [], daily: [] };
