@@ -819,9 +819,16 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // future day instead of being invisible until it arrives.
   const futureDays = Array.from(byDay.keys()).filter(d => d > todayStr).sort();
   const seriesEnd = futureDays.length ? futureDays[futureDays.length - 1] : todayStr;
-  const startDate = new Date(rangeStart + 'T00:00:00Z');
+  // Don't waste chart width on empty days/weeks/months before the earliest real data (Axel,
+  // 2026-09-08: "ca commence le 1er ... on pourrait exploiter plus la largeur" -- a fixed
+  // 365-day lookback with all the actual data landing in the last week squeezed nearly every
+  // bar to nothing and piled their labels on top of each other at the right edge). Only ever
+  // trims the front, never extends past the user-selected rangeDays window.
+  const earliestDataDay = Array.from(byDay.keys()).sort()[0];
+  const effectiveStart = earliestDataDay && earliestDataDay > rangeStart ? earliestDataDay : rangeStart;
+  const startDate = new Date(effectiveStart + 'T00:00:00Z');
   const endDate = new Date(seriesEnd + 'T00:00:00Z');
-  const totalSpanDays = Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+  const totalSpanDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
   const dateAt = (i: number) => { const d = new Date(startDate); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); };
 
   const series: { key: string; label: string; total: number }[] = [];
@@ -847,7 +854,14 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     Array.from(byDay.entries()).forEach(([d, t]) => { if (d >= rangeStart) byMonth.set(d.slice(0, 7), (byMonth.get(d.slice(0, 7)) ?? 0) + t); });
     const now = new Date();
     const anchor = endDate > now ? endDate : now;
-    for (let m = 11; m >= 0; m--) {
+    // Same front-trim as day/week above, in months: never show more empty leading months than
+    // the earliest real data actually needs, capped at the usual 12-month window.
+    const startMonthDate = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
+    // Floor of 2 months even when all data sits in the current month -- a single bar reads as
+    // broken, not as "trimmed"; a floor of 2 still gives it a neighbour for context.
+    const monthsSpan = Math.min(12, Math.max(2,
+      (anchor.getUTCFullYear() - startMonthDate.getUTCFullYear()) * 12 + (anchor.getUTCMonth() - startMonthDate.getUTCMonth()) + 1));
+    for (let m = monthsSpan - 1; m >= 0; m--) {
       const dt = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - m, 1));
       const key = dt.toISOString().slice(0, 7);
       series.push({ key, label: `${key.slice(5, 7)}/${key.slice(2, 4)}`, total: byMonth.get(key) ?? 0 });
