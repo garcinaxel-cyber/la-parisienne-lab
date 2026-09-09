@@ -143,11 +143,11 @@ function buildPlan(
     }
     const providedSum = provided.allocations.reduce((s, a) => s + a.qty, 0);
     if (providedSum !== l.qty_checked) {
-      return { ...empty, error: `Répartition invalide pour ${l.sku} : la somme (${providedSum}) ne correspond pas au total coché (${l.qty_checked}).` };
+      return { ...empty, error: `Phân bổ không hợp lệ cho ${l.sku}: tổng (${providedSum}) không khớp với số lượng đã tích (${l.qty_checked}).` };
     }
     for (const o of odooLines) {
       const alloc = provided.allocations.find(a => a.moveId === o.moveId);
-      if (!alloc) return { ...empty, error: `Répartition incomplète pour ${l.sku} — ligne Odoo ${o.moveId} manquante.` };
+      if (!alloc) return { ...empty, error: `Phân bổ chưa đầy đủ cho ${l.sku} — thiếu dòng Odoo ${o.moveId}.` };
       plan.push({ sku: l.sku, moveId: o.moveId, note: o.note, expectedQty: o.expectedQty, deliverQty: alloc.qty });
     }
   }
@@ -189,7 +189,7 @@ export async function writeQuantitiesAndValidatePicking(
   // reference) means our skip_backorder context didn't fully suppress the interactive flow —
   // surface it raw rather than assume success, since we can't drive a wizard headlessly here.
   if (validateRes !== true) {
-    return { ok: false, error: `Odoo a renvoyé une réponse inattendue à la validation : ${JSON.stringify(validateRes)} — le picking n'est peut-être pas validé, vérifier manuellement dans Odoo.` };
+    return { ok: false, error: `Odoo trả về phản hồi không mong đợi khi xác nhận: ${JSON.stringify(validateRes)} — phiếu xuất kho có thể chưa được xác nhận, vui lòng kiểm tra thủ công trên Odoo.` };
   }
   return { ok: true };
 }
@@ -280,13 +280,13 @@ export async function validateDeliveryOnOdoo(
   splits: SplitInput[] = [],
 ): Promise<DeliveryValidateResult> {
   if (sourceType !== 'replenishment' && sourceType !== 'sales_order') {
-    return { ok: false, dryRun, error: `Type de commande non géré : ${sourceType}` };
+    return { ok: false, dryRun, error: `Loại đơn hàng chưa được hỗ trợ: ${sourceType}` };
   }
   if (!odooWriteConfigured()) {
-    return { ok: false, dryRun, error: 'Compte Odoo en écriture non configuré' };
+    return { ok: false, dryRun, error: 'Tài khoản Odoo ghi chưa được cấu hình' };
   }
   if (!checklistLines.length) {
-    return { ok: false, dryRun, error: 'Aucune ligne à valider' };
+    return { ok: false, dryRun, error: 'Không có dòng nào để xác nhận' };
   }
 
   try {
@@ -304,7 +304,7 @@ async function validateReplenishment(
   const reqs = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
     [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'delivery_picking_ids'] });
   const req = reqs[0];
-  if (!req) return { ok: false, dryRun, error: `Commande ${orderRef} introuvable dans Odoo` };
+  if (!req) return { ok: false, dryRun, error: `Không tìm thấy đơn hàng ${orderRef} trên Odoo` };
 
   // Same two-step transition as lockTomorrowOrders (odoo-order-lock.ts) — action_submit is
   // only valid from 'draft', action_approve only from 'submitted'. Performed for real even in
@@ -323,24 +323,24 @@ async function validateReplenishment(
 
   const pickingIds: number[] = req.delivery_picking_ids ?? [];
   if (!pickingIds.length) {
-    return { ok: false, dryRun, orderConfirmed, error: `Aucun bon de livraison (picking) Odoo trouvé pour ${orderRef} — peut nécessiter une vérification manuelle dans Odoo.` };
+    return { ok: false, dryRun, orderConfirmed, error: `Không tìm thấy phiếu xuất kho (picking) Odoo cho ${orderRef} — có thể cần kiểm tra thủ công trên Odoo.` };
   }
   // In practice a REP has exactly one delivery picking; if Odoo ever attaches more than one,
   // fail loudly instead of guessing which one to act on.
   if (pickingIds.length > 1) {
-    return { ok: false, dryRun, orderConfirmed, error: `${orderRef} a ${pickingIds.length} bons de livraison Odoo — cas non géré, vérification manuelle nécessaire.` };
+    return { ok: false, dryRun, orderConfirmed, error: `${orderRef} có ${pickingIds.length} phiếu xuất kho Odoo — trường hợp chưa được hỗ trợ, cần kiểm tra thủ công.` };
   }
   const pickingId = pickingIds[0];
 
   const pickings = await odooExecute<any[]>('stock.picking', 'search_read',
     [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state', 'location_id', 'location_dest_id', 'picking_type_id', 'group_id'] });
   const picking = pickings[0];
-  if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${pickingId} introuvable` };
+  if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Không tìm thấy picking Odoo ${pickingId}` };
   if (DONE_STATES.has(picking.state)) {
     return { ok: true, dryRun, orderConfirmed, alreadyDoneOnOdoo: true, pickingId, pickingName: picking.name };
   }
   if (BLOCKED_STATES.has(picking.state)) {
-    return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${picking.name} est annulé — vérification manuelle nécessaire.` };
+    return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${picking.name} đã bị huỷ — cần kiểm tra thủ công.` };
   }
 
   const moves = await odooExecute<any[]>('stock.move', 'search_read',
@@ -380,7 +380,7 @@ async function validateReplenishment(
     for (const l of allReqLines) { const pid = l.product_id?.[0]; if (pid && !demandLineIdByProductId[pid]) demandLineIdByProductId[pid] = l.id; }
     const resolved = await resolveMissingCreations(checklistLines, mismatches, demandLineIdByProductId);
     if (resolved.unresolvable.length) {
-      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo ET sans ligne de demande sur la commande : ${resolved.unresolvable.join(', ')} — vérification manuelle nécessaire.` };
+      return { ok: false, dryRun, orderConfirmed, error: `Sản phẩm đã tích không có trên picking Odoo VÀ cũng không có dòng yêu cầu trên đơn hàng: ${resolved.unresolvable.join(', ')} — cần kiểm tra thủ công.` };
     }
     creations = resolved.creations;
     if (creations.length) plannedCreations = creations.map(cr => ({ sku: cr.sku, product_name_vi: cr.product_name_vi, qty: cr.qty }));
@@ -426,7 +426,7 @@ async function validateSalesOrder(
   const orders = await odooExecute<any[]>('sale.order', 'search_read',
     [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status'] });
   const so = orders[0];
-  if (!so) return { ok: false, dryRun, error: `Commande ${orderRef} introuvable dans Odoo` };
+  if (!so) return { ok: false, dryRun, error: `Không tìm thấy đơn hàng ${orderRef} trên Odoo` };
 
   // Same reasoning as REP's confirm step — action_confirm is already proven safe daily via the
   // J+1 lock cron (odoo-order-lock.ts), same-day orders can genuinely still be in draft/sent.
@@ -444,19 +444,19 @@ async function validateSalesOrder(
 
   const pickingIds: number[] = so.picking_ids ?? [];
   if (!pickingIds.length) {
-    return { ok: false, dryRun, orderConfirmed, error: `Aucun bon de livraison (picking) Odoo trouvé pour ${orderRef} — peut nécessiter une vérification manuelle dans Odoo.` };
+    return { ok: false, dryRun, orderConfirmed, error: `Không tìm thấy phiếu xuất kho (picking) Odoo cho ${orderRef} — có thể cần kiểm tra thủ công trên Odoo.` };
   }
   if (pickingIds.length > 1) {
-    return { ok: false, dryRun, orderConfirmed, error: `${orderRef} a ${pickingIds.length} bons de livraison Odoo — cas non géré, vérification manuelle nécessaire.` };
+    return { ok: false, dryRun, orderConfirmed, error: `${orderRef} có ${pickingIds.length} phiếu xuất kho Odoo — trường hợp chưa được hỗ trợ, cần kiểm tra thủ công.` };
   }
   const pickingId = pickingIds[0];
 
   const pickings = await odooExecute<any[]>('stock.picking', 'search_read',
     [[['id', '=', pickingId]]], { fields: ['id', 'name', 'state', 'location_id', 'location_dest_id', 'picking_type_id', 'group_id'] });
   const picking = pickings[0];
-  if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${pickingId} introuvable` };
+  if (!picking) return { ok: false, dryRun, orderConfirmed, error: `Không tìm thấy picking Odoo ${pickingId}` };
   if (BLOCKED_STATES.has(picking.state)) {
-    return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${picking.name} est annulé — vérification manuelle nécessaire.` };
+    return { ok: false, dryRun, orderConfirmed, error: `Picking Odoo ${picking.name} đã bị huỷ — cần kiểm tra thủ công.` };
   }
   // Unlike REP, a picking already 'done' doesn't mean there's nothing left to do here — the
   // invoice step below still needs to run if it hasn't yet (e.g. a previous attempt validated
@@ -522,7 +522,7 @@ async function validateSalesOrder(
     // Point 3 (Axel, 2026-09-02): same as REP — but never touch a picking already done, and only
     // create for SKUs that DO have a sale.order.line on the order (line added after approval).
     if (alreadyDoneOnOdoo) {
-      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés absents du picking Odoo déjà validé : ${mismatches.join(', ')} — vérification manuelle nécessaire.` };
+      return { ok: false, dryRun, orderConfirmed, error: `Sản phẩm đã tích không có trên picking Odoo đã được xác nhận: ${mismatches.join(', ')} — cần kiểm tra thủ công.` };
     }
     const demandLineIdByProductId: Record<number, number> = {};
     for (const l of allSoLines) {
@@ -532,7 +532,7 @@ async function validateSalesOrder(
     }
     const resolved = await resolveMissingCreations(checklistLines, mismatches, demandLineIdByProductId);
     if (resolved.unresolvable.length) {
-      return { ok: false, dryRun, orderConfirmed, error: `Produits cochés introuvables sur le picking Odoo ET sans ligne de commande : ${resolved.unresolvable.join(', ')} — vérification manuelle nécessaire.` };
+      return { ok: false, dryRun, orderConfirmed, error: `Sản phẩm đã tích không có trên picking Odoo VÀ cũng không có dòng trên đơn hàng: ${resolved.unresolvable.join(', ')} — cần kiểm tra thủ công.` };
     }
     creations = resolved.creations;
     if (creations.length) plannedCreations = creations.map(cr => ({ sku: cr.sku, product_name_vi: cr.product_name_vi, qty: cr.qty }));

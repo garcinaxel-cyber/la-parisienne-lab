@@ -200,7 +200,7 @@ export async function syncOdooForDeliveryCheckAction(
       result = await runAutoOdooSync(service as any);
     }
     if (result.error) return { error: result.error };
-    if (result.skipped_concurrent) return { error: 'Une autre synchro est en cours, réessaie dans une minute' };
+    if (result.skipped_concurrent) return { error: 'Đang có một lượt đồng bộ khác chạy, vui lòng thử lại sau một phút' };
 
     let packagingSynced = (result.packaging_only_synced ?? 0);
     try {
@@ -211,7 +211,7 @@ export async function syncOdooForDeliveryCheckAction(
     if (orderDate && orderRef) revalidatePath(`/delivery-check/${orderDate}/${orderRef}`);
     revalidatePath('/delivery-check');
     revalidatePath('/delivery-check/category');
-    if (result.packaging_only_error) return { error: `Sync partielle: ${result.packaging_only_error}` };
+    if (result.packaging_only_error) return { error: `Đồng bộ một phần: ${result.packaging_only_error}` };
     return { ok: true, createdImports: result.created_imports, changesApplied: result.changes_applied, packagingSynced };
   } catch (e: any) {
     return { error: e?.message ?? 'Odoo sync failed' };
