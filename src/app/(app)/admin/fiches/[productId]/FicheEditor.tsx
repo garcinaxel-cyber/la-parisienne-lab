@@ -252,8 +252,19 @@ export default function FicheEditor({
     setSaving(true); setError(null);
     const supabase = createClient();
 
-    // Chef mode: identity/variants are not editable — jump straight to recipe content
+    // Chef mode: identity/variants stay locked — only the technical sheet + recipe content are writable
     if (recipeOnly) {
+      const { error: techErr } = await supabase.from('lab_fiche_meta').update({
+        doc_code: technique.doc_code || null,
+        weight_grams: technique.weight_grams ? Number(technique.weight_grams) : null,
+        tolerance_pct: technique.tolerance_pct ? Number(technique.tolerance_pct) : 3,
+        sensory_vi: technique.sensory_vi || null,
+        sensory_en: technique.sensory_en || null,
+        warning_vi: technique.warning_vi || null,
+        warning_en: technique.warning_en || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', ficheId);
+      if (techErr) { setError(techErr.message); setSaving(false); return; }
       await saveRecipeContent(supabase);
       return;
     }
@@ -385,8 +396,8 @@ export default function FicheEditor({
     { key: 'ingredients', label: lang === 'vi' ? '③ Nguyên liệu' : '③ Ingredients' },
     { key: 'steps',       label: lang === 'vi' ? '④ Quy trình' : '④ Assembly' },
   ];
-  // Chefs only see the recipe tabs — product identity & variants stay admin-only
-  const tabs = recipeOnly ? allTabs.filter(t => t.key === 'ingredients' || t.key === 'steps') : allTabs;
+  // Chefs see the technical sheet + recipe tabs — product identity & variants stay admin-only
+  const tabs = recipeOnly ? allTabs.filter(t => t.key === 'technique' || t.key === 'ingredients' || t.key === 'steps') : allTabs;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -419,10 +430,10 @@ export default function FicheEditor({
       {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm">{error}</div>}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border-soft">
+      <div className="flex gap-1 border-b border-border-soft overflow-x-auto">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors -mb-px ${
+            className={`flex-1 sm:flex-none whitespace-nowrap px-3 sm:px-4 py-3 sm:py-2.5 text-sm font-medium rounded-t-lg transition-colors -mb-px ${
               activeTab === t.key
                 ? 'bg-white border border-border-soft border-b-white text-navy'
                 : 'text-ink-light hover:text-navy'
@@ -627,8 +638,8 @@ export default function FicheEditor({
 
       {/* ── Tab: Fiche technique ── */}
       {activeTab === 'technique' && (
-        <div className="card p-5 space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+        <div className="card p-4 sm:p-5 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="label text-[10px]">{lang === 'vi' ? 'Mã tài liệu' : 'Document code'}</label>
               <input value={technique.doc_code} onChange={e => setTechnique(m => ({ ...m, doc_code: e.target.value }))}
@@ -648,7 +659,7 @@ export default function FicheEditor({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label text-[10px]">Tiêu chuẩn cảm quan — Tiếng Việt</label>
               <p className="text-[10px] text-ink-light mt-0.5 mb-1">Mỗi dòng = 1 tiêu chí. Dùng **Tiêu đề:** để in đậm.</p>
@@ -667,7 +678,7 @@ export default function FicheEditor({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label text-[10px]">Lưu ý nghiêm ngặt — Tiếng Việt</label>
               <textarea value={technique.warning_vi}
@@ -700,7 +711,7 @@ export default function FicheEditor({
           </div>
 
           <div className="card overflow-hidden">
-            <div className="grid grid-cols-12 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/60">
+            <div className="hidden sm:grid grid-cols-12 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/60">
               <div className="col-span-1 text-center">STT</div>
               <div className="col-span-4">Tên nguyên liệu (VI)</div>
               <div className="col-span-3">Ingredient (EN)</div>
@@ -711,35 +722,50 @@ export default function FicheEditor({
 
             <div className="divide-y divide-border-soft">
               {ingredients.map((ing, idx) => (
-                <div key={idx} className="px-4 py-2.5 space-y-1.5">
-                  {/* Main ingredient row */}
-                  <div className="grid grid-cols-12 items-center gap-2">
-                    <div className="col-span-1 flex justify-center">
+                <div key={idx} className="px-4 py-3 sm:py-2.5 space-y-2 sm:space-y-1.5">
+                  {/* Mobile-only: step number + delete, own row for easy tapping */}
+                  <div className="flex items-center justify-between sm:hidden">
+                    <div className="w-7 h-7 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold">
+                      {ing.step_number}
+                    </div>
+                    {ingredients.length > 1 && (
+                      <button onClick={() => removeIngredient(idx)} className="p-2 -mr-2 text-ink-light hover:text-red-500 transition-colors">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                  {/* Main ingredient row — stacked on phone, table row on larger screens */}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-12 sm:items-center sm:gap-2">
+                    <div className="hidden sm:col-span-1 sm:flex sm:justify-center">
                       <div className="w-6 h-6 rounded-full bg-navy text-white flex items-center justify-center text-xs font-bold">
                         {ing.step_number}
                       </div>
                     </div>
-                    <div className="col-span-4">
+                    <div className="sm:col-span-4">
+                      <label className="sm:hidden block text-[10px] font-semibold text-ink-light uppercase tracking-wide mb-0.5">Tên nguyên liệu (VI)</label>
                       <input value={ing.description_vi}
                         onChange={e => updateIngredient(idx, { description_vi: e.target.value })}
-                        placeholder="Đế bánh brioche…" className="input w-full text-sm py-1.5" />
+                        placeholder="Đế bánh brioche…" className="input w-full text-sm py-2 sm:py-1.5" />
                     </div>
-                    <div className="col-span-3">
+                    <div className="sm:col-span-3">
+                      <label className="sm:hidden block text-[10px] font-semibold text-ink-light uppercase tracking-wide mb-0.5">Ingredient (EN)</label>
                       <input value={ing.description_en}
                         onChange={e => updateIngredient(idx, { description_en: e.target.value })}
-                        placeholder="Brioche base…" className="input w-full text-sm py-1.5" />
+                        placeholder="Brioche base…" className="input w-full text-sm py-2 sm:py-1.5" />
                     </div>
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
+                      <label className="sm:hidden block text-[10px] font-semibold text-ink-light uppercase tracking-wide mb-0.5">Qty (gr)</label>
                       <input type="number" min={0} step={0.1} value={ing.quantity_grams ?? ''}
                         onChange={e => updateIngredient(idx, { quantity_grams: e.target.value ? Number(e.target.value) : null })}
-                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                        placeholder="—" className="input w-full text-sm py-2 sm:py-1.5 text-center" />
                     </div>
-                    <div className="col-span-1">
+                    <div className="sm:col-span-1">
+                      <label className="sm:hidden block text-[10px] font-semibold text-ink-light uppercase tracking-wide mb-0.5">%</label>
                       <input type="number" min={0} max={100} step={0.1} value={ing.percentage ?? ''}
                         onChange={e => updateIngredient(idx, { percentage: e.target.value ? Number(e.target.value) : null })}
-                        placeholder="—" className="input w-full text-sm py-1.5 text-center" />
+                        placeholder="—" className="input w-full text-sm py-2 sm:py-1.5 text-center" />
                     </div>
-                    <div className="col-span-1 flex justify-center">
+                    <div className="hidden sm:col-span-1 sm:flex sm:justify-center">
                       {ingredients.length > 1 && (
                         <button onClick={() => removeIngredient(idx)} className="p-1 text-ink-light hover:text-red-500 transition-colors">
                           <Trash2 size={14} />
@@ -749,7 +775,7 @@ export default function FicheEditor({
                   </div>
                   {/* Per-variant quantities — visible when 2+ saved variants exist */}
                   {variants.filter(v => v.id).length > 1 && (
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-1 sm:pl-8">
                       <span className="text-[10px] text-ink-light font-semibold uppercase tracking-wide shrink-0">
                         {lang === 'vi' ? 'Qty theo format:' : 'Qty per size:'}
                       </span>
@@ -773,18 +799,18 @@ export default function FicheEditor({
             </div>
 
             {/* Total row */}
-            <div className="grid grid-cols-12 items-center px-4 py-2.5 gap-2 bg-amber-50 border-t-2 border-amber-200">
-              <div className="col-span-1" />
-              <div className="col-span-7 text-xs font-bold text-amber-800 uppercase text-right pr-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-amber-50 border-t-2 border-amber-200">
+              <div className="text-xs font-bold text-amber-800 uppercase">
                 {lang === 'vi' ? 'Tổng trọng lượng thành phẩm:' : 'Total finished product:'}
               </div>
-              <div className="col-span-2 text-center text-sm font-black text-amber-700">
-                {totalWeight > 0 ? `${totalWeight} gr` : '—'}
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-black text-amber-700">
+                  {totalWeight > 0 ? `${totalWeight} gr` : '—'}
+                </span>
+                <span className="text-sm font-black text-amber-700">
+                  {totalWeight > 0 ? '100%' : '—'}
+                </span>
               </div>
-              <div className="col-span-1 text-center text-sm font-black text-amber-700">
-                {totalWeight > 0 ? '100%' : '—'}
-              </div>
-              <div className="col-span-1" />
             </div>
           </div>
 
@@ -816,7 +842,7 @@ export default function FicheEditor({
                   </button>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="label text-[10px]">Tiếng Việt</label>
                   <textarea value={step.description_vi}
@@ -859,7 +885,7 @@ export default function FicheEditor({
       )}
 
       {/* Save bar */}
-      <div className="flex items-center justify-between pt-2 border-t border-border-soft">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-border-soft">
         <div className="flex items-center gap-2">
           <Link href={backUrl ?? (recipeOnly ? '/station/me' : '/admin/fiches')} className="btn-secondary text-sm">
             {(backUrl ?? '').startsWith('/station') || recipeOnly
@@ -873,9 +899,9 @@ export default function FicheEditor({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between sm:justify-end gap-3">
           {saved && <span className="text-sm text-emerald-600 font-medium">{lang === 'vi' ? '✓ Đã lưu' : '✓ Saved'}</span>}
-          <button onClick={save} disabled={saving} className="btn-primary flex items-center gap-2">
+          <button onClick={save} disabled={saving} className="btn-primary flex items-center justify-center gap-2 flex-1 sm:flex-none py-3 sm:py-2">
             <Save size={15} />
             {saving ? '…' : (lang === 'vi' ? 'Lưu phiếu' : 'Save recipe')}
           </button>
