@@ -817,13 +817,19 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
 
   // delivery_fee lives on the order header, once per order (not per line) -- add it to the
   // grand totals in its own pass so an order with several sale lines doesn't get it multiplied.
+  // Axel, 2026-09-09: "revenue by shop" must foot to the range's grand total (with fees), not the
+  // merchandise-only total -- so the fee also gets attributed to that order's shop here.
   for (const o of orders ?? []) {
     const fee = Number(o.delivery_fee ?? 0);
     if (!fee) continue;
     const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
     if (day === todayStr) todayGrandTotal += fee;
     if (day.slice(0, 7) === monthStr) monthGrandTotal += fee;
-    if (day >= rangeStart) rangeGrandTotal += fee;
+    if (day >= rangeStart) {
+      rangeGrandTotal += fee;
+      const shop = o.shop_name ?? 'Khác';
+      byShop.set(shop, (byShop.get(shop) ?? 0) + fee);
+    }
   }
 
   const daily: { date: string; total: number }[] = [];
