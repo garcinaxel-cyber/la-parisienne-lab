@@ -35,7 +35,7 @@
 // hypothetical). What dryRun actually gates is only the quantity write + picking validation (and,
 // for SO, invoice creation) — the parts that write real business data.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
+import { odooExecute, odooExecuteWrite, odooWriteConfigured, odooDateTimeToLocal } from '@/lib/odoo';
 
 // Every write call in this file passes this context — Odoo's mail module posts a tracked-field
 // chatter message (and tries to notify followers by email) whenever a tracked field actually
@@ -424,7 +424,7 @@ async function validateSalesOrder(
   orderRef: string, checklistLines: DeliveryValidateLine[], dryRun: boolean, splits: SplitInput[],
 ): Promise<DeliveryValidateResult> {
   const orders = await odooExecute<any[]>('sale.order', 'search_read',
-    [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status'] });
+    [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status', 'commitment_date'] });
   const so = orders[0];
   if (!so) return { ok: false, dryRun, error: `Không tìm thấy đơn hàng ${orderRef} trên Odoo` };
 
@@ -435,11 +435,12 @@ async function validateSalesOrder(
     await odooExecuteWrite('sale.order', 'action_confirm', [[so.id]], { context: NO_MAIL_CONTEXT });
     orderConfirmed = true;
     const refreshed = await odooExecute<any[]>('sale.order', 'search_read',
-      [[['id', '=', so.id]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status'] });
+      [[['id', '=', so.id]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status', 'commitment_date'] });
     so.state = refreshed[0]?.state;
     so.picking_ids = refreshed[0]?.picking_ids ?? [];
     so.invoice_ids = refreshed[0]?.invoice_ids ?? [];
     so.invoice_status = refreshed[0]?.invoice_status;
+    so.commitment_date = refreshed[0]?.commitment_date ?? so.commitment_date;
   }
 
   const pickingIds: number[] = so.picking_ids ?? [];
@@ -598,11 +599,21 @@ async function validateSalesOrder(
       const created = await odooExecute<any[]>('account.move', 'read', [newInvoiceIds], { fields: ['name', 'state'] });
       invoiceCreated = true;
       invoiceName = created[0]?.name;
+      const billDate = odooDateTimeToLocal(so.commitment_date).date;
+      if (billDate) {
+        try {
+          await odooExecuteWrite('account.move', 'write', [newInvoiceIds, { invoice_date: billDate }], { context: NO_MAIL_CONTEXT });
+        } catch (e: any) {
+          // Non-fatal — the invoice itself was created fine, only its Bill Date field failed to
+          // set. Left for manual fixing on Odoo rather than failing the whole validation.
+          invoiceError = `Hóa đơn ${invoiceName} đã tạo, nhưng không set được ngày hóa đơn (Bill Date) — vui lòng chỉnh thủ công trên Odoo: ${String(e?.message ?? e)}`;
+        }
+      }
     } else {
-      invoiceError = "L'écriture de facturation n'a rien créé — vérifier manuellement sur Odoo (peut-être rien à facturer).";
+      invoiceError = 'Việc tạo hóa đơn không tạo ra gì cả — vui lòng kiểm tra thủ công trên Odoo (có thể không có gì để xuất hóa đơn).';
     }
   } catch (e: any) {
-    invoiceError = `Livraison validée sur Odoo, mais la création de la facture a échoué : ${String(e?.message ?? e)} — à créer manuellement sur Odoo (bouton "Créer facture", type "Facture normale").`;
+    invoiceError = `Đã validate delivery trên Odoo, nhưng tạo hóa đơn thất bại: ${String(e?.message ?? e)} — vui lòng tạo thủ công trên Odoo (nút "Créer facture", loại "Facture normale").`;
   }
 
   return {
