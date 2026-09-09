@@ -163,6 +163,10 @@ export async function submitOnlineOrderAction(input: {
   shop: string; channel: string; deliveryDate: string; readyTime: string | null;
   customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
+  // Who delivers to the end customer — 'shop' (lab -> shop -> customer, existing flow) or
+  // 'direct' (lab delivers straight to the customer's address, bypassing the shop). Axel,
+  // 2026-09-09 — replaces inferring this from whether deliveryAddress is filled.
+  deliveryMode?: 'shop' | 'direct';
   items: OnlineOrderItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderRef?: string | null; warning?: string; error?: string }> {
   const auth = await requireOnlineSession();
@@ -180,6 +184,7 @@ export async function submitOnlineOrderAction(input: {
   const today = new Date().toISOString().split('T')[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate ?? '') || input.deliveryDate < today) return { error: 'Invalid delivery date' };
   if (!['paid', 'unpaid', 'partial'].includes(input.paymentStatus)) return { error: 'Invalid payment status' };
+  const deliveryMode: 'shop' | 'direct' = input.deliveryMode === 'direct' ? 'direct' : 'shop';
 
   type Resolved = {
     ficheId: string; variantId: string | null; sku: string | null; team: string;
@@ -302,6 +307,7 @@ export async function submitOnlineOrderAction(input: {
     delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
+    delivery_mode: deliveryMode,
     created_by: auth.userId,
   });
   if (ooErr) {

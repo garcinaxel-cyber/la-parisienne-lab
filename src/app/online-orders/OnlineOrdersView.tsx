@@ -57,6 +57,11 @@ const L = {
     channelLabel: 'Kênh bán hàng',
     channelHint: 'Nguồn khách hàng — dùng để thống kê, không quyết định shop xử lý đơn.',
     shopLabel: 'Shop xử lý đơn (tạo trên Odoo)',
+    deliveryModeLabel: 'Ai giao cho khách',
+    dmShop: '🏪 Giao qua shop',
+    dmDirect: '🚚 Lab giao thẳng',
+    dmShopHint: 'Lab giao hàng đến shop, shop giao/khách nhận tại shop (như hiện tại).',
+    dmDirectHint: 'Lab tự giao thẳng đến địa chỉ khách, không qua shop.',
     addProduct: 'Thêm sản phẩm',
     searchPh: 'Tìm sản phẩm theo tên...',
     unitPrice: 'Đơn giá (₫)',
@@ -172,6 +177,11 @@ const L = {
     channelLabel: 'Sales channel',
     channelHint: 'Where the customer came from — for reporting only; it does not decide which shop handles the order.',
     shopLabel: 'Shop handling the order (Odoo document)',
+    deliveryModeLabel: 'Who delivers to the customer',
+    dmShop: '🏪 Via the shop',
+    dmDirect: '🚚 Lab delivers direct',
+    dmShopHint: 'The lab delivers to the shop, and the shop hands it to / delivers it to the customer (current default).',
+    dmDirectHint: "The lab delivers straight to the customer's address, bypassing the shop.",
     addProduct: 'Add products',
     searchPh: 'Search a product by name...',
     unitPrice: 'Unit price (₫)',
@@ -378,6 +388,9 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  // 'shop' (default, existing behaviour) or 'direct' — who delivers to the end customer
+  // (Axel, 2026-09-09). Only meaningful for source==='lab'; ignored for shop_stock sales.
+  const [deliveryMode, setDeliveryMode] = useState<'shop' | 'direct'>('shop');
   const [notes, setNotes] = useState('');
   const [deliveryFee, setDeliveryFee] = useState('0');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('unpaid');
@@ -455,6 +468,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
         customerName: customerName || null, customerPhone: customerPhone || null,
         deliveryAddress: deliveryAddress || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
+        deliveryMode,
         items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
         fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
       });
@@ -463,7 +477,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
       if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
       else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
     }
-    setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes('');
+    setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes(''); setDeliveryMode('shop');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
   }
 
@@ -482,6 +496,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
               customerName={customerName} setCustomerName={setCustomerName}
               customerPhone={customerPhone} setCustomerPhone={setCustomerPhone}
               deliveryAddress={deliveryAddress} setDeliveryAddress={setDeliveryAddress}
+              deliveryMode={deliveryMode} setDeliveryMode={setDeliveryMode}
               notes={notes} setNotes={setNotes}
               deliveryFee={deliveryFee} setDeliveryFee={setDeliveryFee}
               paymentStatus={paymentStatus} setPaymentStatus={setPaymentStatus}
@@ -598,7 +613,7 @@ function OrderTab(props: any) {
     source, setSource,
     shop, setShop, channel, setChannel, channels, newChannel, setNewChannel, addChannel, deleteChannel,
     deliveryDate, setDeliveryDate, readyTime, setReadyTime,
-    customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress,
+    customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress, deliveryMode, setDeliveryMode,
     notes, setNotes, deliveryFee, setDeliveryFee, paymentStatus, setPaymentStatus, amountPaid, setAmountPaid,
     cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart, searchOpen, setSearchOpen,
     feeTypes, feeCart, addFeeToCart, updateFeeLine, removeFeeLine, manageFeesOpen, setManageFeesOpen,
@@ -659,6 +674,25 @@ function OrderTab(props: any) {
             }}>{s}</button>
         ))}
       </div>
+
+      {!isStock && (
+        <>
+          <SectionLabel>{tr('deliveryModeLabel')}</SectionLabel>
+          <div className="grid grid-cols-2 gap-2 mb-1.5">
+            {([['shop', tr('dmShop')], ['direct', tr('dmDirect')]] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setDeliveryMode(k)}
+                style={{
+                  backgroundColor: deliveryMode === k ? NAVY : '#fff', color: deliveryMode === k ? '#FFFAEE' : INK,
+                  border: deliveryMode === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12.5, fontWeight: deliveryMode === k ? 700 : 500,
+                  padding: '9px 8px', borderRadius: 10,
+                }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 16 }}>
+            {deliveryMode === 'direct' ? tr('dmDirectHint') : tr('dmShopHint')}
+          </div>
+        </>
+      )}
 
       <SectionLabel>{tr('addProduct')}</SectionLabel>
       <div className="relative mb-3">

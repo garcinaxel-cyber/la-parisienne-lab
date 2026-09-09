@@ -117,13 +117,27 @@ async function resolveWarehouseId(code: string): Promise<{ id: number; name: str
   return w;
 }
 
-async function resolveProducts(skus: string[]): Promise<Record<string, { id: number; uom_id: number }>> {
-  if (!skus.length) return {};
+async function resolveProducts(skus: string[]): Promise<{ products: Record<string, { id: number; uom_id: number }>; archivedSkus: Set<string> }> {
+  if (!skus.length) return { products: {}, archivedSkus: new Set() };
   const rows = await tmo(odooExecute<any[]>('product.product', 'search_read',
     [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'], limit: 2000 }), 20000, 'products');
-  const out: Record<string, { id: number; uom_id: number }> = {};
-  for (const p of rows) if (p.default_code) out[p.default_code] = { id: p.id, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
-  return out;
+  const products: Record<string, { id: number; uom_id: number }> = {};
+  for (const p of rows) if (p.default_code) products[p.default_code] = { id: p.id, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
+
+  // Anything still missing might genuinely not exist in Odoo, OR be archived (inactive) — the
+  // search above implicitly filters active=True (Odoo ORM default), so an archived SKU looks
+  // identical to a nonexistent one there. A second, active_test:false lookup restricted to just
+  // the still-missing SKUs tells the two cases apart, so the shop sees "sản phẩm đã ngừng kinh
+  // doanh" (discontinued) instead of the misleading "không tìm thấy" (not found) — Axel,
+  // 2026-09-09: the archived-SKU order failure was showing shop staff a non-Vietnamese message.
+  const stillMissing = skus.filter(s => !products[s]);
+  const archivedSkus = new Set<string>();
+  if (stillMissing.length) {
+    const archivedRows = await tmo(odooExecute<any[]>('product.product', 'search_read',
+      [[['default_code', 'in', stillMissing]]], { fields: ['default_code'], limit: 2000, context: { active_test: false } }), 20000, 'archived products');
+    for (const p of archivedRows) if (p.default_code) archivedSkus.add(p.default_code);
+  }
+  return { products, archivedSkus };
 }
 
 // Creates ONE stock.replenishment.request for shopName's own warehouse, sourced from LAB,
@@ -166,13 +180,27 @@ export async function createManagerReplenishment(
 
   const skus = Array.from(new Set(validLines.map(l => l.sku)));
   let products: Record<string, { id: number; uom_id: number }>;
+  let archivedSkus: Set<string>;
   try {
-    products = await resolveProducts(skus);
+    const resolved = await resolveProducts(skus);
+    products = resolved.products;
+    archivedSkus = resolved.archivedSkus;
   } catch (e: any) {
-    return { ok: false, error: `Recherche produit Odoo échouée : ${String(e?.message ?? e)}` };
+    console.error('[odoo-manager-order] product resolution failed:', e?.message ?? e);
+    return { ok: false, error: 'Không thể tạo đơn hàng trên Odoo. Vui lòng thử lại hoặc liên hệ quản lý.' };
   }
   const missing = skus.filter(s => !products[s]);
-  if (missing.length) return { ok: false, error: `Produit(s) introuvable(s) dans Odoo : ${missing.join(', ')}` };
+  if (missing.length) {
+    // Two Vietnamese phrasings (Axel, 2026-09-09), depending on WHY a SKU didn't resolve — an
+    // archived product reads very differently to shop staff than one that's simply mistyped or
+    // never existed on Odoo.
+    const archived = missing.filter(s => archivedSkus.has(s));
+    const notFound = missing.filter(s => !archivedSkus.has(s));
+    const parts: string[] = [];
+    if (archived.length) parts.push(`Sản phẩm đã ngừng kinh doanh trên Odoo: ${archived.join(', ')}`);
+    if (notFound.length) parts.push(`Không tìm thấy sản phẩm trên Odoo: ${notFound.join(', ')}`);
+    return { ok: false, error: parts.join(' · ') };
+  }
 
   // Quotation-type partner (Moon Flower — Axel, 2026-09-07: "pour Moon Flower ça doit créer une
   // SO et non une REP"): one sale.order for the partner. Left in DRAFT on purpose (Axel,
@@ -207,11 +235,14 @@ export async function createManagerReplenishment(
       return { ok: true, orderRef: so.name, deliveryDate, deliveryTime: time };
     } catch (e: any) {
       const baseError = String(e?.message ?? e);
+      console.error('[odoo-manager-order] sale.order creation failed:', baseError);
       if (soId) {
         // Still a draft (creation always leaves it there now) — clean up on any failure.
         try { await odooExecuteWrite('sale.order', 'unlink', [[soId]]); } catch { /* best-effort */ }
       }
-      return { ok: false, error: baseError };
+      // Never surface the raw Odoo/JS exception to shop staff (Axel, 2026-09-09) — baseError is
+      // still logged above for ops to diagnose.
+      return { ok: false, error: 'Không thể tạo đơn hàng trên Odoo. Vui lòng thử lại hoặc liên hệ quản lý.' };
     }
   }
 
@@ -251,10 +282,13 @@ export async function createManagerReplenishment(
     return { ok: true, orderRef, deliveryDate, deliveryTime: time };
   } catch (e: any) {
     const baseError = String(e?.message ?? e);
+    console.error('[odoo-manager-order] stock.replenishment.request creation failed:', baseError);
     if (reqId) {
       // Still a draft (creation always leaves it there now) — clean up on any failure.
       try { await odooExecuteWrite('stock.replenishment.request', 'unlink', [[reqId]]); } catch { /* best-effort */ }
     }
-    return { ok: false, error: baseError };
+    // Never surface the raw Odoo/JS exception to shop staff (Axel, 2026-09-09) — baseError is
+    // still logged above for ops to diagnose.
+    return { ok: false, error: 'Không thể tạo đơn hàng trên Odoo. Vui lòng thử lại hoặc liên hệ quản lý.' };
   }
 }

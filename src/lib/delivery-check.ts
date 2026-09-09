@@ -502,6 +502,37 @@ export async function ensureDeliveryOrderChecklistsBatch(
   return result;
 }
 
+// Online-sale info for the order-detail delivery-check screen (Axel, 2026-09-09): name,
+// phone, delivery mode (shop vs lab-direct-to-customer) and address, for an order that
+// originated from the online-sales interface (src/app/online-orders/). NOT shown on the print
+// view (DeliveryPrintView.tsx) — that stays untouched. An online order's lab_manual_cakes row
+// is matched to this delivery-check order_ref via matched_order_ref (see odoo-shop-order-sync.ts);
+// lab_online_orders (keyed by the same order_batch_id) carries delivery_mode/customer details.
+// Returns null for any non-online order (matched_order_ref never set for it, or set but no
+// lab_online_orders row — e.g. birthday-cakes/exceptional-orders/shop-token flows).
+export interface OnlineOrderCheckInfo {
+  customerName: string | null;
+  customerPhone: string | null;
+  deliveryAddress: string | null;
+  deliveryMode: 'shop' | 'direct';
+}
+
+export async function fetchOnlineOrderInfo(supabase: SupabaseClient, orderRef: string): Promise<OnlineOrderCheckInfo | null> {
+  const { data: mc } = await supabase.from('lab_manual_cakes')
+    .select('order_batch_id').eq('matched_order_ref', orderRef).not('order_batch_id', 'is', null).limit(1).maybeSingle();
+  if (!mc?.order_batch_id) return null;
+  const { data: oo } = await supabase.from('lab_online_orders')
+    .select('customer_name, customer_phone, delivery_address, delivery_mode')
+    .eq('order_batch_id', mc.order_batch_id).maybeSingle();
+  if (!oo) return null;
+  return {
+    customerName: oo.customer_name ?? null,
+    customerPhone: oo.customer_phone ?? null,
+    deliveryAddress: oo.delivery_address ?? null,
+    deliveryMode: oo.delivery_mode === 'direct' ? 'direct' : 'shop',
+  };
+}
+
 export interface UnreconciledLine extends CheckLine {
   manual_cake_id: string;
   customer_name: string | null;

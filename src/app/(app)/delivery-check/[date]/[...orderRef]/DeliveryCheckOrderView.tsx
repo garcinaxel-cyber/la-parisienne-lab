@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck } from 'lucide-react';
-import type { CheckLine, DeliveryOrderHeader } from '@/lib/delivery-check';
+import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
 type LineState = { qty: string; reason: string; note: string };
@@ -148,7 +148,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
   );
 }
 
-export default function DeliveryCheckOrderView({ header, lines, backHref }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string }) {
+export default function DeliveryCheckOrderView({ header, lines, backHref, onlineInfo }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string; onlineInfo?: OnlineOrderCheckInfo | null }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -241,6 +241,26 @@ export default function DeliveryCheckOrderView({ header, lines, backHref }: { he
           <div>
             <h1 className="font-serif text-xl sm:text-2xl font-bold text-navy">{header.order_ref}</h1>
             <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
+            {/* Online-sale customer details (Axel, 2026-09-09) — name, delivery mode (via the
+                shop vs lab-direct-to-customer) and address, for an order placed through the
+                online-sales interface. Never shown on the print view — this is the detail
+                screen only (DeliveryPrintView.tsx is a separate component/route). */}
+            {onlineInfo && (
+              <div className="mt-1.5 inline-flex flex-col gap-0.5 rounded-lg px-2.5 py-1.5 text-xs"
+                style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E3A5F' }}>
+                <div className="font-semibold">
+                  🛍 {vi ? 'Đơn online' : 'Commande en ligne'}
+                  {onlineInfo.customerName ? ` · ${onlineInfo.customerName}` : ''}
+                  {onlineInfo.customerPhone ? ` · ${onlineInfo.customerPhone}` : ''}
+                </div>
+                <div>
+                  {onlineInfo.deliveryMode === 'direct'
+                    ? (vi ? '🚚 Lab giao thẳng cho khách' : '🚚 Livraison directe par le lab')
+                    : (vi ? '🏪 Giao qua shop' : '🏪 Livraison via le shop')}
+                  {onlineInfo.deliveryAddress ? ` · ${onlineInfo.deliveryAddress}` : ''}
+                </div>
+              </div>
+            )}
           </div>
           {/* Manual Odoo resync — an assistant who can't find a product she expects on this
               order doesn't have to wait for the next cron pass (2026-08-16, Axel). */}
