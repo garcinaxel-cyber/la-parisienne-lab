@@ -1611,21 +1611,30 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
               const hasData = !!cur && cur.savedCount > 0;
               const isCurrent = stockSessionSeq >= stockLatestSessionSeq;
               if (!hasData || !isCurrent) return null;
+              // Sticky to the bottom of the screen rather than sitting after the full product
+              // list (Axel, 2026-09-09: "ils oublient de valider" — the confirm step was only
+              // reachable after scrolling past every SKU, so it got missed; pinning it in view
+              // the whole time the shop is on this tab makes it impossible to leave unconfirmed
+              // by accident).
               if (cur?.finishedAt) {
                 const t = new Date(cur.finishedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                 return (
-                  <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
-                    <CheckCircle2 size={14} /> Đợt {stockSessionSeq} đã hoàn tất lúc {t}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
+                  <div className="sticky bottom-3 z-20 -mx-4 px-4">
+                    <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 shadow-lg" style={{ backgroundColor: '#ECFDF5', color: '#047857', border: '1.5px solid #A7F3D0' }}>
+                      <CheckCircle2 size={14} /> Đợt {stockSessionSeq} đã hoàn tất lúc {t}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
+                    </div>
                   </div>
                 );
               }
               return (
-                <button onClick={finishStockCount} disabled={finishing || stockSaving || !stockName.trim()}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
-                  style={finishArmed ? { backgroundColor: '#047857', color: '#fff' } : { backgroundColor: '#fff', color: '#047857', border: '1.5px solid #047857' }}>
-                  {finishing ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                  {finishArmed ? `Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)` : `✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`}
-                </button>
+                <div className="sticky bottom-3 z-20 -mx-4 px-4">
+                  <button onClick={finishStockCount} disabled={finishing || stockSaving || !stockName.trim()}
+                    className="w-full inline-flex items-center justify-center gap-2 text-base font-bold rounded-xl px-4 py-3.5 disabled:opacity-40 shadow-lg"
+                    style={finishArmed ? { backgroundColor: '#047857', color: '#fff' } : { backgroundColor: '#047857', color: '#fff', border: '1.5px solid #047857' }}>
+                    {finishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                    {finishArmed ? `Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)` : `✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`}
+                  </button>
+                </div>
               );
             })()}
             {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
@@ -1756,7 +1765,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                   ) : (
                     <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
                       {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
-                        ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — nếu chưa ai xác nhận, đơn sẽ tự động gửi lúc 14h00.'
+                        ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — sau 14h00 vẫn gửi được nhưng phải có quản lý xác nhận thủ công.'
                         : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
                     </div>
                   )}
