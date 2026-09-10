@@ -107,12 +107,22 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // mirror; Axel, 2026-08-25: "je veux exactement comme les QR code des chefs, dans l admin je
 // peux avoir access facilement a leur interface" — staff access is now fully interactive (same
 // confirm/scrap actions, same Odoo writes), just banner-flagged so it's never mistaken for the
-// shop's own login. The prop name stays `readOnly` for now (only the ONE caller in
-// admin/shop-access/[shopName]/page.tsx passes it) but it now means "acting on behalf of
-// `shopName` via a staff session" rather than "cannot write".
+// shop's own login. The prop name stays `readOnly` for now (two callers pass it: admin's own
+// admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
+// own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
+// than "cannot write".
 export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'; viewerRole?: 'admin' | 'manager' }) {
   const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'>(initialTab);
+  // `initialTab` is only the useState *seed* — on a fresh mount it's all that's needed. But
+  // /shop-manager/store is one long-lived route the manager cockpit re-navigates to with a new
+  // `?tab=` every time (Order quick action vs. Store interface), and Next.js's App Router keeps
+  // this same client component instance mounted across a searchParams-only navigation — so
+  // without this resync, tapping "Order" after having viewed any other tab kept showing whatever
+  // tab was last active instead of jumping to the order screen (Axel, 2026-09-10: "l'onglet
+  // order ... il renvoit pas a l'interface manager de commande qu'on avait dit"). Harmless for
+  // the other two callers, which never pass a changing initialTab.
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   // Inter-shop transfers (Axel, 2026-09-07) — loaded here (not only inside the tab) so the tab
   // button can show how many incoming transfers are waiting for this shop.
   const [transfers, setTransfers] = useState<ShopTransfer[] | null>(null);

@@ -13,11 +13,16 @@ import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAct
 // Shop Manager cockpit (Axel, 2026-09-10) — single client component, internal tab state, same
 // posture as ShopView.tsx/OnlineOrdersView.tsx (one route, one bundle) rather than several
 // separate pages/serverless routes, per Axel's "optimise ... pour que l usage supabase/vercel
-// soit reduit". "Order" and "Store interface" deliberately do NOT get their own screens here —
-// both jump straight into the real, already-built ShopView (src/app/shop/ShopView.tsx) via
-// /shop-manager/store, which now also carries the live-inventory panel these managers asked for
-// (2026-09-10, added directly to ShopView's own Order tab so every shop benefits, not just
-// managers). "Online sales" jumps to the existing /online-orders app, read-only for this role.
+// soit reduit". "Order" deliberately does NOT get its own screen here — it jumps straight into
+// the real, already-built ShopView (src/app/shop/ShopView.tsx) via /shop-manager/store, which
+// carries the live-inventory panel these managers asked for. "Online sales" jumps to the
+// existing /online-orders app, read-only for this role.
+//
+// Landing flow (Axel, 2026-09-10 follow-up: "la premiere page soit la page shop directement"):
+// the FIRST screen after login is always the Shops list (`stage === 'shops'`) — not Today.
+// Picking a shop moves to `stage === 'shop'`, which is a Today/Order/Team-tabbed cockpit for
+// that one shop; Shops is no longer a persistent 4th bottom-tab, it's reached again from the
+// header's shop-switcher (an explicit "all shops" row at the top of that dropdown).
 //
 // Bilingual (Axel, 2026-09-10: "met l'app aussi en anglais") — same localStorage-backed
 // useI18n() toggle as OnlineOrdersView, default VI. NOT extended into ShopView itself (the
@@ -40,8 +45,9 @@ const L = {
   vi: {
     logout: 'Đăng xuất',
     navToday: 'Hôm nay', navOrder: 'Đặt hàng', navShops: 'Boutiques', navTeam: 'Đội ngũ',
+    allShops: 'Tất cả boutique',
     qaOrder: 'Đặt hàng', qaStore: 'Giao diện shop', qaOnline: 'Bán hàng online', qaTeam: 'Đội ngũ',
-    recapReception: 'Nhập hàng', recapReceptionNone: 'Chưa có',
+    recapReception: 'Nhập hàng', recapReceptionNone: 'Chưa có', recapReceptionNotDone: 'Chưa nhận hàng',
     recapCount: 'Kiểm kho', recapCountNone: 'Chưa kiểm',
     recapOrders: 'Đặt hàng', recapLosses: 'Hao hụt', recapTransfers: 'Chuyển kho', recapOnline: 'Bán hàng online',
     flagOdooDirect: 'Có đơn đặt trực tiếp trên Odoo', flagTransferPending: 'Đang chờ nhận',
@@ -56,8 +62,9 @@ const L = {
   en: {
     logout: 'Log out',
     navToday: 'Today', navOrder: 'Order', navShops: 'Shops', navTeam: 'Team',
+    allShops: 'All shops',
     qaOrder: 'Order', qaStore: 'Store interface', qaOnline: 'Online sales', qaTeam: 'Team',
-    recapReception: 'Deliveries', recapReceptionNone: 'None yet',
+    recapReception: 'Reception', recapReceptionNone: 'None yet', recapReceptionNotDone: 'Reception not done',
     recapCount: 'Stock count', recapCountNone: 'Not counted yet',
     recapOrders: 'Orders', recapLosses: 'Losses', recapTransfers: 'Transfers', recapOnline: 'Online sales',
     flagOdooDirect: 'An order was placed directly on Odoo', flagTransferPending: 'Awaiting receipt',
@@ -94,8 +101,13 @@ function fmtCountValue(skuCount: number, valuationStr: string, lang: Lang) {
 function fmtDoneAt(timeStr: string, lang: Lang) {
   return lang === 'en' ? `Done at ${timeStr}` : `Xong lúc ${timeStr}`;
 }
-function fmtOrdersValue(n: number, lang: Lang) {
-  return lang === 'en' ? `${n} order${n !== 1 ? 's' : ''}` : `${n} đơn`;
+// Order refs are shown right alongside the count now (Axel, 2026-09-10: "dans les orders tu
+// mets la ref de la commande") — there's realistically 0-2 orders/shop/day, so listing every
+// ref inline never gets unwieldy; the card just wraps to a second line if it ever does.
+function fmtOrdersValue(orders: { ref: string }[], lang: Lang) {
+  const n = orders.length;
+  const countStr = lang === 'en' ? `${n} order${n !== 1 ? 's' : ''}` : `${n} đơn`;
+  return n ? `${countStr} · ${orders.map(o => o.ref).join(', ')}` : countStr;
 }
 function fmtLossesValue(n: number, lang: Lang) {
   return lang === 'en' ? `${n} item${n !== 1 ? 's' : ''}` : `${n} sản phẩm`;
@@ -131,13 +143,19 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
-type Tab = 'today' | 'shops' | 'team';
+// Order is deliberately NOT one of these — it always jumps to the real ShopView order screen
+// (openStore('order')) rather than being its own client-state tab, exactly like it did before;
+// the bottom nav below still shows it as a peer of Today/Team so it reads as one of the three
+// destinations of a selected shop's interface.
+type Tab = 'today' | 'team';
+type Stage = 'shops' | 'shop';
 
 export default function ShopManagerView({ managerName, color, shops }: { managerName: string; color: string; shops: string[] }) {
   const router = useRouter();
   const { tr, lang, setLang } = useL();
+  const [stage, setStage] = useState<Stage>('shops');
   const [tab, setTab] = useState<Tab>('today');
-  const [activeShop, setActiveShop] = useState(shops[0] ?? '');
+  const [activeShop, setActiveShop] = useState('');
   const [shopPicker, setShopPicker] = useState(false);
 
   async function logout() {
@@ -150,6 +168,18 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
     router.push(`/shop-manager/store?shop=${encodeURIComponent(activeShop)}&tab=${initialTab}`);
   }
 
+  function enterShop(s: string) {
+    setActiveShop(s);
+    setTab('today');
+    setStage('shop');
+    setShopPicker(false);
+  }
+
+  function backToShops() {
+    setStage('shops');
+    setShopPicker(false);
+  }
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: CREAM }}>
       <div style={{ backgroundColor: NAVY }} className="px-4 pt-4 pb-3">
@@ -158,10 +188,14 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
             <Store size={17} style={{ color: NAVY }} />
           </div>
           <div className="flex-1 min-w-0">
-            <button onClick={() => setShopPicker(v => !v)} className="flex items-center gap-1 min-w-0">
-              <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FFFAEE' }}>{activeShop || '—'}</h1>
-              <ChevronDown size={14} style={{ color: GOLD }} className="shrink-0" />
-            </button>
+            {stage === 'shop' ? (
+              <button onClick={() => setShopPicker(v => !v)} className="flex items-center gap-1 min-w-0">
+                <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FFFAEE' }}>{activeShop || '—'}</h1>
+                <ChevronDown size={14} style={{ color: GOLD }} className="shrink-0" />
+              </button>
+            ) : (
+              <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FFFAEE' }}>{tr('navShops')}</h1>
+            )}
             <div className="text-[11px]" style={{ color: '#F0D98A' }}>
               {managerName} · {fmtShopsCount(shops.length, lang)}
             </div>
@@ -178,12 +212,17 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
             <LogOut size={17} />
           </button>
         </div>
-        {shopPicker && (
+        {stage === 'shop' && shopPicker && (
           <div className="max-w-xl mx-auto mt-2.5 rounded-xl overflow-hidden" style={{ backgroundColor: '#fff' }}>
+            <button onClick={backToShops}
+              className="w-full text-left px-3.5 py-2.5 text-sm font-bold flex items-center gap-2"
+              style={{ color: NAVY, backgroundColor: CREAM }}>
+              <Box size={15} /> {tr('allShops')}
+            </button>
             {shops.map(s => (
-              <button key={s} onClick={() => { setActiveShop(s); setShopPicker(false); }}
+              <button key={s} onClick={() => enterShop(s)}
                 className="w-full text-left px-3.5 py-2.5 text-sm font-semibold flex items-center justify-between"
-                style={{ color: INK, borderTop: s === shops[0] ? 'none' : `1px solid ${BORDER}`, backgroundColor: s === activeShop ? CREAM : '#fff' }}>
+                style={{ color: INK, borderTop: `1px solid ${BORDER}`, backgroundColor: s === activeShop ? CREAM : '#fff' }}>
                 {s}
                 {s === activeShop && <Check size={15} style={{ color: GREEN }} />}
               </button>
@@ -193,30 +232,33 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-4 pb-24">
-        {tab === 'today' && <TodayTab activeShop={activeShop} onOpenStore={openStore} onOnlineSales={() => router.push('/online-orders')} onTeam={() => setTab('team')} />}
-        {tab === 'shops' && <ShopsTab shops={shops} activeShop={activeShop} onPick={s => { setActiveShop(s); setTab('today'); }} />}
-        {tab === 'team' && <TeamTab activeShop={activeShop} />}
+        {stage === 'shops' && <ShopsTab shops={shops} activeShop={activeShop} onPick={enterShop} />}
+        {stage === 'shop' && tab === 'today' && (
+          <TodayTab activeShop={activeShop} onOpenStore={openStore} onOnlineSales={() => router.push('/online-orders')} onTeam={() => setTab('team')} />
+        )}
+        {stage === 'shop' && tab === 'team' && <TeamTab activeShop={activeShop} />}
       </div>
 
-      <div style={{ backgroundColor: TABBAR }} className="flex fixed bottom-0 left-0 right-0 z-10">
-        {([
-          ['today', PackageCheck, tr('navToday')],
-          ['order', ShoppingBag, tr('navOrder')],
-          ['shops', Box, tr('navShops')],
-          ['team', Users, tr('navTeam')],
-        ] as const).map(([key, Icon, label]) => {
-          const active = tab === key;
-          return (
-            <button key={key}
-              onClick={() => key === 'order' ? openStore('order') : setTab(key as Tab)}
-              className="flex-1 text-center py-2.5"
-              style={{ color: active ? GOLD : '#8FAE9E', fontWeight: active ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${active ? GOLD : 'transparent'}` }}>
-              <Icon size={17} className="mx-auto" />
-              <div className="mt-0.5">{label}</div>
-            </button>
-          );
-        })}
-      </div>
+      {stage === 'shop' && (
+        <div style={{ backgroundColor: TABBAR }} className="flex fixed bottom-0 left-0 right-0 z-10">
+          {([
+            ['today', PackageCheck, tr('navToday')],
+            ['order', ShoppingBag, tr('navOrder')],
+            ['team', Users, tr('navTeam')],
+          ] as const).map(([key, Icon, label]) => {
+            const active = tab === key;
+            return (
+              <button key={key}
+                onClick={() => key === 'order' ? openStore('order') : setTab(key as Tab)}
+                className="flex-1 text-center py-2.5"
+                style={{ color: active ? GOLD : '#8FAE9E', fontWeight: active ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${active ? GOLD : 'transparent'}` }}>
+                <Icon size={17} className="mx-auto" />
+                <div className="mt-0.5">{label}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -260,6 +302,18 @@ function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
   useEffect(() => { load(); }, [load]);
 
   const recap = data?.recap;
+  const reception = recap?.reception;
+  // "Chưa có/None yet" only when there's truly nothing expected today (reception === null, i.e.
+  // no delivery-check lines at all for this shop+date). When something WAS expected but isn't
+  // fully received yet, that's not a neutral "not yet" state any more — flag it in red instead
+  // of letting it pass silently (Axel, 2026-09-10: "si tu mets not yet c'est qu'il y a vraiment
+  // pas de livraison prevu ... sinon tu mets en rouge que la reception a pas ete faite").
+  const receptionDone = !!reception && reception.confirmedLines >= reception.totalLines;
+  const receptionFlag = reception && !receptionDone
+    ? { color: RED, text: tr('recapReceptionNotDone') }
+    : reception && reception.discrepancies.length
+      ? { color: RED, text: fmtDiscrepancy(reception.discrepancies.length, lang) }
+      : undefined;
 
   return (
     <div className="space-y-4">
@@ -275,13 +329,13 @@ function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
       ) : (
         <div className="grid grid-cols-2 gap-2.5">
           <RecapCard icon={Truck} label={tr('recapReception')}
-            value={recap?.reception ? fmtReceptionValue(recap.reception.confirmedLines, recap.reception.totalLines, lang) : tr('recapReceptionNone')}
-            flag={recap?.reception && recap.reception.discrepancies.length ? { color: RED, text: fmtDiscrepancy(recap.reception.discrepancies.length, lang) } : undefined} />
+            value={reception ? fmtReceptionValue(reception.confirmedLines, reception.totalLines, lang) : tr('recapReceptionNone')}
+            flag={receptionFlag} />
           <RecapCard icon={ClipboardList} label={tr('recapCount')}
             value={recap?.count ? fmtCountValue(recap.count.skuCount, fmtVnd(recap.count.valuation), lang) : tr('recapCountNone')}
             flag={recap?.count ? { color: GREEN, text: fmtDoneAt(fmtTime(recap.count.finishedAt), lang) } : undefined} />
           <RecapCard icon={ShoppingBag} label={tr('recapOrders')}
-            value={recap ? fmtOrdersValue(recap.orders.length, lang) : fmtOrdersValue(0, lang)}
+            value={fmtOrdersValue(recap?.orders ?? [], lang)}
             flag={recap && recap.orders.some(o => o.odooDirect) ? { color: AMBER, text: tr('flagOdooDirect') } : undefined} />
           <RecapCard icon={Trash2} label={tr('recapLosses')} value={recap ? fmtLossesValue(recap.losses.totalQty, lang) : fmtLossesValue(0, lang)} />
           <RecapCard icon={ArrowLeftRight} label={tr('recapTransfers')}
