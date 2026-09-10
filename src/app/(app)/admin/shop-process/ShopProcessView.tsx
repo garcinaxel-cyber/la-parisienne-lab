@@ -2,21 +2,11 @@
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ClipboardList, ChevronLeft, ChevronRight, Truck, PackageCheck, ShoppingBag, Trash2, ArrowLeftRight } from 'lucide-react';
+import type { ShopRecap } from '@/lib/shop-recap';
 
-export type ShopRecap = {
-  shop: string;
-  reception: {
-    totalLines: number; confirmedLines: number; lastConfirmedAt: string | null; confirmedBy: string[];
-    // Discrepancies kept for the flag count only -- the cell itself now shows just the two
-    // totals (Axel, 2026-09-08: "juste le comparatif total quantite recu vs quantite check").
-    discrepancies: { sku: string | null; product: string; expected: number; received: number }[];
-    totalExpectedQty: number; totalReceivedQty: number;
-  } | null;
-  count: { sessionsCount: number; finishedAt: string; finishedBy: string; skuCount: number; valuation: number } | null;
-  orders: { ref: string; placedAt: string | null; placedBy: string | null; odooDirect: boolean }[];
-  losses: { count: number; totalQty: number };
-  transfers: { direction: 'in' | 'out'; otherShop: string; ref: string; status: string; by: string; at: string; units: number }[];
-};
+// ShopRecap now lives in src/lib/shop-recap.ts (extracted 2026-09-10, shop-manager feature) —
+// re-exported here so nothing importing { type ShopRecap } from this file needs to change.
+export type { ShopRecap };
 
 const AMBER = '#B45309';
 const RED = '#B42318';

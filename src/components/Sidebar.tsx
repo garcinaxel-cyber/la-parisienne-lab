@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops, UserCog } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -47,6 +47,9 @@ const ADMIN_NAV = [
   // control/audit tool over the shops' own workflow (réception, comptage, commande, pertes,
   // transferts), read-only, today/yesterday only. Same admin-only posture as Check.
   { href: '/admin/shop-process', icon: ClipboardListShops, labelVi: 'Theo dõi cửa hàng', labelEn: 'Suivi shops', adminOnly: true },
+  // Shop manager accounts (2026-09-10) — individual logins for the shop managers, admin-only
+  // provisioning (create/update the 3 real accounts) + a read-only roster.
+  { href: '/admin/shop-managers', icon: UserCog, labelVi: 'Quản lý cửa hàng', labelEn: 'Shop managers', adminOnly: true },
 ];
 
 export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {

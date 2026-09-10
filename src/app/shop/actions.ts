@@ -47,22 +47,49 @@ async function requireShopSession(): Promise<{ shopName: string } | { error: str
   return { shopName: labProfile.shop_name };
 }
 
-async function requireStaffSession(): Promise<{ ok: true } | { error: string }> {
+// "Staff preview" read-only twins (below) are also how a shop_manager's own login reads these
+// tabs when acting on one of THEIR shops (Axel, 2026-09-10) — never a real shop's own session,
+// that always goes through the "My..." action instead (requireShopSession). A manager's
+// explicitShopName is checked against their own lab_shop_managers.shops, same as the write path
+// in requireShopOrStaffSession above; admin/lab_manager/assistant keep unrestricted access.
+async function requireStaffOrManagerSession(explicitShopName?: string): Promise<{ ok: true } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
-  return { ok: true };
+  if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { ok: true };
+  if (profile?.role === 'shop_manager') {
+    if (!explicitShopName) return { error: 'Shop name required' };
+    const manager = await resolveShopManagerByUserId(session.user.id);
+    if (!manager || !manager.shops.includes(explicitShopName)) return { error: 'Forbidden' };
+    return { ok: true };
+  }
+  return { error: 'Forbidden' };
 }
 
-// Accepts either the shop's own session, OR a staff session testing AS a specific shop (Axel,
+// Shop Manager (Axel, 2026-09-10): an individual login (role='shop_manager') linked to an
+// existing lab_shop_managers row via user_id — the SAME row used for the shared-shop-login PIN
+// unlock (resolveManager below), just also reachable without typing that PIN first. Looked up
+// with the service-role client since this runs right after the session/role check, same posture
+// as every other cross-cutting read in this file.
+async function resolveShopManagerByUserId(userId: string): Promise<ShopManager & { shops: string[] } | null> {
+  const supabase = service();
+  if (!supabase) return null;
+  const { data } = await supabase.from('lab_shop_managers')
+    .select('id, name, color, shops').eq('user_id', userId).eq('active', true).maybeSingle();
+  if (!data) return null;
+  return { id: data.id, name: data.name, color: data.color, shops: Array.isArray(data.shops) ? data.shops : [] };
+}
+
+// Accepts either the shop's own session, a staff session testing AS a specific shop (Axel,
 // 2026-08-25: one-click access from admin, same convenience as the station QR codes — except
 // stations work by the tablet staying logged into a real per-team account, there's no token
 // trick to copy; shops use ONE shared account per shop, so the equivalent here is letting staff
-// act through their own already-authenticated admin session instead of switching accounts).
-// explicitShopName is only trusted when the caller is staff (role check happens first) — a shop
-// user's own shopName always comes from their OWN lab_profiles row, never from client input.
+// act through their own already-authenticated admin session instead of switching accounts), OR
+// (2026-09-10) a shop_manager's own individual login acting on one of THEIR authorized shops.
+// explicitShopName is only ever trusted after the role check — a shop user's own shopName always
+// comes from their OWN lab_profiles row, never from client input; a manager's explicitShopName
+// is re-checked against their own lab_shop_managers.shops, never trusted blindly either.
 async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
@@ -72,6 +99,15 @@ async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ s
     const { data: labProfile } = await supabase.from('lab_profiles').select('shop_name').eq('id', session.user.id).maybeSingle();
     if (!labProfile?.shop_name) return { error: 'Shop not configured' };
     return { shopName: labProfile.shop_name, isStaffTest: false };
+  }
+  if (profile?.role === 'shop_manager') {
+    if (!explicitShopName) return { error: 'Shop name required' };
+    const manager = await resolveShopManagerByUserId(session.user.id);
+    if (!manager || !manager.shops.includes(explicitShopName)) return { error: 'Forbidden' };
+    // Not a "staff test" — this really is the manager operating this shop, same as the shop's
+    // own login (no testing banner), just identified via their own account instead of the
+    // shop's shared one.
+    return { shopName: explicitShopName, isStaffTest: false };
   }
   if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {
     if (!explicitShopName) return { error: 'Shop name required' };
@@ -86,8 +122,43 @@ async function requireShopOrStaff(): Promise<{ ok: true } | { error: string }> {
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (profile?.role === 'shop' || ['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { ok: true };
+  if (profile?.role === 'shop' || profile?.role === 'shop_manager' || ['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { ok: true };
   return { error: 'Forbidden' };
+}
+
+// The manager's own shop list + name/color (Axel, 2026-09-10) — used by /shop-manager to build
+// the shop-switcher and "Shops" tab without asking the caller to already know an explicit shop
+// name (unlike every action above, which is scoped to one shop at a time).
+export async function getMyManagerProfileAction(): Promise<{ manager?: { name: string; color: string; shops: string[] }; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role !== 'shop_manager') return { error: 'Forbidden' };
+  const manager = await resolveShopManagerByUserId(session.user.id);
+  if (!manager) return { error: 'Manager not configured' };
+  return { manager: { name: manager.name, color: manager.color, shops: manager.shops } };
+}
+
+// Team tab's read-only "Managers" list (Axel's mockup, 2026-09-10) — deliberately read-only:
+// adding/editing a manager's PIN is a security-sensitive operation left to admin
+// (/admin/shop-managers), not self-service like the staff roster below. Never returns pin_hash.
+export type ShopManagerListEntry = { id: string; name: string; color: string; shopsCount: number; allFiveShops: boolean };
+
+export async function getShopManagersForShopAction(shopName?: string): Promise<{ managers?: ShopManagerListEntry[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data } = await supabase.from('lab_shop_managers')
+    .select('id, name, color, shops').eq('active', true).contains('shops', [auth.shopName]);
+  return {
+    managers: (data ?? []).map((m: any) => ({
+      id: m.id, name: m.name, color: m.color,
+      shopsCount: Array.isArray(m.shops) ? m.shops.length : 0,
+      allFiveShops: Array.isArray(m.shops) && m.shops.length >= 5,
+    })),
+  };
 }
 
 // shop_name is stored inconsistently across sync sources — found live 2026-08-19 while
@@ -332,14 +403,14 @@ async function prefillReceivedQtyIfComplete(
 
 // ── Staff preview (read-only, any shop by name) ─────────────────────────────
 export async function getShopDeliveriesForStaffAction(shopName: string): Promise<{ orders?: ShopDeliveryOrder[]; today?: string; tomorrow?: string; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const [today, tomorrow] = labTodayTomorrow();
   return { orders: await fetchDeliveries(shopName), today, tomorrow };
 }
 
 export async function getShopCakesForStaffAction(shopName: string): Promise<{ cakes?: ShopCake[]; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   return { cakes: await fetchCakes(shopName) };
 }
@@ -347,7 +418,7 @@ export async function getShopCakesForStaffAction(shopName: string): Promise<{ ca
 // getMyShopLossesAction's staff-driven counterpart — same query, just scoped to an
 // explicit/staff-supplied shopName instead of the caller's own lab_profiles row.
 export async function getShopLossesForStaffAction(shopName: string): Promise<{ losses?: ShopLoss[]; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -632,7 +703,7 @@ export async function getMyShopLossesDailyRecapAction(): Promise<{ recap?: ShopL
 }
 
 export async function getShopLossesDailyRecapForStaffAction(shopName: string): Promise<{ recap?: ShopLossDailyRecap[]; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   return { recap: await fetchDailyLossRecap(shopName) };
 }
@@ -868,7 +939,7 @@ export async function getMyStockCountListAction(sessionSeq?: number): Promise<{ 
 }
 
 export async function getStockCountListForStaffAction(shopName: string, sessionSeq?: number): Promise<{ date?: string; sessionSeq?: number; latestSessionSeq?: number; sessions?: ShopStockCountSession[]; lines?: ShopStockCountLine[]; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const today = vnDateStr();
   const sessions = await fetchStockSessions(shopName, today);
@@ -1060,9 +1131,31 @@ export async function getMyDailyReportAction(): Promise<{ report?: ShopDailyRepo
 }
 
 export async function getDailyReportForStaffAction(shopName: string): Promise<{ report?: ShopDailyReport; error?: string }> {
-  const auth = await requireStaffSession();
+  const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   return { report: await fetchDailyReport(shopName) };
+}
+
+// ── Live inventory reference (Order tab) ────────────────────────────────────────────────────
+// Axel, 2026-09-10: shop managers place orders across all 5 shops and asked for a view of the
+// shop's latest stock count right next to product search, with a toggle for in-stock/out-of-
+// stock. Reuses the exact same Kiểm kho data (lab_shop_stock_counts via fetchStockSessions/
+// fetchStockCountList above) — read-only, scoped to whichever session is most recent today, no
+// separate table and no new Odoo/Supabase reads beyond what Kiểm kho already does.
+export type ShopStockLevel = { sku: string; name: string; qty: number; category: string };
+
+export async function getShopCurrentStockLevelsAction(shopName?: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const today = vnDateStr();
+  const sessions = await fetchStockSessions(auth.shopName, today);
+  if (!sessions.length) return { levels: [], asOf: null };
+  const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const list = await fetchStockCountList(auth.shopName, latest.seq);
+  return {
+    levels: list.filter(l => l.qty != null).map(l => ({ sku: l.sku, name: l.name, qty: l.qty as number, category: l.category })),
+    asOf: latest.updatedAt,
+  };
 }
 
 // ── Commande (manager-only) ─────────────────────────────────────────────────────────────────

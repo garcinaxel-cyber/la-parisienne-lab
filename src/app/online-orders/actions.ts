@@ -31,13 +31,26 @@ function service() {
   );
 }
 
-async function requireOnlineSession(): Promise<{ userId: string; fullName: string; isAdmin: boolean } | { error: string }> {
+// shop_manager (2026-09-10) — Axel: "accès en lecture (Analytic + Suivi)" — a manager's own
+// login sees everything an admin sees here (both getMyOnlineOrdersAction and
+// getOnlineAnalyticsAction already return every seller's data, not just the caller's own), but
+// may never place, edit, cancel or otherwise write an order. requireOnlineWriteSession below is
+// the same check plus that extra guard, used by every mutating action in this file; the plain
+// read actions (list/analytics/channels/fees) keep using requireOnlineSession directly.
+async function requireOnlineSession(): Promise<{ userId: string; fullName: string; isAdmin: boolean; role: 'admin' | 'online_sales' | 'shop_manager' } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
-  if (!profile || !['online_sales', 'admin'].includes(profile.role)) return { error: 'Not authorized' };
-  return { userId: session.user.id, fullName: profile.full_name ?? '', isAdmin: profile.role === 'admin' };
+  if (!profile || !['online_sales', 'admin', 'shop_manager'].includes(profile.role)) return { error: 'Not authorized' };
+  return { userId: session.user.id, fullName: profile.full_name ?? '', isAdmin: profile.role === 'admin', role: profile.role as 'admin' | 'online_sales' | 'shop_manager' };
+}
+
+async function requireOnlineWriteSession(): Promise<{ userId: string; fullName: string; isAdmin: boolean; role: 'admin' | 'online_sales' | 'shop_manager' } | { error: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return auth;
+  if (auth.role === 'shop_manager') return { error: 'Read-only access' };
+  return auth;
 }
 
 const clean = (s: string | null | undefined, max: number) => {
@@ -111,7 +124,7 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
 // Design reference photo — same storage bucket as the public shop-order flow, just
 // session-gated instead of token-gated.
 export async function uploadOnlineDesignPhotoAction(formData: FormData): Promise<{ url?: string; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -169,7 +182,7 @@ export async function submitOnlineOrderAction(input: {
   deliveryMode?: 'shop' | 'direct';
   items: OnlineOrderItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderRef?: string | null; warning?: string; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -349,7 +362,7 @@ export async function submitShopStockSaleAction(input: {
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   items: ShopStockSaleItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderBatchId?: string; warning?: string; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -527,7 +540,7 @@ export async function replaceOnlineOrderLinesAction(
   orderBatchId: string,
   items: { ficheId: string | null; variantId: string | null; sku: string | null; nameVi: string; qty: number; unitPrice: number }[],
 ): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -561,7 +574,7 @@ async function assertOwnsOrder(supabase: NonNullable<ReturnType<typeof service>>
 }
 
 export async function setShopDeliveredAction(orderBatchId: string, delivered: boolean): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -577,7 +590,7 @@ export async function setShopDeliveredAction(orderBatchId: string, delivered: bo
 }
 
 export async function setPaymentStatusAction(orderBatchId: string, status: 'paid' | 'unpaid' | 'partial', amountPaid: number): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   if (!['paid', 'unpaid', 'partial'].includes(status)) return { error: 'Invalid status' };
   const supabase = service();
@@ -606,7 +619,7 @@ export async function listOnlineChannelsAction(): Promise<{ channels?: string[];
 }
 
 export async function addOnlineChannelAction(name: string): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -618,7 +631,7 @@ export async function addOnlineChannelAction(name: string): Promise<{ ok?: boole
 }
 
 export async function deleteOnlineChannelAction(name: string): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -644,7 +657,7 @@ export async function listExtraFeeTypesAction(): Promise<{ fees?: ExtraFeeType[]
 }
 
 export async function addExtraFeeTypeAction(input: { emoji?: string | null; label: string; defaultPrice: number }): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -658,7 +671,7 @@ export async function addExtraFeeTypeAction(input: { emoji?: string | null; labe
 }
 
 export async function updateExtraFeeTypeAction(input: { id: string; emoji?: string | null; label?: string; defaultPrice?: number }): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -673,7 +686,7 @@ export async function updateExtraFeeTypeAction(input: { id: string; emoji?: stri
 }
 
 export async function deleteExtraFeeTypeAction(id: string): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
@@ -688,7 +701,7 @@ export async function deleteExtraFeeTypeAction(id: string): Promise<{ ok?: boole
 // so a typical bank-app screenshot lands at 100–250 KB instead of 2–5 MB — negligible for
 // storage, and it is only ever rendered as a next/image thumbnail on demand (egress-cached).
 export async function uploadPaymentProofAction(orderBatchId: string, formData: FormData): Promise<{ url?: string; error?: string }> {
-  const auth = await requireOnlineSession();
+  const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };

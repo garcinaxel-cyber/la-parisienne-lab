@@ -309,9 +309,9 @@ function fmtCompactVnd(v: number): string {
 type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
 type Tab = 'order' | 'track' | 'stats';
 
-export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: string; isAdmin: boolean }) {
+export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }: { fullName: string; isAdmin: boolean; readOnly?: boolean }) {
   const { tr } = useL();
-  const [tab, setTab] = useState<Tab>('order');
+  const [tab, setTab] = useState<Tab>(readOnly ? 'track' : 'order');
   const today = new Date().toISOString().slice(0, 10);
   // ── Order form state ──
   const [shop, setShop] = useState(ONLINE_SHOPS[0]);
@@ -486,7 +486,7 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
       <Header fullName={fullName} count={cart.length} tab={tab} />
       <div className="flex-1 overflow-y-auto pb-20">
         <div className="max-w-xl mx-auto px-4 py-4">
-          {tab === 'order' && (
+          {tab === 'order' && !readOnly && (
             <OrderTab
               source={source} setSource={setSource}
               shop={shop} setShop={setShop} channel={channel} setChannel={setChannel}
@@ -513,11 +513,11 @@ export default function OnlineOrdersView({ fullName, isAdmin }: { fullName: stri
               submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
             />
           )}
-          {tab === 'track' && <TrackTab isAdmin={isAdmin} />}
+          {tab === 'track' && <TrackTab isAdmin={isAdmin} readOnly={readOnly} />}
           {tab === 'stats' && <StatsTab />}
         </div>
       </div>
-      <TabBar tab={tab} setTab={setTab} />
+      <TabBar tab={tab} setTab={setTab} readOnly={readOnly} />
     </div>
   );
 }
@@ -585,10 +585,10 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
   );
 }
 
-function TabBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
+function TabBar({ tab, setTab, readOnly = false }: { tab: Tab; setTab: (t: Tab) => void; readOnly?: boolean }) {
   const { tr } = useL();
   const items: { key: Tab; icon: string; label: string }[] = [
-    { key: 'order', icon: '🧾', label: tr('tabOrder') },
+    ...(readOnly ? [] : [{ key: 'order' as const, icon: '🧾', label: tr('tabOrder') }]),
     { key: 'track', icon: '📦', label: tr('tabTrack') },
     { key: 'stats', icon: '📊', label: tr('tabStats') },
   ];
@@ -1042,7 +1042,7 @@ function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSumma
   );
 }
 
-function TrackTab({ isAdmin }: { isAdmin: boolean }) {
+function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: boolean }) {
   const { tr, lang } = useL();
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
   const [filter, setFilter] = useState<'all' | 'undelivered' | 'unpaid' | 'late'>('all');
@@ -1173,7 +1173,7 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</div>
               <div style={{ fontSize: 12, color: INK_LIGHT, marginBottom: 9 }}>{o.items.map(i => `${i.nameVi} ×${i.qty}`).join(', ')}</div>
-              {o.source === 'excel_import' && o.items.length > 0 && o.items.every(i => !i.sku) && (
+              {!readOnly && o.source === 'excel_import' && o.items.length > 0 && o.items.every(i => !i.sku) && (
                 <button onClick={() => setReconstructing(reconstructing === o.orderBatchId ? null : o.orderBatchId)}
                   className="mb-2" style={{
                     display: 'inline-flex', alignItems: 'center', backgroundColor: '#EDE9FE', color: '#6D28D9',
@@ -1185,36 +1185,56 @@ function TrackTab({ isAdmin }: { isAdmin: boolean }) {
               )}
               <div className="flex justify-between items-center mb-2">
                 <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
-                <button onClick={() => cyclePayment(o)} style={{
-                  backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
-                  color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
-                }}>
-                  {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
-                </button>
-              </div>
-              <div className="flex items-center gap-2 mb-2"
-                onDragOver={e => e.preventDefault()}
-                onDrop={e => { e.preventDefault(); onProof(o, e.dataTransfer.files?.[0]); }}>
-                {o.paymentProofUrl && (
-                  <a href={o.paymentProofUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                    <img src={thumb(o.paymentProofUrl, 128)} alt={tr('payProof')} loading="lazy" className="w-10 h-10 rounded-md object-cover" style={{ border: `1px solid ${BORDER}` }} />
-                  </a>
+                {readOnly ? (
+                  <span style={{
+                    backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
+                    color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
+                  }}>
+                    {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
+                  </span>
+                ) : (
+                  <button onClick={() => cyclePayment(o)} style={{
+                    backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
+                    color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
+                  }}>
+                    {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
+                  </button>
                 )}
-                <label className="flex-1 text-center py-1.5 rounded-lg cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT, fontSize: 11.5, backgroundColor: '#FFFDF5' }}>
-                  {uploadingFor === o.orderBatchId ? tr('uploading') : (o.paymentProofUrl ? `✓ ${tr('payProof')}` : tr('payProofDrop'))}
-                  <input type="file" accept="image/*" className="hidden" onChange={e => onProof(o, e.target.files?.[0])} />
-                </label>
               </div>
+              {o.paymentProofUrl || !readOnly ? (
+                <div className="flex items-center gap-2 mb-2"
+                  onDragOver={readOnly ? undefined : e => e.preventDefault()}
+                  onDrop={readOnly ? undefined : e => { e.preventDefault(); onProof(o, e.dataTransfer.files?.[0]); }}>
+                  {o.paymentProofUrl && (
+                    <a href={o.paymentProofUrl} target="_blank" rel="noreferrer" className="shrink-0">
+                      <img src={thumb(o.paymentProofUrl, 128)} alt={tr('payProof')} loading="lazy" className="w-10 h-10 rounded-md object-cover" style={{ border: `1px solid ${BORDER}` }} />
+                    </a>
+                  )}
+                  {!readOnly && (
+                    <label className="flex-1 text-center py-1.5 rounded-lg cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT, fontSize: 11.5, backgroundColor: '#FFFDF5' }}>
+                      {uploadingFor === o.orderBatchId ? tr('uploading') : (o.paymentProofUrl ? `✓ ${tr('payProof')}` : tr('payProofDrop'))}
+                      <input type="file" accept="image/*" className="hidden" onChange={e => onProof(o, e.target.files?.[0])} />
+                    </label>
+                  )}
+                </div>
+              ) : null}
               <div style={{ height: 1, backgroundColor: CREAM_DARK, marginBottom: 9 }} />
               <div className="flex gap-2">
                 {o.source !== 'shop_stock' && <div className="flex-1 text-center py-1.5 rounded-lg" style={{
                   backgroundColor: o.labDelivered ? '#F0FDF4' : CREAM, color: o.labDelivered ? '#047857' : INK_LIGHT,
                   border: o.labDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.labDelivered ? 700 : 600,
                 }}>{o.labDelivered ? tr('labDelivered') : tr('labNot')}</div>}
-                <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
-                  backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
-                  border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
+                {readOnly ? (
+                  <div className="flex-1 text-center py-1.5 rounded-lg" style={{
+                    backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
+                    border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
+                  }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</div>
+                ) : (
+                  <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
+                    backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
+                    border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
+                  }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
+                )}
                     </div>
                   </div>
                 );

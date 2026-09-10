@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell, ArrowRightLeft } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer } from './actions';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel } from './actions';
 import ShopTransfersTab from './ShopTransfersTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
@@ -110,9 +110,9 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // shop's own login. The prop name stays `readOnly` for now (only the ONE caller in
 // admin/shop-access/[shopName]/page.tsx passes it) but it now means "acting on behalf of
 // `shopName` via a staff session" rather than "cannot write".
-export default function ShopView({ shopName, readOnly = false }: { shopName: string; readOnly?: boolean }) {
+export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'; viewerRole?: 'admin' | 'manager' }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'>('deliveries');
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'>(initialTab);
   // Inter-shop transfers (Axel, 2026-09-07) — loaded here (not only inside the tab) so the tab
   // button can show how many incoming transfers are waiting for this shop.
   const [transfers, setTransfers] = useState<ShopTransfer[] | null>(null);
@@ -239,6 +239,15 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState<string | null>(null);
   const [orderResult, setOrderResult] = useState<{ orderRef: string; deliveryDate: string; deliveryTime?: string; managerName?: string } | null>(null);
+
+  // Live inventory reference next to product search (Axel, 2026-09-10: "à côté de leur prise de
+  // commande une visu sur le dernier inventaire ... masquer ce qu'ils ont pas en stock et
+  // inversement") — read-only, reuses the shop's own daily Kiểm kho data, loaded lazily once when
+  // the Order tab is first opened (same posture as orderCategories above).
+  const [invLevels, setInvLevels] = useState<ShopStockLevel[] | null>(null);
+  const [invAsOf, setInvAsOf] = useState<string | null>(null);
+  const [invFilter, setInvFilter] = useState<'all' | 'in' | 'out'>('all');
+  const [invQuery, setInvQuery] = useState('');
 
   // Push notification opt-in (phase 4, 2026-09-05: "notif boutique quand c'est bientôt l'heure
   // de commander" + inventaire/réception terminés) — same reflect-the-real-state pattern as the
@@ -380,6 +389,17 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       const actions = await import('./actions');
       const res = await actions.getManagerOrderCategoriesAction(readOnly ? shopName : undefined);
       setOrderCategories(res.categories ?? []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'order' || invLevels !== null) return;
+    (async () => {
+      const actions = await import('./actions');
+      const res = await actions.getShopCurrentStockLevelsAction(readOnly ? shopName : undefined);
+      setInvLevels(res.levels ?? []);
+      setInvAsOf(res.asOf ?? null);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -1032,14 +1052,21 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div>
-            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? ' · Chế độ Admin' : ''}</div>
+            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? (viewerRole === 'manager' ? '' : ' · Chế độ Admin') : ''}</div>
             <h1 className="text-white font-serif text-xl font-bold">{shopName}</h1>
           </div>
           {readOnly ? (
-            <button onClick={() => router.push('/admin/shop-access')}
-              className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại admin">
-              <ArrowLeft size={16} /> Admin
-            </button>
+            viewerRole === 'manager' ? (
+              <button onClick={() => router.push('/shop-manager')}
+                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại">
+                <ArrowLeft size={16} /> Quay lại
+              </button>
+            ) : (
+              <button onClick={() => router.push('/admin/shop-access')}
+                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại admin">
+                <ArrowLeft size={16} /> Admin
+              </button>
+            )
           ) : (
             <div className="flex items-center gap-1">
               {(pushState === 'on' || pushState === 'off') && (
@@ -1059,7 +1086,7 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-4 space-y-4">
-        {readOnly && (
+        {readOnly && viewerRole === 'admin' && (
           <div className="rounded-xl px-3.5 py-2.5 flex items-start gap-2" style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }}>
             <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#92400E' }} />
             <div className="text-xs" style={{ color: '#92400E' }}>
@@ -1837,6 +1864,54 @@ export default function ShopView({ shopName, readOnly = false }: { shopName: str
                         );
                       })}
                     </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tồn kho gần nhất</div>
+                    {invAsOf && (
+                      <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>
+                        Kiểm {new Date(invAsOf).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                  {invLevels === null ? (
+                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Đang tải…</div>
+                  ) : !invLevels.length ? (
+                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Chưa có dữ liệu kiểm kho hôm nay</div>
+                  ) : (
+                    <>
+                      <div className="flex rounded-lg p-0.5" style={{ border: '1px solid #D1D5DB' }}>
+                        {([['all', 'Tất cả'], ['in', 'Còn hàng'], ['out', 'Hết hàng']] as const).map(([k, label]) => (
+                          <button key={k} onClick={() => setInvFilter(k)}
+                            className="flex-1 text-center text-[11px] font-semibold rounded-md py-1.5"
+                            style={{ backgroundColor: invFilter === k ? '#1f2937' : 'transparent', color: invFilter === k ? 'white' : '#6B7280' }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="relative">
+                        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
+                        <input type="text" value={invQuery} onChange={e => setInvQuery(e.target.value)}
+                          placeholder="Lọc theo tên…" className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+                      </div>
+                      <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: '1px solid #F3F4F6' }}>
+                        {invLevels
+                          .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
+                          .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
+                          .slice(0, 80)
+                          .map(l => (
+                            <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: '#F3F4F6' }}>
+                              <span className="truncate flex-1 min-w-0">{l.name}</span>
+                              <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
+                                style={{ color: l.qty > 0 ? '#15803D' : '#B42318', backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FDECEC' }}>
+                                {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    </>
                   )}
                 </div>
 
