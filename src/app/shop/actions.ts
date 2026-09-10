@@ -1142,6 +1142,13 @@ export async function getDailyReportForStaffAction(shopName: string): Promise<{ 
 // stock. Reuses the exact same Kiểm kho data (lab_shop_stock_counts via fetchStockSessions/
 // fetchStockCountList above) — read-only, scoped to whichever session is most recent today, no
 // separate table and no new Odoo/Supabase reads beyond what Kiểm kho already does.
+//
+// A line with no count yet (qty: null in fetchStockCountList — nobody has entered a number for
+// it in the latest session) used to be dropped entirely, so "All" silently only ever showed
+// counted lines. Axel, 2026-09-10 follow-up: "le all doit afficher tout ... le out of stock doit
+// comprendre les produits a 0 et ceux non compte car c'est 0" — an uncounted product is exactly
+// as un-orderable-with-confidence as a counted zero, so it's folded into qty 0 (out of stock)
+// here rather than tracked as a separate "not counted" state nothing asked for.
 export type ShopStockLevel = { sku: string; name: string; qty: number; category: string };
 
 export async function getShopCurrentStockLevelsAction(shopName?: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; error?: string }> {
@@ -1153,7 +1160,7 @@ export async function getShopCurrentStockLevelsAction(shopName?: string): Promis
   const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
   const list = await fetchStockCountList(auth.shopName, latest.seq);
   return {
-    levels: list.filter(l => l.qty != null).map(l => ({ sku: l.sku, name: l.name, qty: l.qty as number, category: l.category })),
+    levels: list.map(l => ({ sku: l.sku, name: l.name, qty: l.qty ?? 0, category: l.category })),
     asOf: latest.updatedAt,
   };
 }
