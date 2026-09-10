@@ -5,6 +5,7 @@ import {
   ChevronDown, Package2, Store, ShoppingBag, Users, Truck, ClipboardList, Trash2,
   ArrowLeftRight, Plus, Pencil, X, Check, LogOut, Loader2, PackageCheck, Box,
 } from 'lucide-react';
+import { useI18n, type Lang } from '@/lib/i18n';
 import * as actions from './actions';
 import type { ManagerShopStatus } from './actions';
 import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAction, removeShopStaffNameAction, getShopManagersForShopAction, type ShopStaffName, type ShopManagerListEntry } from '@/app/shop/actions';
@@ -17,6 +18,11 @@ import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAct
 // /shop-manager/store, which now also carries the live-inventory panel these managers asked for
 // (2026-09-10, added directly to ShopView's own Order tab so every shop benefits, not just
 // managers). "Online sales" jumps to the existing /online-orders app, read-only for this role.
+//
+// Bilingual (Axel, 2026-09-10: "met l'app aussi en anglais") — same localStorage-backed
+// useI18n() toggle as OnlineOrdersView, default VI. NOT extended into ShopView itself (the
+// reused Order/Store-interface screens stay Vietnamese-only for now — that's the much bigger,
+// separate file real shop-PIN logins also depend on).
 
 const NAVY = '#1A4731';
 const GOLD = '#C9A84C';
@@ -30,6 +36,93 @@ const GREEN = '#15803D';
 const AMBER = '#B45309';
 const RED = '#B42318';
 
+const L = {
+  vi: {
+    logout: 'Đăng xuất',
+    navToday: 'Hôm nay', navOrder: 'Đặt hàng', navShops: 'Boutiques', navTeam: 'Đội ngũ',
+    qaOrder: 'Đặt hàng', qaStore: 'Giao diện shop', qaOnline: 'Bán hàng online', qaTeam: 'Đội ngũ',
+    recapReception: 'Nhập hàng', recapReceptionNone: 'Chưa có',
+    recapCount: 'Kiểm kho', recapCountNone: 'Chưa kiểm',
+    recapOrders: 'Đặt hàng', recapLosses: 'Hao hụt', recapTransfers: 'Chuyển kho', recapOnline: 'Bán hàng online',
+    flagOdooDirect: 'Có đơn đặt trực tiếp trên Odoo', flagTransferPending: 'Đang chờ nhận',
+    shopsTapHint: 'chạm để mở',
+    pillNoDelivery: 'Không có nhập hàng', pillCounted: 'Đã kiểm kho', pillNotCounted: 'Chưa kiểm kho',
+    teamAnyoneEdits: 'Ai cũng sửa được', teamNoStaff: 'Chưa có nhân viên nào',
+    staffNamePh: 'Tên nhân viên…', save: 'Lưu', addStaff: 'Thêm nhân viên',
+    teamManagersTitle: 'Quản lý', teamNoManagers: 'Chưa có quản lý nào',
+    allFiveShops: 'Tất cả 5 boutique',
+    managersFooterNote: 'Thêm/sửa quản lý: liên hệ Lab (admin).',
+  },
+  en: {
+    logout: 'Log out',
+    navToday: 'Today', navOrder: 'Order', navShops: 'Shops', navTeam: 'Team',
+    qaOrder: 'Order', qaStore: 'Store interface', qaOnline: 'Online sales', qaTeam: 'Team',
+    recapReception: 'Deliveries', recapReceptionNone: 'None yet',
+    recapCount: 'Stock count', recapCountNone: 'Not counted yet',
+    recapOrders: 'Orders', recapLosses: 'Losses', recapTransfers: 'Transfers', recapOnline: 'Online sales',
+    flagOdooDirect: 'An order was placed directly on Odoo', flagTransferPending: 'Awaiting receipt',
+    shopsTapHint: 'tap to open',
+    pillNoDelivery: 'No delivery', pillCounted: 'Stock counted', pillNotCounted: 'Not counted',
+    teamAnyoneEdits: 'Anyone can edit', teamNoStaff: 'No staff yet',
+    staffNamePh: 'Staff name…', save: 'Save', addStaff: 'Add staff',
+    teamManagersTitle: 'Managers', teamNoManagers: 'No managers yet',
+    allFiveShops: 'All 5 shops',
+    managersFooterNote: 'To add or remove a manager, contact the Lab (admin).',
+  },
+} as const;
+type LKey = keyof typeof L.vi;
+function useL() {
+  const { lang, setLang } = useI18n();
+  const d = (lang === 'en' ? L.en : L.vi) as Record<LKey, string>;
+  return { tr: (k: LKey) => d[k], lang, setLang };
+}
+
+// Small dynamic (interpolated/pluralized) strings — kept as functions of (value, lang) next to
+// the static L dict above rather than folded into it, since they're never a plain lookup.
+function fmtShopsCount(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} shop${n > 1 ? 's' : ''}` : `${n} boutique${n > 1 ? 's' : ''}`;
+}
+function fmtReceptionValue(confirmed: number, total: number, lang: Lang) {
+  return lang === 'en' ? `${confirmed}/${total} lines` : `${confirmed}/${total} dòng`;
+}
+function fmtDiscrepancy(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} quantity mismatch${n > 1 ? 'es' : ''}` : `${n} lệch số lượng`;
+}
+function fmtCountValue(skuCount: number, valuationStr: string, lang: Lang) {
+  return `${skuCount} SKU · ${valuationStr}`;
+}
+function fmtDoneAt(timeStr: string, lang: Lang) {
+  return lang === 'en' ? `Done at ${timeStr}` : `Xong lúc ${timeStr}`;
+}
+function fmtOrdersValue(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} order${n !== 1 ? 's' : ''}` : `${n} đơn`;
+}
+function fmtLossesValue(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} item${n !== 1 ? 's' : ''}` : `${n} sản phẩm`;
+}
+function fmtTransfersValue(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} transfer${n !== 1 ? 's' : ''}` : `${n} phiếu`;
+}
+function fmtOnlineValue(n: number, amountStr: string, lang: Lang) {
+  return lang === 'en' ? `${n} order${n !== 1 ? 's' : ''} · ${amountStr}` : `${n} đơn · ${amountStr}`;
+}
+function fmtReceivedPill(confirmed: number, total: number, lang: Lang) {
+  return lang === 'en' ? `Received ${confirmed}/${total}` : `Nhập ${confirmed}/${total}`;
+}
+function fmtOrdersPill(count: number, odooDirect: number, lang: Lang) {
+  if (lang === 'en') return `${count} order${count !== 1 ? 's' : ''}${odooDirect ? ` · ${odooDirect} via Odoo` : ''}`;
+  return `${count} đơn đặt hàng${odooDirect ? ` · ${odooDirect} qua Odoo` : ''}`;
+}
+function fmtTransfersPending(n: number, lang: Lang) {
+  return lang === 'en' ? `${n} transfer${n !== 1 ? 's' : ''} awaiting receipt` : `${n} chuyển kho chờ nhận`;
+}
+function fmtStaffTitle(shop: string, lang: Lang) {
+  return lang === 'en' ? `Staff — ${shop}` : `Nhân viên — ${shop}`;
+}
+function fmtManagerShops(count: number, lang: Lang) {
+  return lang === 'en' ? `${count} shop${count !== 1 ? 's' : ''}` : `${count} boutique`;
+}
+
 function fmtVnd(v: number): string {
   return `${Math.round(v).toLocaleString('vi-VN')} ₫`;
 }
@@ -42,6 +135,7 @@ type Tab = 'today' | 'shops' | 'team';
 
 export default function ShopManagerView({ managerName, color, shops }: { managerName: string; color: string; shops: string[] }) {
   const router = useRouter();
+  const { tr, lang, setLang } = useL();
   const [tab, setTab] = useState<Tab>('today');
   const [activeShop, setActiveShop] = useState(shops[0] ?? '');
   const [shopPicker, setShopPicker] = useState(false);
@@ -69,10 +163,18 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
               <ChevronDown size={14} style={{ color: GOLD }} className="shrink-0" />
             </button>
             <div className="text-[11px]" style={{ color: '#F0D98A' }}>
-              {managerName} · {shops.length} boutique{shops.length > 1 ? 's' : ''}
+              {managerName} · {fmtShopsCount(shops.length, lang)}
             </div>
           </div>
-          <button onClick={logout} className="p-2 rounded-lg shrink-0" style={{ color: 'rgba(255,250,238,0.6)' }} aria-label="Đăng xuất">
+          <div className="flex rounded-md overflow-hidden shrink-0" style={{ border: '1px solid rgba(255,255,255,0.25)' }} aria-label="Language">
+            {(['vi', 'en'] as const).map(lg => (
+              <button key={lg} onClick={() => setLang(lg)} style={{
+                fontSize: 10.5, fontWeight: 700, padding: '3px 7px', letterSpacing: '.03em',
+                backgroundColor: lang === lg ? GOLD : 'transparent', color: lang === lg ? NAVY : 'rgba(255,255,255,0.7)',
+              }}>{lg.toUpperCase()}</button>
+            ))}
+          </div>
+          <button onClick={logout} className="p-2 rounded-lg shrink-0" style={{ color: 'rgba(255,250,238,0.6)' }} aria-label={tr('logout')}>
             <LogOut size={17} />
           </button>
         </div>
@@ -98,10 +200,10 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
 
       <div style={{ backgroundColor: TABBAR }} className="flex fixed bottom-0 left-0 right-0 z-10">
         {([
-          ['today', PackageCheck, 'Hôm nay'],
-          ['order', ShoppingBag, 'Đặt hàng'],
-          ['shops', Box, 'Boutiques'],
-          ['team', Users, 'Đội ngũ'],
+          ['today', PackageCheck, tr('navToday')],
+          ['order', ShoppingBag, tr('navOrder')],
+          ['shops', Box, tr('navShops')],
+          ['team', Users, tr('navTeam')],
         ] as const).map(([key, Icon, label]) => {
           const active = tab === key;
           return (
@@ -146,6 +248,7 @@ function RecapCard({ icon: Icon, label, value, flag }: { icon: any; label: strin
 function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
   activeShop: string; onOpenStore: (tab: 'deliveries' | 'order') => void; onOnlineSales: () => void; onTeam: () => void;
 }) {
+  const { tr, lang } = useL();
   const [data, setData] = useState<Awaited<ReturnType<typeof actions.getManagerTodayRecapAction>> | null>(null);
 
   const load = useCallback(async () => {
@@ -161,31 +264,31 @@ function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2.5">
-        <QuickAction icon={ShoppingBag} label="Đặt hàng" onClick={() => onOpenStore('order')} />
-        <QuickAction icon={Store} label="Giao diện shop" onClick={() => onOpenStore('deliveries')} />
-        <QuickAction icon={Package2} label="Bán hàng online" onClick={onOnlineSales} />
-        <QuickAction icon={Users} label="Đội ngũ" onClick={onTeam} />
+        <QuickAction icon={ShoppingBag} label={tr('qaOrder')} onClick={() => onOpenStore('order')} />
+        <QuickAction icon={Store} label={tr('qaStore')} onClick={() => onOpenStore('deliveries')} />
+        <QuickAction icon={Package2} label={tr('qaOnline')} onClick={onOnlineSales} />
+        <QuickAction icon={Users} label={tr('qaTeam')} onClick={onTeam} />
       </div>
 
       {!data ? (
         <div className="text-center py-10"><Loader2 className="animate-spin inline" style={{ color: INK_LIGHT }} /></div>
       ) : (
         <div className="grid grid-cols-2 gap-2.5">
-          <RecapCard icon={Truck} label="Nhập hàng"
-            value={recap?.reception ? `${recap.reception.confirmedLines}/${recap.reception.totalLines} dòng` : 'Chưa có'}
-            flag={recap?.reception && recap.reception.discrepancies.length ? { color: RED, text: `${recap.reception.discrepancies.length} lệch số lượng` } : undefined} />
-          <RecapCard icon={ClipboardList} label="Kiểm kho"
-            value={recap?.count ? `${recap.count.skuCount} SKU · ${fmtVnd(recap.count.valuation)}` : 'Chưa kiểm'}
-            flag={recap?.count ? { color: GREEN, text: `Xong lúc ${fmtTime(recap.count.finishedAt)}` } : undefined} />
-          <RecapCard icon={ShoppingBag} label="Đặt hàng"
-            value={recap ? `${recap.orders.length} đơn` : '0 đơn'}
-            flag={recap && recap.orders.some(o => o.odooDirect) ? { color: AMBER, text: 'Có đơn đặt trực tiếp trên Odoo' } : undefined} />
-          <RecapCard icon={Trash2} label="Hao hụt" value={recap ? `${recap.losses.totalQty} sản phẩm` : '0'} />
-          <RecapCard icon={ArrowLeftRight} label="Chuyển kho"
-            value={recap ? `${recap.transfers.length} phiếu` : '0'}
-            flag={recap && recap.transfers.some(t => t.status === 'sent') ? { color: AMBER, text: 'Đang chờ nhận' } : undefined} />
-          <RecapCard icon={Package2} label="Bán hàng online"
-            value={data.online ? `${data.online.count} đơn · ${fmtVnd(data.online.total)}` : '0 đơn'} />
+          <RecapCard icon={Truck} label={tr('recapReception')}
+            value={recap?.reception ? fmtReceptionValue(recap.reception.confirmedLines, recap.reception.totalLines, lang) : tr('recapReceptionNone')}
+            flag={recap?.reception && recap.reception.discrepancies.length ? { color: RED, text: fmtDiscrepancy(recap.reception.discrepancies.length, lang) } : undefined} />
+          <RecapCard icon={ClipboardList} label={tr('recapCount')}
+            value={recap?.count ? fmtCountValue(recap.count.skuCount, fmtVnd(recap.count.valuation), lang) : tr('recapCountNone')}
+            flag={recap?.count ? { color: GREEN, text: fmtDoneAt(fmtTime(recap.count.finishedAt), lang) } : undefined} />
+          <RecapCard icon={ShoppingBag} label={tr('recapOrders')}
+            value={recap ? fmtOrdersValue(recap.orders.length, lang) : fmtOrdersValue(0, lang)}
+            flag={recap && recap.orders.some(o => o.odooDirect) ? { color: AMBER, text: tr('flagOdooDirect') } : undefined} />
+          <RecapCard icon={Trash2} label={tr('recapLosses')} value={recap ? fmtLossesValue(recap.losses.totalQty, lang) : fmtLossesValue(0, lang)} />
+          <RecapCard icon={ArrowLeftRight} label={tr('recapTransfers')}
+            value={recap ? fmtTransfersValue(recap.transfers.length, lang) : fmtTransfersValue(0, lang)}
+            flag={recap && recap.transfers.some(t => t.status === 'sent') ? { color: AMBER, text: tr('flagTransferPending') } : undefined} />
+          <RecapCard icon={Package2} label={tr('recapOnline')}
+            value={data.online ? fmtOnlineValue(data.online.count, fmtVnd(data.online.total), lang) : fmtOnlineValue(0, fmtVnd(0), lang)} />
         </div>
       )}
     </div>
@@ -193,6 +296,7 @@ function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
 }
 
 function ShopsTab({ shops, activeShop, onPick }: { shops: string[]; activeShop: string; onPick: (s: string) => void }) {
+  const { tr, lang } = useL();
   const [statuses, setStatuses] = useState<ManagerShopStatus[] | null>(null);
   useEffect(() => {
     (async () => {
@@ -203,7 +307,7 @@ function ShopsTab({ shops, activeShop, onPick }: { shops: string[]; activeShop: 
 
   return (
     <div className="space-y-2.5">
-      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{shops.length} boutique{shops.length > 1 ? 's' : ''} · chạm để mở</div>
+      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{fmtShopsCount(shops.length, lang)} · {tr('shopsTapHint')}</div>
       {shops.map(s => {
         const st = statuses?.find(x => x.shop === s);
         return (
@@ -215,10 +319,10 @@ function ShopsTab({ shops, activeShop, onPick }: { shops: string[]; activeShop: 
             </div>
             {st && (
               <div className="flex flex-wrap gap-1.5">
-                <Pill ok={st.receptionTotal > 0 && st.receptionConfirmed >= st.receptionTotal} label={st.receptionTotal ? `Nhập ${st.receptionConfirmed}/${st.receptionTotal}` : 'Không có nhập hàng'} />
-                <Pill ok={st.countDone} label={st.countDone ? 'Đã kiểm kho' : 'Chưa kiểm kho'} />
-                <Pill ok={st.ordersOdooDirect === 0} label={`${st.ordersCount} đơn đặt hàng${st.ordersOdooDirect ? ` · ${st.ordersOdooDirect} qua Odoo` : ''}`} warn={st.ordersOdooDirect > 0} />
-                {st.transfersPending > 0 && <Pill ok={false} warn label={`${st.transfersPending} chuyển kho chờ nhận`} />}
+                <Pill ok={st.receptionTotal > 0 && st.receptionConfirmed >= st.receptionTotal} label={st.receptionTotal ? fmtReceivedPill(st.receptionConfirmed, st.receptionTotal, lang) : tr('pillNoDelivery')} />
+                <Pill ok={st.countDone} label={st.countDone ? tr('pillCounted') : tr('pillNotCounted')} />
+                <Pill ok={st.ordersOdooDirect === 0} label={fmtOrdersPill(st.ordersCount, st.ordersOdooDirect, lang)} warn={st.ordersOdooDirect > 0} />
+                {st.transfersPending > 0 && <Pill ok={false} warn label={fmtTransfersPending(st.transfersPending, lang)} />}
               </div>
             )}
           </button>
@@ -235,6 +339,7 @@ function Pill({ ok, warn, label }: { ok: boolean; warn?: boolean; label: string 
 }
 
 function TeamTab({ activeShop }: { activeShop: string }) {
+  const { tr, lang } = useL();
   const [staff, setStaff] = useState<ShopStaffName[] | null>(null);
   const [managers, setManagers] = useState<ShopManagerListEntry[] | null>(null);
   const [adding, setAdding] = useState(false);
@@ -275,14 +380,14 @@ function TeamTab({ activeShop }: { activeShop: string }) {
     <div className="space-y-5">
       <div>
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>Nhân viên — {activeShop}</div>
-          <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>Ai cũng sửa được</div>
+          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{fmtStaffTitle(activeShop, lang)}</div>
+          <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{tr('teamAnyoneEdits')}</div>
         </div>
         <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
           {!staff ? (
             <div className="py-6 text-center"><Loader2 size={16} className="animate-spin inline" style={{ color: INK_LIGHT }} /></div>
           ) : !staff.length ? (
-            <div className="py-4 px-3.5 text-xs" style={{ color: '#9CA3AF' }}>Chưa có nhân viên nào</div>
+            <div className="py-4 px-3.5 text-xs" style={{ color: '#9CA3AF' }}>{tr('teamNoStaff')}</div>
           ) : staff.map((s, i) => (
             <div key={s.id} className="flex items-center justify-between px-3.5 py-2.5" style={{ borderTop: i === 0 ? 'none' : `1px solid ${CREAM_DARK}` }}>
               {editingId === s.id ? (
@@ -312,33 +417,33 @@ function TeamTab({ activeShop }: { activeShop: string }) {
           <div className="flex items-center gap-2 mt-2">
             <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && submitAdd()}
-              placeholder="Tên nhân viên…" className="flex-1 min-w-0 rounded-xl px-3 py-2 text-sm" style={{ border: `1px solid ${BORDER}` }} />
-            <button onClick={submitAdd} className="px-3 py-2 rounded-xl text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>Lưu</button>
+              placeholder={tr('staffNamePh')} className="flex-1 min-w-0 rounded-xl px-3 py-2 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+            <button onClick={submitAdd} className="px-3 py-2 rounded-xl text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>{tr('save')}</button>
           </div>
         ) : (
           <button onClick={() => setAdding(true)} className="w-full flex items-center justify-center gap-1.5 mt-2 rounded-xl px-3 py-2 text-xs font-semibold"
             style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT }}>
-            <Plus size={14} /> Thêm nhân viên
+            <Plus size={14} /> {tr('addStaff')}
           </button>
         )}
       </div>
 
       <div>
-        <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: INK_LIGHT }}>Quản lý</div>
+        <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: INK_LIGHT }}>{tr('teamManagersTitle')}</div>
         <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
           {!managers ? (
             <div className="py-6 text-center"><Loader2 size={16} className="animate-spin inline" style={{ color: INK_LIGHT }} /></div>
           ) : !managers.length ? (
-            <div className="py-4 px-3.5 text-xs" style={{ color: '#9CA3AF' }}>Chưa có quản lý nào</div>
+            <div className="py-4 px-3.5 text-xs" style={{ color: '#9CA3AF' }}>{tr('teamNoManagers')}</div>
           ) : managers.map((m, i) => (
             <div key={m.id} className="flex items-center gap-2.5 px-3.5 py-2.5" style={{ borderTop: i === 0 ? 'none' : `1px solid ${CREAM_DARK}` }}>
               <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
               <div className="text-sm font-bold flex-1 min-w-0" style={{ color: INK }}>{m.name}</div>
-              <div className="text-[11px] shrink-0" style={{ color: '#9CA3AF' }}>{m.allFiveShops ? 'Tất cả 5 boutique' : `${m.shopsCount} boutique`}</div>
+              <div className="text-[11px] shrink-0" style={{ color: '#9CA3AF' }}>{m.allFiveShops ? tr('allFiveShops') : fmtManagerShops(m.shopsCount, lang)}</div>
             </div>
           ))}
         </div>
-        <div className="mt-2 text-[11px]" style={{ color: '#9CA3AF' }}>Thêm/sửa quản lý: liên hệ Lab (admin).</div>
+        <div className="mt-2 text-[11px]" style={{ color: '#9CA3AF' }}>{tr('managersFooterNote')}</div>
       </div>
     </div>
   );
