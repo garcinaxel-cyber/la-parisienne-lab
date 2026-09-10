@@ -35,12 +35,14 @@ function genPin(): string {
 }
 
 // The 3 real managers Axel gave 2026-09-10, all covering every portal shop ("ils ont accès à
-// toutes les boutiques"). Display names guessed from the email prefixes where no name was given
-// (Sales@laparisienne.com.vn is a team inbox, not a person) — editable later from Odoo/Supabase
-// directly if wrong, this is just the label shown in the app.
+// toutes les boutiques"). Display name for Sales@laparisienne.com.vn confirmed by Axel as "Quan"
+// (the inbox is a team alias, but a real person owns it) — editable later from Odoo/Supabase
+// directly if wrong, this is just the label shown in the app. PINs are only set here on first
+// creation (see provisionShopManagerAccountsAction below) — a later PIN change is a direct
+// lab_shop_managers.pin_hash update, not something this button does.
 const MANAGER_SPECS: { name: string; email: string; password: string; color: string }[] = [
   { name: 'Xuân Giang', email: 'xuangiang.marketing@gmail.com', password: 'xuangiang95@', color: '#EA580C' },
-  { name: 'Sales', email: 'Sales@laparisienne.com.vn', password: 'Laparisienne2026@', color: '#0D9488' },
+  { name: 'Quan', email: 'Sales@laparisienne.com.vn', password: 'Laparisienne2026@', color: '#0D9488' },
   { name: 'Phương', email: 'phuongc.works@gmail.com', password: '12345678@', color: '#BE123C' },
 ];
 
