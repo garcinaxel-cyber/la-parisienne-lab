@@ -9,6 +9,7 @@ import { useI18n, type Lang } from '@/lib/i18n';
 import * as actions from './actions';
 import type { ManagerShopStatus } from './actions';
 import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAction, removeShopStaffNameAction, getShopManagersForShopAction, type ShopStaffName, type ShopManagerListEntry } from '@/app/shop/actions';
+import OrderTab from './OrderTab';
 
 // Shop Manager cockpit (Axel, 2026-09-10) — single client component, internal tab state, same
 // posture as ShopView.tsx/OnlineOrdersView.tsx (one route, one bundle) rather than several
@@ -29,17 +30,19 @@ import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAct
 // reused Order/Store-interface screens stay Vietnamese-only for now — that's the much bigger,
 // separate file real shop-PIN logins also depend on).
 
-const NAVY = '#1A4731';
-const GOLD = '#C9A84C';
-const CREAM = '#FFF4CC';
+// Exported — OrderTab.tsx (the manager's own dedicated Order screen, 2026-09-10) shares this
+// exact palette so it visually matches Today/Team instead of redefining its own colors.
+export const NAVY = '#1A4731';
+export const GOLD = '#C9A84C';
+export const CREAM = '#FFF4CC';
 const CREAM_DARK = '#F5E89A';
-const INK = '#1A2C24';
-const INK_LIGHT = '#6B7280';
-const BORDER = '#E0D49A';
+export const INK = '#1A2C24';
+export const INK_LIGHT = '#6B7280';
+export const BORDER = '#E0D49A';
 const TABBAR = '#163D29';
-const GREEN = '#15803D';
-const AMBER = '#B45309';
-const RED = '#B42318';
+export const GREEN = '#15803D';
+export const AMBER = '#B45309';
+export const RED = '#B42318';
 
 const L = {
   vi: {
@@ -143,11 +146,13 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
-// Order is deliberately NOT one of these — it always jumps to the real ShopView order screen
-// (openStore('order')) rather than being its own client-state tab, exactly like it did before;
-// the bottom nav below still shows it as a peer of Today/Team so it reads as one of the three
-// destinations of a selected shop's interface.
-type Tab = 'today' | 'team';
+// Order is now a real in-place tab (Axel, 2026-09-10 follow-up: it was routing out to the full
+// staff ShopView, which read as "the staff's interface", not the manager's own) — OrderTab.tsx
+// is a dedicated, cockpit-styled screen calling the exact same server actions ShopView's order
+// tab already used. "Store interface" (the OTHER quick action, Giao diện shop) is untouched — it
+// still deliberately reuses the real ShopView via /shop-manager/store, that one was never in
+// question.
+type Tab = 'today' | 'order' | 'team';
 type Stage = 'shops' | 'shop';
 
 export default function ShopManagerView({ managerName, color, shops }: { managerName: string; color: string; shops: string[] }) {
@@ -164,8 +169,8 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
     router.push('/login');
   }
 
-  function openStore(initialTab: 'deliveries' | 'order') {
-    router.push(`/shop-manager/store?shop=${encodeURIComponent(activeShop)}&tab=${initialTab}`);
+  function openStoreInterface() {
+    router.push(`/shop-manager/store?shop=${encodeURIComponent(activeShop)}&tab=deliveries`);
   }
 
   function enterShop(s: string) {
@@ -234,8 +239,10 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
       <div className="max-w-xl mx-auto px-4 py-4 pb-24">
         {stage === 'shops' && <ShopsTab shops={shops} activeShop={activeShop} onPick={enterShop} />}
         {stage === 'shop' && tab === 'today' && (
-          <TodayTab activeShop={activeShop} onOpenStore={openStore} onOnlineSales={() => router.push('/online-orders')} onTeam={() => setTab('team')} />
+          <TodayTab activeShop={activeShop} onOpenStoreInterface={openStoreInterface} onOrder={() => setTab('order')}
+            onOnlineSales={() => router.push('/online-orders')} onTeam={() => setTab('team')} />
         )}
+        {stage === 'shop' && tab === 'order' && <OrderTab activeShop={activeShop} managerName={managerName} />}
         {stage === 'shop' && tab === 'team' && <TeamTab activeShop={activeShop} />}
       </div>
 
@@ -249,7 +256,7 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
             const active = tab === key;
             return (
               <button key={key}
-                onClick={() => key === 'order' ? openStore('order') : setTab(key as Tab)}
+                onClick={() => setTab(key as Tab)}
                 className="flex-1 text-center py-2.5"
                 style={{ color: active ? GOLD : '#8FAE9E', fontWeight: active ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${active ? GOLD : 'transparent'}` }}>
                 <Icon size={17} className="mx-auto" />
@@ -287,8 +294,8 @@ function RecapCard({ icon: Icon, label, value, flag }: { icon: any; label: strin
   );
 }
 
-function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
-  activeShop: string; onOpenStore: (tab: 'deliveries' | 'order') => void; onOnlineSales: () => void; onTeam: () => void;
+function TodayTab({ activeShop, onOpenStoreInterface, onOrder, onOnlineSales, onTeam }: {
+  activeShop: string; onOpenStoreInterface: () => void; onOrder: () => void; onOnlineSales: () => void; onTeam: () => void;
 }) {
   const { tr, lang } = useL();
   const [data, setData] = useState<Awaited<ReturnType<typeof actions.getManagerTodayRecapAction>> | null>(null);
@@ -318,8 +325,8 @@ function TodayTab({ activeShop, onOpenStore, onOnlineSales, onTeam }: {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2.5">
-        <QuickAction icon={ShoppingBag} label={tr('qaOrder')} onClick={() => onOpenStore('order')} />
-        <QuickAction icon={Store} label={tr('qaStore')} onClick={() => onOpenStore('deliveries')} />
+        <QuickAction icon={ShoppingBag} label={tr('qaOrder')} onClick={onOrder} />
+        <QuickAction icon={Store} label={tr('qaStore')} onClick={onOpenStoreInterface} />
         <QuickAction icon={Package2} label={tr('qaOnline')} onClick={onOnlineSales} />
         <QuickAction icon={Users} label={tr('qaTeam')} onClick={onTeam} />
       </div>
