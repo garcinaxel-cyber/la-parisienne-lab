@@ -1,5 +1,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooDateTimeToLocal, labTodayUtcThreshold } from '@/lib/odoo';
+import { SHOP_CONFIG } from '@/lib/shops';
+
+// Sales-order shop_name was being written verbatim from Odoo's partner display name
+// (order.partner_id[1], e.g. "MOON FLOWER" — Odoo's own casing) instead of the app's
+// canonical key ("Moon Flower", SHOP_CONFIG's key). Every downstream `.in('shop_name', shops)`
+// query (shop-manager cockpit, admin Suivi shops, delivery-check by-shop, ...) filters on the
+// canonical key, so Moon Flower's own orders/deliveries were silently invisible everywhere —
+// discovered 2026-09-10 as "0 orders" / "No delivery" for Moon Flower despite real orders
+// existing. Normalize here, once, at the point shop_name is first set from Odoo — same fix
+// point for every partner name SHOP_CONFIG knows about (Moon Flower, Lab), a no-op for every
+// other (non-shop) customer name a sales order can carry.
+const SHOP_NAME_BY_PARTNER_NAME: Record<string, string> = Object.fromEntries(
+  Object.entries(SHOP_CONFIG).filter(([, cfg]) => cfg.partnerName).map(([key, cfg]) => [cfg.partnerName!, key]),
+);
+function normalizeShopName(raw: string | null | undefined): string | null {
+  if (!raw) return raw ?? null;
+  return SHOP_NAME_BY_PARTNER_NAME[raw] ?? raw;
+}
 
 export interface OdooSyncResult {
   lines: any[];
@@ -492,7 +510,7 @@ for (const l of soLines) {
   if (excludedSet.has(prod.sku)) {
     (excludedSoLinesByRef[order.name] ??= []).push({
       name: order.name, delivery_date: odooDateTimeToLocal(order.commitment_date).date,
-      shop_name: order.partner_id?.[1] ?? null,
+      shop_name: normalizeShopName(order.partner_id?.[1]),
       sku: prod.sku, product_name_vi: prod.name,
       qty, note: [extractNote(l.name), attachedNoteByLineId[l.id]].filter(Boolean).join(' / ') || null,
     });
@@ -505,7 +523,7 @@ for (const l of soLines) {
   lines.push({
     source_type: 'sales_order',
     order_ref: order.name,
-    shop_name: order.partner_id?.[1] ?? '',
+    shop_name: normalizeShopName(order.partner_id?.[1]) ?? '',
     product_sku: prod.sku,
     product_name_vi: String(l.name || prod.name).replace(/\[.*?\]\s*/, '').split('\n')[0].trim(),
     team: t?.team ?? '',
