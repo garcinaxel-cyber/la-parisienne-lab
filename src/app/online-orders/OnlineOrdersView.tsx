@@ -162,6 +162,15 @@ const L = {
     newFeeNamePh: 'Tên phụ phí mới...',
     newFeePricePh: 'Giá',
     addBtn: 'Thêm',
+    newCustomerBadge: 'Khách mới',
+    returningCustomerBadge: 'Khách cũ',
+    priorOrdersSuffix: 'đơn trước',
+    returningManualTag: 'đã xác nhận',
+    markReturning: 'Đánh dấu là khách cũ',
+    clearReturningOverride: 'Bỏ đánh dấu',
+    exportBtn: 'Xuất Excel',
+    exportFrom: 'Từ ngày',
+    exportTo: 'Đến ngày',
   },
   en: {
     titleOrder: 'Online orders',
@@ -282,6 +291,15 @@ const L = {
     newFeeNamePh: 'New fee name...',
     newFeePricePh: 'Price',
     addBtn: 'Add',
+    newCustomerBadge: 'New customer',
+    returningCustomerBadge: 'Returning customer',
+    priorOrdersSuffix: 'prior orders',
+    returningManualTag: 'confirmed',
+    markReturning: 'Mark as returning',
+    clearReturningOverride: 'Clear',
+    exportBtn: 'Export Excel',
+    exportFrom: 'From',
+    exportTo: 'To',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -1054,6 +1072,13 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
   // day no longer means scrolling past a long, growing history (imports included).
   const [jumpDate, setJumpDate] = useState('');
   const [reconstructing, setReconstructing] = useState<string | null>(null);
+  // Excel export by period (Axel, 2026-09-11) — mirrors her old tracker's columns; defaults to
+  // a 7-day window ending today so opening the panel already has a sensible range picked.
+  const [showExport, setShowExport] = useState(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const weekAgoIso = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const [exportFrom, setExportFrom] = useState(weekAgoIso);
+  const [exportTo, setExportTo] = useState(todayIso);
 
   async function load(deliveryDate?: string) {
     const res = await actions.getMyOnlineOrdersAction(deliveryDate ? { deliveryDate } : undefined);
@@ -1100,6 +1125,14 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
     await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
     load(jumpDate || undefined);
   }
+  async function toggleReturningOverride(o: OnlineOrderSummary) {
+    // Clicking a manual confirmation clears it (back to auto); clicking an auto "new customer"
+    // read confirms it as returning (the phone-match can't see pre-app history). An
+    // auto-detected returning customer needs no correction, so its badge isn't clickable.
+    const next = o.returningManual ? null : true;
+    await actions.setCustomerReturningOverrideAction(o.orderBatchId, next);
+    load(jumpDate || undefined);
+  }
   async function onProof(o: OnlineOrderSummary, file: File | undefined) {
     if (!file || !file.type.startsWith('image/')) return;
     setUploadingFor(o.orderBatchId);
@@ -1129,7 +1162,29 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
             padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap',
           }}>{tr('clearDate')}</button>
         )}
+        <button onClick={() => setShowExport(v => !v)} style={{
+          fontSize: 11.5, fontWeight: 700, color: showExport ? '#FFFAEE' : INK, backgroundColor: showExport ? NAVY : '#fff',
+          border: showExport ? 'none' : `1px solid ${BORDER}`, padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap', marginLeft: 'auto',
+        }}>📤 {tr('exportBtn')}</button>
       </div>
+      {showExport && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap rounded-lg px-2.5 py-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+          <label className="flex items-center gap-1.5" style={{ fontSize: 11.5, color: INK_LIGHT }}>
+            {tr('exportFrom')}
+            <input type="date" value={exportFrom} max={exportTo} onChange={e => setExportFrom(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: INK, padding: '3px 6px' }} />
+          </label>
+          <label className="flex items-center gap-1.5" style={{ fontSize: 11.5, color: INK_LIGHT }}>
+            {tr('exportTo')}
+            <input type="date" value={exportTo} min={exportFrom} onChange={e => setExportTo(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: INK, padding: '3px 6px' }} />
+          </label>
+          <a href={`/api/lab/online-orders-export?from=${exportFrom}&to=${exportTo}&lang=${lang}`} style={{
+            fontSize: 11.5, fontWeight: 700, color: '#fff', backgroundColor: '#6D28D9',
+            padding: '6px 12px', borderRadius: 8, whiteSpace: 'nowrap', textDecoration: 'none',
+          }}>{tr('exportBtn')}</a>
+        </div>
+      )}
       <div className="flex gap-2 mb-3 overflow-x-auto">
         {([['all', tr('fAll')], ['undelivered', tr('fUndelivered')], ['unpaid', tr('unpaid')], ['late', tr('fLate')]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
@@ -1171,7 +1226,27 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                 </div>
                 {late && <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('latePay')}</span>}
               </div>
-              <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</div>
+              <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 2 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</span>
+                {o.customerPhone && (() => {
+                  const label = o.isReturningCustomer
+                    ? `${tr('returningCustomerBadge')}${o.returningManual ? ` (${tr('returningManualTag')})` : o.priorOrderCount > 0 ? ` (${o.priorOrderCount} ${tr('priorOrdersSuffix')})` : ''}`
+                    : tr('newCustomerBadge');
+                  const style = {
+                    backgroundColor: o.isReturningCustomer ? '#DCFCE7' : CREAM,
+                    color: o.isReturningCustomer ? '#166534' : '#8a7326',
+                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, border: 'none', whiteSpace: 'nowrap' as const,
+                  };
+                  // Clickable only where a human can usefully act: confirm a "new" read, or undo
+                  // their own earlier confirmation. An auto-detected repeat needs no correction.
+                  const clickable = !readOnly && (!o.isReturningCustomer || o.returningManual);
+                  return clickable ? (
+                    <button onClick={() => toggleReturningOverride(o)} title={o.returningManual ? tr('clearReturningOverride') : tr('markReturning')} style={style}>{label}</button>
+                  ) : (
+                    <span style={style}>{label}</span>
+                  );
+                })()}
+              </div>
               <div style={{ fontSize: 12, color: INK_LIGHT, marginBottom: 9 }}>{o.items.map(i => `${i.nameVi} ×${i.qty}`).join(', ')}</div>
               {!readOnly && o.source === 'excel_import' && o.items.length > 0 && o.items.every(i => !i.sku) && (
                 <button onClick={() => setReconstructing(reconstructing === o.orderBatchId ? null : o.orderBatchId)}

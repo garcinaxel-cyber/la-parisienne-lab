@@ -58,6 +58,17 @@ const clean = (s: string | null | undefined, max: number) => {
   return t === '' ? null : t;
 };
 
+// New-vs-returning customer detection (Axel, 2026-09-11): "qui recommande" — a repeat customer,
+// keyed on phone number, replacing the old Excel's hand-filled "Khách mới/Khách cũ" column.
+// Phone numbers are entered free-text ("097 8421293", "Sđt 0334992879", ...), so comparison is
+// digits-only on the last 9 (a VN mobile number minus any leading 0/country code) rather than
+// an exact string match.
+function normalizePhoneKey(raw: string | null | undefined): string | null {
+  const digits = (raw ?? '').replace(/\D/g, '');
+  if (digits.length < 8) return null; // too short to be a real phone — never matches
+  return digits.slice(-9);
+}
+
 // ── Product search (session-gated twin of order/[token]/actions.ts's searchShopProductsAction) ──
 export type OnlineProduct = {
   ficheId: string; variantId: string | null; sku: string | null;
@@ -452,6 +463,11 @@ export type OnlineOrderSummary = {
   items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null }[];
   total: number; deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
+  // New-vs-returning (Axel, 2026-09-11): isReturningCustomer is the final answer (auto OR manual
+  // override); returningManual marks that a human confirmed it (the auto phone-match can't see
+  // pre-app history); priorOrderCount is however many earlier orders that phone number has, for
+  // context even when a manual override is set.
+  isReturningCustomer: boolean; returningManual: boolean; priorOrderCount: number;
 };
 
 export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
@@ -508,6 +524,17 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
     : { data: [] as any[] };
   const labDeliveredRefs = new Set((deliveries ?? []).map((d: any) => d.order_ref));
 
+  // New-vs-returning: the whole table (order_batch_id, phone, created_at) — cheap, ~150 rows —
+  // so a customer's first order can be found even when it falls outside today's/this-page's
+  // window. See normalizePhoneKey above for why this isn't a raw string match.
+  const { data: allForPhones } = await supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at');
+  const byPhoneKey = new Map<string, { order_batch_id: string; created_at: string }[]>();
+  for (const r of allForPhones ?? []) {
+    const key = normalizePhoneKey(r.customer_phone);
+    if (!key) continue;
+    const arr = byPhoneKey.get(key) ?? []; arr.push(r); byPhoneKey.set(key, arr);
+  }
+
   const result: OnlineOrderSummary[] = orders.map((o: any) => {
     const ls = linesByBatch.get(o.order_batch_id) ?? [];
     const first = ls[0];
@@ -515,6 +542,12 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
     const orderRef = ls.find((l: any) => l.matched_order_ref && l.matched_order_ref !== '__pending_create__')?.matched_order_ref ?? null;
     const source: 'lab' | 'shop_stock' | 'excel_import' =
       o.source === 'shop_stock' ? 'shop_stock' : o.source === 'excel_import' ? 'excel_import' : 'lab';
+    const phoneKey = normalizePhoneKey(o.customer_phone);
+    const priorOrderCount = phoneKey
+      ? (byPhoneKey.get(phoneKey) ?? []).filter(r => r.order_batch_id !== o.order_batch_id && r.created_at < o.created_at).length
+      : 0;
+    const override: boolean | null = o.customer_returning_override ?? null;
+    const isReturningCustomer = override != null ? override : priorOrderCount > 0;
     return {
       orderBatchId: o.order_batch_id, source,
       shopName: o.shop_name ?? first?.shop_name ?? '', channel: o.channel ?? first?.channel ?? null,
@@ -525,6 +558,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
       shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
       paymentProofUrl: o.payment_proof_url ?? null,
+      isReturningCustomer, returningManual: override != null, priorOrderCount,
     };
   });
   return { orders: result };
@@ -584,6 +618,22 @@ export async function setShopDeliveredAction(orderBatchId: string, delivered: bo
     shop_delivered: delivered, shop_delivered_at: delivered ? new Date().toISOString() : null,
     shop_delivered_by: delivered ? auth.userId : null,
   }).eq('order_batch_id', orderBatchId);
+  if (error) return { error: error.message };
+  revalidatePath('/online-orders');
+  return { ok: true };
+}
+
+// Manual correction for the auto phone-match (Axel, 2026-09-11): toggles between "no override"
+// (null — trust the auto-detection) and "confirmed returning customer" (true). Passing null
+// clears back to auto.
+export async function setCustomerReturningOverrideAction(orderBatchId: string, value: boolean | null): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineWriteSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const ownErr = await assertOwnsOrder(supabase, orderBatchId, auth);
+  if (ownErr) return { error: ownErr };
+  const { error } = await supabase.from('lab_online_orders').update({ customer_returning_override: value }).eq('order_batch_id', orderBatchId);
   if (error) return { error: error.message };
   revalidatePath('/online-orders');
   return { ok: true };
