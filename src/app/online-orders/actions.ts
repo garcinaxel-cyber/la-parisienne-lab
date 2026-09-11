@@ -564,6 +564,153 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   return { orders: result };
 }
 
+// ── Customer database (Axel, 2026-09-11): "onglet base de donnée client" — merges customers
+// from shop-placed orders (via the public /order/[token] link — a shop takes a birthday-cake or
+// special order for a named customer) with the online-sales orders above, grouped by phone
+// number. Axel: "tu gardes que les clients qui ont un numero de telephone" — an order with no
+// usable phone (see normalizePhoneKey) never creates a customer entry at all.
+//
+// Live count 2026-09-11: shop-placed orders vastly outnumber online-sales orders (307 vs 22
+// batches) — they're the real customer history, online sales is a small slice of it. They carry
+// no price (unit_price is never set on that flow, confirmed empty) and no payment/shop-delivered
+// status (there is no lab_online_orders header for them) — amount is left null (render as "—",
+// never as 0đ) rather than invented, and "delivered" only reflects the lab→shop handover
+// (via matched_order_ref, when that order has synced to Odoo) — a different, earlier signal than
+// online orders' shop→customer shop_delivered flag, so the two are never mixed into one meaning.
+export type CustomerOrderHistoryItem = {
+  orderBatchId: string;
+  date: string; // delivery_date, falling back to created_at
+  origin: 'online' | 'shop'; // 'online' = placed through this tab; 'shop' = a shop's own walk-in/phone order
+  shopName: string | null;
+  itemsSummary: string;
+  amount: number | null; // null = price was never recorded for this order (shop walk-in orders)
+  paymentStatus: 'paid' | 'unpaid' | 'partial' | null; // null = not tracked (shop walk-in orders)
+  delivered: boolean | null; // null = not tracked (shop walk-in orders)
+  cancelled: boolean;
+};
+
+export type CustomerRecord = {
+  phoneKey: string;
+  phone: string;
+  name: string;
+  lastAddress: string | null;
+  orderCount: number;
+  totalAmount: number; // sum of known amounts only
+  hasUnknownAmounts: boolean;
+  lastOrderDate: string;
+  isReturning: boolean;
+  history: CustomerOrderHistoryItem[];
+};
+
+export async function getCustomerDatabaseAction(): Promise<{ customers?: CustomerRecord[]; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const [{ data: onlineOrders }, { data: mcRows }] = await Promise.all([
+    supabase.from('lab_online_orders')
+      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, created_at'),
+    supabase.from('lab_manual_cakes')
+      .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
+      .not('shop_name', 'is', null),
+  ]);
+  if (!onlineOrders?.length && !mcRows?.length) return { customers: [] };
+
+  const onlineBatchIds = new Set((onlineOrders ?? []).map((o: any) => o.order_batch_id));
+  const allBatchIds = Array.from(new Set([...Array.from(onlineBatchIds), ...(mcRows ?? []).map((l: any) => l.order_batch_id)]));
+
+  const { data: saleLines } = onlineBatchIds.size
+    ? await supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', Array.from(onlineBatchIds))
+    : { data: [] as any[] };
+
+  const mcByBatch = new Map<string, any[]>();
+  for (const l of mcRows ?? []) { const arr = mcByBatch.get(l.order_batch_id) ?? []; arr.push(l); mcByBatch.set(l.order_batch_id, arr); }
+  const slByBatch = new Map<string, any[]>();
+  for (const l of saleLines ?? []) { const arr = slByBatch.get(l.order_batch_id) ?? []; arr.push(l); slByBatch.set(l.order_batch_id, arr); }
+
+  // Lab→shop delivery signal, reused for shop walk-in orders — most of them do get matched to an
+  // Odoo order (383 of 389 lines, live count) even without a price recorded locally.
+  const orderRefs = Array.from(new Set((mcRows ?? [])
+    .map((l: any) => l.matched_order_ref)
+    .filter((r: string | null): r is string => !!r && r !== '__pending_create__')));
+  const { data: deliveries } = orderRefs.length
+    ? await supabase.from('lab_delivery_orders').select('order_ref, status').in('order_ref', orderRefs).eq('status', 'validated')
+    : { data: [] as any[] };
+  const deliveredRefs = new Set((deliveries ?? []).map((d: any) => d.order_ref));
+
+  const summarize = (lines: { product_name_vi: string; qty: number }[]): string => {
+    const parts = lines.slice(0, 3).map(l => (l.qty > 1 ? `${l.product_name_vi} ×${l.qty}` : l.product_name_vi));
+    return parts.join(', ') + (lines.length > 3 ? ` +${lines.length - 3}` : '');
+  };
+
+  type Row = { date: string; phoneKey: string; phone: string; name: string; address: string | null; item: CustomerOrderHistoryItem };
+  const rows: Row[] = [];
+
+  for (const batchId of allBatchIds) {
+    const o = (onlineOrders ?? []).find((x: any) => x.order_batch_id === batchId); // header, if an online-sales order
+    const mcLines = mcByBatch.get(batchId) ?? [];
+    const slLines = slByBatch.get(batchId) ?? [];
+
+    if (o) {
+      // Online-sales order — 'lab' source's items live in lab_manual_cakes, every source's
+      // fee/shop_stock/excel_import product lines live in lab_online_sale_lines.
+      const phoneKey = normalizePhoneKey(o.customer_phone);
+      if (!phoneKey) continue;
+      const itemLines = [...mcLines, ...slLines].map((l: any) => ({ product_name_vi: l.product_name_vi, qty: l.qty }));
+      const amount = [...mcLines, ...slLines].reduce((s: number, l: any) => s + (l.qty ?? 0) * (l.unit_price ?? 0), 0);
+      const cancelled = mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at);
+      const date = o.delivery_date || o.created_at;
+      rows.push({
+        date, phoneKey, phone: o.customer_phone, name: o.customer_name || '—', address: o.delivery_address ?? null,
+        item: {
+          orderBatchId: batchId, date, origin: 'online', shopName: o.shop_name ?? null,
+          itemsSummary: summarize(itemLines) || '—', amount, paymentStatus: o.payment_status ?? null,
+          delivered: o.shop_delivered ?? false, cancelled,
+        },
+      });
+    } else if (mcLines.length) {
+      // Shop walk-in order (no lab_online_orders header) — phone/name/address were typed in by
+      // shop staff on the public order form at order time.
+      const first = mcLines[0];
+      const phoneKey = normalizePhoneKey(first.customer_phone);
+      if (!phoneKey) continue;
+      const knownAmount = mcLines.some((l: any) => l.unit_price != null && l.unit_price > 0);
+      const amount = knownAmount ? mcLines.reduce((s: number, l: any) => s + (l.qty ?? 0) * (l.unit_price ?? 0), 0) : null;
+      const cancelled = mcLines.every((l: any) => l.cancelled_at);
+      const delivered = mcLines.some((l: any) => l.matched_order_ref && deliveredRefs.has(l.matched_order_ref)) ? true : null;
+      const date = first.delivery_date || first.created_at;
+      rows.push({
+        date, phoneKey, phone: first.customer_phone, name: first.customer_name || '—', address: first.delivery_address ?? null,
+        item: {
+          orderBatchId: batchId, date, origin: 'shop', shopName: first.shop_name ?? null,
+          itemsSummary: summarize(mcLines.map((l: any) => ({ product_name_vi: l.product_name_vi, qty: l.qty }))) || '—',
+          amount, paymentStatus: null, delivered, cancelled,
+        },
+      });
+    }
+  }
+
+  const byPhone = new Map<string, Row[]>();
+  for (const r of rows) { const arr = byPhone.get(r.phoneKey) ?? []; arr.push(r); byPhone.set(r.phoneKey, arr); }
+
+  const customers: CustomerRecord[] = Array.from(byPhone.entries()).map(([phoneKey, rs]) => {
+    const sorted = [...rs].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const mostRecent = sorted[0];
+    const totalAmount = sorted.reduce((s, r) => s + (r.item.amount ?? 0), 0);
+    const hasUnknownAmounts = sorted.some(r => r.item.amount == null);
+    return {
+      phoneKey, phone: mostRecent.phone, name: mostRecent.name,
+      lastAddress: sorted.find(r => r.address)?.address ?? null,
+      orderCount: sorted.length, totalAmount, hasUnknownAmounts,
+      lastOrderDate: mostRecent.date, isReturning: sorted.length >= 2,
+      history: sorted.map(r => r.item),
+    };
+  }).sort((a, b) => (b.lastOrderDate || '').localeCompare(a.lastOrderDate || ''));
+
+  return { customers };
+}
+
 // Reconstruction (Axel, 2026-09-08): a historical excel_import order whose product text
 // couldn't be auto-matched to a real SKU lands with ONE generic no-SKU revenue line (original
 // Excel text kept verbatim as product_name_vi). This lets the seller replace that single line
