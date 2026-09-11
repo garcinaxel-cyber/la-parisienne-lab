@@ -1600,7 +1600,7 @@ export default function StationView({
                         ? <img src={thumb(a.image_url, 96)} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
                         : <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>
+                        <div className="text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
                           {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                         </div>
                         <div className="text-xs" style={{ color: '#8B5CF6' }}>×{qtyForFilter(a)}</div>
@@ -1725,7 +1725,7 @@ export default function StationView({
                                 ? <img src={thumb(a.image_url, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
                                 : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
                               <div className="flex-1 min-w-0">
-                                <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>
+                                <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
                                   {lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi)}
                                 </div>
                                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -2330,7 +2330,7 @@ export default function StationView({
                               onChange={() => toggleHistorySel(d.delivery_date, g.key, unsent.map(u => u.key))}
                               className="w-4 h-4 shrink-0" style={{ accentColor: '#1A4731' }} />
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold truncate" style={{ color: '#1A4731' }}>
+                              <div className="text-xs font-bold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
                                 {g.name}{g.variant && g.variant !== 'Standard' ? ` · ${g.variant}` : ''}
                               </div>
                               <div className="text-[11px]" style={{ color: '#92600A' }}>
@@ -2384,7 +2384,7 @@ export default function StationView({
                     <div className="mt-3 pt-3 space-y-1.5 border-t overflow-y-auto" style={{ borderColor: '#F3EFDD', maxHeight: 260 }}>
                       {stats.completion.products.map(p => (
                         <div key={p.sku} className="flex justify-between items-center text-[12px]">
-                          <span className="truncate pr-3" style={{ color: '#1A4731' }}>{p.name}</span>
+                          <span className="overflow-x-auto whitespace-nowrap no-scrollbar pr-3" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{p.name}</span>
                           <span className="shrink-0" style={{ color: '#6B6455' }}>
                             {p.checked}/{p.expected} ·{' '}
                             <span className="font-bold" style={{ color: p.gap > 0 ? '#B45309' : '#2D6A4F' }}>
@@ -2420,7 +2420,7 @@ export default function StationView({
                               return (
                                 <div key={s.sku} className="rounded-lg px-2 py-1.5 -mx-2" style={low ? { backgroundColor: '#FEF2F2' } : undefined}>
                                   <div className="flex justify-between items-center text-[13px]">
-                                    <span className="truncate pr-3" style={{ color: '#1A4731' }}>{s.name}</span>
+                                    <span className="overflow-x-auto whitespace-nowrap no-scrollbar pr-3" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{s.name}</span>
                                     <span className="font-bold shrink-0" style={{ color: s.found ? (low ? '#B42318' : '#1A4731') : '#B45309' }}>
                                       {s.found ? s.qty : '—'}
                                     </span>
@@ -2513,7 +2513,7 @@ export default function StationView({
                         {sel.on && <CheckCircle2 size={16} className="text-white" />}
                       </button>
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>
+                        <div className="font-semibold text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
                           {lang === 'vi' ? g.name_vi : (g.name_en || g.name_vi)}
                           {g.variant_label && g.variant_label !== 'Standard' && (
                             <span className="text-[11px] font-normal text-ink-light"> · {g.variant_label}</span>
@@ -2578,7 +2578,7 @@ export default function StationView({
                 <h3 className="font-bold text-base" style={{ color: '#DC2626' }}>
                   {lang === 'vi' ? 'Lý do bị chặn' : 'Blocked reason'}
                 </h3>
-                <p className="text-xs text-ink-light mt-0.5 truncate">{blockedModal.product_name_vi}</p>
+                <p className="text-xs text-ink-light mt-0.5 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{blockedModal.product_name_vi}</p>
               </div>
               <button onClick={() => { setBlockedModal(null); setBlockedReason(''); setBlockedCustom(''); }} className="p-1 text-ink-light"><X size={20} /></button>
             </div>
@@ -2676,7 +2676,7 @@ export default function StationView({
                     <div className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center text-xl" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>{extraProduct.name_vi}</div>
+                    <div className="font-semibold text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{extraProduct.name_vi}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       {(extraVariant?.sku ?? extraProduct.sku) && <span className="text-[10px] font-mono text-ink-light">{extraVariant?.sku ?? extraProduct.sku}</span>}
                       <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
@@ -2719,7 +2719,7 @@ export default function StationView({
                             <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.name_vi}</div>
+                            <div className="text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{p.name_vi}</div>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               {p.sku && <span className="text-[10px] font-mono text-ink-light">{p.sku}</span>}
                               <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"

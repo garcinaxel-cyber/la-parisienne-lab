@@ -363,7 +363,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                   ) : (
                     <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: CREAM }} />
                   )}
-                  <span className="truncate flex-1 min-w-0">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
+                  <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button onClick={() => setQtyForProduct(p, qtyInCart - 1)} disabled={qtyInCart <= 0}
                       className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: `1px solid ${BORDER}` }}>
@@ -417,7 +417,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                 .map(l => (
                   <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: CREAM }}>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-semibold" style={{ color: INK }}>{l.name}</div>
+                      <div className="overflow-x-auto whitespace-nowrap no-scrollbar font-semibold" style={{ WebkitOverflowScrolling: 'touch', color: INK }}>{l.name}</div>
                       <div style={{ color: '#9CA3AF' }}>{l.qty > 0 ? (lang === 'en' ? `${l.qty} in stock` : `${l.qty} còn`) : tr('outOfStock')}</div>
                     </div>
                     <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
@@ -445,7 +445,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                     ) : (
                       <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: CREAM }} />
                     )}
-                    <span className="text-sm font-semibold truncate flex-1 min-w-0" style={{ color: INK }}>{l.name}</span>
+                    <span className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch', color: INK }}>{l.name}</span>
                     <button onClick={() => removeItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: RED }} /></button>
                   </div>
                   <div className="flex items-center gap-2">
@@ -510,7 +510,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                     <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold truncate" style={{ color: INK }}>{l.name}</div>
+                    <div className="text-sm font-bold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: INK }}>{l.name}</div>
                     {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
                   </div>
                   <span className="text-sm font-bold shrink-0">×{l.qty}</span>

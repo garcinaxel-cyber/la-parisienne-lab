@@ -186,7 +186,7 @@ export default function StationFichesPage() {
                       style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm truncate" style={{ color: '#1A4731' }}>
+                    <div className="font-semibold text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
                       {lang === 'vi' ? fiche.name_vi : (fiche.name_en || fiche.name_vi)}
                     </div>
                     {fiche.name_en && lang === 'vi' && (

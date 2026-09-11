@@ -1034,7 +1034,7 @@ function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSumma
         <div className="space-y-1.5 mb-2">
           {lines.map(l => (
             <div key={l.key} className="flex items-center gap-2 rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
-              <span className="flex-1 min-w-0 truncate" style={{ fontSize: 12 }}>{l.nameVi}</span>
+              <span className="flex-1 min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', fontSize: 12 }}>{l.nameVi}</span>
               <input type="number" min={1} value={l.qty} onChange={e => updateQty(l.key, Number(e.target.value))}
                 className="text-center rounded" style={{ width: 36, fontSize: 12, border: `1px solid ${BORDER}`, padding: '2px 0' }} />
               <input type="number" min={0} value={l.unitPrice} onChange={e => updatePrice(l.key, Number(e.target.value))}
@@ -1469,7 +1469,7 @@ function StatsTab() {
               <div className="mt-2 mb-1 rounded-lg" style={{ backgroundColor: '#FFFDF5', border: `1px solid ${CREAM_DARK}` }}>
                 {c.products.map((p, j) => (
                   <div key={`${p.sku ?? p.name}-${j}`} className="flex justify-between items-center px-2.5 py-1.5" style={{ fontSize: 12, borderTop: j ? `1px solid ${CREAM_DARK}` : 'none' }}>
-                    <span className="min-w-0 truncate" style={{ paddingRight: 8 }}>{p.name}{p.sku ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {p.sku}</span> : null}</span>
+                    <span className="min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>{p.name}{p.sku ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {p.sku}</span> : null}</span>
                     <span className="shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}>×{p.qty} · <b>{fmtCompactVnd(p.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11 }}>· {pct(p.total, c.total || 1)}</span></span>
                   </div>
                 ))}

@@ -211,7 +211,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                         <button type="button" onClick={() => setZoomImage(l.imageUrl!)} className="shrink-0 w-9 h-9 rounded overflow-hidden"><img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" /></button>
                       ) : <div className="shrink-0 w-9 h-9 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold truncate">{l.name}</div>
+                        <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                         <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Gửi: {l.qtySent}{l.note ? ` · ${l.note}` : ''}</div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
@@ -332,7 +332,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                         {p.imageUrl ? (
                           <button type="button" onClick={() => setZoomImage(p.imageUrl!)} className="shrink-0 w-10 h-10 rounded overflow-hidden"><img src={thumb(p.imageUrl, 80)} alt="" className="w-full h-full object-cover" /></button>
                         ) : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
-                        <span className="truncate flex-1 min-w-0">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
+                        <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button onClick={() => setQtyForProduct(p, inCart - 1)} disabled={inCart <= 0} className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: '1px solid #D1D5DB' }}><Minus size={11} /></button>
                           <span className="w-5 text-center text-xs font-bold">{inCart}</span>
@@ -354,7 +354,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                   <div key={l.sku} className="px-4 py-2.5 space-y-1.5">
                     <div className="flex items-center gap-2.5">
                       {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-10 h-10 rounded object-cover" /> : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
-                      <span className="text-sm font-semibold truncate flex-1 min-w-0">{l.name}</span>
+                      <span className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
                       <button onClick={() => updateQty(l.sku, 0)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
                     </div>
                     <div className="flex items-center gap-2">
@@ -426,7 +426,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
                   {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" /> : <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-navy truncate">{l.name}</div>
+                    <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                     {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
                   </div>
                   <span className="text-sm font-bold shrink-0">×{l.qty}</span>
@@ -462,7 +462,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 const diff = v - l.qtySent;
                 return (
                   <div key={l.id} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ backgroundColor: diff ? '#FFFBEB' : '#F9FAFB' }}>
-                    <div className="text-sm font-semibold truncate">{l.name}</div>
+                    <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                     <div className="text-sm font-bold shrink-0">{v}<span className="text-xs font-normal" style={{ color: '#9CA3AF' }}> / {l.qtySent}</span>{diff ? <span className="text-xs ml-1" style={{ color: '#B45309' }}>({diff})</span> : null}</div>
                   </div>
                 );

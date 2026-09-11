@@ -1206,7 +1206,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               </button>
                             )}
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-navy truncate">{l.product_name_vi}</div>
+                              <div className="text-sm font-semibold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.product_name_vi}</div>
                             </div>
                           </div>
                           {/* 3 explicit columns (Axel, 2026-08-27): what the client originally
@@ -1304,7 +1304,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <img src={thumb(lossProduct.main_image_url, 80)} alt="" className="w-full h-full object-cover" />
                           </button>
                         )}
-                        <span className="font-semibold truncate">
+                        <span className="font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                           {lossProduct.name_vi}{lossProduct.variantLabel ? ` — ${lossProduct.variantLabel}` : ''}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}
                         </span>
                       </span>
@@ -1326,7 +1326,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
                               {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
-                              <span className="truncate">
+                              <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                                 {p.name_vi}{p.variantLabel ? <span style={{ color: '#6B7280' }}> — {p.variantLabel}</span> : null}
                                 {p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
                               </span>
@@ -1372,7 +1372,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           <img src={thumb(item.product.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold truncate">
+                          <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                             {item.product.name_vi}{item.product.variantLabel ? ` — ${item.product.variantLabel}` : ''} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>×{item.qty}</span>
                           </div>
                           <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
@@ -1426,7 +1426,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="mt-1 space-y-0.5">
                         {r.products.map(p => (
                           <div key={p.productName} className="flex items-center justify-between gap-2 text-xs" style={{ color: '#6B7280' }}>
-                            <span className="truncate">{p.productName}</span>
+                            <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
                             <span className="font-semibold shrink-0" style={{ color: '#374151' }}>×{p.qty}</span>
                           </div>
                         ))}
@@ -1448,7 +1448,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 {losses.map(l => (
                   <div key={l.id} className="bg-white rounded-2xl p-3.5" style={{ border: '1px solid #E5E7EB' }}>
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-bold text-navy truncate">{l.productName} ×{l.qty}</div>
+                      <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.productName} ×{l.qty}</div>
                       {l.odooScrapId ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#059669' }}><CheckCircle2 size={12} /> Odoo</span>
                       ) : (
@@ -1549,7 +1549,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <button key={p.sku} onClick={() => addStockItem(p)}
                         className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
                         {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
-                        <span className="truncate">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
+                        <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
                       </button>
                     ))}
                   </div>
@@ -1620,7 +1620,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
                           )}
                           <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold truncate">{l.name}</div>
+                            <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
                           </div>
                           <input type="number" min={0} step="1" inputMode="decimal" disabled={stockSessionSeq < stockLatestSessionSeq}
@@ -1713,7 +1713,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                           {g.lines.map(l => (
                             <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
-                              <span className="text-sm truncate" style={{ color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
+                              <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
                               <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
                                 {l.qty === null ? 'Chưa kiểm' : l.qty}
                               </span>
@@ -1736,7 +1736,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                         {dailyReport.losses.map(p => (
                           <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
-                            <span className="text-sm truncate">{p.productName}</span>
+                            <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
                             <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
                           </div>
                         ))}
@@ -1858,7 +1858,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             ) : (
                               <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
                             )}
-                            <span className="truncate flex-1 min-w-0">{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
+                            <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button onClick={() => setOrderQtyForProduct(p, qtyInCart - 1)} disabled={qtyInCart <= 0}
                                 className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: '1px solid #D1D5DB' }}>
@@ -1913,7 +1913,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           .slice(0, 80)
                           .map(l => (
                             <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: '#F3F4F6' }}>
-                              <span className="truncate flex-1 min-w-0">{l.name}</span>
+                              <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
                               <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
                                 style={{ color: l.qty > 0 ? '#15803D' : '#B42318', backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FDECEC' }}>
                                 {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
@@ -1943,7 +1943,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             ) : (
                               <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
                             )}
-                            <span className="text-sm font-semibold truncate flex-1 min-w-0">{l.name}</span>
+                            <span className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
                             <button onClick={() => removeOrderItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
                           </div>
                           <div className="flex items-center gap-2">
@@ -2048,7 +2048,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <img src={thumb(pendingReceipt.line.image_url, 128)} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
               )}
               <div className="min-w-0">
-                <div className="text-sm font-bold text-navy truncate">{pendingReceipt.line.product_name_vi}</div>
+                <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{pendingReceipt.line.product_name_vi}</div>
                 <div className="text-xs" style={{ color: '#9CA3AF' }}>Đơn {pendingReceipt.order.header.order_ref}</div>
               </div>
             </div>
@@ -2099,7 +2099,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <img src={thumb(item.product.main_image_url, 112)} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-navy truncate">
+                    <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                       {item.product.name_vi}{item.product.variantLabel ? ` — ${item.product.variantLabel}` : ''}{item.product.sku ? ` (${item.product.sku})` : ''}
                     </div>
                     <div className="text-xs" style={{ color: '#6B7280' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
@@ -2144,7 +2144,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-navy truncate">{l.name}</div>
+                    <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                     {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
                   </div>
                   <span className="text-sm font-bold shrink-0">×{l.qty}</span>
@@ -2217,7 +2217,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </>
                   ) : (
                     <>
-                      <span className="flex-1 min-w-0 text-sm font-medium truncate">{s.name}</span>
+                      <span className="flex-1 min-w-0 text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{s.name}</span>
                       <button onClick={() => { setEditingStaffId(s.id); setEditStaffDraft(s.name); }}
                         className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
                         aria-label="Sửa" title="Sửa">

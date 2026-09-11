@@ -310,7 +310,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
                   {p.imageUrl
                     ? <img src={thumb(p.imageUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
                     : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
-                  <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi}</span>
+                  <span className="flex-1 min-w-0 text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{p.nameVi}</span>
                   <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold" style={{ color: '#2D6A4F' }}><Plus size={13} /> {p.sku && <span className="font-mono font-normal" style={{ color: '#9CA3AF' }}>{p.sku}</span>}</span>
                 </button>
               ))}
