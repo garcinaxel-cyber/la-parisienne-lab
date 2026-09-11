@@ -3,13 +3,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ChevronDown, Package2, Store, ShoppingBag, Users, Truck, ClipboardList, Trash2,
-  ArrowLeftRight, Plus, Pencil, X, Check, LogOut, Loader2, PackageCheck, Box,
+  ArrowLeftRight, Plus, Pencil, X, Check, LogOut, Loader2, PackageCheck, Box, FileText,
 } from 'lucide-react';
 import { useI18n, type Lang } from '@/lib/i18n';
 import * as actions from './actions';
 import type { ManagerShopStatus } from './actions';
 import { getShopStaffNamesAction, addShopStaffNameAction, renameShopStaffNameAction, removeShopStaffNameAction, getShopManagersForShopAction, type ShopStaffName, type ShopManagerListEntry } from '@/app/shop/actions';
 import OrderTab from './OrderTab';
+import ReportTab from './ReportTab';
 
 // Shop Manager cockpit (Axel, 2026-09-10) — single client component, internal tab state, same
 // posture as ShopView.tsx/OnlineOrdersView.tsx (one route, one bundle) rather than several
@@ -47,7 +48,7 @@ export const RED = '#B42318';
 const L = {
   vi: {
     logout: 'Đăng xuất',
-    navToday: 'Hôm nay', navOrder: 'Đặt hàng', navShops: 'Boutiques', navTeam: 'Đội ngũ',
+    navToday: 'Hôm nay', navOrder: 'Đặt hàng', navShops: 'Boutiques', navTeam: 'Đội ngũ', navReport: 'Báo cáo',
     allShops: 'Tất cả boutique',
     qaOrder: 'Đặt hàng', qaStore: 'Giao diện shop', qaOnline: 'Bán hàng online', qaTeam: 'Đội ngũ',
     recapReception: 'Nhập hàng', recapReceptionNone: 'Chưa có', recapReceptionNotDone: 'Chưa nhận hàng',
@@ -64,7 +65,7 @@ const L = {
   },
   en: {
     logout: 'Log out',
-    navToday: 'Today', navOrder: 'Order', navShops: 'Shops', navTeam: 'Team',
+    navToday: 'Today', navOrder: 'Order', navShops: 'Shops', navTeam: 'Team', navReport: 'Report',
     allShops: 'All shops',
     qaOrder: 'Order', qaStore: 'Store interface', qaOnline: 'Online sales', qaTeam: 'Team',
     recapReception: 'Reception', recapReceptionNone: 'None yet', recapReceptionNotDone: 'Reception not done',
@@ -152,7 +153,7 @@ function fmtTime(iso: string | null): string {
 // tab already used. "Store interface" (the OTHER quick action, Giao diện shop) is untouched — it
 // still deliberately reuses the real ShopView via /shop-manager/store, that one was never in
 // question.
-type Tab = 'today' | 'order' | 'team';
+type Tab = 'today' | 'order' | 'team' | 'report';
 type Stage = 'shops' | 'shop';
 
 export default function ShopManagerView({ managerName, color, shops }: { managerName: string; color: string; shops: string[] }) {
@@ -244,6 +245,7 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
         )}
         {stage === 'shop' && tab === 'order' && <OrderTab activeShop={activeShop} managerName={managerName} />}
         {stage === 'shop' && tab === 'team' && <TeamTab activeShop={activeShop} />}
+        {stage === 'shop' && tab === 'report' && <ReportTab activeShop={activeShop} />}
       </div>
 
       {stage === 'shop' && (
@@ -251,6 +253,7 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
           {([
             ['today', PackageCheck, tr('navToday')],
             ['order', ShoppingBag, tr('navOrder')],
+            ['report', FileText, tr('navReport')],
             ['team', Users, tr('navTeam')],
           ] as const).map(([key, Icon, label]) => {
             const active = tab === key;

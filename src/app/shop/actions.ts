@@ -864,14 +864,13 @@ export type ShopStockCountLine = {
   priceB2c: number | null;
 };
 
-async function fetchStockCountList(shopName: string, sessionSeq: number): Promise<ShopStockCountLine[]> {
+async function fetchStockCountList(shopName: string, date: string, sessionSeq: number): Promise<ShopStockCountLine[]> {
   const supabase = service();
   if (!supabase) return [];
   const entries = await stockCountEntries(shopName);
 
-  const today = vnDateStr();
   const { data: counts } = await supabase.from('lab_shop_stock_counts')
-    .select('sku, qty').eq('shop_name', shopName).eq('count_date', today).eq('session_seq', sessionSeq);
+    .select('sku, qty').eq('shop_name', shopName).eq('count_date', date).eq('session_seq', sessionSeq);
   const qtyBySku = new Map<string, number>();
   for (const c of counts ?? []) qtyBySku.set(c.sku, Number(c.qty));
 
@@ -943,7 +942,7 @@ export async function getMyStockCountListAction(sessionSeq?: number): Promise<{ 
   // Allow latest+1 too — the client requests it to preview/start a brand-new blank session
   // before anything has actually been saved into it yet.
   const seq = sessionSeq && sessionSeq >= 1 && sessionSeq <= latest + 1 ? sessionSeq : latest;
-  return { shopName: auth.shopName, date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(auth.shopName, seq) };
+  return { shopName: auth.shopName, date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(auth.shopName, today, seq) };
 }
 
 export async function getStockCountListForStaffAction(shopName: string, sessionSeq?: number): Promise<{ date?: string; sessionSeq?: number; latestSessionSeq?: number; sessions?: ShopStockCountSession[]; lines?: ShopStockCountLine[]; error?: string }> {
@@ -953,7 +952,7 @@ export async function getStockCountListForStaffAction(shopName: string, sessionS
   const sessions = await fetchStockSessions(shopName, today);
   const latest = sessions.length ? sessions[sessions.length - 1].seq : 1;
   const seq = sessionSeq && sessionSeq >= 1 && sessionSeq <= latest + 1 ? sessionSeq : latest;
-  return { date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(shopName, seq) };
+  return { date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(shopName, today, seq) };
 }
 
 export async function saveStockCountAction(input: {
@@ -1106,42 +1105,92 @@ export type ShopDailyReport = {
   lossesReportCount: number;
 };
 
-async function fetchDailyReport(shopName: string): Promise<ShopDailyReport> {
-  const today = vnDateStr();
-  // Reflects the latest stock-count session of the day — if a shop ran several counts today
-  // (Axel, 2026-09-05), the report shows the most recent one, same as the Kiểm kho tab itself.
-  const sessions = await fetchStockSessions(shopName, today);
-  const latestSessionSeq = sessions.length ? sessions[sessions.length - 1].seq : 1;
-  const stockLines = await fetchStockCountList(shopName, latestSessionSeq);
-  const stockCountedCount = stockLines.filter(l => l.qty !== null).length;
-  // Somme qty x prix de vente sur les lignes reellement comptees (qty null = pas encore compte,
-  // ne compte pas comme 0 dans la valorisation).
-  const stockValuationTotal = stockLines.reduce((s, l) => s + (l.qty ?? 0) * (l.priceB2c ?? 0), 0);
-  const lossRecap = await fetchDailyLossRecap(shopName);
-  const todayLoss = lossRecap.find(r => r.date === today);
-  return {
-    date: today,
-    stockLines,
-    stockCountedCount,
-    stockTotalCount: stockLines.length,
-    stockCounted: stockCountedCount > 0,
-    stockValuationTotal,
-    losses: todayLoss?.products ?? [],
-    lossesTotalQty: todayLoss?.totalQty ?? 0,
-    lossesReportCount: todayLoss?.reportCount ?? 0,
-  };
+// Axel, 2026-09-11: "je voudrais que dans l'onglet report des shops qu il y ait l historique sur
+// 7 jours glissants" — same rolling-7-day posture as fetchDailyLossRecap above, VN calendar days,
+// most-recent first (today always included, even with nothing counted yet — the UI shows that as
+// "not counted" rather than omitting the day).
+function last7VnDates(): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < 7; i++) out.push(vnDateStr(new Date(Date.now() - i * 86400000)));
+  return out;
 }
 
-export async function getMyDailyReportAction(): Promise<{ report?: ShopDailyReport; error?: string }> {
+// Batched across the whole 7-day window rather than looping fetchDailyReport per day: the
+// catalog/extras lookup (stockCountEntries -> fetchProductionCatalog, several Supabase reads) is
+// the same every day for one shop, so it's fetched ONCE here, same for the price lookup and the
+// already-7-day fetchDailyLossRecap — only the raw stock-count rows are fetched per-window (one
+// query) rather than per-day. Axel: "optimise bien tout pour que l'usage supabase/vercel soit
+// reduit" — a naive 7x loop would re-run ~5 queries/day for no reason.
+async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[]> {
+  const dates = last7VnDates();
+  const minDate = dates[dates.length - 1];
+  const supabase = service();
+  const entries = await stockCountEntries(shopName);
+  const skus = Array.from(entries.keys());
+
+  const [countsRes, pricesRes, lossRecap] = await Promise.all([
+    supabase
+      ? supabase.from('lab_shop_stock_counts').select('sku, qty, count_date, session_seq')
+          .eq('shop_name', shopName).gte('count_date', minDate)
+      : Promise.resolve({ data: [] as any[] }),
+    supabase && skus.length
+      ? supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
+      : Promise.resolve({ data: [] as any[] }),
+    fetchDailyLossRecap(shopName),
+  ]);
+
+  const priceBySku = new Map<string, number>();
+  for (const r of pricesRes.data ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+
+  const rowsByDate = new Map<string, { sku: string; qty: number; session_seq: number }[]>();
+  for (const r of countsRes.data ?? []) {
+    const d = r.count_date as string;
+    const arr = rowsByDate.get(d) ?? [];
+    arr.push({ sku: r.sku, qty: Number(r.qty), session_seq: Number(r.session_seq) });
+    rowsByDate.set(d, arr);
+  }
+
+  return dates.map(date => {
+    const rows = rowsByDate.get(date) ?? [];
+    // Same "highest session_seq with any saved data = current" rule as fetchStockSessions.
+    const latestSeq = rows.length ? Math.max(...rows.map(r => r.session_seq)) : null;
+    const qtyBySku = new Map<string, number>();
+    if (latestSeq != null) for (const r of rows) if (r.session_seq === latestSeq) qtyBySku.set(r.sku, r.qty);
+
+    const stockLines: ShopStockCountLine[] = Array.from(entries.entries())
+      .map(([sku, v]) => ({
+        sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null,
+        category: v.category, imageUrl: v.imageUrl, priceB2c: priceBySku.get(sku) ?? null,
+      }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+
+    const stockCountedCount = stockLines.filter(l => l.qty !== null).length;
+    const stockValuationTotal = stockLines.reduce((s, l) => s + (l.qty ?? 0) * (l.priceB2c ?? 0), 0);
+    const dayLoss = lossRecap.find(r => r.date === date);
+    return {
+      date,
+      stockLines,
+      stockCountedCount,
+      stockTotalCount: stockLines.length,
+      stockCounted: stockCountedCount > 0,
+      stockValuationTotal,
+      losses: dayLoss?.products ?? [],
+      lossesTotalQty: dayLoss?.totalQty ?? 0,
+      lossesReportCount: dayLoss?.reportCount ?? 0,
+    };
+  });
+}
+
+export async function getMyDailyReportRangeAction(): Promise<{ reports?: ShopDailyReport[]; error?: string }> {
   const auth = await requireShopSession();
   if ('error' in auth) return { error: auth.error };
-  return { report: await fetchDailyReport(auth.shopName) };
+  return { reports: await fetchDailyReportRange(auth.shopName) };
 }
 
-export async function getDailyReportForStaffAction(shopName: string): Promise<{ report?: ShopDailyReport; error?: string }> {
+export async function getDailyReportRangeForStaffAction(shopName: string): Promise<{ reports?: ShopDailyReport[]; error?: string }> {
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
-  return { report: await fetchDailyReport(shopName) };
+  return { reports: await fetchDailyReportRange(shopName) };
 }
 
 // ── Live inventory reference (Order tab) ────────────────────────────────────────────────────
@@ -1166,7 +1215,7 @@ export async function getShopCurrentStockLevelsAction(shopName?: string): Promis
   const sessions = await fetchStockSessions(auth.shopName, today);
   if (!sessions.length) return { levels: [], asOf: null };
   const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
-  const list = await fetchStockCountList(auth.shopName, latest.seq);
+  const list = await fetchStockCountList(auth.shopName, today, latest.seq);
   return {
     levels: list.map(l => ({ sku: l.sku, name: l.name, qty: l.qty ?? 0, category: l.category })),
     asOf: latest.updatedAt,

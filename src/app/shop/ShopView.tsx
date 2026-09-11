@@ -7,6 +7,7 @@ import ShopTransfersTab from './ShopTransfersTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
+import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-report-pdf';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
@@ -67,15 +68,6 @@ function fmtVnd(v: number) {
 // Kiểm kho is grouped by fiche category (Axel, 2026-09-03: "je veux un comptage par category").
 // The list already arrives sorted category-then-name from the server, so this just buckets it —
 // insertion order into the Map already matches that server order, no re-sort needed here.
-function groupStockByCategory(lines: ShopStockCountLine[]): { category: string; lines: ShopStockCountLine[] }[] {
-  const byCategory = new Map<string, ShopStockCountLine[]>();
-  for (const l of lines) {
-    if (!byCategory.has(l.category)) byCategory.set(l.category, []);
-    byCategory.get(l.category)!.push(l);
-  }
-  return Array.from(byCategory.entries()).map(([category, lines]) => ({ category, lines }));
-}
-
 // Staff roster picker (Axel, 2026-08-27) — a <select> over the shop's managed name list plus a
 // small gear button opening the manage modal, used in both the delivery-confirm name field and
 // the loss-report name field so there's exactly one roster shared everywhere a name is needed.
@@ -218,7 +210,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // losses, generated on demand (re-fetched every time this tab is opened, unlike the other tabs'
   // load-once-per-mount caches, since it depends on data the shop may have just changed on the
   // Kiểm kho tab).
-  const [dailyReport, setDailyReport] = useState<ShopDailyReport | null>(null);
+  // 2026-09-11 (Axel: "l historique sur 7 jours glissants"): `reports` holds the whole rolling
+  // 7-day window (most-recent first, today included); `selectedReportDate` is which day is
+  // drilled into (null = the day list). `dailyReport` stays a derived lookup, same shape as
+  // before, so the detail view/PDF export below barely changed.
+  const [reports, setReports] = useState<ShopDailyReport[] | null>(null);
+  const [selectedReportDate, setSelectedReportDate] = useState<string | null>(null);
+  const dailyReport = selectedReportDate ? reports?.find(r => r.date === selectedReportDate) ?? null : null;
   const [reportLoading, setReportLoading] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
@@ -377,6 +375,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   useEffect(() => {
     if (tab !== 'report') return;
+    setSelectedReportDate(null); // always land on the 7-day list, not wherever a previous visit drilled into
     loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -732,185 +731,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setReportLoading(true);
     setReportMsg(null);
     const actions = await import('./actions');
-    const res = readOnly ? await actions.getDailyReportForStaffAction(shopName) : await actions.getMyDailyReportAction();
+    const res = readOnly ? await actions.getDailyReportRangeForStaffAction(shopName) : await actions.getMyDailyReportRangeAction();
     setReportLoading(false);
     if (res.error) { setReportMsg(`Lỗi: ${res.error}`); return; }
-    setDailyReport(res.report ?? null);
+    setReports(res.reports ?? []);
   }
 
   // Client-side PDF export (Axel, 2026-09-03: "le rapport doit etre exportable pdf" — "pdf en
-  // viet bien sur") — rasterizes the already-rendered report DOM (real browser text layout, so
-  // Draws the report as real vector text — not a screenshot — using jsPDF's own text/shape APIs,
-  // so the PDF is sharp at any zoom, has selectable/searchable text, and stays small. Vietnamese
-  // diacritics need a font that actually has those glyphs (jsPDF's built-in fonts don't), so a
-  // Noto Sans subset carrying every character used in the catalog is embedded from
-  // src/lib/pdf-fonts.ts (regenerating that file is documented there). This replaces the earlier
-  // html2canvas-screenshot approach, which produced blurry, unstructured pages when zoomed
-  // (Axel, 2026-09-03: "c est pas structure, c est soupe ... je veux un vrai pdf") — this version
-  // instead measures and lays out each header/row itself. Rows are drawn compact (Axel, same
-  // message: "et reduit la taille des lignes").
+  // viet bien sur"), drawing logic shared with the shop-manager cockpit's Report tab — see
+  // src/lib/shop-report-pdf.ts for the full jsPDF layout (extracted 2026-09-11).
   async function exportReportPdf() {
     if (!dailyReport) return;
     setReportExporting(true);
     setReportMsg(null);
     try {
-      const [{ jsPDF }, { NOTO_SANS_VN_REGULAR_BASE64, NOTO_SANS_VN_BOLD_BASE64 }] = await Promise.all([
-        import('jspdf'),
-        import('@/lib/pdf-fonts'),
-      ]);
-
-      const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-      pdf.addFileToVFS('NotoSansVN-Regular.ttf', NOTO_SANS_VN_REGULAR_BASE64);
-      pdf.addFont('NotoSansVN-Regular.ttf', 'NotoSansVN', 'normal');
-      pdf.addFileToVFS('NotoSansVN-Bold.ttf', NOTO_SANS_VN_BOLD_BASE64);
-      pdf.addFont('NotoSansVN-Bold.ttf', 'NotoSansVN', 'bold');
-      pdf.setFont('NotoSansVN', 'normal');
-
-      const MARGIN = 32;
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const contentWidth = pageWidth - MARGIN * 2;
-      const usableBottom = pageHeight - MARGIN - 14; // reserve room for the page-number footer
-
-      const DARK: [number, number, number] = [31, 41, 55];
-      const GRAY: [number, number, number] = [107, 114, 128];
-      const LIGHT_GRAY: [number, number, number] = [156, 163, 175];
-      const RED: [number, number, number] = [220, 38, 38];
-      const HEADER_BG: [number, number, number] = [243, 244, 246];
-      const DIVIDER: [number, number, number] = [229, 231, 235];
-
-      // Compact rows (Axel: "reduit la taille des lignes") — small font, tight row height.
-      const ROW_FONT = 8;
-      const ROW_H = 12.5;
-      const CAT_HEADER_FONT = 8;
-      const CAT_HEADER_H = 14;
-      const SECTION_TITLE_FONT = 9.5;
-      const SECTION_TITLE_H = 16;
-
-      let cursorY = MARGIN;
-
-      const ensureSpace = (h: number) => {
-        if (cursorY + h > usableBottom) {
-          pdf.addPage();
-          cursorY = MARGIN;
-        }
-      };
-
-      // Truncates with an ellipsis instead of wrapping, so every row stays exactly one line tall.
-      const fitText = (text: string, maxWidth: number): string => {
-        if (pdf.getTextWidth(text) <= maxWidth) return text;
-        let lo = 0, hi = text.length;
-        while (lo < hi) {
-          const mid = Math.ceil((lo + hi) / 2);
-          if (pdf.getTextWidth(text.slice(0, mid) + '…') <= maxWidth) lo = mid;
-          else hi = mid - 1;
-        }
-        return lo > 0 ? text.slice(0, lo) + '…' : '…';
-      };
-
-      const drawDivider = (y: number) => {
-        pdf.setDrawColor(...DIVIDER);
-        pdf.setLineWidth(0.4);
-        pdf.line(MARGIN, y, pageWidth - MARGIN, y);
-      };
-
-      const drawCategoryHeader = (label: string) => {
-        // Never leave a lone header at the bottom of a page — it must fit alongside one row.
-        if (cursorY + CAT_HEADER_H + ROW_H > usableBottom) {
-          pdf.addPage();
-          cursorY = MARGIN;
-        }
-        pdf.setFillColor(...HEADER_BG);
-        pdf.rect(MARGIN, cursorY, contentWidth, CAT_HEADER_H, 'F');
-        pdf.setFont('NotoSansVN', 'bold');
-        pdf.setFontSize(CAT_HEADER_FONT);
-        pdf.setTextColor(...GRAY);
-        pdf.text(label.toUpperCase(), MARGIN + 6, cursorY + CAT_HEADER_H / 2, { baseline: 'middle' });
-        cursorY += CAT_HEADER_H;
-      };
-
-      const drawProductRow = (name: string, qtyLabel: string, color: [number, number, number], bold: boolean) => {
-        ensureSpace(ROW_H);
-        const qtyWidth = 64;
-        pdf.setFont('NotoSansVN', bold ? 'bold' : 'normal');
-        pdf.setFontSize(ROW_FONT);
-        pdf.setTextColor(...color);
-        pdf.text(fitText(name, contentWidth - qtyWidth - 10), MARGIN + 6, cursorY + ROW_H / 2, { baseline: 'middle' });
-        pdf.setFont('NotoSansVN', 'bold');
-        pdf.text(qtyLabel, pageWidth - MARGIN - 6, cursorY + ROW_H / 2, { baseline: 'middle', align: 'right' });
-        drawDivider(cursorY + ROW_H);
-        cursorY += ROW_H;
-      };
-
-      // ── Header ──
-      pdf.setFont('NotoSansVN', 'bold');
-      pdf.setFontSize(13);
-      pdf.setTextColor(...DARK);
-      pdf.text(shopName, MARGIN, cursorY, { baseline: 'top' });
-      cursorY += 17;
-      pdf.setFont('NotoSansVN', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(...GRAY);
-      pdf.text(`Báo cáo cuối ngày · ${fmtDate(dailyReport.date)}`, MARGIN, cursorY, { baseline: 'top' });
-      cursorY += 14;
-      drawDivider(cursorY);
-      cursorY += 12;
-
-      // ── Kiểm kho progress ──
-      ensureSpace(SECTION_TITLE_H);
-      pdf.setFont('NotoSansVN', 'bold');
-      pdf.setFontSize(SECTION_TITLE_FONT);
-      pdf.setTextColor(...GRAY);
-      pdf.text('KIỂM KHO', MARGIN, cursorY, { baseline: 'top' });
-      pdf.setTextColor(...DARK);
-      pdf.text(`${dailyReport.stockCountedCount}/${dailyReport.stockTotalCount} đã kiểm`, pageWidth - MARGIN, cursorY, {
-        baseline: 'top',
-        align: 'right',
-      });
-      cursorY += SECTION_TITLE_H + 4;
-
-      // ── Stock lines, by category ──
-      for (const g of groupStockByCategory(dailyReport.stockLines)) {
-        drawCategoryHeader(g.category);
-        for (const l of g.lines) {
-          if (l.qty === null) {
-            drawProductRow(l.name, 'Chưa kiểm', LIGHT_GRAY, false);
-          } else if (l.qty === 0) {
-            drawProductRow(l.name, '0', RED, true);
-          } else {
-            drawProductRow(l.name, String(l.qty), DARK, false);
-          }
-        }
-        cursorY += 8;
-      }
-
-      // ── Losses ── (drawCategoryHeader below already guards its own space + header-orphan check)
-      const lossesTitle = `HAO HỤT HÔM NAY${dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}`;
-      drawCategoryHeader(lossesTitle);
-      if (!dailyReport.losses.length) {
-        ensureSpace(ROW_H);
-        pdf.setFont('NotoSansVN', 'normal');
-        pdf.setFontSize(ROW_FONT);
-        pdf.setTextColor(...LIGHT_GRAY);
-        pdf.text('Không có hao hụt hôm nay', MARGIN + 6, cursorY + ROW_H / 2, { baseline: 'middle' });
-        cursorY += ROW_H;
-      } else {
-        for (const p of dailyReport.losses) {
-          drawProductRow(p.productName, `×${p.qty}`, RED, true);
-        }
-      }
-
-      // ── Page numbers ──
-      const totalPages = pdf.getNumberOfPages();
-      for (let p = 1; p <= totalPages; p++) {
-        pdf.setPage(p);
-        pdf.setFont('NotoSansVN', 'normal');
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(...LIGHT_GRAY);
-        pdf.text(`Trang ${p}/${totalPages}`, pageWidth / 2, pageHeight - 18, { baseline: 'top', align: 'center' });
-      }
-
-      pdf.save(`bao-cao-${shopName}-${dailyReport.date}.pdf`);
+      await exportShopDailyReportPdf(shopName, dailyReport);
     } catch {
       setReportMsg('Lỗi khi xuất PDF, vui lòng thử lại.');
     } finally {
@@ -1677,86 +1512,122 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
           </div>
         ) : tab === 'report' ? (
-          <div className="space-y-3">
+          !selectedReportDate ? (
             <div className="space-y-3">
               <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                  Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
-                </div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày · 7 ngày gần nhất</div>
                 <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
               </div>
 
-              {reportLoading && !dailyReport ? (
+              {reportLoading && !reports ? (
                 <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
-              ) : !dailyReport ? null : !dailyReport.stockCounted ? (
-                <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
-                  Chưa kiểm kho hôm nay — vui lòng kiểm kho trước khi xem báo cáo.
-                </div>
-              ) : (
-                <>
-                  <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
-                    <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
-                    <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
-                  </div>
-
-                  <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
-                    <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>💰 Valorisation kho</span>
-                    <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
-                  </div>
-
-                  <div className="space-y-3">
-                    {groupStockByCategory(dailyReport.stockLines).map(g => (
-                      <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                        <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
-                          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
+              ) : !reports?.length ? null : (
+                <div className="space-y-2">
+                  {reports.map((r, i) => (
+                    <button key={r.date} onClick={() => setSelectedReportDate(r.date)}
+                      className="w-full text-left bg-white rounded-2xl p-3.5 flex items-center justify-between gap-3"
+                      style={{ border: '1px solid #E5E7EB' }}>
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{i === 0 ? ' · Hôm nay' : ''}</div>
+                        <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? '#6B7280' : '#9CA3AF' }}>
+                          {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} đã kiểm` : 'Chưa kiểm kho'}
+                          {r.lossesReportCount ? ` · ${r.lossesReportCount} báo cáo hao hụt` : ''}
                         </div>
+                      </div>
+                      {r.stockCounted && (
+                        <div className="text-sm font-bold shrink-0" style={{ color: '#1D4ED8' }}>{fmtVnd(r.stockValuationTotal)}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <button onClick={() => setSelectedReportDate(null)}
+                className="inline-flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#6B7280' }}>
+                <ArrowLeft size={15} /> 7 ngày gần nhất
+              </button>
+
+              <div className="space-y-3">
+                <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                    Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
+                  </div>
+                  <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
+                </div>
+
+                {!dailyReport ? null : !dailyReport.stockCounted ? (
+                  <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                    Chưa kiểm kho ngày này.
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
+                      <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
+                    </div>
+
+                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>💰 Valorisation kho</span>
+                      <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {groupStockByCategory(dailyReport.stockLines).map(g => (
+                        <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                          <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
+                          </div>
+                          <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                            {g.lines.map(l => (
+                              <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
+                                <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
+                                <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
+                                  {l.qty === null ? 'Chưa kiểm' : l.qty}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+                      <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                        <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+                          Hao hụt ngày này{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
+                        </div>
+                      </div>
+                      {!dailyReport.losses.length ? (
+                        <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt ngày này</div>
+                      ) : (
                         <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
-                          {g.lines.map(l => (
-                            <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
-                              <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
-                              <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
-                                {l.qty === null ? 'Chưa kiểm' : l.qty}
-                              </span>
+                          {dailyReport.losses.map(p => (
+                            <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
+                              <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
+                              <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
                             </div>
                           ))}
                         </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                    <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
-                      <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                        Hao hụt hôm nay{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
-                      </div>
+                      )}
                     </div>
-                    {!dailyReport.losses.length ? (
-                      <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt hôm nay</div>
-                    ) : (
-                      <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
-                        {dailyReport.losses.map(p => (
-                          <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
-                            <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                            <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+                  </>
+                )}
+              </div>
 
-            {dailyReport?.stockCounted && (
-              <button onClick={exportReportPdf} disabled={reportExporting}
-                className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
-                style={{ backgroundColor: '#1f2937' }}>
-                {reportExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                Xuất PDF
-              </button>
-            )}
-            {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
-          </div>
+              {dailyReport?.stockCounted && (
+                <button onClick={exportReportPdf} disabled={reportExporting}
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#1f2937' }}>
+                  {reportExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  Xuất PDF
+                </button>
+              )}
+              {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
+            </div>
+          )
         ) : tab === 'transfer' ? (
           <ShopTransfersTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)}
             setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
