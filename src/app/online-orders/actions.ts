@@ -93,7 +93,7 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
   const { data: vars } = ficheIds.length
     ? await supabase.from('lab_fiche_variants')
         .select('fiche_id, id, sku, label, image_url, is_default, sort_order')
-        .in('fiche_id', ficheIds).order('is_default', { ascending: false }).order('sort_order')
+        .in('fiche_id', ficheIds).eq('is_active', true).order('is_default', { ascending: false }).order('sort_order')
     : { data: [] as any[] };
 
   const skus = Array.from(new Set((vars ?? []).map((v: any) => v.sku).filter(Boolean)));

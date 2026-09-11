@@ -38,6 +38,11 @@ interface Variant {
   is_default: boolean;
   sort_order: number;
   image_url: string;
+  // Per-SKU active/inactive (Axel, 2026-09-11): unlike removing a variant, this keeps its
+  // recipe/quantity data intact but hides it from shop/manager/online-sales ordering — e.g. a
+  // size archived on Odoo while sibling sizes on the same recipe card stay orderable. Manual
+  // only (Odoo access here is read-only).
+  is_active: boolean;
 }
 
 interface Ingredient {
@@ -69,7 +74,7 @@ function emptyStep(num: number): AssemblyStep {
 }
 
 function emptyVariant(sortOrder: number): Variant {
-  return { label: '', sku: '', weight_g: '', is_default: false, sort_order: sortOrder, image_url: '' };
+  return { label: '', sku: '', weight_g: '', is_default: false, sort_order: sortOrder, image_url: '', is_active: true };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -108,7 +113,7 @@ export default function FicheEditor({
   const [variants, setVariants] = useState<Variant[]>(
     initVariants.length > 0
       ? initVariants
-      : [{ label: 'Standard', sku: '', weight_g: '', is_default: true, sort_order: 0, image_url: '' }]
+      : [{ label: 'Standard', sku: '', weight_g: '', is_default: true, sort_order: 0, image_url: '', is_active: true }]
   );
   const [ingredients, setIngredients] = useState<Ingredient[]>(
     initIngredients.length > 0 ? initIngredients : [emptyIngredient(1)]
@@ -303,6 +308,7 @@ export default function FicheEditor({
           is_default: v.is_default,
           sort_order: v.sort_order,
           image_url: v.image_url || null,
+          is_active: v.is_active,
         }).eq('id', v.id!)
       )
     );
@@ -317,6 +323,7 @@ export default function FicheEditor({
       is_default: v.is_default,
       sort_order: v.sort_order,
       image_url: v.image_url || null,
+      is_active: v.is_active,
     }));
     if (newVariants.length > 0) {
       const { error: insVErr } = await supabase.from('lab_fiche_variants').insert(newVariants);
@@ -552,22 +559,23 @@ export default function FicheEditor({
             </div>
             <div className="card overflow-hidden">
               <div className="grid grid-cols-12 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-ink-light bg-cream/60">
-                <div className="col-span-3">Label</div>
-                <div className="col-span-4">SKU</div>
+                <div className="col-span-2">Label</div>
+                <div className="col-span-3">SKU</div>
                 <div className="col-span-2 text-center">{lang === 'vi' ? 'Khối lượng' : 'Weight'} (gr)</div>
                 <div className="col-span-2 text-center">{lang === 'vi' ? 'Mặc định' : 'Default'}</div>
+                <div className="col-span-2 text-center">{lang === 'vi' ? 'Đang bán' : 'Orderable'}</div>
                 <div className="col-span-1" />
               </div>
               <div className="divide-y divide-border-soft">
                 {variants.map((v, idx) => (
-                  <div key={idx} className="px-4 py-2.5 space-y-1.5">
+                  <div key={idx} className={`px-4 py-2.5 space-y-1.5 ${v.is_active ? '' : 'opacity-50'}`}>
                     <div className="grid grid-cols-12 items-center gap-2">
-                      <div className="col-span-3">
+                      <div className="col-span-2">
                         <input value={v.label}
                           onChange={e => updateVariant(idx, { label: e.target.value })}
                           placeholder="Standard, D14…" className="input w-full text-sm py-1.5" />
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-3">
                         <input value={v.sku}
                           onChange={e => updateVariant(idx, { sku: e.target.value })}
                           placeholder="BCMD14…" className="input w-full text-sm py-1.5 font-mono text-xs" />
@@ -581,6 +589,19 @@ export default function FicheEditor({
                         <input type="radio" name="default_variant" checked={v.is_default}
                           onChange={() => setDefaultVariant(idx)}
                           className="accent-navy w-4 h-4 cursor-pointer" />
+                      </div>
+                      <div className="col-span-2 flex justify-center">
+                        <button type="button" onClick={() => updateVariant(idx, { is_active: !v.is_active })}
+                          title={v.is_active
+                            ? (lang === 'vi' ? 'Đang bán — bấm để ẩn khỏi đặt hàng (VD: đã ngừng trên Odoo)' : 'Orderable — click to hide from ordering (e.g. archived on Odoo)')
+                            : (lang === 'vi' ? 'Đã ẩn khỏi đặt hàng — bấm để mở lại' : 'Hidden from ordering — click to re-enable')}
+                          className={`text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${
+                            v.is_active
+                              ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                              : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
+                          }`}>
+                          {v.is_active ? (lang === 'vi' ? '✓ Đang bán' : '✓ Active') : (lang === 'vi' ? '⛔ Đã ẩn' : '⛔ Hidden')}
+                        </button>
                       </div>
                       <div className="col-span-1 flex justify-center">
                         {variants.length > 1 && (

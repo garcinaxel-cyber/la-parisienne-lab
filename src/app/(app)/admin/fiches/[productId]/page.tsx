@@ -43,7 +43,7 @@ export default async function FicheDetailPage({ params, searchParams }: { params
       .order('step_number'),
     supabase
       .from('lab_fiche_variants')
-      .select('id, label, sku, weight_g, is_default, sort_order, image_url')
+      .select('id, label, sku, weight_g, is_default, sort_order, image_url, is_active')
       .eq('fiche_id', params.productId)
       .order('sort_order'),
   ]);
@@ -88,6 +88,7 @@ export default async function FicheDetailPage({ params, searchParams }: { params
         is_default: v.is_default ?? false,
         sort_order: v.sort_order ?? 0,
         image_url: v.image_url ?? '',
+        is_active: v.is_active ?? true,
       }))}
       ingredients={ingredients}
       assemblySteps={assemblySteps}

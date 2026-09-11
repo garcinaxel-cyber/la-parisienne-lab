@@ -766,16 +766,24 @@ export type ShopStockSearchProduct = { sku: string; name: string; category: stri
 // Full active production catalog (every category) — the shared source for both the default
 // checklist (filtered below) and the "add a product" search (unfiltered — birthday cakes and
 // bentos are still findable there, they're just not auto-listed every day).
-async function fetchProductionCatalog(): Promise<ShopStockSearchProduct[]> {
+//
+// excludeInactiveVariants (Axel, 2026-09-11): per-SKU active/inactive on lab_fiche_variants —
+// hides a size archived on Odoo from shop/manager ORDERING while sibling sizes on the same
+// recipe card stay orderable. Deliberately opt-in (default false): the stock-count checklist
+// keeps counting an archived SKU's physical shelf stock until it's sold through, so it must
+// still be findable there — only searchManagerOrderProductsAction (ordering) passes true.
+async function fetchProductionCatalog(excludeInactiveVariants = false): Promise<ShopStockSearchProduct[]> {
   const supabase = service();
   if (!supabase) return [];
   const { data: fiches } = await supabase.from('lab_fiche_meta').select('id, name_vi, category, image_url').eq('is_active', true);
   const ficheById: Record<string, any> = {};
   for (const f of fiches ?? []) ficheById[f.id] = f;
   const ficheIds = (fiches ?? []).map(f => f.id);
-  const { data: vars } = ficheIds.length
-    ? await supabase.from('lab_fiche_variants').select('fiche_id, sku, label, image_url').in('fiche_id', ficheIds)
-    : { data: [] as any[] };
+  let variantsQuery = ficheIds.length
+    ? supabase.from('lab_fiche_variants').select('fiche_id, sku, label, image_url').in('fiche_id', ficheIds)
+    : null;
+  if (variantsQuery && excludeInactiveVariants) variantsQuery = variantsQuery.eq('is_active', true);
+  const { data: vars } = variantsQuery ? await variantsQuery : { data: [] as any[] };
   const skus = Array.from(new Set((vars ?? []).map((v: any) => v.sku).filter(Boolean)));
   const { data: nameRows } = skus.length
     ? await supabase.from('lab_order_lines').select('product_sku, product_name_vi').in('product_sku', skus).limit(5000)
@@ -1232,7 +1240,7 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
   const cat = (category ?? '').trim();
   const browsingCategory = !q && !!cat;
 
-  let filteredProduction: ShopManagerCatalogProduct[] = (await fetchProductionCatalog()).map(p => ({ ...p, isPackaging: false }));
+  let filteredProduction: ShopManagerCatalogProduct[] = (await fetchProductionCatalog(true)).map(p => ({ ...p, isPackaging: false }));
   if (q) filteredProduction = filteredProduction.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q));
   if (cat) filteredProduction = filteredProduction.filter(p => p.category === cat);
 
