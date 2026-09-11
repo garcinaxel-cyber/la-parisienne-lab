@@ -612,7 +612,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     supabase.from('lab_online_orders')
       .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, created_at'),
     supabase.from('lab_manual_cakes')
-      .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
+      .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
   ]);
   if (!onlineOrders?.length && !mcRows?.length) return { customers: [] };
@@ -621,7 +621,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   const allBatchIds = Array.from(new Set([...Array.from(onlineBatchIds), ...(mcRows ?? []).map((l: any) => l.order_batch_id)]));
 
   const { data: saleLines } = onlineBatchIds.size
-    ? await supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price').in('order_batch_id', Array.from(onlineBatchIds))
+    ? await supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', Array.from(onlineBatchIds))
     : { data: [] as any[] };
 
   const mcByBatch = new Map<string, any[]>();
@@ -643,8 +643,14 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     const parts = lines.slice(0, 3).map(l => (l.qty > 1 ? `${l.product_name_vi} ×${l.qty}` : l.product_name_vi));
     return parts.join(', ') + (lines.length > 3 ? ` +${lines.length - 3}` : '');
   };
+  const skuKeysOf = (lines: { sku?: string | null; product_sku?: string | null }[]): Set<string> => {
+    const keys = new Set<string>();
+    for (const l of lines) { const s = (l.sku ?? l.product_sku ?? '').trim().toUpperCase(); if (s) keys.add(s); }
+    return keys;
+  };
+  const sharesSku = (a: Set<string>, b: Set<string>): boolean => Array.from(a).some(k => b.has(k));
 
-  type Row = { date: string; phoneKey: string; phone: string; name: string; address: string | null; item: CustomerOrderHistoryItem };
+  type Row = { date: string; phoneKey: string; phone: string; name: string; address: string | null; skuKeys: Set<string>; item: CustomerOrderHistoryItem };
   const rows: Row[] = [];
 
   for (const batchId of allBatchIds) {
@@ -663,6 +669,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
       const date = o.delivery_date || o.created_at;
       rows.push({
         date, phoneKey, phone: o.customer_phone, name: o.customer_name || '—', address: o.delivery_address ?? null,
+        skuKeys: skuKeysOf([...mcLines, ...slLines]),
         item: {
           orderBatchId: batchId, date, origin: 'online', shopName: o.shop_name ?? null,
           itemsSummary: summarize(itemLines) || '—', amount, paymentStatus: o.payment_status ?? null,
@@ -682,6 +689,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
       const date = first.delivery_date || first.created_at;
       rows.push({
         date, phoneKey, phone: first.customer_phone, name: first.customer_name || '—', address: first.delivery_address ?? null,
+        skuKeys: skuKeysOf(mcLines),
         item: {
           orderBatchId: batchId, date, origin: 'shop', shopName: first.shop_name ?? null,
           itemsSummary: summarize(mcLines.map((l: any) => ({ product_name_vi: l.product_name_vi, qty: l.qty }))) || '—',
@@ -695,7 +703,20 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   for (const r of rows) { const arr = byPhone.get(r.phoneKey) ?? []; arr.push(r); byPhone.set(r.phoneKey, arr); }
 
   const customers: CustomerRecord[] = Array.from(byPhone.entries()).map(([phoneKey, rs]) => {
-    const sorted = [...rs].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    // Dedup (Axel, 2026-09-11): the same real sale sometimes gets entered twice — once when a
+    // shop takes it via the public order link (walk-in, no price) and again when the online-sales
+    // team logs it for revenue tracking (has price/payment). A same-customer, same-delivery-date,
+    // same-SKU walk-in row is folded into the matching online row instead of shown as a second
+    // order — requiring the SKU (not just phone+date) so two genuinely different same-day orders
+    // are never merged (Axel: "un client peut tres bien commander le meme jour 2 produits").
+    const onlineByDate = new Map<string, Row[]>();
+    for (const r of rs) if (r.item.origin === 'online') { const arr = onlineByDate.get(r.date) ?? []; arr.push(r); onlineByDate.set(r.date, arr); }
+    const deduped = rs.filter(r => {
+      if (r.item.origin !== 'shop') return true;
+      const candidates = onlineByDate.get(r.date) ?? [];
+      return !candidates.some(c => sharesSku(c.skuKeys, r.skuKeys));
+    });
+    const sorted = [...deduped].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const mostRecent = sorted[0];
     const totalAmount = sorted.reduce((s, r) => s + (r.item.amount ?? 0), 0);
     const hasUnknownAmounts = sorted.some(r => r.item.amount == null);
