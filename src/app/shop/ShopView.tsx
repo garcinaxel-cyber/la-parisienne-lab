@@ -1,9 +1,11 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell, ArrowRightLeft } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState } from './actions';
+import { getEventAccessStateAction, enterEventAction, exitEventAction } from './actions';
 import ShopTransfersTab from './ShopTransfersTab';
+import EventCaisseTab from './EventCaisseTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
@@ -103,9 +105,9 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
 // own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
 // than "cannot write".
-export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'; viewerRole?: 'admin' | 'manager' }) {
+export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse'; viewerRole?: 'admin' | 'manager' }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer'>(initialTab);
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse'>(initialTab);
   // `initialTab` is only the useState *seed* — on a fresh mount it's all that's needed. But
   // /shop-manager/store is one long-lived route the manager cockpit re-navigates to with a new
   // `?tab=` every time (Order quick action vs. Store interface), and Next.js's App Router keeps
@@ -115,6 +117,42 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // order ... il renvoit pas a l'interface manager de commande qu'on avait dit"). Harmless for
   // the other two callers, which never pass a changing initialTab.
   useEffect(() => { setTab(initialTab); }, [initialTab]);
+
+  // Event access (Axel, 2026-09-12): a discreet button INSIDE the shop's own already-open portal
+  // lets staff step into an active event via PIN — no separate login/URL (see the mockup
+  // discussion: staff already have their own shop's app open). Only offered on the shop's own
+  // live session, never an admin/manager preview (readOnly) — those manage events from
+  // /admin/events instead.
+  const [eventState, setEventState] = useState<EventAccessState | null>(null);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinSubmitting, setPinSubmitting] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const loadEventState = useCallback(async () => {
+    if (readOnly) return;
+    const res = await getEventAccessStateAction();
+    if (!('error' in res)) setEventState(res);
+  }, [readOnly]);
+  useEffect(() => { loadEventState(); }, [loadEventState]);
+
+  async function submitPin() {
+    setPinSubmitting(true);
+    setPinError(null);
+    const res = await enterEventAction(pinInput);
+    setPinSubmitting(false);
+    if (res.error) { setPinError(res.error); return; }
+    setPinInput('');
+    setShowPinModal(false);
+    setTab('caisse');
+    await loadEventState();
+  }
+
+  async function doExitEvent() {
+    await exitEventAction();
+    setTab('deliveries');
+    await loadEventState();
+  }
   // Inter-shop transfers (Axel, 2026-09-07) — loaded here (not only inside the tab) so the tab
   // button can show how many incoming transfers are waiting for this shop.
   const [transfers, setTransfers] = useState<ShopTransfer[] | null>(null);
@@ -975,10 +1013,17 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div>
-            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">La Parisienne Lab{readOnly ? (viewerRole === 'manager' ? '' : ' · Chế độ Admin') : ''}</div>
-            <h1 className="text-white font-serif text-xl font-bold">{shopName}</h1>
+            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">
+              {eventState?.inEvent ? '🎪 Event shop' : `La Parisienne Lab${readOnly ? (viewerRole === 'manager' ? '' : ' · Chế độ Admin') : ''}`}
+            </div>
+            <h1 className="text-white font-serif text-xl font-bold">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
           </div>
-          {readOnly ? (
+          {eventState?.inEvent ? (
+            <button onClick={doExitEvent}
+              className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Thoát event">
+              <LogOut size={16} /> Thoát
+            </button>
+          ) : readOnly ? (
             viewerRole === 'manager' ? (
               <button onClick={() => router.push('/shop-manager')}
                 className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại">
@@ -1023,11 +1068,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             style={{ backgroundColor: tab === 'deliveries' ? '#1f2937' : 'white', color: tab === 'deliveries' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
             <Truck size={16} /> Giao hàng
           </button>
-          <button onClick={() => setTab('cakes')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'cakes' ? '#1f2937' : 'white', color: tab === 'cakes' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
-            <Cake size={16} /> Bánh sinh nhật
-          </button>
+          {eventState?.inEvent ? (
+            <button onClick={() => setTab('caisse')}
+              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+              style={{ backgroundColor: tab === 'caisse' ? '#1f2937' : 'white', color: tab === 'caisse' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+              <ShoppingBag size={16} /> Thu ngân
+            </button>
+          ) : (
+            <button onClick={() => setTab('cakes')}
+              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+              style={{ backgroundColor: tab === 'cakes' ? '#1f2937' : 'white', color: tab === 'cakes' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+              <Cake size={16} /> Bánh sinh nhật
+            </button>
+          )}
           <button onClick={() => setTab('losses')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'losses' ? '#1f2937' : 'white', color: tab === 'losses' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
@@ -1742,6 +1795,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
             </div>
           )
+        ) : tab === 'caisse' ? (
+          <EventCaisseTab />
         ) : tab === 'transfer' ? (
           <ShopTransfersTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)}
             setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
@@ -2313,6 +2368,42 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <button onClick={() => setShowStaffModal(false)}
               className="w-full text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
               Đóng
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Discreet FAB into an active event (Axel, 2026-09-12) — only on the shop's own live
+          session, only when at least one event is currently open, and only while not already
+          inside one. */}
+      {!readOnly && eventState?.hasActiveEvent && !eventState?.inEvent && (
+        <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
+          className="fixed right-4 bottom-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg z-20"
+          style={{ backgroundColor: '#FFFAEE', border: '1.5px solid #E0D49A' }} aria-label="Vào event">
+          <Store size={20} style={{ color: '#1A4731' }} />
+        </button>
+      )}
+
+      {showPinModal && (
+        <div className="fixed inset-0 flex items-center justify-center px-5 z-30" style={{ backgroundColor: 'rgba(20,17,10,0.5)' }}>
+          <div className="relative w-full max-w-[280px] rounded-2xl p-5 text-center" style={{ backgroundColor: '#FFF4CC' }}>
+            <button onClick={() => setShowPinModal(false)} className="absolute top-2.5 right-3" aria-label="Đóng">
+              <X size={16} style={{ color: '#6B7280' }} />
+            </button>
+            <div className="text-sm font-bold" style={{ color: '#1A4731' }}>Vào event</div>
+            <p className="text-xs mt-1" style={{ color: '#6B7280' }}>Nhập mã PIN của event</p>
+            <input
+              value={pinInput}
+              onChange={e => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onKeyDown={e => { if (e.key === 'Enter' && pinInput) submitPin(); }}
+              type="tel" inputMode="numeric" autoFocus placeholder="••••"
+              className="w-full text-center text-2xl font-bold tracking-[0.3em] rounded-xl px-3 py-2.5 mt-3"
+              style={{ border: '1px solid #E0D49A', backgroundColor: '#FFFAEE', color: '#1A2C24' }} />
+            {pinError && <div className="text-xs font-semibold mt-2" style={{ color: '#DC2626' }}>{pinError}</div>}
+            <button onClick={submitPin} disabled={pinSubmitting || !pinInput}
+              className="w-full text-sm font-bold rounded-xl px-3 py-2.5 mt-3 text-white disabled:opacity-50"
+              style={{ backgroundColor: '#1A4731' }}>
+              {pinSubmitting ? <Loader2 size={14} className="animate-spin inline" /> : 'Xác nhận'}
             </button>
           </div>
         </div>

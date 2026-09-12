@@ -12,6 +12,8 @@ import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenFo
 import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
+import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
+import { getActiveEventById, getActiveEventByPin, hasAnyActiveEvent, type EventShop } from '@/lib/event-shops';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -36,6 +38,20 @@ function service() {
   );
 }
 
+// Event shops (Axel, 2026-09-12): a staff member steps into an active event through a discreet
+// button INSIDE their own already-authenticated shop session (never a separate login/URL — see
+// the mockup discussion: "staff ont deja l'appli de leur shop"). Once the signed PIN cookie is
+// set, every shopName resolution below transparently switches to the event's own "shop" for the
+// rest of that browser's session — same tabs, same actions, just pointed at the event's data
+// instead of the staff's normal shop. getActiveEventById filters active=true itself, so a closed
+// event silently stops overriding (falls back to the real shop) without needing to clear the
+// cookie from here.
+async function currentEventOverride(): Promise<EventShop | null> {
+  const id = readEventIdFromCookie();
+  if (!id) return null;
+  return getActiveEventById(id);
+}
+
 async function requireShopSession(): Promise<{ shopName: string } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
@@ -44,7 +60,8 @@ async function requireShopSession(): Promise<{ shopName: string } | { error: str
   if (profile?.role !== 'shop') return { error: 'Forbidden' };
   const { data: labProfile } = await supabase.from('lab_profiles').select('shop_name').eq('id', session.user.id).maybeSingle();
   if (!labProfile?.shop_name) return { error: 'Shop not configured' };
-  return { shopName: labProfile.shop_name };
+  const event = await currentEventOverride();
+  return { shopName: event?.name ?? labProfile.shop_name };
 }
 
 // "Staff preview" read-only twins (below) are also how a shop_manager's own login reads these
@@ -95,6 +112,16 @@ async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ s
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+
+  // Event override — checked once here, after confirming a real shop/staff session exists
+  // (never in place of one), so it applies uniformly whether the caller is a shop's own login,
+  // a shop_manager, or staff testing a shop. Not a "staff test" — same posture as a manager
+  // acting on one of their own shops, no testing banner.
+  if (['shop', 'shop_manager', 'admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {
+    const event = await currentEventOverride();
+    if (event) return { shopName: event.name, isStaffTest: false };
+  }
+
   if (profile?.role === 'shop') {
     const { data: labProfile } = await supabase.from('lab_profiles').select('shop_name').eq('id', session.user.id).maybeSingle();
     if (!labProfile?.shop_name) return { error: 'Shop not configured' };
@@ -1857,4 +1884,158 @@ export async function cancelShopTransferAction(input: { shopName?: string; trans
   const enPayload: PushPayload = { title: t.to_shop, body: `✖ ${shortShop(t.from_shop)} cancelled transfer ${t.ref} (${byName})` };
   await awaitPush(Promise.all([sendShopPush(supabase, t.to_shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
   return { transfer: mapTransferRow(updated ?? { ...t, status: 'cancelled' }, lineRows ?? []) };
+}
+
+// ── Event access (Axel, 2026-09-12) ─────────────────────────────────────────────────────────
+// A staff member steps into an active event via a discreet button inside their OWN shop's
+// already-open portal (see currentEventOverride() above) — no separate login, no separate URL.
+// getEventAccessStateAction drives that button: hasActiveEvent decides whether to show it at
+// all, inEvent/eventName reflect whether THIS browser is currently inside one (so ShopView can
+// render the event tabs instead of the normal ones).
+export type EventAccessState = { hasActiveEvent: boolean; inEvent: boolean; eventName?: string };
+
+export async function getEventAccessStateAction(): Promise<EventAccessState | { error: string }> {
+  const auth = await requireShopOrStaff();
+  if ('error' in auth) return { error: auth.error };
+  const [hasActive, event] = await Promise.all([hasAnyActiveEvent(), currentEventOverride()]);
+  return { hasActiveEvent: hasActive, inEvent: !!event, eventName: event?.name };
+}
+
+export async function enterEventAction(pin: string): Promise<{ ok?: boolean; eventName?: string; error?: string }> {
+  const auth = await requireShopOrStaff();
+  if ('error' in auth) return { error: auth.error };
+  const clean = (pin ?? '').trim();
+  if (!/^\d{4,6}$/.test(clean)) return { error: 'Mã PIN không hợp lệ' };
+  const event = await getActiveEventByPin(clean);
+  if (!event) return { error: 'Mã PIN không đúng' };
+  setEventSessionCookie(event.id);
+  return { ok: true, eventName: event.name };
+}
+
+export async function exitEventAction(): Promise<{ ok: boolean }> {
+  clearEventSessionCookie();
+  return { ok: true };
+}
+
+// ── Thu ngân — mini caisse (Axel, 2026-09-12) ───────────────────────────────────────────────
+// "une sorte de mini caisse enregistreuse qui n'aurait aucun impact odoo": lands in the exact
+// same tables as the /online-orders "sell from shop stock" feature (lab_online_orders +
+// lab_online_sale_lines, source='event_stock' — a sibling of 'shop_stock', kept distinct so
+// reporting can always tell an event's own point-of-sale apart from a real shop's) — never
+// lab_manual_cakes/lab_assignments/Odoo, so it can never reach chef production or Odoo stock.
+// Gated to an actual event session (never a real shop's own PIN-less use) via requireEventSession.
+async function requireEventSession(): Promise<{ event: EventShop } | { error: string }> {
+  const auth = await requireShopOrStaff();
+  if ('error' in auth) return { error: auth.error };
+  const event = await currentEventOverride();
+  if (!event) return { error: 'Không ở trong event' };
+  return { event };
+}
+
+export type EventCaisseProduct = { sku: string; name: string; unitPrice: number; available: number };
+
+// "Uniquement ce qui a été livré/compté sur l'event" (Axel's locked-in answer): available = the
+// event's own latest FINISHED stock count minus whatever the caisse has already sold since —
+// same two building blocks (fetchStockSessions/fetchStockCountList) getShopCurrentStockLevelsAction
+// already uses for a real shop, just with the sale-side subtraction added on top so this can never
+// oversell past what is physically on hand at the event.
+export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const shopName = auth.event.name;
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const today = vnDateStr();
+  const sessions = await fetchStockSessions(shopName, today);
+  if (!sessions.length) return { products: [] };
+  const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
+  const counted = await fetchStockCountList(shopName, today, latest.seq);
+
+  const { data: orders } = await supabase.from('lab_online_orders').select('order_batch_id').eq('shop_name', shopName).eq('source', 'event_stock');
+  const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
+  const soldBySku = new Map<string, number>();
+  if (batchIds.length) {
+    const { data: lines } = await supabase.from('lab_online_sale_lines').select('sku, qty').in('order_batch_id', batchIds).eq('is_fee', false);
+    for (const l of lines ?? []) if (l.sku) soldBySku.set(l.sku, (soldBySku.get(l.sku) ?? 0) + Number(l.qty));
+  }
+
+  const products: EventCaisseProduct[] = counted
+    .filter(c => c.qty != null && c.qty > 0 && c.priceB2c != null)
+    .map(c => ({ sku: c.sku, name: c.name, unitPrice: c.priceB2c as number, available: Math.max(0, (c.qty ?? 0) - (soldBySku.get(c.sku) ?? 0)) }))
+    .filter(p => p.available > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { products };
+}
+
+export type EventSaleItem = { sku: string; qty: number };
+
+export async function recordEventSaleAction(items: EventSaleItem[]): Promise<{ ok?: boolean; total?: number; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const shopName = auth.event.name;
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const clean = (Array.isArray(items) ? items : []).slice(0, 50)
+    .map(i => ({ sku: String(i.sku ?? '').trim(), qty: Math.round(Number(i.qty)) }))
+    .filter(i => i.sku && i.qty > 0);
+  if (!clean.length) return { error: 'Giỏ hàng trống' };
+
+  // Re-check against CURRENT availability server-side — never trust the client's cart qty, the
+  // gating is the whole point of this feature (Axel: never sell past what's physically there).
+  const { products, error } = await getEventCaisseCatalogAction();
+  if (error) return { error };
+  const bySku = new Map((products ?? []).map(p => [p.sku, p]));
+  for (const i of clean) {
+    const p = bySku.get(i.sku);
+    if (!p || i.qty > p.available) return { error: `Không đủ hàng: ${p?.name ?? i.sku}` };
+  }
+
+  const today = vnDateStr();
+  const orderBatchId = crypto.randomUUID();
+  const total = clean.reduce((sum, i) => sum + i.qty * (bySku.get(i.sku)!.unitPrice), 0);
+  const { error: ooErr } = await supabase.from('lab_online_orders').insert({
+    order_batch_id: orderBatchId, source: 'event_stock', shop_name: shopName, channel: 'Event',
+    delivery_date: today, payment_status: 'paid', amount_paid: total,
+  });
+  if (ooErr) return { error: ooErr.message };
+  const rows = clean.map(i => {
+    const p = bySku.get(i.sku)!;
+    return { sku: p.sku, product_name_vi: p.name, qty: i.qty, unit_price: p.unitPrice, is_fee: false, order_batch_id: orderBatchId };
+  });
+  const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(rows);
+  if (lErr) {
+    await supabase.from('lab_online_orders').delete().eq('order_batch_id', orderBatchId);
+    return { error: lErr.message };
+  }
+  return { ok: true, total };
+}
+
+export type EventSaleHistoryLine = { label: string; amount: number; time: string };
+
+export async function getEventSalesHistoryAction(): Promise<{ sales?: EventSaleHistoryLine[]; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: orders } = await supabase.from('lab_online_orders')
+    .select('order_batch_id, amount_paid, created_at').eq('shop_name', auth.event.name).eq('source', 'event_stock')
+    .order('created_at', { ascending: false }).limit(50);
+  const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
+  const { data: lines } = batchIds.length
+    ? await supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty').in('order_batch_id', batchIds)
+    : { data: [] as any[] };
+  const linesByBatch = new Map<string, string[]>();
+  for (const l of lines ?? []) {
+    const arr = linesByBatch.get(l.order_batch_id) ?? [];
+    arr.push(l.qty > 1 ? `${l.product_name_vi} ×${l.qty}` : l.product_name_vi);
+    linesByBatch.set(l.order_batch_id, arr);
+  }
+  const fmtTime = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' });
+  return {
+    sales: (orders ?? []).map((o: any) => ({
+      label: (linesByBatch.get(o.order_batch_id) ?? []).join(', ') || 'Đơn hàng',
+      amount: Number(o.amount_paid ?? 0), time: fmtTime.format(new Date(o.created_at)),
+    })),
+  };
 }

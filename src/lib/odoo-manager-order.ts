@@ -1,6 +1,7 @@
 import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labLocalToOdooUtc, LAB_TZ } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
 import { resolvePartnerId, resolveSoLineUomField } from '@/lib/odoo-shop-order-sync';
+import { resolveEventShopConfig } from '@/lib/event-shops';
 
 // Phase 3 of the shop portal plan (Axel, 2026-09-03): a shop manager places a real stock
 // replenishment (REP) order directly from the portal, PIN-gated (verifyManagerPinAction /
@@ -173,7 +174,9 @@ export async function createManagerReplenishment(
   const validLines = lines.filter(l => l.sku && l.qty > 0);
   if (!validLines.length) return { ok: false, error: 'Aucune ligne valide dans la commande' };
 
-  const map = SHOP_CONFIG[shopName];
+  // Event shops (Axel, 2026-09-12) aren't in the static SHOP_CONFIG — resolved dynamically
+  // against lab_event_shops instead, same docType:'replenishment' shape as a real La Paris shop.
+  const map = SHOP_CONFIG[shopName] ?? await resolveEventShopConfig(shopName);
   if (!map || !map.portalAccount) {
     return { ok: false, error: `Boutique "${shopName}" non configurée pour les commandes` };
   }

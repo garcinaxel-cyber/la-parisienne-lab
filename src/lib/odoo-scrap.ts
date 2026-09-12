@@ -11,6 +11,7 @@
 // and callers must treat that as "not available for this shop", never fall back to LAB.
 import { odooExecuteWrite, odooWriteConfigured } from './odoo';
 import { SHOP_ODOO_MAP } from './odoo-shop-order-sync';
+import { resolveEventShopConfig } from './event-shops';
 
 // 2026-08-21 — every read in this file uses the WRITE-account client (odooExecuteWrite), not the
 // read-only account. Found the hard way: Axel granted Inventory/Administrator + a custom
@@ -32,7 +33,9 @@ const shopLocationCache = new Map<string, ShopWarehouseLocation | null>();
 /** Resolve a shop's OWN stock location (never LAB/Stock) via its Odoo warehouse code. */
 export async function resolveShopWarehouseLocation(shopName: string): Promise<ShopWarehouseLocation | null> {
   if (shopLocationCache.has(shopName)) return shopLocationCache.get(shopName)!;
-  const code = SHOP_ODOO_MAP[shopName]?.warehouseCode;
+  // Event shops (Axel, 2026-09-12) aren't in SHOP_ODOO_MAP — resolved dynamically against
+  // lab_event_shops instead, same "own warehouse, never LAB" rule as any other shop here.
+  const code = SHOP_ODOO_MAP[shopName]?.warehouseCode ?? (await resolveEventShopConfig(shopName))?.warehouseCode;
   if (!code) { shopLocationCache.set(shopName, null); return null; }
   const whs = await tmo(odooExecuteWrite<any[]>('stock.warehouse', 'search_read',
     [[['code', '=', code]]], { fields: ['lot_stock_id', 'name'], limit: 1 }), 15000, 'shop warehouse');
