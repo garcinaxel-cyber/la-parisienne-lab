@@ -1,11 +1,19 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { BookOpen, Plus, Tag, Users } from 'lucide-react';
+import { BookOpen, EyeOff, Plus, Tag, Users } from 'lucide-react';
 import { TEAMS, TEAM_LABELS, type Team } from '@/lib/types';
 import { thumb } from '@/lib/img-thumb';
 
 const hasTeam = (f: any) => Array.isArray(f.teams) && f.teams.length > 0;
+
+// Special pseudo-category for fiches with zero active variant (Axel, 2026-09-12: "je voudrais
+// que les produits qu on ajoute en archive (s ils ont pas de variante active), s enleve de la
+// liste et se mette dans une categorie special"). A variant's own is_active toggle (lab_v80,
+// 2026-09-11) is manual — set per-SKU when Axel notices it archived on Odoo. Distinct from a
+// fiche with ZERO variant rows at all (a brand-new fiche nobody has saved variants for yet) —
+// that one stays in its normal category, since it's just unconfigured, not archived.
+const ARCHIVED_CAT = '__archived__';
 
 // Builds a list URL preserving both filter axes (category + team) — used both for the filter
 // chips themselves and for the ?back= param on each fiche link, so returning from a fiche
@@ -43,13 +51,14 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager'].includes(profile?.role ?? '')) redirect('/dashboard');
 
-  const [{ data: fiches }, { data: stepCounts }] = await Promise.all([
+  const [{ data: fiches }, { data: stepCounts }, { data: variants }] = await Promise.all([
     supabase
       .from('lab_fiche_meta')
       .select('id, name_vi, name_en, image_url, category, teams, b2c_sku_ref')
       .eq('is_active', true)
       .order('name_vi'),
     supabase.from('lab_fiche_steps').select('fiche_id'),
+    supabase.from('lab_fiche_variants').select('fiche_id, is_active'),
   ]);
 
   const countByFiche: Record<string, number> = {};
@@ -57,7 +66,19 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
     countByFiche[s.fiche_id] = (countByFiche[s.fiche_id] ?? 0) + 1;
   }
 
-  const allFiches = fiches ?? [];
+  // A fiche is "archived" once every one of its variants has been individually toggled inactive
+  // (is_active on lab_fiche_variants, lab_v80) — never when it simply has no variant rows yet.
+  const variantTotalByFiche: Record<string, number> = {};
+  const variantActiveByFiche: Record<string, number> = {};
+  for (const v of variants ?? []) {
+    variantTotalByFiche[v.fiche_id] = (variantTotalByFiche[v.fiche_id] ?? 0) + 1;
+    if (v.is_active) variantActiveByFiche[v.fiche_id] = (variantActiveByFiche[v.fiche_id] ?? 0) + 1;
+  }
+  const isArchivedFiche = (f: any) => (variantTotalByFiche[f.id] ?? 0) > 0 && (variantActiveByFiche[f.id] ?? 0) === 0;
+
+  const allFichesRaw = fiches ?? [];
+  const archivedFiches = allFichesRaw.filter(isArchivedFiche);
+  const allFiches = allFichesRaw.filter(f => !isArchivedFiche(f));
   const selectedCat = searchParams?.cat ?? '';
   // 'team' is either a real Team value, the literal 'none' (no team assigned at all), or empty (all)
   const selectedTeam = searchParams?.team ?? '';
@@ -67,11 +88,14 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
     return acc;
   }, {} as Record<Team, number>);
 
-  // All unique categories for filter chips
+  // All unique categories for filter chips — sellable (non-archived) fiches only; Archived is its
+  // own special chip below, never mixed into a real category's count.
   const allCats = Array.from(new Set(allFiches.map((f: any) => f.category ?? 'Khác'))).sort() as string[];
 
   // Filter then group
-  let filtered = selectedCat ? allFiches.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : allFiches;
+  const isArchivedView = selectedCat === ARCHIVED_CAT;
+  const baseList = isArchivedView ? archivedFiches : allFiches;
+  let filtered = isArchivedView ? baseList : (selectedCat ? baseList.filter((f: any) => (f.category ?? 'Khác') === selectedCat) : baseList);
   if (selectedTeam === 'none') filtered = filtered.filter((f: any) => !hasTeam(f));
   else if (selectedTeam) filtered = filtered.filter((f: any) => (f.teams ?? []).includes(selectedTeam));
 
@@ -79,10 +103,14 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
   const currentListUrl = listHref({ cat: selectedCat, team: selectedTeam });
 
   const catGroups = new Map<string, typeof allFiches>();
-  for (const f of filtered) {
-    const cat = (f as any).category ?? 'Khác';
-    if (!catGroups.has(cat)) catGroups.set(cat, []);
-    catGroups.get(cat)!.push(f);
+  if (isArchivedView) {
+    if (filtered.length) catGroups.set('Đã ngừng bán · Archived', filtered);
+  } else {
+    for (const f of filtered) {
+      const cat = (f as any).category ?? 'Khác';
+      if (!catGroups.has(cat)) catGroups.set(cat, []);
+      catGroups.get(cat)!.push(f);
+    }
   }
 
   return (
@@ -132,8 +160,10 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
         )}
       </div>
 
-      {/* Category filter chips */}
-      {allCats.length > 1 && (
+      {/* Category filter chips — Archived is its own visually-muted chip, separate from real
+          categories (Axel, 2026-09-12: fiches with every variant toggled inactive move here
+          instead of staying listed under their normal category) */}
+      {(allCats.length > 1 || archivedFiches.length > 0) && (
         <div className="flex gap-2 flex-wrap pb-2">
           <Link href={listHref({ team: selectedTeam })}
             className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${!selectedCat ? 'bg-navy text-white' : 'bg-cream text-ink-light border border-border-soft hover:border-navy/30'}`}>
@@ -146,6 +176,14 @@ export default async function FichesPage({ searchParams }: { searchParams?: { ca
               {cat} ({allFiches.filter((f: any) => (f.category ?? 'Khác') === cat).length})
             </Link>
           ))}
+          {archivedFiches.length > 0 && (
+            <Link href={listHref({ cat: ARCHIVED_CAT, team: selectedTeam })}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${
+                isArchivedView ? 'bg-ink-light text-white border-ink-light' : 'bg-gray-100 text-gray-500 border-gray-200 hover:border-gray-400'
+              }`}>
+              <EyeOff size={12} /> Đã ngừng bán · Archived ({archivedFiches.length})
+            </Link>
+          )}
         </div>
       )}
 
