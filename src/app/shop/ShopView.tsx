@@ -260,6 +260,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // inversement") — read-only, reuses the shop's own daily Kiểm kho data, loaded lazily once when
   // the Order tab is first opened (same posture as orderCategories above).
   const [invLevels, setInvLevels] = useState<ShopStockLevel[] | null>(null);
+  // Every order already submitted for today's + tomorrow's delivery (Axel, 2026-09-12: a second,
+  // same-day top-up order for Bà Triệu wasn't visible anywhere once submitted — see
+  // getRecentManagerOrdersAction). Independent of orderCart/orderDraftLoaded, which only ever
+  // reflect the CURRENT unsubmitted draft for the selected date.
+  const [recentOrders, setRecentOrders] = useState<{ orderRef: string; deliveryDate: string; deliveryTime: string | null; managerName: string | null; createdAt: string; itemCount: number; totalQty: number }[] | null>(null);
+  const [recentOrdersDates, setRecentOrdersDates] = useState<{ today: string; tomorrow: string } | null>(null);
   const [invAsOf, setInvAsOf] = useState<string | null>(null);
   const [invFilter, setInvFilter] = useState<'all' | 'in' | 'out'>('all');
   const [invQuery, setInvQuery] = useState('');
@@ -420,6 +426,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  const loadRecentOrders = useCallback(async () => {
+    const actions = await import('./actions');
+    const res = await actions.getRecentManagerOrdersAction(readOnly ? shopName : undefined);
+    if (res.error) return;
+    setRecentOrders(res.orders ?? []);
+    if (res.today && res.tomorrow) setRecentOrdersDates({ today: res.today, tomorrow: res.tomorrow });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly, shopName]);
+
+  useEffect(() => {
+    if (tab !== 'order') return;
+    loadRecentOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   // Loads whatever draft already exists for the currently-selected delivery date — any staff or
   // manager picks up exactly where the last person left off, on any device, under the shared
   // shop login (Axel, 2026-09-05).
@@ -457,9 +478,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (tab !== 'order' || !orderDeliveryDate) return;
     const id = setInterval(() => {
       if (!orderCartDirtyRef.current && !orderPendingConfirm) loadOrderDraft(orderDeliveryDate);
+      loadRecentOrders(); // a colleague's already-submitted order on another device should show up here too
     }, 15000);
     return () => clearInterval(id);
-  }, [tab, orderDeliveryDate, orderPendingConfirm, loadOrderDraft]);
+  }, [tab, orderDeliveryDate, orderPendingConfirm, loadOrderDraft, loadRecentOrders]);
 
   useEffect(() => {
     const q = orderSearchQuery.trim();
@@ -869,6 +891,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setOrderCart([]);
     setOrderDraftLoaded(null);
     orderCartDirtyRef.current = false;
+    loadRecentOrders();
   }
 
   // Saves whatever's in the cart as a draft first (so nothing is lost if the PIN step is
@@ -1777,6 +1800,27 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                   )}
                 </div>
+
+                {!!recentOrders?.length && (
+                  <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Đơn đã gửi (hôm nay + ngày mai)</div>
+                    <div className="space-y-1.5">
+                      {recentOrders.map(o => (
+                        <div key={o.orderRef} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F0FDF4' }}>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold truncate" style={{ color: '#166534' }}>
+                              {o.orderRef} · Giao {fmtDate(o.deliveryDate)}
+                              {recentOrdersDates?.tomorrow === o.deliveryDate ? ' (ngày mai)' : recentOrdersDates?.today === o.deliveryDate ? ' (hôm nay)' : ''}
+                            </div>
+                            <div className="text-[11px]" style={{ color: '#6B7280' }}>
+                              {o.itemCount} SP · {o.totalQty} cái{o.managerName ? ` · ${o.managerName}` : ''} · {new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>

@@ -1545,6 +1545,39 @@ export async function submitManagerOrderAction(input: {
   return { orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: manager.name };
 }
 
+// Surfaces every order ALREADY submitted for today's and tomorrow's delivery (Axel, 2026-09-12:
+// Bà Triệu placed two separate orders for the same delivery date — a normal advance order plus a
+// same-day top-up — and nothing in the Order tab showed the first one once a second was
+// submitted, so a manager reviewing "what's already ordered" only ever saw one when there were
+// two). Reads lab_shop_manager_orders directly — the audit log already written by
+// submitManagerOrderAction above — rather than relying on the draft table, which only ever holds
+// the CURRENT unsubmitted cart and gets marked 'submitted'/replaced the moment an order goes out.
+export type ShopRecentOrder = {
+  orderRef: string; deliveryDate: string; deliveryTime: string | null;
+  managerName: string | null; createdAt: string; itemCount: number; totalQty: number;
+};
+export async function getRecentManagerOrdersAction(shopName?: string): Promise<{ orders?: ShopRecentOrder[]; today?: string; tomorrow?: string; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const [today, tomorrow] = labTodayTomorrow();
+  const { data, error } = await supabase.from('lab_shop_manager_orders')
+    .select('order_ref, delivery_date, delivery_time, manager_name, created_at, lines')
+    .eq('shop_name', auth.shopName).in('delivery_date', [today, tomorrow])
+    .order('delivery_date', { ascending: true }).order('created_at', { ascending: true });
+  if (error) return { error: error.message };
+  const orders: ShopRecentOrder[] = (data ?? []).map(r => {
+    const lines = Array.isArray(r.lines) ? r.lines : [];
+    return {
+      orderRef: r.order_ref, deliveryDate: r.delivery_date, deliveryTime: r.delivery_time,
+      managerName: r.manager_name, createdAt: r.created_at,
+      itemCount: lines.length, totalQty: lines.reduce((a: number, l: any) => a + Number(l?.qty ?? 0), 0),
+    };
+  });
+  return { orders, today, tomorrow };
+}
+
 // ── Push notifications (phase 4, 2026-09-05) ────────────────────────────────
 // Shop-scoped subscribe/unsubscribe — same posture as the chefs' subscribePushAction
 // (station/[team]/actions.ts): the session only confirms the click came from a logged-in shop

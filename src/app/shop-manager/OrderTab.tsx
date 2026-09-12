@@ -9,7 +9,9 @@ import {
   getManagerOrderContextAction, getManagerOrderCategoriesAction, getManagerOrderDraftAction,
   saveManagerOrderDraftAction, discardManagerOrderDraftAction, searchManagerOrderProductsAction,
   getShopCurrentStockLevelsAction, submitManagerOrderAction, getShopStaffNamesAction,
+  getRecentManagerOrdersAction,
   type ShopManagerOrderDraft, type ShopManagerCatalogProduct, type ShopStockLevel, type ShopStaffName,
+  type ShopRecentOrder,
 } from '@/app/shop/actions';
 import { thumb } from '@/lib/img-thumb';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, GREEN, AMBER, RED } from './ShopManagerView';
@@ -43,6 +45,7 @@ const L = {
     confirmOrder: 'Xác nhận đơn hàng', pinLabel: 'Mã PIN quản lý', pinPh: 'Mã PIN',
     cancel: 'Huỷ', confirm: 'Xác nhận', pinNote: 'Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.',
     successTitle: 'Đã xác nhận đơn hàng', successRef: 'Mã đơn Odoo', newOrder: 'Đặt đơn khác', orderTotal: 'Tổng giá trị',
+    recentOrders: 'Đơn đã gửi (hôm nay + ngày mai)', today: 'hôm nay', tomorrow: 'ngày mai',
     lateWarning: '⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.',
     normalNoteTomorrow: 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN trước 14h00.',
     normalNoteLater: 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng.',
@@ -59,6 +62,7 @@ const L = {
     cancel: 'Cancel', confirm: 'Confirm', pinNote: 'This order is created and confirmed immediately in Odoo — it cannot be cancelled in the app.',
     successTitle: 'Order confirmed', successRef: 'Odoo order ref', newOrder: 'Place another order', orderTotal: 'Order total',
     lateWarning: '⚠️ Past 14:00 — ordering for tomorrow now is AGAINST PROCESS. It still goes through if a manager confirms, but please avoid ordering after 14:00 next time.',
+    recentOrders: 'Orders already sent (today + tomorrow)', today: 'today', tomorrow: 'tomorrow',
     normalNoteTomorrow: 'Ordering for tomorrow: anyone can add products, a manager confirms with their PIN before 14:00.',
     normalNoteLater: 'Ordering for this date: anyone can add products, a manager confirms with their PIN whenever ready.',
   },
@@ -123,7 +127,23 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
   const [invFilter, setInvFilter] = useState<'all' | 'in' | 'out'>('all');
   const [invQuery, setInvQuery] = useState('');
   const [staffNames, setStaffNames] = useState<ShopStaffName[] | null>(null);
+  // Every order already submitted for today's + tomorrow's delivery (Axel, 2026-09-12: Bà Triệu
+  // placed two separate orders for the same delivery date — a normal advance order plus a
+  // same-day top-up — and this cockpit had no way to show the first one was still there once a
+  // second was submitted). Independent of cart/draftLoaded, which only ever reflect the CURRENT
+  // unsubmitted draft for the selected date.
+  const [recentOrders, setRecentOrders] = useState<ShopRecentOrder[] | null>(null);
+  const [recentOrdersDates, setRecentOrdersDates] = useState<{ today: string; tomorrow: string } | null>(null);
   const cartDirtyRef = useRef(false);
+
+  const loadRecentOrders = useCallback(async () => {
+    const res = await getRecentManagerOrdersAction(activeShop);
+    if (res.error) return;
+    setRecentOrders(res.orders ?? []);
+    if (res.today && res.tomorrow) setRecentOrdersDates({ today: res.today, tomorrow: res.tomorrow });
+  }, [activeShop]);
+
+  useEffect(() => { loadRecentOrders(); }, [activeShop, loadRecentOrders]);
 
   // Order context (min/default delivery date) + categories + live inventory + staff roster —
   // all loaded once per shop, same posture as ShopView's own order tab.
@@ -169,9 +189,10 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
     if (!deliveryDate) return;
     const id = setInterval(() => {
       if (!cartDirtyRef.current && !pendingConfirm) loadDraft(deliveryDate);
+      loadRecentOrders();
     }, 15000);
     return () => clearInterval(id);
-  }, [deliveryDate, pendingConfirm, loadDraft]);
+  }, [deliveryDate, pendingConfirm, loadDraft, loadRecentOrders]);
 
   useEffect(() => {
     const q = searchQuery.trim();
@@ -256,6 +277,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
     setCart([]);
     setDraftLoaded(null);
     cartDirtyRef.current = false;
+    loadRecentOrders();
   }
 
   const itemCount = cart.filter(l => l.qty > 0).length;
@@ -310,6 +332,27 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
           </div>
         )}
       </div>
+
+      {!!recentOrders?.length && (
+        <div className="bg-white rounded-2xl p-3.5 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="text-xs font-semibold" style={{ color: INK_LIGHT }}>{tr('recentOrders')}</div>
+          <div className="space-y-1.5">
+            {recentOrders.map(o => (
+              <div key={o.orderRef} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F0FDF4' }}>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold truncate" style={{ color: '#166534' }}>
+                    {o.orderRef} · {fmtDate(o.deliveryDate, lang)}
+                    {recentOrdersDates?.tomorrow === o.deliveryDate ? ` (${tr('tomorrow')})` : recentOrdersDates?.today === o.deliveryDate ? ` (${tr('today')})` : ''}
+                  </div>
+                  <div className="text-[11px]" style={{ color: INK_LIGHT }}>
+                    {fmtItems(o.itemCount, lang)} · {o.totalQty}{o.managerName ? ` · ${o.managerName}` : ''} · {fmtRelative(o.createdAt, lang)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Draft banner — collapsed by default when there's already something in the cart (a
           staff member's prefill, or a draft from earlier), expands into the full editable cart
