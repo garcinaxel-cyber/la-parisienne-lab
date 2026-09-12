@@ -61,7 +61,7 @@ function fmtDate(d: string) {
 // interface shop") — meme convention d'affichage que le dashboard admin (analytics), juste en
 // VND complet avec separateurs de milliers plutot qu'abrege (170.000 ₫), plus lisible pour un
 // manager boutique qu'un "0.2M".
-function fmtVnd(v: number) {
+export function fmtVnd(v: number) {
   return `${Math.round(v).toLocaleString('vi-VN')} ₫`;
 }
 
@@ -238,7 +238,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
   const [orderSearching, setOrderSearching] = useState(false);
-  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null }[]>([]);
+  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null; priceB2c: number | null }[]>([]);
   const [orderDraftLoaded, setOrderDraftLoaded] = useState<ShopManagerOrderDraft | null>(null);
   const [orderDraftSaving, setOrderDraftSaving] = useState(false);
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
@@ -423,7 +423,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const draft = res.draft ?? null;
     setOrderDraftLoaded(draft);
     if (draft) {
-      setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null })));
+      setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null, priceB2c: l.priceB2c ?? null })));
       if (draft.deliveryTime) setOrderDeliveryTime(draft.deliveryTime);
       if (draft.createdByName) setOrderCreatedByName(draft.createdByName);
     } else {
@@ -795,7 +795,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     orderCartDirtyRef.current = true;
     setOrderCart(prev => {
       const exists = prev.some(l => l.sku === p.sku);
-      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl }] : prev;
+      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl, priceB2c: p.priceB2c ?? null }] : prev;
       return prev.map(l => l.sku === p.sku ? { ...l, qty: clamped } : l);
     });
   }
@@ -891,6 +891,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const qty = v !== undefined && v.trim() !== '' ? Number(v) : NaN;
     return sum + (Number.isFinite(qty) ? qty : 0) * (l.priceB2c ?? 0);
   }, 0);
+
+  // Total value of the replenishment order being built (Axel, 2026-09-12: "quand les shops
+  // passent commande, peux tu afficher la total value de la commande ?") — same qty × price_b2c
+  // convention as the Kiểm kho valuation above; a line whose SKU has no B2C price (packaging,
+  // matière) just contributes 0, same as everywhere else this total is computed.
+  const orderCartTotal = orderCart.reduce((sum, l) => sum + l.qty * (l.priceB2c ?? 0), 0);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
@@ -1837,6 +1843,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   </div>
                 )}
 
+                {orderCart.some(l => l.qty > 0) && (
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tổng giá trị đơn hàng</span>
+                    <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(orderCartTotal)}</span>
+                  </div>
+                )}
+
                 {orderMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderMsg}</div>}
 
                 <div className="flex gap-2">
@@ -2021,6 +2034,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <span className="text-sm font-bold shrink-0">×{l.qty}</span>
                 </div>
               ))}
+            </div>
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng giá trị</span>
+              <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(orderCartTotal)}</span>
             </div>
             <div>
               <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Mã PIN quản lý</div>

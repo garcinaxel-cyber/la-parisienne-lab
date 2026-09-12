@@ -1274,7 +1274,13 @@ export async function verifyManagerPinAction(pin: string, shopName?: string): Pr
 // lab_excluded_skus + context: { lang: 'vi_VN' } approach used by the Kiểm kho search before
 // packaging was dropped from that specific feature — packaging stays IN SCOPE here, per Axel's
 // original Phase 3 spec: shops do need to reorder packaging/matière, not just finished goods).
-export type ShopManagerCatalogProduct = { sku: string; name: string; category: string; imageUrl: string | null; isPackaging: boolean };
+// priceB2c rides along per SKU (same product_variants.price_b2c source as the Kiểm kho
+// valuation above) so the cart can show a running order total (Axel, 2026-09-12: "quand les
+// shops passent commande, peux tu afficher la total value de la commande ?" — closes the gap
+// the manager-Order-screen build already flagged: "the mockup's sticky bar shows a money total
+// ... neither exists in the underlying data yet"). null for a SKU with no B2C price (packaging,
+// matière) — those simply don't contribute to the total, same convention as elsewhere.
+export type ShopManagerCatalogProduct = { sku: string; name: string; category: string; imageUrl: string | null; isPackaging: boolean; priceB2c: number | null };
 
 // `category` lets the manager browse a whole category (e.g. tapping a chip) instead of typing —
 // Axel, 2026-09-03: "faciliter l'ajout de produit, pas forcement 1 par 1, et un filtre par
@@ -1289,11 +1295,12 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
   const cat = (category ?? '').trim();
   const browsingCategory = !q && !!cat;
 
-  let filteredProduction: ShopManagerCatalogProduct[] = (await fetchProductionCatalog(true)).map(p => ({ ...p, isPackaging: false }));
+  type CatalogProductNoPrice = Omit<ShopManagerCatalogProduct, 'priceB2c'>;
+  let filteredProduction: CatalogProductNoPrice[] = (await fetchProductionCatalog(true)).map(p => ({ ...p, isPackaging: false }));
   if (q) filteredProduction = filteredProduction.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q));
   if (cat) filteredProduction = filteredProduction.filter(p => p.category === cat);
 
-  let packaging: ShopManagerCatalogProduct[] = [];
+  let packaging: CatalogProductNoPrice[] = [];
   if (!cat || cat === 'Packaging') {
     const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
     const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
@@ -1315,7 +1322,16 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
   }
 
   const cap = browsingCategory ? 200 : 40;
-  const all = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, cap);
+  const capped = [...filteredProduction, ...packaging].sort((a, b) => a.name.localeCompare(b.name)).slice(0, cap);
+
+  const skusForPrice = Array.from(new Set(capped.map(p => p.sku)));
+  const { data: priceRows } = skusForPrice.length
+    ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', skusForPrice)
+    : { data: [] as any[] };
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+
+  const all: ShopManagerCatalogProduct[] = capped.map(p => ({ ...p, priceB2c: priceBySku.get(p.sku) ?? null }));
   return { products: all };
 }
 
@@ -1360,7 +1376,7 @@ export type ShopManagerOrderDraft = {
   id: string;
   deliveryDate: string;
   deliveryTime: string | null;
-  lines: { sku: string; name: string; qty: number; note?: string }[];
+  lines: { sku: string; name: string; qty: number; note?: string; priceB2c?: number | null }[];
   createdByName: string | null;
   updatedAt: string;
 };
@@ -1384,10 +1400,24 @@ export async function getManagerOrderDraftAction(deliveryDate: string, shopName?
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Ngày giao không hợp lệ' };
   const row = await findActiveDraft(auth.shopName, date);
   if (!row) return { draft: null };
+  const lines: { sku: string; name: string; qty: number; note?: string }[] = Array.isArray(row.lines) ? row.lines : [];
+
+  // Draft rows only ever store sku/name/qty/note (see saveManagerOrderDraftAction) — price is
+  // resolved fresh here instead of stored, same convention as the Kiểm kho valuation, so an
+  // order total always reflects the current price_b2c even for a draft saved days ago.
+  const supabase = service();
+  const skus = Array.from(new Set(lines.map(l => l.sku).filter(Boolean)));
+  const { data: priceRows } = supabase && skus.length
+    ? await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
+    : { data: [] as any[] };
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+
   return {
     draft: {
       id: row.id, deliveryDate: row.delivery_date, deliveryTime: row.delivery_time,
-      lines: Array.isArray(row.lines) ? row.lines : [], createdByName: row.created_by_name, updatedAt: row.updated_at,
+      lines: lines.map(l => ({ ...l, priceB2c: priceBySku.get(l.sku) ?? null })),
+      createdByName: row.created_by_name, updatedAt: row.updated_at,
     },
   };
 }

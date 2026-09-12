@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, Plus, Minus, Trash2, Send, Loader2, ChevronRight, CheckCircle2, Truck } from 'lucide-react';
 import { useI18n, type Lang } from '@/lib/i18n';
 import {
-  NamePicker,
+  NamePicker, fmtVnd,
 } from '@/app/shop/ShopView';
 import {
   getManagerOrderContextAction, getManagerOrderCategoriesAction, getManagerOrderDraftAction,
@@ -24,10 +24,12 @@ import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, GREEN, AMBER, RED } from './
 // shell around them. "Store interface" (the other quick action) is untouched — it still opens
 // the real ShopView via /shop-manager/store, unrelated to this rebuild.
 //
-// One gap vs the mockup: the mockup's sticky bar shows a money total ("485,000 đ") and its
-// inventory rows show a 3rd "Low" state — neither exists in the underlying data yet
-// (ShopManagerCatalogProduct/ShopStockLevel carry no price and no low-stock threshold), so this
-// shows item count only and a plain in/out-of-stock pill rather than inventing numbers.
+// One gap vs the mockup: its inventory rows show a 3rd "Low" state — that still doesn't exist
+// in the underlying data (ShopStockLevel carries no low-stock threshold), so this keeps a plain
+// in/out-of-stock pill rather than inventing one. The money total ("485,000 đ") DOES now show in
+// the sticky bar (Axel, 2026-09-12: "quand les shops passent commande, peux tu afficher la total
+// value de la commande ?") — ShopManagerCatalogProduct/ShopManagerOrderDraft lines now carry
+// priceB2c (product_variants.price_b2c, same source as the Kiểm kho valuation elsewhere).
 
 const L = {
   vi: {
@@ -40,7 +42,7 @@ const L = {
     yourName: 'Tên của bạn', delivery: 'Giao hàng', saveDraft: 'Lưu nháp', discardDraft: 'Xoá nháp',
     confirmOrder: 'Xác nhận đơn hàng', pinLabel: 'Mã PIN quản lý', pinPh: 'Mã PIN',
     cancel: 'Huỷ', confirm: 'Xác nhận', pinNote: 'Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.',
-    successTitle: 'Đã xác nhận đơn hàng', successRef: 'Mã đơn Odoo', newOrder: 'Đặt đơn khác',
+    successTitle: 'Đã xác nhận đơn hàng', successRef: 'Mã đơn Odoo', newOrder: 'Đặt đơn khác', orderTotal: 'Tổng giá trị',
     lateWarning: '⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.',
     normalNoteTomorrow: 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN trước 14h00.',
     normalNoteLater: 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng.',
@@ -55,7 +57,7 @@ const L = {
     yourName: 'Your name', delivery: 'Delivery', saveDraft: 'Save draft', discardDraft: 'Discard draft',
     confirmOrder: 'Confirm order', pinLabel: 'Manager PIN', pinPh: 'PIN',
     cancel: 'Cancel', confirm: 'Confirm', pinNote: 'This order is created and confirmed immediately in Odoo — it cannot be cancelled in the app.',
-    successTitle: 'Order confirmed', successRef: 'Odoo order ref', newOrder: 'Place another order',
+    successTitle: 'Order confirmed', successRef: 'Odoo order ref', newOrder: 'Place another order', orderTotal: 'Order total',
     lateWarning: '⚠️ Past 14:00 — ordering for tomorrow now is AGAINST PROCESS. It still goes through if a manager confirms, but please avoid ordering after 14:00 next time.',
     normalNoteTomorrow: 'Ordering for tomorrow: anyone can add products, a manager confirms with their PIN before 14:00.',
     normalNoteLater: 'Ordering for this date: anyone can add products, a manager confirms with their PIN whenever ready.',
@@ -91,7 +93,7 @@ function fmtItems(n: number, lang: Lang) {
   return lang === 'en' ? `${n} item${n !== 1 ? 's' : ''}` : `${n} sản phẩm`;
 }
 
-type CartLine = { sku: string; name: string; qty: number; note: string; imageUrl: string | null };
+type CartLine = { sku: string; name: string; qty: number; note: string; imageUrl: string | null; priceB2c: number | null };
 
 export default function OrderTab({ activeShop, managerName }: { activeShop: string; managerName: string }) {
   const { tr, lang } = useL();
@@ -149,7 +151,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
     const draft = res.draft ?? null;
     setDraftLoaded(draft);
     if (draft) {
-      setCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null })));
+      setCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null, priceB2c: l.priceB2c ?? null })));
       if (draft.deliveryTime) setDeliveryTime(draft.deliveryTime);
       if (draft.createdByName) setCreatedByName(draft.createdByName);
       setCartExpanded(false);
@@ -189,7 +191,7 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
     setCartExpanded(true);
     setCart(prev => {
       const exists = prev.some(l => l.sku === p.sku);
-      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl }] : prev;
+      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl, priceB2c: p.priceB2c ?? null }] : prev;
       return prev.map(l => l.sku === p.sku ? { ...l, qty: clamped } : l);
     });
   }
@@ -257,6 +259,9 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
   }
 
   const itemCount = cart.filter(l => l.qty > 0).length;
+  // Same qty × price_b2c convention as the Kiểm kho valuation; a SKU with no B2C price
+  // (packaging, matière) just contributes 0 (Axel, 2026-09-12 — see file header comment).
+  const cartTotal = cart.reduce((sum, l) => sum + l.qty * (l.priceB2c ?? 0), 0);
 
   if (result) {
     return (
@@ -481,11 +486,14 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
       {msg && <div className="text-xs font-semibold" style={{ color: RED }}>{msg}</div>}
 
       {/* Sticky checkout bar — above the bottom nav, always visible once there's something to
-          order. No money total shown (see file header comment — not in the underlying data). */}
+          order. */}
       {cart.length > 0 && (
         <div className="fixed left-0 right-0 z-10 px-4" style={{ bottom: 56 }}>
           <div className="max-w-xl mx-auto rounded-2xl px-4 py-3 flex items-center justify-between shadow-lg" style={{ backgroundColor: NAVY }}>
-            <div className="text-sm font-bold text-white">{fmtItems(itemCount, lang)}</div>
+            <div>
+              <div className="text-sm font-bold text-white">{fmtItems(itemCount, lang)}</div>
+              <div className="text-xs font-semibold" style={{ color: GOLD }}>{fmtVnd(cartTotal)}</div>
+            </div>
             <button onClick={openConfirm} disabled={!itemCount || submitting}
               className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2 disabled:opacity-40" style={{ backgroundColor: GOLD, color: NAVY }}>
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} {tr('confirmOrder')}
@@ -516,6 +524,10 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                   <span className="text-sm font-bold shrink-0">×{l.qty}</span>
                 </div>
               ))}
+            </div>
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{tr('orderTotal')}</span>
+              <span className="text-sm font-bold" style={{ color: NAVY }}>{fmtVnd(cartTotal)}</span>
             </div>
             <div>
               <div className="text-xs font-semibold mb-1" style={{ color: INK_LIGHT }}>{tr('pinLabel')}</div>
