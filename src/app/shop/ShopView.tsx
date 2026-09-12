@@ -120,9 +120,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   // Event access (Axel, 2026-09-12): a discreet button INSIDE the shop's own already-open portal
   // lets staff step into an active event via PIN — no separate login/URL (see the mockup
-  // discussion: staff already have their own shop's app open). Only offered on the shop's own
-  // live session, never an admin/manager preview (readOnly) — those manage events from
-  // /admin/events instead.
+  // discussion: staff already have their own shop's app open). Also offered on the admin/manager
+  // preview (readOnly) — Axel testing via /shop-manager's "Store interface" found nothing there
+  // (2026-09-12) since this was originally gated to the shop's own live session only; the
+  // backend (requireShopOrStaffSession's event-override check) already covers admin/shop_manager
+  // roles identically to a real shop login, so this is a client-side-only relaxation.
   const [eventState, setEventState] = useState<EventAccessState | null>(null);
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -130,10 +132,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [pinError, setPinError] = useState<string | null>(null);
 
   const loadEventState = useCallback(async () => {
-    if (readOnly) return;
     const res = await getEventAccessStateAction();
     if (!('error' in res)) setEventState(res);
-  }, [readOnly]);
+  }, []);
   useEffect(() => { loadEventState(); }, [loadEventState]);
 
   async function submitPin() {
@@ -2373,10 +2374,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         </div>
       )}
 
-      {/* Discreet FAB into an active event (Axel, 2026-09-12) — only on the shop's own live
-          session, only when at least one event is currently open, and only while not already
-          inside one. */}
-      {!readOnly && eventState?.hasActiveEvent && !eventState?.inEvent && (
+      {/* Discreet FAB into an active event (Axel, 2026-09-12) — shown whenever at least one
+          event is currently open and this session isn't already inside one (a real shop login
+          or an admin/manager preview alike). */}
+      {eventState?.hasActiveEvent && !eventState?.inEvent && (
         <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
           className="fixed right-4 bottom-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg z-20"
           style={{ backgroundColor: '#FFFAEE', border: '1.5px solid #E0D49A' }} aria-label="Vào event">
