@@ -176,6 +176,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string } | null>(null);
   const [pendingLoss, setPendingLoss] = useState(false);
 
+  // "Xác nhận tất cả" recap (Axel, 2026-09-12: "un bouton on peut confirmer tout d un coup avec
+  // un recap avant") — opens a review sheet listing every still-unconfirmed line for today
+  // instead of tapping OK line by line. Same double-check spirit as pendingReceipt above, just
+  // for every remaining line at once.
+  const [confirmAllOpen, setConfirmAllOpen] = useState(false);
+  const [confirmAllSubmitting, setConfirmAllSubmitting] = useState(false);
+
   const [lossName, setLossName] = useState('');
 
   // ── Kiểm kho (daily stock count) — Axel, 2026-09-03: shops count their own stock every day,
@@ -633,6 +640,29 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
   }
 
+  // Bulk write behind "Xác nhận toàn bộ" in the recap sheet — same confirmReceiptAction as a
+  // single OK tap, just fired once per remaining line and reloaded once at the end instead of
+  // after every line (todaysPendingLines is small, one delivery's worth of SKUs, not a cron).
+  async function doSubmitAllPending() {
+    const trimmedName = name.trim();
+    if (!trimmedName || !todaysPendingLines.length) return;
+    setConfirmAllSubmitting(true);
+    try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
+    const { confirmReceiptAction } = await import('./actions');
+    await Promise.all(todaysPendingLines.map(p => {
+      const status: 'ok' | 'issue' = p.qtyNum === null || p.qtyNum !== refQty(p.line) ? 'issue' : 'ok';
+      return confirmReceiptAction({
+        checkLineId: p.line.id, deliveryOrderId: p.order.header.id,
+        qtyReceived: p.qtyNum, status, note: p.note.trim() || null,
+        confirmedByName: trimmedName,
+        ...(readOnly ? { shopName } : {}),
+      });
+    }));
+    setConfirmAllSubmitting(false);
+    setConfirmAllOpen(false);
+    load({ silent: true });
+  }
+
   // viewSessionSeq lets the caller ask for a specific session (used to preview a brand-new
   // blank one, or to look back at an earlier one in history) — omitted, it loads whichever is
   // the shop's current/latest session of the day.
@@ -870,6 +900,25 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // as interactive as the shop's own login (Axel, 2026-08-25) — the only remaining gate is the day.
   const canConfirm = day === 'today';
 
+  // Every not-yet-confirmed line across TODAY's orders regardless of which day tab is active
+  // (Axel, 2026-09-12: "un pop up permanent en haut" — the reminder shouldn't disappear just
+  // because someone taps over to "Ngày mai"). `touched` mirrors requestConfirmLine's own
+  // fallback: a line the shop never typed into still shows the lab-checked qty as a default, so
+  // "untouched" means draft[l.id] was never created, not that the displayed value is empty.
+  const todaysPendingLines = (() => {
+    const todays = orders?.filter(o => o.header.delivery_date === todayDate) ?? [];
+    const out: { order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qtyNum: number | null; note: string; touched: boolean }[] = [];
+    for (const o of todays) {
+      for (const l of o.lines) {
+        if (l.receipt) continue;
+        const touched = l.id in draft;
+        const d = draft[l.id] ?? { qty: String(refQty(l)), note: '' };
+        out.push({ order: o, line: l, qtyNum: d.qty.trim() === '' ? null : Number(d.qty), note: d.note, touched });
+      }
+    }
+    return out;
+  })();
+
   // Kiểm kho category filter + per-category completion (Axel, 2026-09-03: "je voudrais que tu
   // mettes un filtre par categorie et une fois qu une categorie est check en entier la categorie
   // s affiche en vert") — "checked" means every line in that category has a non-empty value in
@@ -994,6 +1043,42 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           <div className="text-center py-10 text-sm font-semibold" style={{ color: '#DC2626' }}>{error}</div>
         ) : tab === 'deliveries' ? (
           <div className="space-y-3">
+            {/* Permanent reminder (Axel, 2026-09-12: "un pop up permanent en haut : vous avez
+                pas encore confirmer la reception de toutes les lignes") — stays up regardless of
+                which day tab is showing, so switching to "Ngày mai" never hides it; flips to a
+                green "all done" state and its button disappears once nothing is left. No push
+                notification, no cron — purely a client-side nudge on today's already-loaded data
+                (Axel: "je veux pas charger le cron"). */}
+            {todayDate && (
+              <div className="rounded-2xl px-3.5 py-3 flex items-center gap-3"
+                style={todaysPendingLines.length
+                  ? { backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }
+                  : { backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }}>
+                {todaysPendingLines.length ? (
+                  <AlertTriangle size={18} className="shrink-0" style={{ color: '#92600A' }} />
+                ) : (
+                  <CheckCircle2 size={18} className="shrink-0" style={{ color: '#166534' }} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold" style={{ color: todaysPendingLines.length ? '#92600A' : '#166534' }}>
+                    {todaysPendingLines.length ? 'Chưa xác nhận hết' : 'Đã xác nhận hết'}
+                  </div>
+                  <div className="text-[11px]" style={{ color: todaysPendingLines.length ? '#92600A' : '#166534', opacity: 0.9 }}>
+                    {todaysPendingLines.length
+                      ? `Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng hôm nay`
+                      : 'Tất cả sản phẩm giao hôm nay đã được xác nhận nhận hàng'}
+                  </div>
+                </div>
+                {todaysPendingLines.length > 0 && (
+                  <button onClick={() => setConfirmAllOpen(true)} disabled={!name.trim()}
+                    className="shrink-0 text-xs font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
+                    style={{ backgroundColor: '#1f2937' }}>
+                    Xác nhận tất cả
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-1.5">
               <button onClick={() => setDay('today')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
@@ -1960,6 +2045,66 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#16A34A' }}>
                 Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recap sheet behind "Xác nhận tất cả" (Axel, 2026-09-12) — every remaining line for
+          today, reviewed together before one bulk write. A line the shop never touched (still
+          showing the default Bếp qty) is called out in amber so it doesn't slip through
+          unnoticed; ×0 is called out in red as "not received" rather than treated as an error —
+          same acceptance rule as the single-line flow (doSubmitLine), just surfaced here so it's
+          visible before a batch of lines gets confirmed at once. */}
+      {confirmAllOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
+              Xác nhận tất cả ({todaysPendingLines.length} sản phẩm)
+            </div>
+            <div className="text-xs" style={{ color: '#6B7280' }}>Xem lại số lượng trước khi gửi — mỗi dòng dưới đây sẽ được xác nhận cùng lúc.</div>
+            <div className="space-y-1.5">
+              {todaysPendingLines.map(p => {
+                const ref = refQty(p.line);
+                const isZero = p.qtyNum === 0;
+                const isDiff = p.qtyNum !== null && p.qtyNum !== ref;
+                const untouched = !p.touched;
+                const bg = untouched ? '#FFFBEB' : (isZero || isDiff) ? '#FEF2F2' : '#F9FAFB';
+                const border = untouched ? '#FBBF24' : (isZero || isDiff) ? '#FCA5A5' : 'transparent';
+                return (
+                  <div key={p.line.id} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
+                    {p.line.image_url ? (
+                      <img src={thumb(p.line.image_url, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
+                    ) : (
+                      <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.line.product_name_vi}</div>
+                      {untouched ? (
+                        <div className="text-[10.5px] font-bold" style={{ color: '#92400E' }}>● Chưa kiểm tra — giữ nguyên số lượng Bếp giao</div>
+                      ) : isZero ? (
+                        <div className="text-[10.5px] font-bold" style={{ color: '#DC2626' }}>● Không nhận được</div>
+                      ) : isDiff ? (
+                        <div className="text-[10.5px] font-bold" style={{ color: '#DC2626' }}>● Chênh lệch {(p.qtyNum! - ref) > 0 ? '+' : ''}{p.qtyNum! - ref}</div>
+                      ) : null}
+                    </div>
+                    <span className="text-sm font-bold shrink-0" style={{ color: isZero ? '#DC2626' : '#1f2937' }}>
+                      {p.qtyNum === null ? '—' : `×${p.qtyNum}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmAllOpen(false)}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                Quay lại
+              </button>
+              <button onClick={doSubmitAllPending} disabled={confirmAllSubmitting || !todaysPendingLines.length}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                {confirmAllSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                Xác nhận toàn bộ
               </button>
             </div>
           </div>
