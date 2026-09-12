@@ -25,6 +25,18 @@ function vnDayRangeUtc(dateStr: string): { start: string; end: string } {
   return { start: start.toISOString(), end: new Date(start.getTime() + 86400000).toISOString() };
 }
 
+// "Commande" is the one metric a manager expects to see across a rolling window, not a single
+// calendar day: a manager typically places tomorrow's order today, so if `orders` stayed scoped
+// to `date` alone, an order placed today for tomorrow's delivery would vanish from the recap
+// until tomorrow — exactly the gap Axel flagged (shop-manager's "Shops" tab showing "1 order" for
+// Bà Triệu when 3 had actually been placed: 1 for today, 2 for tomorrow). Réception/comptage/
+// pertes/transferts all stay strictly same-day (unchanged) — only the orders window widens.
+function nextDayStr(dateStr: string): string {
+  const start = new Date(`${dateStr}T00:00:00+07:00`);
+  const next = new Date(start.getTime() + 86400000);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(next);
+}
+
 // Caller passes a service-role client (lab_shop_stock_sessions_done and lab_shop_transfers have
 // RLS enabled with no policy at all — only ever read/written via server actions using the
 // service-role key, see shop/actions.ts / api/odoo/stock-count-recap) and the exact set of shops
@@ -33,6 +45,7 @@ function vnDayRangeUtc(dateStr: string): { start: string; end: string } {
 export async function computeShopRecaps(svc: SupabaseClient, shops: string[], date: string): Promise<ShopRecap[]> {
   if (!shops.length) return [];
   const { start, end } = vnDayRangeUtc(date);
+  const ordersWindow = [date, nextDayStr(date)];
 
   const [
     { data: dos },
@@ -44,8 +57,8 @@ export async function computeShopRecaps(svc: SupabaseClient, shops: string[], da
   ] = await Promise.all([
     svc.from('lab_delivery_orders').select('id, order_ref, delivery_date, shop_name').in('shop_name', shops).eq('delivery_date', date),
     svc.from('lab_shop_stock_sessions_done').select('shop_name, count_date, session_seq, finished_at, finished_by_name, sku_count, valuation').in('shop_name', shops).eq('count_date', date),
-    svc.from('lab_order_lines').select('order_ref, shop_name, delivery_date').in('shop_name', shops).eq('delivery_date', date),
-    svc.from('lab_shop_manager_orders').select('shop_name, order_ref, delivery_date, created_at, manager_name').in('shop_name', shops).eq('delivery_date', date),
+    svc.from('lab_order_lines').select('order_ref, shop_name, delivery_date').in('shop_name', shops).in('delivery_date', ordersWindow),
+    svc.from('lab_shop_manager_orders').select('shop_name, order_ref, delivery_date, created_at, manager_name').in('shop_name', shops).in('delivery_date', ordersWindow),
     svc.from('lab_shop_losses').select('shop_name, sku, product_name, qty, reason_tag_name, reported_by_name, reported_at').in('shop_name', shops).gte('reported_at', start).lt('reported_at', end),
     svc.from('lab_shop_transfers').select('id, ref, from_shop, to_shop, status, sent_by_name, sent_at, received_by_name, received_at, unit_count, line_count').gte('sent_at', start).lt('sent_at', end),
   ]);
