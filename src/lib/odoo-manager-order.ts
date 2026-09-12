@@ -111,8 +111,10 @@ function validateDeliveryDate(date: string, _skipWindowCheck = false): { ok: tru
 const warehouseCache = new Map<string, { id: number; name: string } | null>();
 async function resolveWarehouseId(code: string): Promise<{ id: number; name: string } | null> {
   if (warehouseCache.has(code)) return warehouseCache.get(code)!;
+  // '=ilike' (not '=') so an event shop's code — typed by Axel directly in Odoo, any case —
+  // still resolves against the uppercased code stored in lab_event_shops.
   const rows = await tmo(odooExecute<any[]>('stock.warehouse', 'search_read',
-    [[['code', '=', code]]], { fields: ['id', 'name'], limit: 1 }), 15000, 'warehouse');
+    [[['code', '=ilike', code]]], { fields: ['id', 'name'], limit: 1 }), 15000, 'warehouse');
   const w = rows[0] ? { id: rows[0].id, name: rows[0].name } : null;
   warehouseCache.set(code, w);
   return w;

@@ -37,8 +37,10 @@ export async function resolveShopWarehouseLocation(shopName: string): Promise<Sh
   // lab_event_shops instead, same "own warehouse, never LAB" rule as any other shop here.
   const code = SHOP_ODOO_MAP[shopName]?.warehouseCode ?? (await resolveEventShopConfig(shopName))?.warehouseCode;
   if (!code) { shopLocationCache.set(shopName, null); return null; }
+  // '=ilike' (not '=') so an event shop's Odoo-side code (typed by Axel directly in Odoo, any
+  // case) still resolves against the uppercased code stored in lab_event_shops.
   const whs = await tmo(odooExecuteWrite<any[]>('stock.warehouse', 'search_read',
-    [[['code', '=', code]]], { fields: ['lot_stock_id', 'name'], limit: 1 }), 15000, 'shop warehouse');
+    [[['code', '=ilike', code]]], { fields: ['lot_stock_id', 'name'], limit: 1 }), 15000, 'shop warehouse');
   const wh = whs[0];
   if (!wh?.lot_stock_id) { shopLocationCache.set(shopName, null); return null; }
   const result: ShopWarehouseLocation = {

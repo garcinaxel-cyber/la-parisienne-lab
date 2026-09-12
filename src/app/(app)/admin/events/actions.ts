@@ -28,7 +28,10 @@ export async function createEventAction(input: { name: string; warehouseCode: st
 
   let wh: { id: number; name: string } | undefined;
   try {
-    const rows = await odooExecute<any[]>('stock.warehouse', 'search_read', [[['code', '=', code]]], { fields: ['id', 'name'], limit: 1 });
+    // '=ilike' — case-insensitive exact match. Axel types the code in Odoo's own UI however he
+    // likes (e.g. "Test"), while this form always uppercases what it stores/searches with; a
+    // plain '=' would silently fail to find "Test" when searching for "TEST".
+    const rows = await odooExecute<any[]>('stock.warehouse', 'search_read', [[['code', '=ilike', code]]], { fields: ['id', 'name'], limit: 1 });
     wh = rows[0];
   } catch (e: any) {
     return { error: e?.message ?? 'Không thể kết nối Odoo' };
