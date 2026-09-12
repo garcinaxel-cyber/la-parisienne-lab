@@ -19,6 +19,13 @@ function fmtTime(iso: string | null): string {
 function fmtVnd(n: number): string {
   return new Intl.NumberFormat('vi-VN').format(Math.round(n)) + ' ₫';
 }
+// Commande's window now spans this row's `date` + the next day (Axel, 2026-09-12: an order
+// already placed today for tomorrow's delivery must read as separate from one placed for the
+// row's own date, not folded into it silently) — tag only the ones that DON'T match the row's
+// date, so the common case (same-day order) stays exactly as terse as before.
+function fmtShortDate(d: string, vi: boolean): string {
+  return new Date(`${d}T12:00:00+07:00`).toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+}
 
 // Commande/Transferts lists can still grow long on a busy day -- cap what's shown inline and
 // fold the rest behind a plain count (Axel: "un ecran assez synthetique").
@@ -158,6 +165,9 @@ export default function ShopProcessView({ date, which, recaps }: { date: string;
                               <span className="font-semibold">{fmtTime(o.placedAt)}</span>
                               <span className="text-ink-light"> · {o.placedBy} · {o.ref} · app</span>
                             </span>
+                          )}
+                          {o.deliveryDate !== date && (
+                            <span className="font-semibold" style={{ color: AMBER }}> · {vi ? 'giao' : 'livr.'} {fmtShortDate(o.deliveryDate, vi)}</span>
                           )}
                         </div>
                       )} />

@@ -82,7 +82,12 @@ export type ManagerShopStatus = {
   shop: string;
   receptionTotal: number; receptionConfirmed: number;
   countDone: boolean;
-  ordersCount: number; ordersOdooDirect: number;
+  // Split by delivery date, not one lumped total — computeShopRecaps' orders window now spans
+  // today + tomorrow (Axel, 2026-09-12: "faut separer ... sinon on comprend pas": a manager who
+  // placed tomorrow's order in advance needs that visually distinct from today's own order, not
+  // folded into one "3 orders" figure that reads as if 3 were placed for the SAME delivery).
+  ordersToday: number; ordersTodayOdooDirect: number;
+  ordersTomorrow: number; ordersTomorrowOdooDirect: number;
   lossesCount: number;
   transfersPending: number;
 };
@@ -96,13 +101,18 @@ export async function getManagerShopsStatusAction(): Promise<{ shops?: ManagerSh
   const recaps = await computeShopRecaps(svc, auth.shops, date);
   return {
     date,
-    shops: recaps.map(r => ({
-      shop: r.shop,
-      receptionTotal: r.reception?.totalLines ?? 0, receptionConfirmed: r.reception?.confirmedLines ?? 0,
-      countDone: !!r.count,
-      ordersCount: r.orders.length, ordersOdooDirect: r.orders.filter(o => o.odooDirect).length,
-      lossesCount: r.losses.count,
-      transfersPending: r.transfers.filter(t => t.status === 'sent').length,
-    })),
+    shops: recaps.map(r => {
+      const todayOrders = r.orders.filter(o => o.deliveryDate === date);
+      const tomorrowOrders = r.orders.filter(o => o.deliveryDate !== date);
+      return {
+        shop: r.shop,
+        receptionTotal: r.reception?.totalLines ?? 0, receptionConfirmed: r.reception?.confirmedLines ?? 0,
+        countDone: !!r.count,
+        ordersToday: todayOrders.length, ordersTodayOdooDirect: todayOrders.filter(o => o.odooDirect).length,
+        ordersTomorrow: tomorrowOrders.length, ordersTomorrowOdooDirect: tomorrowOrders.filter(o => o.odooDirect).length,
+        lossesCount: r.losses.count,
+        transfersPending: r.transfers.filter(t => t.status === 'sent').length,
+      };
+    }),
   };
 }

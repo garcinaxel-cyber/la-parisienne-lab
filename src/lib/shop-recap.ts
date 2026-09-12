@@ -15,7 +15,7 @@ export type ShopRecap = {
     totalExpectedQty: number; totalReceivedQty: number;
   } | null;
   count: { sessionsCount: number; finishedAt: string; finishedBy: string; skuCount: number; valuation: number } | null;
-  orders: { ref: string; placedAt: string | null; placedBy: string | null; odooDirect: boolean }[];
+  orders: { ref: string; deliveryDate: string; placedAt: string | null; placedBy: string | null; odooDirect: boolean }[];
   losses: { count: number; totalQty: number };
   transfers: { direction: 'in' | 'out'; otherShop: string; ref: string; status: string; by: string; at: string; units: number }[];
 };
@@ -106,14 +106,18 @@ export async function computeShopRecaps(svc: SupabaseClient, shops: string[], da
       valuation: Number(shopSessions[0].valuation ?? 0),
     } : null;
 
-    // ── Commande ──
-    const refs = Array.from(new Set((orderLines ?? []).filter((o: any) => o.shop_name === shop).map((o: any) => o.order_ref).filter(Boolean)));
+    // ── Commande ── (window spans `date` + the next day — see nextDayStr above — so every
+    // order carries its own deliveryDate: the UI groups by it instead of showing one lumped
+    // count that mixes an order for today with one already placed for tomorrow.)
+    const shopOrderLines = (orderLines ?? []).filter((o: any) => o.shop_name === shop);
+    const refs = Array.from(new Set(shopOrderLines.map((o: any) => o.order_ref).filter(Boolean)));
     const shopManagerOrders = (managerOrders ?? []).filter((m: any) => m.shop_name === shop);
     const orders = refs.map((ref: any) => {
       const m = shopManagerOrders.find((x: any) => x.order_ref === ref);
+      const deliveryDate = (m?.delivery_date ?? shopOrderLines.find((o: any) => o.order_ref === ref)?.delivery_date) as string;
       return m
-        ? { ref: ref as string, placedAt: m.created_at as string, placedBy: m.manager_name as string, odooDirect: false }
-        : { ref: ref as string, placedAt: null, placedBy: null, odooDirect: true };
+        ? { ref: ref as string, deliveryDate, placedAt: m.created_at as string, placedBy: m.manager_name as string, odooDirect: false }
+        : { ref: ref as string, deliveryDate, placedAt: null, placedBy: null, odooDirect: true };
     });
 
     // ── Pertes ── total qty only, same posture as admin's own recap table.

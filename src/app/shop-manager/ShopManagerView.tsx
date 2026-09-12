@@ -54,6 +54,7 @@ const L = {
     recapReception: 'Nhập hàng', recapReceptionNone: 'Chưa có', recapReceptionNotDone: 'Chưa nhận hàng',
     recapCount: 'Kiểm kho', recapCountNone: 'Chưa kiểm',
     recapOrders: 'Đặt hàng', recapLosses: 'Hao hụt', recapTransfers: 'Chuyển kho', recapOnline: 'Bán hàng online',
+    ordersToday: 'Hôm nay', ordersTomorrow: 'Ngày mai', pillNoOrders: 'Chưa có đơn',
     flagOdooDirect: 'Có đơn đặt trực tiếp trên Odoo', flagTransferPending: 'Đang chờ nhận',
     shopsTapHint: 'chạm để mở',
     pillNoDelivery: 'Không có nhập hàng', pillCounted: 'Đã kiểm kho', pillNotCounted: 'Chưa kiểm kho',
@@ -71,6 +72,7 @@ const L = {
     recapReception: 'Reception', recapReceptionNone: 'None yet', recapReceptionNotDone: 'Reception not done',
     recapCount: 'Stock count', recapCountNone: 'Not counted yet',
     recapOrders: 'Orders', recapLosses: 'Losses', recapTransfers: 'Transfers', recapOnline: 'Online sales',
+    ordersToday: 'Today', ordersTomorrow: 'Tomorrow', pillNoOrders: 'No orders yet',
     flagOdooDirect: 'An order was placed directly on Odoo', flagTransferPending: 'Awaiting receipt',
     shopsTapHint: 'tap to open',
     pillNoDelivery: 'No delivery', pillCounted: 'Stock counted', pillNotCounted: 'Not counted',
@@ -108,7 +110,10 @@ function fmtDoneAt(timeStr: string, lang: Lang) {
 // Order refs are shown right alongside the count now (Axel, 2026-09-10: "dans les orders tu
 // mets la ref de la commande") — there's realistically 0-2 orders/shop/day, so listing every
 // ref inline never gets unwieldy; the card just wraps to a second line if it ever does.
-function fmtOrdersValue(orders: { ref: string }[], lang: Lang) {
+// One group's line — "Hôm nay: 2 đơn · REF1, REF2" — never a lumped total across both delivery
+// dates (Axel, 2026-09-12: an order already placed for tomorrow must read as separate from
+// today's own order, "sinon on comprend pas").
+function fmtOrdersGroup(orders: { ref: string }[], lang: Lang) {
   const n = orders.length;
   const countStr = lang === 'en' ? `${n} order${n !== 1 ? 's' : ''}` : `${n} đơn`;
   return n ? `${countStr} · ${orders.map(o => o.ref).join(', ')}` : countStr;
@@ -125,9 +130,10 @@ function fmtOnlineValue(n: number, amountStr: string, lang: Lang) {
 function fmtReceivedPill(confirmed: number, total: number, lang: Lang) {
   return lang === 'en' ? `Received ${confirmed}/${total}` : `Nhập ${confirmed}/${total}`;
 }
-function fmtOrdersPill(count: number, odooDirect: number, lang: Lang) {
-  if (lang === 'en') return `${count} order${count !== 1 ? 's' : ''}${odooDirect ? ` · ${odooDirect} via Odoo` : ''}`;
-  return `${count} đơn đặt hàng${odooDirect ? ` · ${odooDirect} qua Odoo` : ''}`;
+function fmtOrdersPill(groupLabel: string, count: number, odooDirect: number, lang: Lang) {
+  const base = lang === 'en' ? `${count} order${count !== 1 ? 's' : ''}${odooDirect ? ` · ${odooDirect} via Odoo` : ''}`
+    : `${count} đơn${odooDirect ? ` · ${odooDirect} qua Odoo` : ''}`;
+  return `${groupLabel}: ${base}`;
 }
 function fmtTransfersPending(n: number, lang: Lang) {
   return lang === 'en' ? `${n} transfer${n !== 1 ? 's' : ''} awaiting receipt` : `${n} chuyển kho chờ nhận`;
@@ -284,15 +290,44 @@ function QuickAction({ icon: Icon, label, onClick }: { icon: any; label: string;
   );
 }
 
-function RecapCard({ icon: Icon, label, value, flag }: { icon: any; label: string; value: string; flag?: { color: string; text: string } }) {
+function RecapCard({ icon: Icon, label, value, flag, full }: { icon: any; label: string; value: string; flag?: { color: string; text: string }; full?: boolean }) {
   return (
-    <div className="rounded-2xl p-3.5" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+    <div className={`rounded-2xl p-3.5 ${full ? 'col-span-2' : ''}`} style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
       <div className="flex items-center gap-1.5 mb-1.5">
         <Icon size={14} style={{ color: INK_LIGHT }} />
         <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{label}</div>
       </div>
       <div className="text-sm font-bold" style={{ color: INK }}>{value}</div>
       {flag && <div className="text-[10.5px] font-bold mt-1" style={{ color: flag.color }}>{flag.text}</div>}
+    </div>
+  );
+}
+
+// Orders card is its own component, not a plain RecapCard: it needs two rows (today's delivery
+// vs. tomorrow's, per Axel — see fmtOrdersGroup above) instead of one value string, and spans
+// the full card width since that no longer fits half a 2-column row.
+function OrdersRecapCard({ todayOrders, tomorrowOrders, tr, lang }: {
+  todayOrders: { ref: string; odooDirect: boolean }[]; tomorrowOrders: { ref: string; odooDirect: boolean }[];
+  tr: (k: LKey) => string; lang: Lang;
+}) {
+  const anyOdoo = todayOrders.some(o => o.odooDirect) || tomorrowOrders.some(o => o.odooDirect);
+  return (
+    <div className="rounded-2xl p-3.5 col-span-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <ShoppingBag size={14} style={{ color: INK_LIGHT }} />
+        <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: INK_LIGHT }}>{tr('recapOrders')}</div>
+      </div>
+      <div className="space-y-1">
+        <div className="text-sm">
+          <span className="font-bold" style={{ color: INK }}>{tr('ordersToday')}:</span>{' '}
+          <span style={{ color: todayOrders.length ? INK : INK_LIGHT }}>{fmtOrdersGroup(todayOrders, lang)}</span>
+        </div>
+        <div className="text-sm">
+          <span className="font-bold" style={{ color: INK }}>{tr('ordersTomorrow')}:</span>{' '}
+          <span style={{ color: tomorrowOrders.length ? INK : INK_LIGHT }}>{fmtOrdersGroup(tomorrowOrders, lang)}</span>
+        </div>
+      </div>
+      {anyOdoo && <div className="text-[10.5px] font-bold mt-1" style={{ color: AMBER }}>{tr('flagOdooDirect')}</div>}
     </div>
   );
 }
@@ -344,9 +379,10 @@ function TodayTab({ activeShop, onOpenStoreInterface, onOrder, onOnlineSales, on
           <RecapCard icon={ClipboardList} label={tr('recapCount')}
             value={recap?.count ? fmtCountValue(recap.count.skuCount, fmtVnd(recap.count.valuation), lang) : tr('recapCountNone')}
             flag={recap?.count ? { color: GREEN, text: fmtDoneAt(fmtTime(recap.count.finishedAt), lang) } : undefined} />
-          <RecapCard icon={ShoppingBag} label={tr('recapOrders')}
-            value={fmtOrdersValue(recap?.orders ?? [], lang)}
-            flag={recap && recap.orders.some(o => o.odooDirect) ? { color: AMBER, text: tr('flagOdooDirect') } : undefined} />
+          <OrdersRecapCard
+            todayOrders={(recap?.orders ?? []).filter(o => o.deliveryDate === data.date)}
+            tomorrowOrders={(recap?.orders ?? []).filter(o => o.deliveryDate !== data.date)}
+            tr={tr} lang={lang} />
           <RecapCard icon={Trash2} label={tr('recapLosses')} value={recap ? fmtLossesValue(recap.losses.totalQty, lang) : fmtLossesValue(0, lang)} />
           <RecapCard icon={ArrowLeftRight} label={tr('recapTransfers')}
             value={recap ? fmtTransfersValue(recap.transfers.length, lang) : fmtTransfersValue(0, lang)}
@@ -385,7 +421,20 @@ function ShopsTab({ shops, activeShop, onPick }: { shops: string[]; activeShop: 
               <div className="flex flex-wrap gap-1.5">
                 <Pill ok={st.receptionTotal > 0 && st.receptionConfirmed >= st.receptionTotal} label={st.receptionTotal ? fmtReceivedPill(st.receptionConfirmed, st.receptionTotal, lang) : tr('pillNoDelivery')} />
                 <Pill ok={st.countDone} label={st.countDone ? tr('pillCounted') : tr('pillNotCounted')} />
-                <Pill ok={st.ordersOdooDirect === 0} label={fmtOrdersPill(st.ordersCount, st.ordersOdooDirect, lang)} warn={st.ordersOdooDirect > 0} />
+                {st.ordersToday === 0 && st.ordersTomorrow === 0 ? (
+                  <Pill ok label={tr('pillNoOrders')} />
+                ) : (
+                  <>
+                    {st.ordersToday > 0 && (
+                      <Pill ok={st.ordersTodayOdooDirect === 0} warn={st.ordersTodayOdooDirect > 0}
+                        label={fmtOrdersPill(tr('ordersToday'), st.ordersToday, st.ordersTodayOdooDirect, lang)} />
+                    )}
+                    {st.ordersTomorrow > 0 && (
+                      <Pill ok={st.ordersTomorrowOdooDirect === 0} warn={st.ordersTomorrowOdooDirect > 0}
+                        label={fmtOrdersPill(tr('ordersTomorrow'), st.ordersTomorrow, st.ordersTomorrowOdooDirect, lang)} />
+                    )}
+                  </>
+                )}
                 {st.transfersPending > 0 && <Pill ok={false} warn label={fmtTransfersPending(st.transfersPending, lang)} />}
               </div>
             )}
