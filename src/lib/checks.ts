@@ -366,7 +366,7 @@ export async function checkLateDeliveries(supabase: SupabaseClient): Promise<Lat
 // jamais envoyée en stock, donc jamais produite côté Odoo.
 export const STOCK_CATEGORIES = ['Macaron', 'Biscuit Voyage', 'Tiramisu'];
 
-export type StockSnapshotItem = { sku: string; name: string; qty: number; category: string | null };
+export type StockSnapshotItem = { sku: string; name: string; qty: number; category: string | null; teams: string[] };
 export type StockSnapshot = { at: string; items: StockSnapshotItem[]; error?: string };
 
 export async function collectLabStockSnapshot(supabase: SupabaseClient): Promise<StockSnapshot> {
@@ -376,12 +376,21 @@ export async function collectLabStockSnapshot(supabase: SupabaseClient): Promise
     const [quants, { data: variants }, { data: fiches }] = await Promise.all([
       getLabStockAllQuants(),
       supabase.from('lab_fiche_variants').select('sku, fiche_id').not('sku', 'is', null).limit(3000),
-      supabase.from('lab_fiche_meta').select('id, category'),
+      supabase.from('lab_fiche_meta').select('id, category, teams'),
     ]);
     const catByFiche: Record<string, string | null> = {};
-    for (const f of fiches ?? []) catByFiche[f.id] = f.category ?? null;
+    const teamsByFiche: Record<string, string[]> = {};
+    for (const f of fiches ?? []) {
+      catByFiche[f.id] = f.category ?? null;
+      teamsByFiche[f.id] = Array.isArray(f.teams) ? f.teams : [];
+    }
     const catBySku: Record<string, string | null> = {};
-    for (const v of variants ?? []) if (v.sku && !(v.sku in catBySku)) catBySku[v.sku] = catByFiche[v.fiche_id] ?? null;
+    const teamsBySku: Record<string, string[]> = {};
+    for (const v of variants ?? []) {
+      if (!v.sku || v.sku in catBySku) continue;
+      catBySku[v.sku] = catByFiche[v.fiche_id] ?? null;
+      teamsBySku[v.sku] = teamsByFiche[v.fiche_id] ?? [];
+    }
     const bySku: Record<string, { name: string; qty: number }> = {};
     for (const q of quants) bySku[q.sku] = { name: q.name, qty: q.qty };
     // Catalogued finished goods only (SKU known to the fiche system): every 3-stock-category SKU
@@ -393,7 +402,7 @@ export async function collectLabStockSnapshot(supabase: SupabaseClient): Promise
       const q = bySku[sku];
       const isStockCat = !!category && STOCK_CATEGORIES.includes(category);
       if (!isStockCat && (!q || q.qty === 0)) continue;
-      items.push({ sku, name: q?.name ?? sku, qty: q?.qty ?? 0, category });
+      items.push({ sku, name: q?.name ?? sku, qty: q?.qty ?? 0, category, teams: teamsBySku[sku] ?? [] });
     }
     items.sort((a, b) => Math.abs(b.qty) - Math.abs(a.qty));
     return { at, items };
@@ -405,7 +414,7 @@ export async function collectLabStockSnapshot(supabase: SupabaseClient): Promise
 // ── 8. Sous seuil de sécurité (3 catégories stock) ───────────────────────────
 // Les seuils EXISTENT déjà : lab_stock_safety_thresholds, saisis par les chefs dans l'onglet
 // Analytique de leur station (2026-08-21). Zéro nouvelle saisie — un SKU sans seuil n'alerte pas.
-export interface SafetyStockIssue { sku: string; name: string; category: string; qty: number; threshold: number }
+export interface SafetyStockIssue { sku: string; name: string; category: string; qty: number; threshold: number; teams: string[] }
 
 export async function checkSafetyStock(supabase: SupabaseClient, snapshot: StockSnapshot): Promise<SafetyStockIssue[]> {
   if (snapshot.error) return [];
@@ -416,7 +425,7 @@ export async function checkSafetyStock(supabase: SupabaseClient, snapshot: Stock
   for (const r of rows ?? []) thr[r.sku] = Number(r.threshold);
   return stockItems
     .filter(i => thr[i.sku] != null && i.qty < thr[i.sku])
-    .map(i => ({ sku: i.sku, name: i.name, category: i.category!, qty: i.qty, threshold: thr[i.sku] }))
+    .map(i => ({ sku: i.sku, name: i.name, category: i.category!, qty: i.qty, threshold: thr[i.sku], teams: i.teams }))
     .sort((a, b) => (a.qty / a.threshold) - (b.qty / b.threshold));
 }
 

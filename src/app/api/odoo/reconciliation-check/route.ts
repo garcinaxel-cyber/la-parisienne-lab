@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { runAllChecks } from '@/lib/checks';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { runAllChecks, type SafetyStockIssue } from '@/lib/checks';
+import { sendTeamPush, type PushPayload } from '@/lib/push-notify';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -11,6 +12,54 @@ export const maxDuration = 60;
 // writes exactly one row to lab_reconciliation_runs, even on zero issues — the admin page's
 // "last run" timestamp is how the admin knows the check is actually running, not just that it
 // once found something. Also callable by hand (no params — runAllChecks owns its own windows).
+//
+// Safety-stock push to chefs (Axel, 2026-09-12: "je voudrais egalement que les chefs recoivent
+// une notification quand un produit en stock passe sous le seuil de securite" — Macaron/Biscuit
+// Voyage/Tiramisu only, exactly the 3 categories checkSafetyStock already covers). Deliberately
+// reuses THIS run rather than a new, more frequent cron (Axel confirmed 1x/jour à 6h is enough) —
+// zero extra Odoo calls. "des que ca passe sous le seuil il y ait une notif, pas plus" (Axel) —
+// notify once per crossing, never repeat on a later day the same SKU is still low — tracked via
+// lab_safety_stock_alerts (lab_v81): a SKU already in that table is skipped, and one that's back
+// at/above threshold today is cleared from it so a later second dip notifies again. Guarded
+// behind !r.stockSnapshot.error so a transient Odoo read failure (empty safetyStock as a side
+// effect, not a real recovery) never wipes out real alert state.
+async function notifySafetyStockDrops(supabase: SupabaseClient, issues: SafetyStockIssue[]): Promise<void> {
+  try {
+    const { data: alerted } = await supabase.from('lab_safety_stock_alerts').select('sku');
+    const alertedSkus = new Set((alerted ?? []).map((r: any) => r.sku as string));
+    const currentSkus = new Set(issues.map(i => i.sku));
+
+    const recovered = Array.from(alertedSkus).filter(sku => !currentSkus.has(sku));
+    if (recovered.length) await supabase.from('lab_safety_stock_alerts').delete().in('sku', recovered);
+
+    const newlyBelow = issues.filter(i => !alertedSkus.has(i.sku));
+    if (!newlyBelow.length) return;
+
+    const byTeam = new Map<string, SafetyStockIssue[]>();
+    for (const i of newlyBelow) {
+      for (const team of i.teams.length ? i.teams : ['__no_team__']) {
+        const list = byTeam.get(team) ?? [];
+        list.push(i);
+        byTeam.set(team, list);
+      }
+    }
+    for (const [team, items] of Array.from(byTeam.entries())) {
+      if (team === '__no_team__') continue; // no team assigned on the fiche — nobody to push to
+      const shown = items.slice(0, 4).map(i => `${i.name} (${i.qty}/${i.threshold})`).join(', ');
+      const rest = items.length > 4 ? ` +${items.length - 4}` : '';
+      const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `⚠️ Dưới ngưỡng an toàn: ${shown}${rest}`, url: `/station/${team}` };
+      const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `⚠️ Below safety threshold: ${shown}${rest}`, url: `/station/${team}` };
+      await sendTeamPush(supabase, team, viPayload, enPayload);
+    }
+    await supabase.from('lab_safety_stock_alerts').upsert(
+      newlyBelow.map(i => ({ sku: i.sku, category: i.category, qty: i.qty, threshold: i.threshold, notified_at: new Date().toISOString() })),
+      { onConflict: 'sku' },
+    );
+  } catch (e: any) {
+    console.error('[reconciliation-check] safety-stock notify failed:', e?.message ?? e);
+  }
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get('secret') ?? req.headers.get('authorization')?.replace('Bearer ', '');
@@ -49,6 +98,7 @@ export async function GET(req: Request) {
       orphan_stock_count: r.orphanStock.length,
       stock_snapshot: r.stockSnapshot,
     });
+    if (!r.stockSnapshot.error) await notifySafetyStockDrops(supabase, r.safetyStock);
     return NextResponse.json({ ok: true, issue_count: totalIssues });
   } catch (e: any) {
     const msg = e?.message ?? 'Check failed';
