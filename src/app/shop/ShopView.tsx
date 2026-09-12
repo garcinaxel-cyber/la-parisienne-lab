@@ -14,6 +14,20 @@ import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-repor
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
 
+// Brand palette (Axel, 2026-09-12: "l'interface shop est pas dans le code couleur de l'app") —
+// same values as the already-rebranded surfaces (src/app/shop-manager/ShopManagerView.tsx,
+// src/app/online-orders/shared.ts). Exported so ShopTransfersTab.tsx/EventCaisseTab.tsx (which
+// already import NamePicker from here) share the exact same palette instead of redefining it.
+export const NAVY = '#1A4731';
+export const GOLD = '#C9A84C';
+export const GOLD_LIGHT = '#F0D98A';
+export const GOLD_PALE = '#FFFAEE';
+export const CREAM = '#FFF4CC';
+export const INK = '#1A2C24';
+export const BORDER = '#E0D49A';
+export const GREEN = '#15803D';
+export const RED = '#B42318';
+
 // Same result shape as /api/lab/products-search (station/inventory product picker) — reused
 // as-is here rather than writing a second search endpoint. main_image_url is already returned
 // by that route (dv?.image_url ?? f.image_url) — kept here too so the scrap picker can show a
@@ -82,13 +96,13 @@ export function NamePicker({ value, onChange, names, onManage }: {
   return (
     <div className="flex items-center gap-1.5 flex-1 min-w-0">
       <select value={value} onChange={e => onChange(e.target.value)}
-        className="flex-1 min-w-0 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }}>
+        className="flex-1 min-w-0 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }}>
         <option value="">Chọn tên…</option>
         {(names ?? []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
         {value.trim() && !(names ?? []).some(s => s.name === value) && <option value={value}>{value}</option>}
       </select>
       <button type="button" onClick={onManage}
-        className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+        className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
         aria-label="Quản lý danh sách tên" title="Quản lý danh sách tên">
         <Settings size={14} style={{ color: '#6B7280' }} />
       </button>
@@ -1010,11 +1024,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const orderCartTotal = orderCart.reduce((sum, l) => sum + l.qty * (l.priceB2c ?? 0), 0);
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#FAF8F3' }}>
-      <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: '#1f2937' }}>
+    <div className="min-h-screen" style={{ backgroundColor: CREAM }}>
+      <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: NAVY }}>
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div>
-            <div className="text-white/60 text-xs font-semibold uppercase tracking-widest">
+            <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: GOLD_LIGHT }}>
               {eventState?.inEvent ? '🎪 Event shop' : `La Parisienne Lab${readOnly ? (viewerRole === 'manager' ? '' : ' · Chế độ Admin') : ''}`}
             </div>
             <h1 className="text-white font-serif text-xl font-bold">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
@@ -1042,7 +1056,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <button onClick={handleToggleShopPush}
                   title={pushState === 'on' ? 'Tắt thông báo đẩy' : 'Bật thông báo đẩy (nhắc giờ đặt hàng, kiểm kho, giao hàng...)'}
                   className="p-2 rounded-lg hover:bg-white/10"
-                  style={{ color: pushState === 'on' ? '#7CD98C' : 'rgba(255,255,255,0.6)' }}>
+                  style={{ color: pushState === 'on' ? GREEN : 'rgba(255,255,255,0.6)' }}>
                   <Bell size={18} />
                 </button>
               )}
@@ -1056,9 +1070,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
       <div className="max-w-xl mx-auto px-4 py-4 space-y-4">
         {readOnly && viewerRole === 'admin' && (
-          <div className="rounded-xl px-3.5 py-2.5 flex items-start gap-2" style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }}>
-            <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#92400E' }} />
-            <div className="text-xs" style={{ color: '#92400E' }}>
+          <div className="rounded-xl px-3.5 py-2.5 flex items-start gap-2" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}` }}>
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#8A6D14' }} />
+            <div className="text-xs" style={{ color: '#8A6D14' }}>
               <span className="font-bold">Chế độ Admin — thao tác thay cho {shopName}.</span> Mọi xác nhận/báo cáo hao hụt ở đây được ghi thật (kể cả gửi lên Odoo), giống hệt như boutique tự làm.
             </div>
           </div>
@@ -1066,48 +1080,48 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         <div className="flex flex-wrap gap-1.5">
           <button onClick={() => setTab('deliveries')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'deliveries' ? '#1f2937' : 'white', color: tab === 'deliveries' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'deliveries' ? NAVY : 'white', color: tab === 'deliveries' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Truck size={16} /> Giao hàng
           </button>
           {eventState?.inEvent ? (
             <button onClick={() => setTab('caisse')}
               className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-              style={{ backgroundColor: tab === 'caisse' ? '#1f2937' : 'white', color: tab === 'caisse' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+              style={{ backgroundColor: tab === 'caisse' ? NAVY : 'white', color: tab === 'caisse' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
               <ShoppingBag size={16} /> Thu ngân
             </button>
           ) : (
             <button onClick={() => setTab('cakes')}
               className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-              style={{ backgroundColor: tab === 'cakes' ? '#1f2937' : 'white', color: tab === 'cakes' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+              style={{ backgroundColor: tab === 'cakes' ? NAVY : 'white', color: tab === 'cakes' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
               <Cake size={16} /> Bánh sinh nhật
             </button>
           )}
           <button onClick={() => setTab('losses')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'losses' ? '#1f2937' : 'white', color: tab === 'losses' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'losses' ? NAVY : 'white', color: tab === 'losses' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Trash2 size={16} /> Hao hụt
           </button>
           <button onClick={() => setTab('stock')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'stock' ? '#1f2937' : 'white', color: tab === 'stock' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'stock' ? NAVY : 'white', color: tab === 'stock' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <ClipboardList size={16} /> Kiểm kho
           </button>
           <button onClick={() => setTab('report')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'report' ? '#1f2937' : 'white', color: tab === 'report' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'report' ? NAVY : 'white', color: tab === 'report' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <FileText size={16} /> Báo cáo
           </button>
           <button onClick={() => setTab('order')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
-            style={{ backgroundColor: tab === 'order' ? '#1f2937' : 'white', color: tab === 'order' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'order' ? NAVY : 'white', color: tab === 'order' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Package2 size={16} /> Đặt hàng
           </button>
           <button onClick={() => setTab('transfer')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
-            style={{ backgroundColor: tab === 'transfer' ? '#1f2937' : 'white', color: tab === 'transfer' ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+            style={{ backgroundColor: tab === 'transfer' ? NAVY : 'white', color: tab === 'transfer' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <ArrowRightLeft size={16} /> Chuyển kho
             {pendingIncomingTransfers > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center" style={{ backgroundColor: '#DC2626' }}>
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center" style={{ backgroundColor: RED }}>
                 {pendingIncomingTransfers}
               </span>
             )}
@@ -1117,7 +1131,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         {loading ? (
           <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
         ) : error ? (
-          <div className="text-center py-10 text-sm font-semibold" style={{ color: '#DC2626' }}>{error}</div>
+          <div className="text-center py-10 text-sm font-semibold" style={{ color: RED }}>{error}</div>
         ) : tab === 'deliveries' ? (
           <div className="space-y-3">
             {/* Permanent reminder (Axel, 2026-09-12: "un pop up permanent en haut : vous avez
@@ -1129,18 +1143,18 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {todayDate && (
               <div className="rounded-2xl px-3.5 py-3 flex items-center gap-3"
                 style={todaysPendingLines.length
-                  ? { backgroundColor: '#FEF3C7', border: '1px solid #FCD34D' }
-                  : { backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }}>
+                  ? { backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}` }
+                  : { backgroundColor: '#EAF6EC', border: '1px solid #B7E3CC' }}>
                 {todaysPendingLines.length ? (
-                  <AlertTriangle size={18} className="shrink-0" style={{ color: '#92600A' }} />
+                  <AlertTriangle size={18} className="shrink-0" style={{ color: '#8A6D14' }} />
                 ) : (
-                  <CheckCircle2 size={18} className="shrink-0" style={{ color: '#166534' }} />
+                  <CheckCircle2 size={18} className="shrink-0" style={{ color: GREEN }} />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-bold" style={{ color: todaysPendingLines.length ? '#92600A' : '#166534' }}>
+                  <div className="text-xs font-bold" style={{ color: todaysPendingLines.length ? '#8A6D14' : GREEN }}>
                     {todaysPendingLines.length ? 'Chưa xác nhận hết' : 'Đã xác nhận hết'}
                   </div>
-                  <div className="text-[11px]" style={{ color: todaysPendingLines.length ? '#92600A' : '#166534', opacity: 0.9 }}>
+                  <div className="text-[11px]" style={{ color: todaysPendingLines.length ? '#8A6D14' : GREEN, opacity: 0.9 }}>
                     {todaysPendingLines.length
                       ? `Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng hôm nay`
                       : 'Tất cả sản phẩm giao hôm nay đã được xác nhận nhận hàng'}
@@ -1149,7 +1163,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 {todaysPendingLines.length > 0 && (
                   <button onClick={() => setConfirmAllOpen(true)} disabled={!name.trim()}
                     className="shrink-0 text-xs font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
-                    style={{ backgroundColor: '#1f2937' }}>
+                    style={{ backgroundColor: NAVY }}>
                     Xác nhận tất cả
                   </button>
                 )}
@@ -1159,34 +1173,34 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="flex gap-1.5">
               <button onClick={() => setDay('today')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
-                style={{ backgroundColor: day === 'today' ? '#F3E8B8' : 'white', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                style={{ backgroundColor: day === 'today' ? GOLD_PALE : 'white', color: INK, border: `1px solid ${BORDER}` }}>
                 Hôm nay{todayDate ? ` · ${fmtDate(todayDate)}` : ''}
               </button>
               <button onClick={() => setDay('tomorrow')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
-                style={{ backgroundColor: day === 'tomorrow' ? '#F3E8B8' : 'white', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                style={{ backgroundColor: day === 'tomorrow' ? GOLD_PALE : 'white', color: INK, border: `1px solid ${BORDER}` }}>
                 Ngày mai{tomorrowDate ? ` · ${fmtDate(tomorrowDate)}` : ''}
               </button>
             </div>
             {!filteredOrders?.length ? (
-              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
                 {day === 'today' ? 'Không có đơn giao hôm nay' : 'Không có đơn giao ngày mai'}
               </div>
             ) : (
               <>
               {day === 'today' && (
-                <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: `1px solid ${BORDER}` }}>
                   <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
                   <NamePicker value={name} onChange={setName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
               )}
               {filteredOrders.map(o => (
-              <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+              <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
                   <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
                   <div className="text-xs" style={{ color: '#6B7280' }}>{fmtDate(o.header.delivery_date)}</div>
                 </div>
-                <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                   {o.lines.map(l => {
                     const ref = refQty(l);
                     // Unconfirmed lines are always in the input state; confirmed lines flip back
@@ -1203,7 +1217,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           <div className="min-w-0 flex-1 flex items-center gap-2.5">
                             {l.image_url && (
                               <button type="button" onClick={() => setZoomImage(l.image_url)}
-                                className="shrink-0 w-11 h-11 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }}
+                                className="shrink-0 w-11 h-11 rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}
                                 aria-label="Xem ảnh sản phẩm">
                                 <img src={thumb(l.image_url, 112)} alt="" className="w-full h-full object-cover" />
                               </button>
@@ -1225,7 +1239,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             </div>
                             <div className="text-center">
                               <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Bếp</div>
-                              <div className="text-sm font-bold" style={{ color: l.qty_checked != null ? '#1f2937' : '#D1D5DB' }}>
+                              <div className="text-sm font-bold" style={{ color: l.qty_checked != null ? INK : BORDER }}>
                                 {l.qty_checked != null ? `×${l.qty_checked}` : '—'}
                               </div>
                             </div>
@@ -1233,7 +1247,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Nhận</div>
                               {!canConfirm ? (
                                 l.receipt ? (
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? GREEN : RED }}>
                                     {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
                                   </span>
                                 ) : (
@@ -1243,22 +1257,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                                 <div className="flex items-center gap-1.5">
                                   <input type="number" value={d.qty} onChange={e => updDraft(l, { qty: e.target.value })}
                                     className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
-                                    style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
-                                  {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
+                                    style={{ border: '1px solid', borderColor: isDiff ? '#EFC3BE' : BORDER }} />
+                                  {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: RED }}>{qtyNum - ref > 0 ? '+' : ''}{qtyNum - ref}</span>}
                                   <button onClick={() => requestConfirmLine(o, l)} disabled={saving === l.id || !name.trim()}
                                     className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
-                                    style={{ backgroundColor: '#16A34A' }}>
+                                    style={{ backgroundColor: GREEN }}>
                                     {saving === l.id ? <Loader2 size={13} className="animate-spin" /> : 'OK'}
                                   </button>
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-1.5">
-                                  <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: l.receipt!.status === 'ok' ? '#059669' : '#DC2626' }}>
+                                  <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: l.receipt!.status === 'ok' ? GREEN : RED }}>
                                     <CheckCircle2 size={16} /> ×{l.receipt!.qty_received ?? '?'}
-                                    {savedDiff !== 0 && <span style={{ color: '#DC2626' }}> ({savedDiff > 0 ? '+' : ''}{savedDiff})</span>}
+                                    {savedDiff !== 0 && <span style={{ color: RED }}> ({savedDiff > 0 ? '+' : ''}{savedDiff})</span>}
                                   </span>
                                   <button onClick={() => startEdit(l)}
-                                    className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                                    className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
                                     title="Sửa" aria-label="Sửa">
                                     <Pencil size={12} />
                                   </button>
@@ -1270,7 +1284,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         {isEditing && canConfirm && isDiff && (
                           <div className="mt-2">
                             <input type="text" value={d.note} onChange={e => updDraft(l, { note: e.target.value })}
-                              placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                              placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                           </div>
                         )}
                         {l.receipt && (
@@ -1290,7 +1304,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         ) : tab === 'losses' ? (
           <div className="space-y-3">
             {(
-              <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+              <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo hao hụt</div>
                 <div>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
@@ -1299,7 +1313,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <div className="relative">
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Sản phẩm</div>
                   {lossProduct ? (
-                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB', backgroundColor: '#F9FAFB' }}>
+                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: GOLD_PALE }}>
                       <span className="flex items-center gap-2 min-w-0">
                         {lossProduct.main_image_url && (
                           <button type="button" onClick={() => setZoomImage(lossProduct.main_image_url!)}
@@ -1311,23 +1325,23 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           {lossProduct.name_vi}{lossProduct.variantLabel ? ` — ${lossProduct.variantLabel}` : ''}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}
                         </span>
                       </span>
-                      <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>Đổi</button>
+                      <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: RED }}>Đổi</button>
                     </div>
                   ) : (
                     <div className="relative">
                       <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                       <input type="text" value={lossQuery} onChange={e => setLossQuery(e.target.value)}
-                        placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                        placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                       {lossQuery.trim().length >= 2 && (
                         <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
-                          style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                          style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                           {lossSearching ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                           ) : !lossResults.length ? (
                             <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
                           ) : flattenForPicker(lossResults).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
-                              className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                              className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
                               {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
                               <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                                 {p.name_vi}{p.variantLabel ? <span style={{ color: '#6B7280' }}> — {p.variantLabel}</span> : null}
@@ -1344,33 +1358,33 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <div className="flex-1">
                     <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Số lượng</div>
                     <input type="number" min={0} step="1" value={lossQty} onChange={e => setLossQty(e.target.value)}
-                      className="w-full rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                      className="w-full rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ border: `1px solid ${BORDER}` }} />
                   </div>
                   <div className="flex-[2]">
                     <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Lý do</div>
                     <select value={lossReasonId ?? ''} onChange={e => setLossReasonId(e.target.value ? Number(e.target.value) : null)}
-                      className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }}>
+                      className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }}>
                       <option value="">Chọn lý do…</option>
                       {(lossReasons ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
                 </div>
                 <input type="text" value={lossNote} onChange={e => setLossNote(e.target.value)}
-                  placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                  placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 <button onClick={addLossItem}
                   disabled={!lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
-                  style={{ backgroundColor: '#F3F4F6', color: '#1f2937', border: '1px solid #D1D5DB' }}>
+                  style={{ backgroundColor: GOLD_PALE, color: INK, border: `1px solid ${BORDER}` }}>
                   + Thêm vào danh sách
                 </button>
 
                 {lossItems.length > 0 && (
-                  <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+                  <div className="space-y-1.5 pt-1" style={{ borderTop: `1px solid ${GOLD_PALE}` }}>
                     <div className="text-xs font-bold uppercase tracking-wide pt-1.5" style={{ color: '#6B7280' }}>
                       Danh sách ({lossItems.length})
                     </div>
                     {lossItems.map(item => (
-                      <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
+                      <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD_PALE}` }}>
                         {item.product.main_image_url && (
                           <img src={thumb(item.product.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
                         )}
@@ -1380,7 +1394,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           </div>
                           <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
                         </div>
-                        <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: '#DC2626' }} aria-label="Xoá">✕</button>
+                        <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: RED }} aria-label="Xoá">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1398,7 +1412,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <button onClick={() => { if (lossItems.length === 0) addLossItem(); setPendingLoss(true); }}
                   disabled={lossSubmitting || !lossName.trim() || (lossItems.length === 0 && !(lossProduct && lossReasonId && Number(lossQty) > 0))}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
-                  style={{ backgroundColor: '#DC2626' }}>
+                  style={{ backgroundColor: RED }}>
                   {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                   {lossItems.length > 1 ? `Báo cáo hao hụt (${lossItems.length} sản phẩm)` : 'Báo cáo hao hụt'}
                 </button>
@@ -1407,15 +1421,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     Sẵn sàng báo cáo — hoặc nhấn "+ Thêm vào danh sách" để thêm sản phẩm khác trước.
                   </div>
                 )}
-                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? '#DC2626' : '#059669' }}>{lossMsg}</div>}
+                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? RED : GREEN }}>{lossMsg}</div>}
               </div>
             )}
 {dailyRecap && dailyRecap.length > 0 && (
-            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-              <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+              <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng hao hụt 7 ngày qua</div>
               </div>
-              <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+              <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {dailyRecap.map(r => (
                   <div key={r.date} className="px-4 py-2.5">
                     <div className="flex items-center justify-between">
@@ -1430,7 +1444,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         {r.products.map(p => (
                           <div key={p.productName} className="flex items-center justify-between gap-2 text-xs" style={{ color: '#6B7280' }}>
                             <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                            <span className="font-semibold shrink-0" style={{ color: '#374151' }}>×{p.qty}</span>
+                            <span className="font-semibold shrink-0" style={{ color: INK }}>×{p.qty}</span>
                           </div>
                         ))}
                       </div>
@@ -1443,19 +1457,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {lossesLoading && losses === null ? (
               <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
             ) : !losses?.length ? (
-              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
                 Chưa có báo cáo hao hụt nào
               </div>
             ) : (
               <div className="space-y-2">
                 {losses.map(l => (
-                  <div key={l.id} className="bg-white rounded-2xl p-3.5" style={{ border: '1px solid #E5E7EB' }}>
+                  <div key={l.id} className="bg-white rounded-2xl p-3.5" style={{ border: `1px solid ${BORDER}` }}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.productName} ×{l.qty}</div>
                       {l.odooScrapId ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#059669' }}><CheckCircle2 size={12} /> Odoo</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: GREEN }}><CheckCircle2 size={12} /> Odoo</span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#D97706' }}><AlertTriangle size={12} /> Chưa đồng bộ</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#8A6D14' }}><AlertTriangle size={12} /> Chưa đồng bộ</span>
                       )}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{l.reasonTagName}{l.note ? ` · ${l.note}` : ''}</div>
@@ -1467,14 +1481,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           </div>
         ) : tab === 'stock' ? (
           <div className="space-y-3">
-            <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+            <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                   Kiểm kho hôm nay{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
                 </div>
                 {stockSessionSeq >= stockLatestSessionSeq && stockSessions.some(s => s.seq === stockLatestSessionSeq) && (
                   <button type="button" onClick={() => setStockNewSessionConfirm(true)}
-                    className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1" style={{ border: '1px solid #D1D5DB', color: '#1f2937' }}>
+                    className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                     🆕 Đợt mới
                   </button>
                 )}
@@ -1493,8 +1507,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <button key={seq} type="button" onClick={() => loadStock(seq)}
                         className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1"
                         style={{
-                          backgroundColor: active ? '#1f2937' : 'white', color: active ? 'white' : '#374151',
-                          border: `1px solid ${active ? '#1f2937' : '#D1D5DB'}`,
+                          backgroundColor: active ? NAVY : 'white', color: active ? 'white' : INK,
+                          border: `1px solid ${active ? NAVY : BORDER}`,
                         }}>
                         Đợt {seq}{isLocked ? ' 🔒' : ''}
                       </button>
@@ -1508,21 +1522,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 const who = info.updatedByNames.join(', ');
                 const time = new Date(info.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                 return (
-                  <div className="rounded-lg p-2.5" style={{ backgroundColor: '#FEF3C7' }}>
-                    <div className="text-[11px] font-semibold" style={{ color: '#92400E' }}>
+                  <div className="rounded-lg p-2.5" style={{ backgroundColor: GOLD_PALE }}>
+                    <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
                       ⚠ Đợt {stockSessionSeq} đã có {info.savedCount} mục được nhập{who ? ` bởi ${who}` : ''} lúc {time}. Đây là tiếp tục đợt cũ — ô nào bạn không nhập lại sẽ giữ nguyên số cũ. Muốn đếm lại toàn bộ từ đầu? Bấm "Đợt mới" ở trên.
                     </div>
                   </div>
                 );
               })()}
               {stockNewSessionConfirm && (
-                <div className="rounded-lg p-2.5 space-y-1.5" style={{ backgroundColor: '#FEF9C3' }}>
-                  <div className="text-[11px] font-semibold" style={{ color: '#854D0E' }}>
+                <div className="rounded-lg p-2.5 space-y-1.5" style={{ backgroundColor: GOLD_PALE }}>
+                  <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
                     Bắt đầu đợt kiểm kho mới sẽ khoá đợt {stockLatestSessionSeq} lại (không sửa được nữa) — tiếp tục?
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setStockNewSessionConfirm(false)} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>Huỷ</button>
-                    <button onClick={startNewStockSession} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5 text-white" style={{ backgroundColor: '#1f2937' }}>Bắt đầu</button>
+                    <button onClick={() => setStockNewSessionConfirm(false)} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Huỷ</button>
+                    <button onClick={startNewStockSession} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5 text-white" style={{ backgroundColor: NAVY }}>Bắt đầu</button>
                   </div>
                 </div>
               )}
@@ -1535,22 +1549,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+            <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
               <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm không có trong danh sách</div>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={stockSearchQuery} onChange={e => setStockSearchQuery(e.target.value)}
-                  placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                  placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 {stockSearchQuery.trim().length >= 2 && (
                   <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
-                    style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                    style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                     {stockSearching ? (
                       <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                     ) : !stockSearchResults.length ? (
                       <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
                     ) : stockSearchResults.map(p => (
                       <button key={p.sku} onClick={() => addStockItem(p)}
-                        className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: '#F3F4F6' }}>
+                        className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
                         {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
                         <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
                       </button>
@@ -1563,22 +1577,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {stockLoading && stockLines === null ? (
               <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
             ) : !stockLines?.length ? (
-              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+              <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
                 Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng
               </div>
             ) : (
               <>
-                <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ backgroundColor: '#EFF6FF' }}>
-                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#1D4ED8' }}>💰 Valorisation kiểm kho</span>
-                  <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(stockValuationLive)}</span>
+                <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ backgroundColor: GOLD_PALE }}>
+                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#8A6D14' }}>💰 Valorisation kiểm kho</span>
+                  <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(stockValuationLive)}</span>
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
                   <button type="button" onClick={() => setStockCategoryFilter(null)}
                     className="shrink-0 inline-flex items-center gap-1 text-xs font-bold rounded-full px-3 py-1.5"
                     style={{
-                      backgroundColor: stockCategoryFilter === null ? '#1f2937' : 'white',
-                      color: stockCategoryFilter === null ? 'white' : '#374151',
-                      border: `1px solid ${stockCategoryFilter === null ? '#1f2937' : '#D1D5DB'}`,
+                      backgroundColor: stockCategoryFilter === null ? NAVY : 'white',
+                      color: stockCategoryFilter === null ? 'white' : INK,
+                      border: `1px solid ${stockCategoryFilter === null ? NAVY : BORDER}`,
                     }}>
                     Tất cả
                   </button>
@@ -1589,9 +1603,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <button key={g.category} type="button" onClick={() => setStockCategoryFilter(g.category)}
                         className="shrink-0 inline-flex items-center gap-1 text-xs font-bold rounded-full px-3 py-1.5"
                         style={{
-                          backgroundColor: active ? '#1f2937' : isComplete ? '#DCFCE7' : 'white',
-                          color: active ? 'white' : isComplete ? '#166534' : '#374151',
-                          border: `1px solid ${active ? '#1f2937' : isComplete ? '#86EFAC' : '#D1D5DB'}`,
+                          backgroundColor: active ? NAVY : isComplete ? '#EAF6EC' : 'white',
+                          color: active ? 'white' : isComplete ? GREEN : INK,
+                          border: `1px solid ${active ? NAVY : isComplete ? '#B7E3CC' : BORDER}`,
                         }}>
                         {isComplete && <Check size={12} />}
                         {g.category} ({g.filled}/{g.lines.length})
@@ -1604,14 +1618,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 {visibleStockGroups.map(g => {
                   const isComplete = g.filled === g.lines.length;
                   return (
-                  <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                    <div className="px-4 py-2" style={{ backgroundColor: isComplete ? '#DCFCE7' : '#F9FAFB' }}>
-                      <div className="text-xs font-bold uppercase tracking-wide flex items-center gap-1" style={{ color: isComplete ? '#166534' : '#6B7280' }}>
+                  <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                    <div className="px-4 py-2" style={{ backgroundColor: isComplete ? '#EAF6EC' : GOLD_PALE }}>
+                      <div className="text-xs font-bold uppercase tracking-wide flex items-center gap-1" style={{ color: isComplete ? GREEN : '#6B7280' }}>
                         {isComplete && <Check size={12} />}
                         {g.category}
                       </div>
                     </div>
-                    <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                    <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                       {g.lines.map(l => (
                         <div key={l.sku} className="px-4 py-2.5 flex items-center gap-3">
                           {l.imageUrl ? (
@@ -1620,7 +1634,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                             </button>
                           ) : (
-                            <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                            <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
@@ -1628,7 +1642,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           </div>
                           <input type="number" min={0} step="1" inputMode="decimal" disabled={stockSessionSeq < stockLatestSessionSeq}
                             value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
-                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0 disabled:opacity-50" style={{ border: '1px solid #D1D5DB' }} />
+                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0 disabled:opacity-50" style={{ border: `1px solid ${BORDER}` }} />
                         </div>
                       ))}
                     </div>
@@ -1642,7 +1656,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <button onClick={saveStockCount}
               disabled={stockSaving || !stockName.trim() || !stockLines?.length || stockSessionSeq < stockLatestSessionSeq}
               className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
-              style={{ backgroundColor: '#1f2937' }}>
+              style={{ backgroundColor: NAVY }}>
               {stockSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               Lưu kiểm kho
             </button>
@@ -1660,7 +1674,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 const t = new Date(cur.finishedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
                 return (
                   <div className="sticky bottom-3 z-20 -mx-4 px-4">
-                    <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 shadow-lg" style={{ backgroundColor: '#ECFDF5', color: '#047857', border: '1.5px solid #A7F3D0' }}>
+                    <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 shadow-lg" style={{ backgroundColor: '#EAF6EC', color: GREEN, border: '1.5px solid #B7E3CC' }}>
                       <CheckCircle2 size={14} /> Đợt {stockSessionSeq} đã hoàn tất lúc {t}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
                     </div>
                   </div>
@@ -1670,19 +1684,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <div className="sticky bottom-3 z-20 -mx-4 px-4">
                   <button onClick={finishStockCount} disabled={finishing || stockSaving || !stockName.trim()}
                     className="w-full inline-flex items-center justify-center gap-2 text-base font-bold rounded-xl px-4 py-3.5 disabled:opacity-40 shadow-lg"
-                    style={finishArmed ? { backgroundColor: '#047857', color: '#fff' } : { backgroundColor: '#047857', color: '#fff', border: '1.5px solid #047857' }}>
+                    style={finishArmed ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: GREEN, color: '#fff', border: `1.5px solid ${GREEN}` }}>
                     {finishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
                     {finishArmed ? `Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)` : `✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`}
                   </button>
                 </div>
               );
             })()}
-            {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? '#DC2626' : '#059669' }}>{stockMsg}</div>}
+            {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? RED : GREEN }}>{stockMsg}</div>}
           </div>
         ) : tab === 'report' ? (
           !selectedReportDate ? (
             <div className="space-y-3">
-              <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+              <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày · 7 ngày gần nhất</div>
                 <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
               </div>
@@ -1694,7 +1708,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   {reports.map((r, i) => (
                     <button key={r.date} onClick={() => setSelectedReportDate(r.date)}
                       className="w-full text-left bg-white rounded-2xl p-3.5 flex items-center justify-between gap-3"
-                      style={{ border: '1px solid #E5E7EB' }}>
+                      style={{ border: `1px solid ${BORDER}` }}>
                       <div className="min-w-0">
                         <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{i === 0 ? ' · Hôm nay' : ''}</div>
                         <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? '#6B7280' : '#9CA3AF' }}>
@@ -1703,13 +1717,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         </div>
                       </div>
                       {r.stockCounted && (
-                        <div className="text-sm font-bold shrink-0" style={{ color: '#1D4ED8' }}>{fmtVnd(r.stockValuationTotal)}</div>
+                        <div className="text-sm font-bold shrink-0" style={{ color: '#8A6D14' }}>{fmtVnd(r.stockValuationTotal)}</div>
                       )}
                     </button>
                   ))}
                 </div>
               )}
-              {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
+              {reportMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{reportMsg}</div>}
             </div>
           ) : (
             <div className="space-y-3">
@@ -1719,7 +1733,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </button>
 
               <div className="space-y-3">
-                <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                     Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
                   </div>
@@ -1727,32 +1741,32 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 </div>
 
                 {!dailyReport ? null : !dailyReport.stockCounted ? (
-                  <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+                  <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
                     Chưa kiểm kho ngày này.
                   </div>
                 ) : (
                   <>
-                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: `1px solid ${BORDER}` }}>
                       <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
                       <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
                     </div>
 
-                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: '1px solid #E5E7EB' }}>
+                    <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: `1px solid ${BORDER}` }}>
                       <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>💰 Valorisation kho</span>
-                      <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
+                      <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
                     </div>
 
                     <div className="space-y-3">
                       {groupStockByCategory(dailyReport.stockLines).map(g => (
-                        <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                          <div className="px-4 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                        <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                          <div className="px-4 py-2" style={{ backgroundColor: GOLD_PALE }}>
                             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{g.category}</div>
                           </div>
-                          <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                          <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                             {g.lines.map(l => (
                               <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
-                                <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? '#DC2626' : '#1f2937', fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
-                                <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? '#DC2626' : l.qty === null ? '#9CA3AF' : '#1f2937' }}>
+                                <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? RED : INK, fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
+                                <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? RED : l.qty === null ? '#9CA3AF' : INK }}>
                                   {l.qty === null ? 'Chưa kiểm' : l.qty}
                                 </span>
                               </div>
@@ -1762,8 +1776,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       ))}
                     </div>
 
-                    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                      <div className="px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                      <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
                         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                           Hao hụt ngày này{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
                         </div>
@@ -1771,11 +1785,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       {!dailyReport.losses.length ? (
                         <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt ngày này</div>
                       ) : (
-                        <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                        <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                           {dailyReport.losses.map(p => (
                             <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
                               <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                              <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
+                              <span className="text-sm font-bold shrink-0" style={{ color: RED }}>×{p.qty}</span>
                             </div>
                           ))}
                         </div>
@@ -1788,12 +1802,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               {dailyReport?.stockCounted && (
                 <button onClick={exportReportPdf} disabled={reportExporting}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
-                  style={{ backgroundColor: '#1f2937' }}>
+                  style={{ backgroundColor: NAVY }}>
                   {reportExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                   Xuất PDF
                 </button>
               )}
-              {reportMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{reportMsg}</div>}
+              {reportMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{reportMsg}</div>}
             </div>
           )
         ) : tab === 'caisse' ? (
@@ -1804,21 +1818,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         ) : tab === 'order' ? (
           <div className="space-y-3">
             {orderResult ? (
-              <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
-                <CheckCircle2 size={32} className="mx-auto" style={{ color: '#16A34A' }} />
+              <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: `1px solid ${BORDER}` }}>
+                <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
                 <div className="text-sm font-bold text-navy">Đã xác nhận đơn hàng</div>
                 <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` lúc ${orderResult.deliveryTime}` : ''}{orderResult.managerName ? ` · Quản lý: ${orderResult.managerName}` : ''}</div>
-                <div className="rounded-xl px-4 py-3" style={{ backgroundColor: '#F9FAFB' }}>
+                <div className="rounded-xl px-4 py-3" style={{ backgroundColor: GOLD_PALE }}>
                   <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã đơn Odoo</div>
-                  <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{orderResult.orderRef}</div>
+                  <div className="text-lg font-bold" style={{ color: INK }}>{orderResult.orderRef}</div>
                 </div>
-                <button onClick={newOrder} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#1f2937' }}>
+                <button onClick={newOrder} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: NAVY }}>
                   Đặt đơn khác
                 </button>
               </div>
             ) : (
               <>
-                <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
                   <div>
                     <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
                     <NamePicker value={orderCreatedByName} onChange={setOrderCreatedByName} names={staffNames} onManage={() => setShowStaffModal(true)} />
@@ -1828,43 +1842,43 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Giao hàng:</span>
                     <input type="date" value={orderDeliveryDate ?? ''} min={orderMinDate ?? undefined}
                       onChange={e => setOrderDeliveryDate(e.target.value)}
-                      className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                      className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: `1px solid ${BORDER}` }} />
                     <input type="time" value={orderDeliveryTime} onChange={e => setOrderDeliveryTime(e.target.value)}
-                      className="w-[92px] shrink-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+                      className="w-[92px] shrink-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: `1px solid ${BORDER}` }} />
                   </div>
                   {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate && !orderTomorrowOpen ? (
                     // Late-order warning (Axel, 2026-09-08): ordering for tomorrow past 14h00 is
                     // still allowed — a manager can confirm it with their PIN — but it goes
                     // against process, so this has to be impossible to miss rather than a quiet
                     // grey hint.
-                    <div className="rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' }}>
+                    <div className="rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#FBEAE8', color: RED, border: '1px solid #EFC3BE' }}>
                       ⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH và có thể ảnh hưởng đến sản xuất/giao hàng. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.
                     </div>
                   ) : (
-                    <div className="text-[11px] font-semibold" style={{ color: '#DC2626' }}>
+                    <div className="text-[11px] font-semibold" style={{ color: RED }}>
                       {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
                         ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — sau 14h00 vẫn gửi được nhưng phải có quản lý xác nhận thủ công.'
                         : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
                     </div>
                   )}
                   {orderDraftLoaded && (
-                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FEF9C3' }}>
-                      <span className="text-[11px] font-semibold truncate" style={{ color: '#854D0E' }}>
+                    <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE }}>
+                      <span className="text-[11px] font-semibold truncate" style={{ color: '#8A6D14' }}>
                         📝 Nháp {orderDraftLoaded.createdByName ? `của ${orderDraftLoaded.createdByName} · ` : ''}cập nhật {new Date(orderDraftLoaded.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: '#DC2626' }}>Xoá nháp</button>
+                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: RED }}>Xoá nháp</button>
                     </div>
                   )}
                 </div>
 
                 {!!recentOrders?.length && (
-                  <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                  <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
                     <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Đơn đã gửi (hôm nay + ngày mai)</div>
                     <div className="space-y-1.5">
                       {recentOrders.map(o => (
-                        <div key={o.orderRef} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F0FDF4' }}>
+                        <div key={o.orderRef} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#EAF6EC' }}>
                           <div className="min-w-0">
-                            <div className="text-xs font-bold truncate" style={{ color: '#166534' }}>
+                            <div className="text-xs font-bold truncate" style={{ color: GREEN }}>
                               {o.orderRef} · Giao {fmtDate(o.deliveryDate)}
                               {recentOrdersDates?.tomorrow === o.deliveryDate ? ' (ngày mai)' : recentOrdersDates?.today === o.deliveryDate ? ' (hôm nay)' : ''}
                             </div>
@@ -1878,19 +1892,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   </div>
                 )}
 
-                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>
                   {orderCategories.length > 0 && (
                     <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-0.5 px-0.5" style={{ WebkitOverflowScrolling: 'touch' }}>
                       <button onClick={() => setOrderCategoryFilter(null)}
                         className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
-                        style={{ backgroundColor: !orderCategoryFilter ? '#1f2937' : 'white', color: !orderCategoryFilter ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+                        style={{ backgroundColor: !orderCategoryFilter ? NAVY : 'white', color: !orderCategoryFilter ? 'white' : INK, border: `1px solid ${BORDER}` }}>
                         Tất cả
                       </button>
                       {orderCategories.map(cat => (
                         <button key={cat} onClick={() => setOrderCategoryFilter(prev => prev === cat ? null : cat)}
                           className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
-                          style={{ backgroundColor: orderCategoryFilter === cat ? '#1f2937' : 'white', color: orderCategoryFilter === cat ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+                          style={{ backgroundColor: orderCategoryFilter === cat ? NAVY : 'white', color: orderCategoryFilter === cat ? 'white' : INK, border: `1px solid ${BORDER}` }}>
                           {cat}
                         </button>
                       ))}
@@ -1899,11 +1913,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <div className="relative">
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                     <input type="text" value={orderSearchQuery} onChange={e => setOrderSearchQuery(e.target.value)}
-                      placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                      placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                   </div>
                   {(orderSearchQuery.trim().length >= 2 || orderCategoryFilter) && (
                     <div className="rounded-lg overflow-y-auto overscroll-contain max-h-72"
-                      style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+                      style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                       {orderSearching ? (
                         <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                       ) : !orderSearchResults.length ? (
@@ -1911,24 +1925,24 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       ) : orderSearchResults.map(p => {
                         const qtyInCart = orderCart.find(l => l.sku === p.sku)?.qty ?? 0;
                         return (
-                          <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: '#F3F4F6' }}>
+                          <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: GOLD_PALE }}>
                             {p.imageUrl ? (
                               <button type="button" onClick={() => setZoomImage(p.imageUrl!)}
                                 className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
                                 <img src={thumb(p.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                               </button>
                             ) : (
-                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />
                             )}
                             <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button onClick={() => setOrderQtyForProduct(p, qtyInCart - 1)} disabled={qtyInCart <= 0}
-                                className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: '1px solid #D1D5DB' }}>
+                                className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: `1px solid ${BORDER}` }}>
                                 <Minus size={11} />
                               </button>
                               <span className="w-5 text-center text-xs font-bold">{qtyInCart}</span>
                               <button onClick={() => setOrderQtyForProduct(p, qtyInCart + 1)}
-                                className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #D1D5DB' }}>
+                                className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}>
                                 <Plus size={11} />
                               </button>
                             </div>
@@ -1939,7 +1953,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   )}
                 </div>
 
-                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+                <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center justify-between">
                     <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tồn kho gần nhất</div>
                     {invAsOf && (
@@ -1954,11 +1968,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Chưa có dữ liệu kiểm kho hôm nay</div>
                   ) : (
                     <>
-                      <div className="flex rounded-lg p-0.5" style={{ border: '1px solid #D1D5DB' }}>
+                      <div className="flex rounded-lg p-0.5" style={{ border: `1px solid ${BORDER}` }}>
                         {([['all', 'Tất cả'], ['in', 'Còn hàng'], ['out', 'Hết hàng']] as const).map(([k, label]) => (
                           <button key={k} onClick={() => setInvFilter(k)}
                             className="flex-1 text-center text-[11px] font-semibold rounded-md py-1.5"
-                            style={{ backgroundColor: invFilter === k ? '#1f2937' : 'transparent', color: invFilter === k ? 'white' : '#6B7280' }}>
+                            style={{ backgroundColor: invFilter === k ? NAVY : 'transparent', color: invFilter === k ? 'white' : '#6B7280' }}>
                             {label}
                           </button>
                         ))}
@@ -1966,18 +1980,18 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="relative">
                         <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                         <input type="text" value={invQuery} onChange={e => setInvQuery(e.target.value)}
-                          placeholder="Lọc theo tên…" className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+                          placeholder="Lọc theo tên…" className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                       </div>
-                      <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: '1px solid #F3F4F6' }}>
+                      <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: `1px solid ${GOLD_PALE}` }}>
                         {invLevels
                           .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
                           .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
                           .slice(0, 80)
                           .map(l => (
-                            <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: '#F3F4F6' }}>
+                            <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: GOLD_PALE }}>
                               <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
                               <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
-                                style={{ color: l.qty > 0 ? '#15803D' : '#B42318', backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FDECEC' }}>
+                                style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FBEAE8' }}>
                                 {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
                               </span>
                             </div>
@@ -1988,12 +2002,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 </div>
 
                 {!orderCart.length ? (
-                  <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: '1px solid #E5E7EB' }}>
+                  <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: `1px solid ${BORDER}` }}>
                     Giỏ hàng trống — tìm và thêm sản phẩm ở trên
                   </div>
                 ) : (
-                  <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-                    <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+                  <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                    <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                       {orderCart.map(l => (
                         <div key={l.sku} className="px-4 py-2.5 space-y-1.5">
                           <div className="flex items-center gap-2.5">
@@ -2003,24 +2017,24 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                                 <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                               </button>
                             ) : (
-                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />
+                              <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />
                             )}
                             <span className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
-                            <button onClick={() => removeOrderItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
+                            <button onClick={() => removeOrderItem(l.sku)} className="shrink-0"><Trash2 size={14} style={{ color: RED }} /></button>
                           </div>
                           <div className="flex items-center gap-2">
                             <button onClick={() => updateOrderQty(l.sku, l.qty - 1)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}>
+                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: `1px solid ${BORDER}` }}>
                               <Minus size={12} />
                             </button>
                             <input type="number" value={l.qty} onChange={e => updateOrderQty(l.sku, Number(e.target.value))}
-                              className="w-14 text-center rounded-lg py-1 text-sm font-bold shrink-0" style={{ border: '1px solid #D1D5DB' }} />
+                              className="w-14 text-center rounded-lg py-1 text-sm font-bold shrink-0" style={{ border: `1px solid ${BORDER}` }} />
                             <button onClick={() => updateOrderQty(l.sku, l.qty + 1)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}>
+                              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: `1px solid ${BORDER}` }}>
                               <Plus size={12} />
                             </button>
                             <input type="text" value={l.note} onChange={e => updateOrderNote(l.sku, e.target.value)}
-                              placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+                              placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                           </div>
                         </div>
                       ))}
@@ -2031,16 +2045,16 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 {orderCart.some(l => l.qty > 0) && (
                   <div className="flex items-center justify-between px-1">
                     <span className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tổng giá trị đơn hàng</span>
-                    <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(orderCartTotal)}</span>
+                    <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(orderCartTotal)}</span>
                   </div>
                 )}
 
-                {orderMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{orderMsg}</div>}
+                {orderMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{orderMsg}</div>}
 
                 <div className="flex gap-2">
                   <button onClick={saveOrderDraft} disabled={!orderCart.some(l => l.qty > 0) || !orderCreatedByName.trim() || orderDraftSaving}
                     className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 disabled:opacity-40"
-                    style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                    style={{ border: `1px solid ${BORDER}`, color: INK }}>
                     {orderDraftSaving ? <Loader2 size={14} className="animate-spin" /> : null}
                     Lưu nháp
                   </button>
@@ -2048,7 +2062,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       banner above is the deterrent now, not a disabled button (Axel, 2026-09-08). */}
                   <button onClick={openOrderConfirm} disabled={!orderCart.some(l => l.qty > 0) || orderSubmitting}
                     className="flex-[2] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
-                    style={{ backgroundColor: '#1f2937' }}>
+                    style={{ backgroundColor: NAVY }}>
                     {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                     Xác nhận đơn hàng
                   </button>
@@ -2058,35 +2072,35 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           </div>
         ) : (
           !cakes?.length ? (
-            <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+            <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
               Chưa có bánh sinh nhật nào
             </div>
           ) : (
             <div className="space-y-2.5">
               {cakes.map(c => (
-                <div key={c.id} className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
+                <div key={c.id} className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-bold text-navy">{c.name} ×{c.qty}</div>
                     <span className="inline-flex items-center gap-1 text-xs font-bold shrink-0"
-                      style={{ color: c.status === 'confirmed' ? '#059669' : c.status === 'cancelled' ? '#DC2626' : '#D97706' }}>
+                      style={{ color: c.status === 'confirmed' ? GREEN : c.status === 'cancelled' ? RED : '#8A6D14' }}>
                       {c.status === 'confirmed' ? <CheckCircle2 size={14} /> : c.status === 'cancelled' ? <AlertTriangle size={14} /> : <Clock size={14} />}
                       {c.status === 'confirmed' ? 'Đã xác nhận' : c.status === 'cancelled' ? 'Đã huỷ' : 'Đang chờ'}
                     </span>
                   </div>
                   <div className="text-xs mt-0.5" style={{ color: '#9CA3AF' }}>{fmtDate(c.deliveryDate)}{c.readyTime ? ` · ${c.readyTime}` : ''}</div>
-                  {c.cancelReason && <div className="text-xs mt-1 font-semibold" style={{ color: '#DC2626' }}>{c.cancelReason}</div>}
-                  <div className="mt-2 pt-2 space-y-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+                  {c.cancelReason && <div className="text-xs mt-1 font-semibold" style={{ color: RED }}>{c.cancelReason}</div>}
+                  <div className="mt-2 pt-2 space-y-1" style={{ borderTop: `1px solid ${GOLD_PALE}` }}>
                     {c.customerName && (
-                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><User size={12} /> {c.customerName}</div>
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: INK }}><User size={12} /> {c.customerName}</div>
                     )}
                     {c.customerPhone && (
-                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><Phone size={12} /> {c.customerPhone}</div>
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: INK }}><Phone size={12} /> {c.customerPhone}</div>
                     )}
                     {c.deliveryAddress && (
-                      <div className="text-xs flex items-center gap-1.5" style={{ color: '#374151' }}><MapPin size={12} /> {c.deliveryAddress}</div>
+                      <div className="text-xs flex items-center gap-1.5" style={{ color: INK }}><MapPin size={12} /> {c.deliveryAddress}</div>
                     )}
                     {c.note && (
-                      <div className="text-xs flex items-start gap-1.5" style={{ color: '#B45309' }}><StickyNote size={12} className="mt-0.5 shrink-0" /> {c.note}</div>
+                      <div className="text-xs flex items-start gap-1.5" style={{ color: '#8A6D14' }}><StickyNote size={12} className="mt-0.5 shrink-0" /> {c.note}</div>
                     )}
                     {!c.customerName && !c.customerPhone && !c.deliveryAddress && !c.note && (
                       <div className="text-xs" style={{ color: '#9CA3AF' }}>Không có thông tin bổ sung</div>
@@ -2114,21 +2128,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận nhận hàng</div>
             <div className="flex items-center gap-3">
               {pendingReceipt.line.image_url && (
-                <img src={thumb(pendingReceipt.line.image_url, 128)} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: '1px solid #E5E7EB' }} />
+                <img src={thumb(pendingReceipt.line.image_url, 128)} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: `1px solid ${BORDER}` }} />
               )}
               <div className="min-w-0">
                 <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{pendingReceipt.line.product_name_vi}</div>
                 <div className="text-xs" style={{ color: '#9CA3AF' }}>Đơn {pendingReceipt.order.header.order_ref}</div>
               </div>
             </div>
-            <div className="rounded-xl p-3 space-y-1.5" style={{ backgroundColor: '#F9FAFB' }}>
+            <div className="rounded-xl p-3 space-y-1.5" style={{ backgroundColor: GOLD_PALE }}>
               <div className="flex items-center justify-between text-sm">
                 <span style={{ color: '#6B7280' }}>Bếp giao</span>
                 <span className="font-bold">×{refQty(pendingReceipt.line)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span style={{ color: '#6B7280' }}>Bạn xác nhận</span>
-                <span className="font-bold" style={{ color: pendingReceipt.qty !== refQty(pendingReceipt.line) ? '#DC2626' : '#1f2937' }}>
+                <span className="font-bold" style={{ color: pendingReceipt.qty !== refQty(pendingReceipt.line) ? RED : INK }}>
                   {pendingReceipt.qty === null ? '—' : `×${pendingReceipt.qty}`}
                 </span>
               </div>
@@ -2138,12 +2152,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <div className="flex gap-2">
               <button onClick={() => setPendingReceipt(null)}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                 Huỷ
               </button>
               <button
                 onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note); }}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#16A34A' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
                 Xác nhận
               </button>
             </div>
@@ -2170,26 +2184,26 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 const isZero = p.qtyNum === 0;
                 const isDiff = p.qtyNum !== null && p.qtyNum !== ref;
                 const untouched = !p.touched;
-                const bg = untouched ? '#FFFBEB' : (isZero || isDiff) ? '#FEF2F2' : '#F9FAFB';
-                const border = untouched ? '#FBBF24' : (isZero || isDiff) ? '#FCA5A5' : 'transparent';
+                const bg = untouched ? GOLD_PALE : (isZero || isDiff) ? '#FBEAE8' : GOLD_PALE;
+                const border = untouched ? GOLD : (isZero || isDiff) ? '#EFC3BE' : 'transparent';
                 return (
                   <div key={p.line.id} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: bg, border: `1px solid ${border}` }}>
                     {p.line.image_url ? (
                       <img src={thumb(p.line.image_url, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
                     ) : (
-                      <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
+                      <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: BORDER }} />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.line.product_name_vi}</div>
                       {untouched ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: '#92400E' }}>● Chưa kiểm tra — giữ nguyên số lượng Bếp giao</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: '#8A6D14' }}>● Chưa kiểm tra — giữ nguyên số lượng Bếp giao</div>
                       ) : isZero ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: '#DC2626' }}>● Không nhận được</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>● Không nhận được</div>
                       ) : isDiff ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: '#DC2626' }}>● Chênh lệch {(p.qtyNum! - ref) > 0 ? '+' : ''}{p.qtyNum! - ref}</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>● Chênh lệch {(p.qtyNum! - ref) > 0 ? '+' : ''}{p.qtyNum! - ref}</div>
                       ) : null}
                     </div>
-                    <span className="text-sm font-bold shrink-0" style={{ color: isZero ? '#DC2626' : '#1f2937' }}>
+                    <span className="text-sm font-bold shrink-0" style={{ color: isZero ? RED : INK }}>
                       {p.qtyNum === null ? '—' : `×${p.qtyNum}`}
                     </span>
                   </div>
@@ -2198,11 +2212,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <div className="flex gap-2">
               <button onClick={() => setConfirmAllOpen(false)}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                 Quay lại
               </button>
               <button onClick={doSubmitAllPending} disabled={confirmAllSubmitting || !todaysPendingLines.length}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {confirmAllSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
                 Xác nhận toàn bộ
               </button>
@@ -2223,9 +2237,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <div className="space-y-1.5">
               {lossItems.map(item => (
-                <div key={item.id} className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#FEF2F2' }}>
+                <div key={item.id} className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#FBEAE8' }}>
                   {item.product.main_image_url && (
-                    <img src={thumb(item.product.main_image_url, 112)} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #FCA5A5' }} />
+                    <img src={thumb(item.product.main_image_url, 112)} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" style={{ border: '1px solid #EFC3BE' }} />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -2233,18 +2247,18 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                     <div className="text-xs" style={{ color: '#6B7280' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
                   </div>
-                  <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{item.qty}</span>
+                  <span className="text-sm font-bold shrink-0" style={{ color: RED }}>×{item.qty}</span>
                 </div>
               ))}
             </div>
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Thao tác này gửi thẳng lên Odoo và không thể huỷ.</div>
             <div className="flex gap-2">
               <button onClick={() => setPendingLoss(false)}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                 Huỷ
               </button>
               <button onClick={() => { setPendingLoss(false); submitLoss(); }}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#DC2626' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: RED }}>
                 Xác nhận
               </button>
             </div>
@@ -2266,11 +2280,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <div className="space-y-1.5">
               {orderCart.filter(l => l.qty > 0).map(l => (
-                <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
+                <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: GOLD_PALE }}>
                   {l.imageUrl ? (
                     <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
                   ) : (
-                    <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />
+                    <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: BORDER }} />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
@@ -2282,7 +2296,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <div className="flex items-center justify-between px-1">
               <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng giá trị</span>
-              <span className="text-sm font-bold" style={{ color: '#1D4ED8' }}>{fmtVnd(orderCartTotal)}</span>
+              <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(orderCartTotal)}</span>
             </div>
             <div>
               <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Mã PIN quản lý</div>
@@ -2291,17 +2305,17 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 onKeyDown={e => { if (e.key === 'Enter') confirmOrder(); }}
                 placeholder="Mã PIN" autoFocus
                 className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold"
-                style={{ border: '1px solid #D1D5DB' }} />
-              {orderConfirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: '#DC2626' }}>{orderConfirmMsg}</div>}
+                style={{ border: `1px solid ${BORDER}` }} />
+              {orderConfirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: RED }}>{orderConfirmMsg}</div>}
             </div>
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.</div>
             <div className="flex gap-2">
               <button onClick={() => { setOrderPendingConfirm(false); setOrderConfirmPin(''); setOrderConfirmMsg(null); }}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                 Huỷ
               </button>
               <button onClick={confirmOrder} disabled={orderSubmitting || !orderConfirmPin.trim()}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
                 Xác nhận
               </button>
@@ -2321,10 +2335,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="flex items-center gap-1.5">
               <input type="text" value={newStaffInput} onChange={e => setNewStaffInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') addStaffName(); }}
-                placeholder="Tên nhân viên mới…" className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                placeholder="Tên nhân viên mới…" className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
               <button onClick={addStaffName} disabled={staffBusy === 'add' || !newStaffInput.trim()}
                 className="w-9 h-9 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
-                style={{ backgroundColor: '#16A34A' }} aria-label="Thêm">
+                style={{ backgroundColor: GREEN }} aria-label="Thêm">
                 {staffBusy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={16} />}
               </button>
             </div>
@@ -2332,19 +2346,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               {!staffNames?.length ? (
                 <div className="text-xs text-center py-3" style={{ color: '#9CA3AF' }}>Chưa có nhân viên nào</div>
               ) : staffNames.map(s => (
-                <div key={s.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #F3F4F6' }}>
+                <div key={s.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD_PALE}` }}>
                   {editingStaffId === s.id ? (
                     <>
                       <input type="text" value={editStaffDraft} onChange={e => setEditStaffDraft(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') saveStaffRename(s.id); }} autoFocus
-                        className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                        className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                       <button onClick={() => saveStaffRename(s.id)} disabled={staffBusy === s.id || !editStaffDraft.trim()}
                         className="w-7 h-7 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
-                        style={{ backgroundColor: '#16A34A' }} aria-label="Lưu">
+                        style={{ backgroundColor: GREEN }} aria-label="Lưu">
                         {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />}
                       </button>
                       <button onClick={() => setEditingStaffId(null)}
-                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }} aria-label="Huỷ">
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }} aria-label="Huỷ">
                         <X size={13} />
                       </button>
                     </>
@@ -2352,13 +2366,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <>
                       <span className="flex-1 min-w-0 text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{s.name}</span>
                       <button onClick={() => { setEditingStaffId(s.id); setEditStaffDraft(s.name); }}
-                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: '1px solid #D1D5DB' }}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
                         aria-label="Sửa" title="Sửa">
                         <Pencil size={12} />
                       </button>
                       <button onClick={() => deleteStaffName(s.id)} disabled={staffBusy === s.id}
                         className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0 disabled:opacity-40"
-                        style={{ border: '1px solid #FCA5A5', color: '#DC2626' }} aria-label="Xoá" title="Xoá">
+                        style={{ border: '1px solid #EFC3BE', color: RED }} aria-label="Xoá" title="Xoá">
                         {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                       </button>
                     </>
@@ -2367,17 +2381,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               ))}
             </div>
             <button onClick={() => setShowStaffModal(false)}
-              className="w-full text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>
+              className="w-full text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
               Đóng
             </button>
           </div>
         </div>
       )}
 
-      {/* Discreet FAB into an active event (Axel, 2026-09-12) — shown whenever at least one
-          event is currently open and this session isn't already inside one (a real shop login
-          or an admin/manager preview alike). */}
-      {eventState?.hasActiveEvent && !eventState?.inEvent && (
+      {/* Discreet FAB into an active event (Axel, 2026-09-12). Restricted to the admin/manager
+          PREVIEW only for now (readOnly) — Axel, 2026-09-12: "on peut mettre tout ce qu'on a
+          fait pour l'event en preview ? pour pas que le shop se demande ce qu'est ce bouton"
+          (still testing the event feature; real shop staff shouldn't see an unfamiliar button
+          yet). Purely additive/UI-only — nothing else changes for a real shop session, since it
+          simply can never reach this button or the PIN modal it opens. Drop the `readOnly &&`
+          once the event feature is ready to launch to real shops too. */}
+      {readOnly && eventState?.hasActiveEvent && !eventState?.inEvent && (
         <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
           className="fixed right-4 bottom-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg z-20"
           style={{ backgroundColor: '#FFFAEE', border: '1.5px solid #E0D49A' }} aria-label="Vào event">
@@ -2400,7 +2418,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               type="tel" inputMode="numeric" autoFocus placeholder="••••"
               className="w-full text-center text-2xl font-bold tracking-[0.3em] rounded-xl px-3 py-2.5 mt-3"
               style={{ border: '1px solid #E0D49A', backgroundColor: '#FFFAEE', color: '#1A2C24' }} />
-            {pinError && <div className="text-xs font-semibold mt-2" style={{ color: '#DC2626' }}>{pinError}</div>}
+            {pinError && <div className="text-xs font-semibold mt-2" style={{ color: RED }}>{pinError}</div>}
             <button onClick={submitPin} disabled={pinSubmitting || !pinInput}
               className="w-full text-sm font-bold rounded-xl px-3 py-2.5 mt-3 text-white disabled:opacity-50"
               style={{ backgroundColor: '#1A4731' }}>

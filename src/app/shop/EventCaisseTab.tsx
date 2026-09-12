@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Minus, Plus, CheckCircle2, Loader2 } from 'lucide-react';
 import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, type EventCaisseProduct, type EventSaleHistoryLine } from './actions';
+import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 
 // "Thu ngân" — the event's mini cash register (Axel, 2026-09-12): "une sorte de mini caisse
 // enregistreuse qui n'aurait aucun impact odoo". Standalone tab, same self-fetching pattern as
@@ -58,12 +59,12 @@ export default function EventCaisseTab() {
 
   return (
     <div className="space-y-3 pb-20">
-      <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#6D28D9' }}>
+      <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}`, color: '#8A6D14' }}>
         📦 Chỉ hiện sản phẩm đã nhập/kiểm kho tại event — không thể bán quá số thực có.
       </div>
 
       {!products.length ? (
-        <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: '1px solid #E5E7EB', color: '#9CA3AF' }}>
+        <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>
           Chưa có sản phẩm nào để bán — kiểm kho trước ở tab &quot;Kiểm kho&quot;.
         </div>
       ) : (
@@ -72,16 +73,16 @@ export default function EventCaisseTab() {
             const qty = cart[p.sku] ?? 0;
             const remaining = p.available - qty;
             return (
-              <div key={p.sku} className="bg-white rounded-2xl p-3" style={{ border: '1px solid #E5E7EB' }}>
-                <div className="text-[13px] font-bold leading-tight" style={{ color: '#1f2937' }}>{p.name}</div>
+              <div key={p.sku} className="bg-white rounded-2xl p-3" style={{ border: `1px solid ${BORDER}` }}>
+                <div className="text-[13px] font-bold leading-tight" style={{ color: INK }}>{p.name}</div>
                 <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>Còn <b>{remaining}</b></div>
-                <div className="text-xs font-extrabold mt-1" style={{ color: '#92600A' }}>{fmt(p.unitPrice)}</div>
-                <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: '#F9FAFB' }}>
-                  <button onClick={() => changeQty(p.sku, -1, p.available)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: '#1f2937' }}>
+                <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
+                <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
+                  <button onClick={() => changeQty(p.sku, -1, p.available)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
                     <Minus size={14} />
                   </button>
                   <span className="text-sm font-extrabold tabular-nums">{qty}</span>
-                  <button onClick={() => changeQty(p.sku, 1, p.available)} disabled={remaining <= 0} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center disabled:opacity-40" style={{ backgroundColor: '#1f2937' }}>
+                  <button onClick={() => changeQty(p.sku, 1, p.available)} disabled={remaining <= 0} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center disabled:opacity-40" style={{ backgroundColor: NAVY }}>
                     <Plus size={14} />
                   </button>
                 </div>
@@ -92,7 +93,7 @@ export default function EventCaisseTab() {
       )}
 
       {msg && (
-        <div className="text-xs font-semibold text-center rounded-lg px-3 py-2" style={{ backgroundColor: msg.startsWith('✓') ? '#EAF6EC' : '#FEF2F2', color: msg.startsWith('✓') ? '#15803D' : '#DC2626' }}>
+        <div className="text-xs font-semibold text-center rounded-lg px-3 py-2" style={{ backgroundColor: msg.startsWith('✓') ? '#EAF6EC' : '#FBEAE8', color: msg.startsWith('✓') ? GREEN : RED }}>
           {msg}
         </div>
       )}
@@ -103,10 +104,10 @@ export default function EventCaisseTab() {
           {history.map((s, i) => (
             <div key={i} className="flex items-center justify-between bg-white rounded-xl px-3 py-2" style={{ border: '1px solid #F0EAC6' }}>
               <div>
-                <div className="text-xs font-bold" style={{ color: '#1f2937' }}>{s.label}</div>
+                <div className="text-xs font-bold" style={{ color: INK }}>{s.label}</div>
                 <div className="text-[10px]" style={{ color: '#9CA3AF' }}>{s.time}</div>
               </div>
-              <div className="text-xs font-extrabold" style={{ color: '#15803D' }}>+{fmt(s.amount)}</div>
+              <div className="text-xs font-extrabold" style={{ color: GREEN }}>+{fmt(s.amount)}</div>
             </div>
           ))}
         </div>

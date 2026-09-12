@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ArrowRightLeft, CheckCircle2, Loader2, Minus, Plus, Search, Send, Trash2, X, AlertTriangle, Clock } from 'lucide-react';
 import type { ShopStaffName, ShopManagerCatalogProduct, ShopTransfer } from './actions';
 import { thumb } from '@/lib/img-thumb';
-import { NamePicker } from './ShopView';
+import { NamePicker, NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 
 // "Chuyển kho" — inter-shop stock transfers (Axel, 2026-09-07). Same visual language as the
 // Đặt hàng tab (category chips + search + cart, manager PIN modal), split into: incoming
@@ -165,14 +165,14 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
   const history = (transfers ?? []).filter(t => t.status !== 'sent');
 
   const statusBadge = (t: ShopTransfer) => t.status === 'received'
-    ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>ĐÃ NHẬN</span>
+    ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#EAF6EC', color: GREEN }}>ĐÃ NHẬN</span>
     : t.status === 'cancelled'
-      ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#F3F4F6', color: '#6B7280' }}>ĐÃ HUỶ</span>
-      : <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>CHỜ NHẬN</span>;
+      ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: GOLD_PALE, color: '#6B7280' }}>ĐÃ HUỶ</span>
+      : <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>CHỜ NHẬN</span>;
 
   if (!canTransfer && peers !== null) {
     return (
-      <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>
+      <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
         Cửa hàng của bạn chưa được bật tính năng chuyển kho.
       </div>
     );
@@ -181,7 +181,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
   return (
     <div className="space-y-3">
       {globalMsg && (
-        <div className="flex items-start justify-between gap-2 rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0', color: '#166534' }}>
+        <div className="flex items-start justify-between gap-2 rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: '#EAF6EC', border: '1px solid #B7E3CC', color: GREEN }}>
           <span>{globalMsg}</span>
           <button onClick={() => setGlobalMsg(null)}><X size={14} /></button>
         </div>
@@ -190,18 +190,18 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
       {/* ── Incoming, waiting for this shop ── */}
       {incomingPending.length > 0 && (
         <div className="space-y-2">
-          <div className="text-xs font-bold uppercase tracking-wide px-1" style={{ color: '#92400E' }}>📥 Nhận về — {incomingPending.length} phiếu chờ nhận</div>
+          <div className="text-xs font-bold uppercase tracking-wide px-1" style={{ color: '#8A6D14' }}>📥 Nhận về — {incomingPending.length} phiếu chờ nhận</div>
           {incomingPending.map(t => (
-            <div key={t.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #FCD34D' }}>
-              <div className="px-4 py-2.5 flex items-center justify-between gap-2" style={{ backgroundColor: '#FFFBEB' }}>
+            <div key={t.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${GOLD}` }}>
+              <div className="px-4 py-2.5 flex items-center justify-between gap-2" style={{ backgroundColor: GOLD_PALE }}>
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-navy truncate">Từ {shortShop(t.fromShop)} · {t.ref}</div>
                   <div className="text-[11px]" style={{ color: '#6B7280' }}>Gửi {fmtDT(t.sentAt)}{t.sentByName ? ` · ${t.sentByName}` : ''}{t.odooPickingName ? ` · Odoo ${t.odooPickingName}` : ''}</div>
                 </div>
                 <span className="text-xs font-bold shrink-0">{t.lineCount} SP · {t.unitCount} cái</span>
               </div>
-              {t.note && <div className="px-4 py-1.5 text-xs" style={{ color: '#6B7280', borderTop: '1px solid #FEF3C7' }}>📝 {t.note}</div>}
-              <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+              {t.note && <div className="px-4 py-1.5 text-xs" style={{ color: '#6B7280', borderTop: `1px solid ${GOLD_PALE}` }}>📝 {t.note}</div>}
+              <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {t.lines.map(l => {
                   const v = recvValue(t, l.sku, l.qtySent);
                   const diff = v !== l.qtySent;
@@ -209,28 +209,28 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                     <div key={l.id} className="px-4 py-2 flex items-center gap-2.5">
                       {l.imageUrl ? (
                         <button type="button" onClick={() => setZoomImage(l.imageUrl!)} className="shrink-0 w-9 h-9 rounded overflow-hidden"><img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" /></button>
-                      ) : <div className="shrink-0 w-9 h-9 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
+                      ) : <div className="shrink-0 w-9 h-9 rounded" style={{ backgroundColor: GOLD_PALE }} />}
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                         <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Gửi: {l.qtySent}{l.note ? ` · ${l.note}` : ''}</div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => setRecv(t, l.sku, v - 1, l.qtySent)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ border: '1px solid #D1D5DB' }}><Minus size={12} /></button>
+                        <button onClick={() => setRecv(t, l.sku, v - 1, l.qtySent)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}><Minus size={12} /></button>
                         <input type="number" value={v} min={0} max={l.qtySent} onChange={e => setRecv(t, l.sku, Number(e.target.value), l.qtySent)}
-                          className="w-12 text-center rounded-lg py-1 text-sm font-bold" style={{ border: `1px solid ${diff ? '#F59E0B' : '#D1D5DB'}`, backgroundColor: diff ? '#FFFBEB' : 'white' }} />
-                        <button onClick={() => setRecv(t, l.sku, v + 1, l.qtySent)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ border: '1px solid #D1D5DB' }}><Plus size={12} /></button>
+                          className="w-12 text-center rounded-lg py-1 text-sm font-bold" style={{ border: `1px solid ${diff ? GOLD : BORDER}`, backgroundColor: diff ? GOLD_PALE : 'white' }} />
+                        <button onClick={() => setRecv(t, l.sku, v + 1, l.qtySent)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}><Plus size={12} /></button>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="px-4 py-2.5 space-y-2" style={{ borderTop: '1px solid #F3F4F6' }}>
+              <div className="px-4 py-2.5 space-y-2" style={{ borderTop: `1px solid ${GOLD_PALE}` }}>
                 <div>
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Người nhận</div>
                   <NamePicker value={receiverName} onChange={setReceiverName} names={staffNames} onManage={onManageStaff} />
                 </div>
                 <button onClick={() => { setRecvMsg(null); setRecvConfirm(t); }} disabled={!receiverName.trim()}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+                  className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                   <CheckCircle2 size={14} /> Xác nhận đã nhận hàng
                 </button>
               </div>
@@ -244,15 +244,15 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
         <div className="space-y-2">
           <div className="text-xs font-bold uppercase tracking-wide px-1" style={{ color: '#6B7280' }}>📤 Đã gửi — chờ kho nhận xác nhận</div>
           {outgoingPending.map(t => (
-            <div key={t.id} className="bg-white rounded-2xl px-4 py-3 space-y-1.5" style={{ border: '1px solid #E5E7EB' }}>
+            <div key={t.id} className="bg-white rounded-2xl px-4 py-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-bold text-navy truncate">→ {shortShop(t.toShop)} · {t.ref}</div>
                 {statusBadge(t)}
               </div>
               <div className="text-[11px]" style={{ color: '#6B7280' }}>Gửi {fmtDT(t.sentAt)}{t.sentByName ? ` · ${t.sentByName}` : ''} · {t.lineCount} SP · {t.unitCount} cái{t.odooPickingName ? ` · Odoo ${t.odooPickingName}` : ''}</div>
-              <div className="text-xs" style={{ color: '#374151' }}>{t.lines.map(l => `${l.name} ×${l.qtySent}`).join(' · ')}</div>
+              <div className="text-xs" style={{ color: INK }}>{t.lines.map(l => `${l.name} ×${l.qtySent}`).join(' · ')}</div>
               <button onClick={() => setCancelAsk(t)} disabled={cancelling === t.id}
-                className="text-xs font-bold inline-flex items-center gap-1" style={{ color: '#DC2626' }}>
+                className="text-xs font-bold inline-flex items-center gap-1" style={{ color: RED }}>
                 {cancelling === t.id ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Huỷ phiếu chuyển
               </button>
             </div>
@@ -262,26 +262,26 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
 
       {/* ── New outgoing transfer ── */}
       {result ? (
-        <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: '1px solid #E5E7EB' }}>
-          <CheckCircle2 size={32} className="mx-auto" style={{ color: '#16A34A' }} />
+        <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: `1px solid ${BORDER}` }}>
+          <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
           <div className="text-sm font-bold text-navy">Đã gửi phiếu chuyển kho</div>
           <div className="text-xs" style={{ color: '#6B7280' }}>→ {result.transfer.toShop} · {result.transfer.lineCount} SP · {result.transfer.unitCount} cái</div>
-          <div className="rounded-xl px-4 py-3" style={{ backgroundColor: '#F9FAFB' }}>
+          <div className="rounded-xl px-4 py-3" style={{ backgroundColor: GOLD_PALE }}>
             <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã phiếu</div>
-            <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{result.transfer.ref}</div>
+            <div className="text-lg font-bold" style={{ color: INK }}>{result.transfer.ref}</div>
             {result.transfer.odooPickingName && <div className="text-xs" style={{ color: '#6B7280' }}>Odoo: {result.transfer.odooPickingName}</div>}
           </div>
           {result.assigned === false && (
-            <div className="text-[11px] text-left rounded-lg px-3 py-2" style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
+            <div className="text-[11px] text-left rounded-lg px-3 py-2" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
               ⚠ Odoo chưa đủ tồn kho để giữ hàng cho phiếu này — hàng vẫn gửi bình thường; kho nhận xác nhận số lượng thật khi nhận.
             </div>
           )}
           <div className="text-xs" style={{ color: '#6B7280' }}>Kho Odoo sẽ cập nhật khi {shortShop(result.transfer.toShop)} xác nhận đã nhận.</div>
-          <button onClick={() => setResult(null)} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#1f2937' }}>Tạo phiếu khác</button>
+          <button onClick={() => setResult(null)} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: NAVY }}>Tạo phiếu khác</button>
         </div>
       ) : (
         <>
-          <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: '1px solid #E5E7EB' }}>
+          <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>📤 Gửi đi — phiếu chuyển kho mới</div>
             <div>
               <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Kho nhận</div>
@@ -289,7 +289,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 {peers === null ? <span className="text-xs" style={{ color: '#9CA3AF' }}>Đang tải…</span> : peers.map(p => (
                   <button key={p} onClick={() => setToShop(prev => prev === p ? null : p)}
                     className="text-xs font-semibold rounded-full px-3 py-1.5"
-                    style={{ backgroundColor: toShop === p ? '#1f2937' : 'white', color: toShop === p ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>
+                    style={{ backgroundColor: toShop === p ? NAVY : 'white', color: toShop === p ? 'white' : INK, border: `1px solid ${BORDER}` }}>
                     {shortShop(p)}
                   </button>
                 ))}
@@ -300,43 +300,43 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
               <NamePicker value={senderName} onChange={setSenderName} names={staffNames} onManage={onManageStaff} />
             </div>
             <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Ghi chú chung (tuỳ chọn)"
-              className="w-full rounded-lg px-2.5 py-1.5 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+              className="w-full rounded-lg px-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
             <div className="text-[11px]" style={{ color: '#6B7280' }}>Ai cũng có thể chuẩn bị phiếu; gửi đi cần mã PIN quản lý. Odoo tạo phiếu chuyển nội bộ ngay, tồn kho đổi khi kho nhận xác nhận.</div>
           </div>
 
-          <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: '1px solid #E5E7EB' }}>
+          <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
             <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>
             {categories.length > 0 && (
               <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-0.5 px-0.5" style={{ WebkitOverflowScrolling: 'touch' }}>
                 <button onClick={() => setCategoryFilter(null)} className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
-                  style={{ backgroundColor: !categoryFilter ? '#1f2937' : 'white', color: !categoryFilter ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>Tất cả</button>
+                  style={{ backgroundColor: !categoryFilter ? NAVY : 'white', color: !categoryFilter ? 'white' : INK, border: `1px solid ${BORDER}` }}>Tất cả</button>
                 {categories.map(cat => (
                   <button key={cat} onClick={() => setCategoryFilter(prev => prev === cat ? null : cat)} className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
-                    style={{ backgroundColor: categoryFilter === cat ? '#1f2937' : 'white', color: categoryFilter === cat ? 'white' : '#1f2937', border: '1px solid #D1D5DB' }}>{cat}</button>
+                    style={{ backgroundColor: categoryFilter === cat ? NAVY : 'white', color: categoryFilter === cat ? 'white' : INK, border: `1px solid ${BORDER}` }}>{cat}</button>
                 ))}
               </div>
             )}
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
               <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm sản phẩm…"
-                className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
             </div>
             {(query.trim().length >= 2 || categoryFilter) && (
-              <div className="rounded-lg overflow-y-auto overscroll-contain max-h-72" style={{ border: '1px solid #E5E7EB', WebkitOverflowScrolling: 'touch' }}>
+              <div className="rounded-lg overflow-y-auto overscroll-contain max-h-72" style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                 {searching ? <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
                   : !results.length ? <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
                   : results.map(p => {
                     const inCart = cart.find(l => l.sku === p.sku)?.qty ?? 0;
                     return (
-                      <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: '#F3F4F6' }}>
+                      <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: GOLD_PALE }}>
                         {p.imageUrl ? (
                           <button type="button" onClick={() => setZoomImage(p.imageUrl!)} className="shrink-0 w-10 h-10 rounded overflow-hidden"><img src={thumb(p.imageUrl, 80)} alt="" className="w-full h-full object-cover" /></button>
-                        ) : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
+                        ) : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />}
                         <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => setQtyForProduct(p, inCart - 1)} disabled={inCart <= 0} className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: '1px solid #D1D5DB' }}><Minus size={11} /></button>
+                          <button onClick={() => setQtyForProduct(p, inCart - 1)} disabled={inCart <= 0} className="w-6 h-6 rounded-md flex items-center justify-center disabled:opacity-30" style={{ border: `1px solid ${BORDER}` }}><Minus size={11} /></button>
                           <span className="w-5 text-center text-xs font-bold">{inCart}</span>
-                          <button onClick={() => setQtyForProduct(p, inCart + 1)} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #D1D5DB' }}><Plus size={11} /></button>
+                          <button onClick={() => setQtyForProduct(p, inCart + 1)} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}><Plus size={11} /></button>
                         </div>
                       </div>
                     );
@@ -346,28 +346,28 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
           </div>
 
           {!cart.length ? (
-            <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: '1px solid #E5E7EB' }}>Chưa có sản phẩm — tìm và thêm ở trên</div>
+            <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: `1px solid ${BORDER}` }}>Chưa có sản phẩm — tìm và thêm ở trên</div>
           ) : (
-            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-              <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
+            <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+              <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {cart.map(l => (
                   <div key={l.sku} className="px-4 py-2.5 space-y-1.5">
                     <div className="flex items-center gap-2.5">
-                      {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-10 h-10 rounded object-cover" /> : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: '#F3F4F6' }} />}
+                      {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-10 h-10 rounded object-cover" /> : <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />}
                       <span className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
-                      <button onClick={() => updateQty(l.sku, 0)} className="shrink-0"><Trash2 size={14} style={{ color: '#DC2626' }} /></button>
+                      <button onClick={() => updateQty(l.sku, 0)} className="shrink-0"><Trash2 size={14} style={{ color: RED }} /></button>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => updateQty(l.sku, l.qty - 1)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}><Minus size={12} /></button>
-                      <input type="number" value={l.qty} onChange={e => updateQty(l.sku, Number(e.target.value))} className="w-14 text-center rounded-lg py-1 text-sm font-bold shrink-0" style={{ border: '1px solid #D1D5DB' }} />
-                      <button onClick={() => updateQty(l.sku, l.qty + 1)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: '1px solid #D1D5DB' }}><Plus size={12} /></button>
+                      <button onClick={() => updateQty(l.sku, l.qty - 1)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: `1px solid ${BORDER}` }}><Minus size={12} /></button>
+                      <input type="number" value={l.qty} onChange={e => updateQty(l.sku, Number(e.target.value))} className="w-14 text-center rounded-lg py-1 text-sm font-bold shrink-0" style={{ border: `1px solid ${BORDER}` }} />
+                      <button onClick={() => updateQty(l.sku, l.qty + 1)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: `1px solid ${BORDER}` }}><Plus size={12} /></button>
                       <input type="text" value={l.note} onChange={e => setCart(prev => prev.map(x => x.sku === l.sku ? { ...x, note: e.target.value } : x))}
-                        placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+                        placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="px-4 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: '#F9FAFB', color: '#374151' }}>
+              <div className="px-4 py-2 text-xs font-semibold flex justify-between" style={{ backgroundColor: GOLD_PALE, color: INK }}>
                 <span>{cart.length} SP</span><span>{cartUnits} cái</span>
               </div>
             </div>
@@ -375,7 +375,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
 
           <button onClick={() => { setPin(''); setConfirmMsg(null); setPendingConfirm(true); }}
             disabled={!cart.length || !toShop || !senderName.trim()}
-            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#1f2937' }}>
+            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>
             <Send size={14} /> Gửi chuyển kho{toShop ? ` → ${shortShop(toShop)}` : ''}
           </button>
         </>
@@ -387,12 +387,12 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
         {transfers === null ? (
           <div className="text-center py-4 text-xs" style={{ color: '#9CA3AF' }}>Đang tải…</div>
         ) : !history.length ? (
-          <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ color: '#9CA3AF', border: '1px solid #E5E7EB' }}>Chưa có phiếu chuyển kho nào</div>
+          <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ color: '#9CA3AF', border: `1px solid ${BORDER}` }}>Chưa có phiếu chuyển kho nào</div>
         ) : history.map(t => {
           const out = t.fromShop === shopName;
           const diffs = t.lines.filter(l => l.qtyReceived != null && l.qtyReceived !== l.qtySent);
           return (
-            <div key={t.id} className="bg-white rounded-2xl px-4 py-3 space-y-1" style={{ border: '1px solid #E5E7EB' }}>
+            <div key={t.id} className="bg-white rounded-2xl px-4 py-3 space-y-1" style={{ border: `1px solid ${BORDER}` }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-bold text-navy truncate">{out ? `→ ${shortShop(t.toShop)}` : `← ${shortShop(t.fromShop)}`} · {t.ref}</div>
                 {statusBadge(t)}
@@ -403,9 +403,9 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 {t.cancelledAt ? ` · Huỷ ${fmtDT(t.cancelledAt)}${t.cancelledByName ? ` · ${t.cancelledByName}` : ''}` : ''}
                 {t.odooPickingName ? ` · Odoo ${t.odooPickingName}` : ''}
               </div>
-              <div className="text-xs" style={{ color: '#374151' }}>{t.lines.map(l => `${l.name} ×${l.qtyReceived ?? l.qtySent}`).join(' · ')}</div>
+              <div className="text-xs" style={{ color: INK }}>{t.lines.map(l => `${l.name} ×${l.qtyReceived ?? l.qtySent}`).join(' · ')}</div>
               {diffs.length > 0 && (
-                <div className="text-[11px] font-semibold" style={{ color: '#B45309' }}>
+                <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
                   ⚠ Chênh lệch: {diffs.map(l => `${l.name} ${(l.qtyReceived ?? 0) - l.qtySent}`).join(', ')}
                 </div>
               )}
@@ -423,8 +423,8 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
             </div>
             <div className="space-y-1.5">
               {cart.map(l => (
-                <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: '#F9FAFB' }}>
-                  {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" /> : <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#E5E7EB' }} />}
+                <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2.5" style={{ backgroundColor: GOLD_PALE }}>
+                  {l.imageUrl ? <img src={thumb(l.imageUrl, 80)} alt="" className="shrink-0 w-8 h-8 rounded object-cover" /> : <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: BORDER }} />}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                     {l.note.trim() && <div className="text-xs" style={{ color: '#9CA3AF' }}>{l.note.trim()}</div>}
@@ -437,13 +437,13 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
               <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Mã PIN quản lý</div>
               <input type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') confirmSend(); }} placeholder="Mã PIN" autoFocus
-                className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold" style={{ border: '1px solid #D1D5DB' }} />
-              {confirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: '#DC2626' }}>{confirmMsg}</div>}
+                className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold" style={{ border: `1px solid ${BORDER}` }} />
+              {confirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: RED }}>{confirmMsg}</div>}
             </div>
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Odoo sẽ tạo phiếu chuyển nội bộ ngay. Có thể huỷ trong app cho đến khi kho nhận xác nhận.</div>
             <div className="flex gap-2">
-              <button onClick={() => { setPendingConfirm(false); setPin(''); setConfirmMsg(null); }} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>Huỷ</button>
-              <button onClick={confirmSend} disabled={submitting || !pin.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+              <button onClick={() => { setPendingConfirm(false); setPin(''); setConfirmMsg(null); }} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Huỷ</button>
+              <button onClick={confirmSend} disabled={submitting || !pin.trim()} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Gửi
               </button>
             </div>
@@ -461,15 +461,15 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 const v = recvValue(recvConfirm, l.sku, l.qtySent);
                 const diff = v - l.qtySent;
                 return (
-                  <div key={l.id} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ backgroundColor: diff ? '#FFFBEB' : '#F9FAFB' }}>
+                  <div key={l.id} className="flex items-center justify-between gap-2 rounded-xl p-2.5" style={{ backgroundColor: diff ? GOLD_PALE : GOLD_PALE }}>
                     <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
-                    <div className="text-sm font-bold shrink-0">{v}<span className="text-xs font-normal" style={{ color: '#9CA3AF' }}> / {l.qtySent}</span>{diff ? <span className="text-xs ml-1" style={{ color: '#B45309' }}>({diff})</span> : null}</div>
+                    <div className="text-sm font-bold shrink-0">{v}<span className="text-xs font-normal" style={{ color: '#9CA3AF' }}> / {l.qtySent}</span>{diff ? <span className="text-xs ml-1" style={{ color: '#8A6D14' }}>({diff})</span> : null}</div>
                   </div>
                 );
               })}
             </div>
             {recvConfirm.lines.some(l => recvValue(recvConfirm, l.sku, l.qtySent) !== l.qtySent) && (
-              <div className="flex items-start gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
+              <div className="flex items-start gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
                 <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                 <span>Có chênh lệch: {recvConfirm.fromIsVirtual
                   ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(recvConfirm.toShop)}`
@@ -477,10 +477,10 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
               </div>
             )}
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Người nhận: <b>{receiverName}</b>. Tồn kho Odoo của hai cửa hàng sẽ đổi ngay khi bấm xác nhận — không thể hoàn tác trong app.</div>
-            {recvMsg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{recvMsg}</div>}
+            {recvMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{recvMsg}</div>}
             <div className="flex gap-2">
-              <button onClick={() => setRecvConfirm(null)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>Quay lại</button>
-              <button onClick={confirmReceive} disabled={recvSubmitting} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+              <button onClick={() => setRecvConfirm(null)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
+              <button onClick={confirmReceive} disabled={recvSubmitting} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {recvSubmitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Xác nhận
               </button>
             </div>
@@ -495,8 +495,8 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
             <div className="text-sm font-bold text-navy">Huỷ phiếu {cancelAsk.ref}?</div>
             <div className="text-xs" style={{ color: '#6B7280' }}>Phiếu chuyển nội bộ trên Odoo sẽ bị huỷ, {shortShop(cancelAsk.toShop)} sẽ được báo. Người huỷ: <b>{senderName || '—'}</b></div>
             <div className="flex gap-2">
-              <button onClick={() => setCancelAsk(null)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>Không</button>
-              <button onClick={() => doCancel(cancelAsk)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: '#DC2626' }}>Huỷ phiếu</button>
+              <button onClick={() => setCancelAsk(null)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Không</button>
+              <button onClick={() => doCancel(cancelAsk)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: RED }}>Huỷ phiếu</button>
             </div>
           </div>
         </div>

@@ -69,17 +69,32 @@ async function requireShopSession(): Promise<{ shopName: string } | { error: str
 // that always goes through the "My..." action instead (requireShopSession). A manager's
 // explicitShopName is checked against their own lab_shop_managers.shops, same as the write path
 // in requireShopOrStaffSession above; admin/lab_manager/assistant keep unrestricted access.
-async function requireStaffOrManagerSession(explicitShopName?: string): Promise<{ ok: true } | { error: string }> {
+async function requireStaffOrManagerSession(explicitShopName?: string): Promise<{ shopName: string } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { ok: true };
+
+  // Event override (Axel, 2026-09-12 bug report: "on tombe juste a nouveau sur l'interface shop
+  // ... on voit les commandes concernant le shop alors qu'en realite on devrait avoir 0 commande")
+  // — same posture/precedent as requireShopOrStaffSession's own override above, just missing here
+  // until now. Every "staff preview" read below (deliveries/cakes/losses/report/stock-count) used
+  // to keep showing the real shop's own data even while this admin/manager preview session was
+  // PIN'd into an active event, because this function only ever returned `{ ok: true }` and each
+  // caller went on to query with its own raw explicitShopName — the one place in this file that
+  // never consulted the event cookie. Checked first, before the shop_manager ownership check
+  // below, so it applies uniformly to every role this function accepts.
+  if (['admin', 'lab_manager', 'assistant', 'shop_manager'].includes(profile?.role ?? '')) {
+    const event = await currentEventOverride();
+    if (event) return { shopName: event.name };
+  }
+
+  if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { shopName: explicitShopName ?? '' };
   if (profile?.role === 'shop_manager') {
     if (!explicitShopName) return { error: 'Shop name required' };
     const manager = await resolveShopManagerByUserId(session.user.id);
     if (!manager || !manager.shops.includes(explicitShopName)) return { error: 'Forbidden' };
-    return { ok: true };
+    return { shopName: explicitShopName };
   }
   return { error: 'Forbidden' };
 }
@@ -433,13 +448,13 @@ export async function getShopDeliveriesForStaffAction(shopName: string): Promise
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const [today, tomorrow] = labTodayTomorrow();
-  return { orders: await fetchDeliveries(shopName), today, tomorrow };
+  return { orders: await fetchDeliveries(auth.shopName), today, tomorrow };
 }
 
 export async function getShopCakesForStaffAction(shopName: string): Promise<{ cakes?: ShopCake[]; error?: string }> {
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
-  return { cakes: await fetchCakes(shopName) };
+  return { cakes: await fetchCakes(auth.shopName) };
 }
 
 // getMyShopLossesAction's staff-driven counterpart — same query, just scoped to an
@@ -451,7 +466,7 @@ export async function getShopLossesForStaffAction(shopName: string): Promise<{ l
   if (!supabase) return { error: 'Server not configured' };
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
-    .eq('shop_name', shopName)
+    .eq('shop_name', auth.shopName)
     .order('reported_at', { ascending: false })
     .limit(50);
   if (error) return { error: error.message };
@@ -732,7 +747,7 @@ export async function getMyShopLossesDailyRecapAction(): Promise<{ recap?: ShopL
 export async function getShopLossesDailyRecapForStaffAction(shopName: string): Promise<{ recap?: ShopLossDailyRecap[]; error?: string }> {
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
-  return { recap: await fetchDailyLossRecap(shopName) };
+  return { recap: await fetchDailyLossRecap(auth.shopName) };
 }
 
 // ── Daily stock count ("Kiểm kho") ──────────────────────────────────────────
@@ -976,10 +991,10 @@ export async function getStockCountListForStaffAction(shopName: string, sessionS
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const today = vnDateStr();
-  const sessions = await fetchStockSessions(shopName, today);
+  const sessions = await fetchStockSessions(auth.shopName, today);
   const latest = sessions.length ? sessions[sessions.length - 1].seq : 1;
   const seq = sessionSeq && sessionSeq >= 1 && sessionSeq <= latest + 1 ? sessionSeq : latest;
-  return { date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(shopName, today, seq) };
+  return { date: today, sessionSeq: seq, latestSessionSeq: latest, sessions, lines: await fetchStockCountList(auth.shopName, today, seq) };
 }
 
 export async function saveStockCountAction(input: {
@@ -1217,7 +1232,7 @@ export async function getMyDailyReportRangeAction(): Promise<{ reports?: ShopDai
 export async function getDailyReportRangeForStaffAction(shopName: string): Promise<{ reports?: ShopDailyReport[]; error?: string }> {
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
-  return { reports: await fetchDailyReportRange(shopName) };
+  return { reports: await fetchDailyReportRange(auth.shopName) };
 }
 
 // ── Live inventory reference (Order tab) ────────────────────────────────────────────────────
