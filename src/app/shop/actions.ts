@@ -1949,11 +1949,17 @@ async function requireEventSession(): Promise<{ event: EventShop } | { error: st
 
 export type EventCaisseProduct = { sku: string; name: string; unitPrice: number; available: number };
 
-// "Uniquement ce qui a été livré/compté sur l'event" (Axel's locked-in answer): available = the
-// event's own latest FINISHED stock count minus whatever the caisse has already sold since —
-// same two building blocks (fetchStockSessions/fetchStockCountList) getShopCurrentStockLevelsAction
-// already uses for a real shop, just with the sale-side subtraction added on top so this can never
-// oversell past what is physically on hand at the event.
+// Reworked, Axel 2026-09-13: "je dois pas avoir de dependance avec l'interface d'un des shops,
+// c'est a part" — the caisse must NOT depend on the clicked-into shop's own Kiểm kho stock count
+// (that count is the SHOP's, not the event's — this used to leak whatever shop a staff member had
+// clicked "event" from). "la caisse devrait se baser sur la commande qu'ils recoivent, attention ne
+// pas blocker si c'est pas check en reception" — available = every unit ever ORDERED for this event
+// (lab_shop_manager_orders, the audit log submitManagerOrderAction writes — never gated on
+// lab_delivery_check_lines/lab_shop_receipt_lines reception-confirmation) minus whatever the caisse
+// has already sold since. "l'event peut etre sur plusieurs jours donc ca doit prendre en compte
+// toutes les commandes et pas seulement la premiere" — no delivery_date filter at all, unlike
+// getRecentManagerOrdersAction's today/tomorrow window: every order ever logged for this event's
+// shop_name is summed, so a SKU that only showed up on day 2's order still appears here.
 export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
@@ -1961,11 +1967,22 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const today = vnDateStr();
-  const sessions = await fetchStockSessions(shopName, today);
-  if (!sessions.length) return { products: [] };
-  const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
-  const counted = await fetchStockCountList(shopName, today, latest.seq);
+  const { data: orderRows } = await supabase.from('lab_shop_manager_orders').select('lines').eq('shop_name', shopName);
+  const orderedBySku = new Map<string, { name: string; qty: number }>();
+  for (const row of orderRows ?? []) {
+    const lines: { sku?: string; name?: string; qty?: number }[] = Array.isArray((row as any).lines) ? (row as any).lines : [];
+    for (const l of lines) {
+      if (!l.sku || !(Number(l.qty) > 0)) continue;
+      const cur = orderedBySku.get(l.sku);
+      orderedBySku.set(l.sku, { name: l.name || cur?.name || l.sku, qty: (cur?.qty ?? 0) + Number(l.qty) });
+    }
+  }
+  if (!orderedBySku.size) return { products: [] };
+
+  const skus = Array.from(orderedBySku.keys());
+  const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus);
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
 
   const { data: orders } = await supabase.from('lab_online_orders').select('order_batch_id').eq('shop_name', shopName).eq('source', 'event_stock');
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
@@ -1975,10 +1992,9 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
     for (const l of lines ?? []) if (l.sku) soldBySku.set(l.sku, (soldBySku.get(l.sku) ?? 0) + Number(l.qty));
   }
 
-  const products: EventCaisseProduct[] = counted
-    .filter(c => c.qty != null && c.qty > 0 && c.priceB2c != null)
-    .map(c => ({ sku: c.sku, name: c.name, unitPrice: c.priceB2c as number, available: Math.max(0, (c.qty ?? 0) - (soldBySku.get(c.sku) ?? 0)) }))
-    .filter(p => p.available > 0)
+  const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
+    .map(([sku, o]) => ({ sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: Math.max(0, o.qty - (soldBySku.get(sku) ?? 0)) }))
+    .filter(p => p.available > 0 && p.unitPrice > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
   return { products };
 }

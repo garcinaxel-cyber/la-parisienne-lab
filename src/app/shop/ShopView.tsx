@@ -151,6 +151,26 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   }, []);
   useEffect(() => { loadEventState(); }, [loadEventState]);
 
+  // Axel, 2026-09-13: "je dois pas avoir de dependance avec l'interface d'un des shops, c'est a
+  // part" — deliveries/cakes, staff names, pertes, kiểm kho and the order tab's live-inventory
+  // reference are each only ever fetched once (guarded below by "already loaded, don't refetch"
+  // checks) so they were silently left showing whatever real shop's data was on screen from
+  // BEFORE the PIN was entered — nothing invalidated them on stepping into (or back out of) an
+  // event. Clearing them here forces every one of those guards to refetch, now correctly scoped
+  // to the event (or back to the real shop on exit) via the very same actions/session logic —
+  // no new data path, just no longer stale.
+  function resetShopScopedState() {
+    setOrders(null); setCakes(null);
+    setStaffNames(null);
+    setLosses(null);
+    setStockLines(null);
+    setStockDirty(false);
+    setInvLevels(null);
+    load();
+    loadStaffNames();
+    loadTransfers();
+  }
+
   async function submitPin() {
     setPinSubmitting(true);
     setPinError(null);
@@ -160,12 +180,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setPinInput('');
     setShowPinModal(false);
     setTab('caisse');
+    resetShopScopedState();
     await loadEventState();
   }
 
   async function doExitEvent() {
     await exitEventAction();
     setTab('deliveries');
+    resetShopScopedState();
     await loadEventState();
   }
   // Inter-shop transfers (Axel, 2026-09-07) — loaded here (not only inside the tab) so the tab
@@ -246,6 +268,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [stockDate, setStockDate] = useState<string | null>(null);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
+  // Axel, 2026-09-13: "je suis pas censé avoir un bouton plus simple que aller tout en bas pour
+  // confirmer mon comptage ?" — a typed-but-unsaved qty (stockDraft) is not the same as a saved
+  // count, and that gap was invisible in the UI. stockDirty just tracks "there is an edit sitting
+  // in stockDraft that hasn't been sent to saveStockCount yet" so the save button itself can pin
+  // itself to the bottom the moment that happens (mirrors the existing sticky "Hoàn tất" pattern
+  // below) — no autosave, the shop still explicitly taps Lưu, it just doesn't have to scroll to do it.
+  const [stockDirty, setStockDirty] = useState(false);
   const [stockName, setStockName] = useState('');
   const [stockSaving, setStockSaving] = useState(false);
   const [stockMsg, setStockMsg] = useState<string | null>(null);
@@ -755,6 +784,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const d: Record<string, string> = {};
     for (const l of res.lines ?? []) if (l.qty !== null) d[l.sku] = String(l.qty);
     setStockDraft(d);
+    setStockDirty(false);
   }
 
   // "Nouveau comptage" (Axel, 2026-09-05) — previews the next session number as a blank
@@ -805,6 +835,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setStockSaving(false);
     if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
     setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    setStockDirty(false);
     setFinishArmed(false);
     if (res.sessionSeq) setStockSessionSeq(res.sessionSeq);
     setStockLatestSessionSeq(prev => Math.max(prev, res.sessionSeq ?? prev));
@@ -1641,7 +1672,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
                           </div>
                           <input type="number" min={0} step="1" inputMode="decimal" disabled={stockSessionSeq < stockLatestSessionSeq}
-                            value={stockDraft[l.sku] ?? ''} onChange={e => setStockDraft(p => ({ ...p, [l.sku]: e.target.value }))}
+                            value={stockDraft[l.sku] ?? ''} onChange={e => { setStockDraft(p => ({ ...p, [l.sku]: e.target.value })); setStockDirty(true); }}
                             placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0 disabled:opacity-50" style={{ border: `1px solid ${BORDER}` }} />
                         </div>
                       ))}
@@ -1661,6 +1692,23 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               Lưu kiểm kho
             </button>
             {(() => {
+              // Axel, 2026-09-13: an unsaved qty edit takes priority over the "Hoàn tất" sticky
+              // slot below — the shop needs to save what they just typed before anything else,
+              // and pinning the save button here means they never have to scroll back down to
+              // find it. Same sticky treatment as "Hoàn tất kiểm kho", just one step earlier.
+              if (stockDirty) {
+                return (
+                  <div className="sticky bottom-3 z-20 -mx-4 px-4">
+                    <button onClick={saveStockCount}
+                      disabled={stockSaving || !stockName.trim() || !stockLines?.length || stockSessionSeq < stockLatestSessionSeq}
+                      className="w-full inline-flex items-center justify-center gap-2 text-base font-bold rounded-xl px-4 py-3.5 disabled:opacity-40 shadow-lg text-white"
+                      style={{ backgroundColor: NAVY }}>
+                      {stockSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                      Lưu kiểm kho
+                    </button>
+                  </div>
+                );
+              }
               const cur = stockSessions.find(x => x.seq === stockSessionSeq);
               const hasData = !!cur && cur.savedCount > 0;
               const isCurrent = stockSessionSeq >= stockLatestSessionSeq;
@@ -1698,7 +1746,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="space-y-3">
               <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày · 7 ngày gần nhất</div>
-                <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
+                <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
               </div>
 
               {reportLoading && !reports ? (
@@ -1737,7 +1785,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
                     Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
                   </div>
-                  <div className="text-sm font-bold text-navy mt-0.5">{shopName}</div>
+                  <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
                 </div>
 
                 {!dailyReport ? null : !dailyReport.stockCounted ? (
