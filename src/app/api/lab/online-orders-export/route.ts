@@ -19,13 +19,16 @@ function normalizePhoneKey(raw: string | null | undefined): string | null {
   return digits.slice(-9);
 }
 
+// "Remboursé" (Axel, 2026-09-14): "je veux une tracabilite" — who refunded the order and when,
+// blank when the order was never refunded. Kept as one packed column, not a hidden/removed row —
+// the export is a full audit trail, so a refunded order stays fully visible in it.
 const HEADERS = {
   vi: ['Ngày nhận', 'Ngày giao', 'Kênh', 'Shop', 'Khách hàng', 'SĐT', 'Loại khách', 'Sản phẩm',
     'Tiền hàng', 'Phụ phí', 'Phí giao hàng', 'Tổng thu', 'Thanh toán', 'Đã thu', 'Mã đơn Odoo',
-    'Lab đã giao', 'Shop đã giao', 'Nguồn', 'Ghi chú'],
+    'Lab đã giao', 'Shop đã giao', 'Nguồn', 'Đã hoàn tiền', 'Ghi chú'],
   en: ['Order date', 'Delivery date', 'Channel', 'Shop', 'Customer', 'Phone', 'Customer type', 'Items',
     'Merchandise', 'Extra fees', 'Delivery fee', 'Grand total', 'Payment', 'Amount paid', 'Odoo ref',
-    'Lab delivered', 'Shop delivered', 'Source', 'Notes'],
+    'Lab delivered', 'Shop delivered', 'Source', 'Refunded', 'Notes'],
 } as const;
 
 function service() {
@@ -143,6 +146,9 @@ export async function GET(req: NextRequest) {
       labDelivered ? (lang === 'en' ? 'Yes' : 'Có') : (lang === 'en' ? 'No' : 'Chưa'),
       o.shop_delivered ? (lang === 'en' ? 'Yes' : 'Có') : (lang === 'en' ? 'No' : 'Chưa'),
       srcLabel[source],
+      o.refunded_at
+        ? `${lang === 'en' ? 'Refunded by' : 'Hoàn bởi'} ${o.refunded_by_name ?? ''} · ${new Date(o.refunded_at).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+        : '',
       o.notes ?? '',
     ]);
   }
@@ -151,7 +157,7 @@ export async function GET(req: NextRequest) {
   ws['!cols'] = [
     { wch: 11 }, { wch: 11 }, { wch: 16 }, { wch: 16 }, { wch: 20 }, { wch: 13 }, { wch: 20 },
     { wch: 40 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-    { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 28 },
+    { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 30 }, { wch: 28 },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, lang === 'en' ? 'Online orders' : 'Đơn hàng online');

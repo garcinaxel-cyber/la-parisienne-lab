@@ -856,6 +856,14 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
     await actions.setPaymentStatusAction(o.orderBatchId, next, next === 'paid' ? o.total + o.deliveryFee : o.amountPaid);
     load(jumpDate || undefined);
   }
+  // Axel, 2026-09-14: "je veux jamais d'ecriture odoo ... seulement l'option remboursement qui
+  // cancel la commande" — order-level, no line-level return. Same window.confirm pattern this
+  // file already uses for logout, since a browser dialog is fine here (unlike the shop portal).
+  async function refundOrder(o: OnlineOrderSummary) {
+    if (!window.confirm(tr('refundConfirm'))) return;
+    await actions.refundOnlineOrderAction(o.orderBatchId);
+    load(jumpDate || undefined);
+  }
 
   return (
     <div>
@@ -919,10 +927,13 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
               {groups.get(key)!.map(o => {
                 const late = isLate(o);
                 return (
-                  <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff' }}>
+                  <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff', opacity: o.refunded ? 0.6 : 1 }}>
               <div className="flex justify-between items-start mb-2">
                 <div className="flex gap-1.5 items-center flex-wrap">
                   <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
+                  {o.refunded && (
+                    <span style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedBadge')}</span>
+                  )}
                   {o.source === 'excel_import' ? (
                     <span style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('importBadge')}</span>
                   ) : o.source === 'shop_stock' ? (
@@ -1021,6 +1032,18 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                   }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
                 )}
                     </div>
+                    {/* Refund (Axel, 2026-09-14): order-level only, 'lab'/'shop_stock' sources only
+                        (excel_import refused server-side too), any write-access staff — see
+                        refundOnlineOrderAction. Once refunded, the trace line replaces the button. */}
+                    {o.refunded ? (
+                      <div style={{ fontSize: 10.5, color: '#B91C1C', marginTop: 7 }}>
+                        {tr('refundedByPrefix')}{o.refundedByName ?? '—'}{o.refundedAt ? ` · ${new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                      </div>
+                    ) : !readOnly && o.source !== 'excel_import' && (
+                      <button onClick={() => refundOrder(o)} className="w-full text-center py-1.5 rounded-lg mt-2" style={{
+                        border: `1px solid #f3b8b8`, color: '#B91C1C', fontSize: 11.5, fontWeight: 600, backgroundColor: '#fff',
+                      }}>{tr('refundBtn')}</button>
+                    )}
                   </div>
                 );
               })}

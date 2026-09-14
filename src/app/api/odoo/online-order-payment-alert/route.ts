@@ -19,11 +19,14 @@ export async function GET(req: Request) {
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
+  // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction) is a cancelled sale — no
+  // point nagging for payment on something that no longer counts as revenue.
   const { data: pending } = await supabase
     .from('lab_online_orders')
     .select('order_batch_id, shop_delivered, shop_delivered_at, created_at, source, customer_name')
     .neq('payment_status', 'paid')
-    .is('payment_alert_sent_at', null);
+    .is('payment_alert_sent_at', null)
+    .is('refunded_at', null);
   if (!pending?.length) return NextResponse.json({ ok: true, checked: 0, alerted: 0 });
 
   const batchIds = pending.map(p => p.order_batch_id);

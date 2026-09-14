@@ -124,8 +124,9 @@ function Row({ label, value, strong, swipe }: { label: string; value: string; st
 }
 
 function HistoryCard({ item: h, lang, tr }: { item: CustomerOrderHistoryItem; lang: 'vi' | 'en'; tr: (k: any) => string }) {
+  const dimmed = h.cancelled || h.refunded;
   return (
-    <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', opacity: h.cancelled ? 0.6 : 1 }}>
+    <div className="rounded-xl p-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', opacity: dimmed ? 0.6 : 1 }}>
       <div className="flex items-center justify-between mb-1.5">
         <span style={{ fontSize: 11.5, fontWeight: 700, color: '#1f2937' }}>{fmtShortDate(h.date, lang)}</span>
         <span style={{
@@ -143,10 +144,13 @@ function HistoryCard({ item: h, lang, tr }: { item: CustomerOrderHistoryItem; la
           <span style={{ fontSize: 11, color: INK_LIGHT, fontStyle: 'italic' }}>{tr('custPriceUnknown')}</span>
         )}
         <div className="flex gap-1.5">
-          {h.cancelled && (
+          {h.refunded && (
+            <span style={{ fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px', backgroundColor: '#FEE2E2', color: '#B91C1C' }} title={h.refundedByName ?? undefined}>{tr('custRefunded')}</span>
+          )}
+          {!h.refunded && h.cancelled && (
             <span style={{ fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px', backgroundColor: '#FEE2E2', color: '#B91C1C' }}>{tr('custCancelled')}</span>
           )}
-          {!h.cancelled && h.delivered != null && (
+          {!dimmed && h.delivered != null && (
             <span style={{
               fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px',
               backgroundColor: h.delivered ? '#DCFCE7' : CREAM, color: h.delivered ? '#166534' : '#8a7326',
@@ -157,7 +161,7 @@ function HistoryCard({ item: h, lang, tr }: { item: CustomerOrderHistoryItem; la
               {h.origin === 'online' ? (h.delivered ? tr('shopDelivered') : tr('shopNot')) : (h.delivered ? tr('labDelivered') : tr('labNot'))}
             </span>
           )}
-          {!h.cancelled && h.paymentStatus && (
+          {!dimmed && h.paymentStatus && (
             <span style={{
               fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px',
               backgroundColor: h.paymentStatus === 'paid' ? '#DCFCE7' : '#FEE2E2', color: h.paymentStatus === 'paid' ? '#166534' : '#B91C1C',

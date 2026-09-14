@@ -463,6 +463,10 @@ export type OnlineOrderSummary = {
   items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null }[];
   total: number; deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
+  // Local refund (Axel, 2026-09-14) — distinct from `cancelled` above, which only ever means a
+  // 'lab' order's Odoo/production cancellation. refunded is zero-Odoo, available on 'lab' and
+  // 'shop_stock' orders alike, and is what actually excludes an order from every revenue total.
+  refunded: boolean; refundedAt: string | null; refundedByName: string | null;
   // New-vs-returning (Axel, 2026-09-11): isReturningCustomer is the final answer (auto OR manual
   // override); returningManual marks that a human confirmed it (the auto phone-match can't see
   // pre-app history); priorOrderCount is however many earlier orders that phone number has, for
@@ -557,6 +561,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
       shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
+      refunded: !!o.refunded_at, refundedAt: o.refunded_at ?? null, refundedByName: o.refunded_by_name ?? null,
       paymentProofUrl: o.payment_proof_url ?? null,
       isReturningCustomer, returningManual: override != null, priorOrderCount,
     };
@@ -587,6 +592,9 @@ export type CustomerOrderHistoryItem = {
   paymentStatus: 'paid' | 'unpaid' | 'partial' | null; // null = not tracked (shop walk-in orders)
   delivered: boolean | null; // null = not tracked (shop walk-in orders)
   cancelled: boolean;
+  // Local refund (Axel, 2026-09-14) — 'online' origin only (shop walk-in orders have no
+  // lab_online_orders header, so no refund concept here); excluded from totalAmount below.
+  refunded: boolean; refundedByName: string | null;
 };
 
 export type CustomerRecord = {
@@ -610,7 +618,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
 
   const [{ data: onlineOrders }, { data: mcRows }] = await Promise.all([
     supabase.from('lab_online_orders')
-      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, created_at'),
+      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refunded_by_name, created_at'),
     supabase.from('lab_manual_cakes')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
@@ -674,6 +682,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
           orderBatchId: batchId, date, origin: 'online', shopName: o.shop_name ?? null,
           itemsSummary: summarize(itemLines) || '—', amount, paymentStatus: o.payment_status ?? null,
           delivered: o.shop_delivered ?? false, cancelled,
+          refunded: !!o.refunded_at, refundedByName: o.refunded_by_name ?? null,
         },
       });
     } else if (mcLines.length) {
@@ -694,6 +703,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
           orderBatchId: batchId, date, origin: 'shop', shopName: first.shop_name ?? null,
           itemsSummary: summarize(mcLines.map((l: any) => ({ product_name_vi: l.product_name_vi, qty: l.qty }))) || '—',
           amount, paymentStatus: null, delivered, cancelled,
+          refunded: false, refundedByName: null,
         },
       });
     }
@@ -718,7 +728,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     });
     const sorted = [...deduped].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const mostRecent = sorted[0];
-    const totalAmount = sorted.reduce((s, r) => s + (r.item.amount ?? 0), 0);
+    const totalAmount = sorted.reduce((s, r) => s + (r.item.refunded ? 0 : (r.item.amount ?? 0)), 0);
     const hasUnknownAmounts = sorted.some(r => r.item.amount == null);
     return {
       phoneKey, phone: mostRecent.phone, name: mostRecent.name,
@@ -802,6 +812,33 @@ export async function setCustomerReturningOverrideAction(orderBatchId: string, v
   const ownErr = await assertOwnsOrder(supabase, orderBatchId, auth);
   if (ownErr) return { error: ownErr };
   const { error } = await supabase.from('lab_online_orders').update({ customer_returning_override: value }).eq('order_batch_id', orderBatchId);
+  if (error) return { error: error.message };
+  revalidatePath('/online-orders');
+  return { ok: true };
+}
+
+// ── Refund (Axel, 2026-09-14) ───────────────────────────────────────────────────────────────
+// "je veux jamais d'ecriture odoo pour ce cas. fais meme pas de retour produit, seulement
+// l'option remboursement qui cancel la commande" — one order-level action, no line-level
+// return, available on both 'lab' and 'shop_stock' orders (the only two he asked for —
+// 'excel_import' is refused below). Purely local: never touches Odoo, lab_manual_cakes or
+// lab_assignments — a 'lab' order's production card and Odoo document are left exactly as they
+// are; only this channel's own tracking/analytics stop counting the sale (see every reader below
+// that now excludes refunded_at). "n'importe quel staff qui a acces a cette interface" — any
+// online_sales/admin write session may refund any order, not just the one they created, so this
+// deliberately skips assertOwnsOrder unlike every other mutation in this file.
+export async function refundOnlineOrderAction(orderBatchId: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineWriteSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: order } = await supabase.from('lab_online_orders').select('source, refunded_at').eq('order_batch_id', orderBatchId).maybeSingle();
+  if (!order) return { error: 'Not found' };
+  if (order.source === 'excel_import') return { error: 'Cannot refund an imported order' };
+  if (order.refunded_at) return { ok: true }; // already refunded — idempotent, no double-write
+  const { error } = await supabase.from('lab_online_orders').update({
+    refunded_at: new Date().toISOString(), refunded_by: auth.userId, refunded_by_name: auth.fullName,
+  }).eq('order_batch_id', orderBatchId);
   if (error) return { error: error.message };
   revalidatePath('/online-orders');
   return { ok: true };
@@ -970,7 +1007,9 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
   // Axel, 2026-09-08: see the note in getMyOnlineOrdersAction -- analytics must reflect every
   // online order (imports included), not just the ones this account created.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).limit(5000);
+  // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction) must vanish from every
+  // total/breakdown here — excluded at the source query so nothing downstream needs its own check.
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).is('refunded_at', null).limit(5000);
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);

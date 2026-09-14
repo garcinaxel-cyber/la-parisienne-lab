@@ -46,7 +46,9 @@ export type ManagerOnlineToday = { count: number; total: number };
 // Analytic tab, far more than a one-line "6 orders today · 1,240,000 ₫" recap card needs.
 async function fetchOnlineToday(svc: ReturnType<typeof service>, shopName: string, date: string): Promise<ManagerOnlineToday> {
   if (!svc) return { count: 0, total: 0 };
-  const { data: orders } = await svc.from('lab_online_orders').select('order_batch_id, source').eq('shop_name', shopName).eq('delivery_date', date);
+  // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction, online-orders/actions.ts)
+  // is a cancelled sale — must not count toward this recap tile either.
+  const { data: orders } = await svc.from('lab_online_orders').select('order_batch_id, source').eq('shop_name', shopName).eq('delivery_date', date).is('refunded_at', null);
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
   if (!batchIds.length) return { count: 0, total: 0 };
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id as string);

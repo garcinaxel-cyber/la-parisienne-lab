@@ -175,6 +175,11 @@ export const L = {
     custPriceUnknown: 'Chưa ghi nhận giá',
     custCancelled: 'Đã huỷ',
     custBackAria: 'Quay lại',
+    refundBtn: 'Hoàn tiền / Huỷ đơn',
+    refundConfirm: 'Hoàn tiền và huỷ đơn này? Sẽ không tính vào doanh thu/thống kê. Không ảnh hưởng Odoo.',
+    refundedBadge: '↩ Đã hoàn tiền',
+    refundedByPrefix: 'Hoàn tiền bởi ',
+    custRefunded: 'Đã hoàn tiền',
   },
   en: {
     titleOrder: 'Online orders',
@@ -319,6 +324,11 @@ export const L = {
     custPriceUnknown: 'Price not recorded',
     custCancelled: 'Cancelled',
     custBackAria: 'Back',
+    refundBtn: 'Refund / cancel order',
+    refundConfirm: "Refund and cancel this order? It won't count toward revenue/stats anymore. No impact on Odoo.",
+    refundedBadge: '↩ Refunded',
+    refundedByPrefix: 'Refunded by ',
+    custRefunded: 'Refunded',
   },
 } as const;
 export type LKey = keyof typeof L.vi;
