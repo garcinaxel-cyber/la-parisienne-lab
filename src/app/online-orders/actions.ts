@@ -837,12 +837,18 @@ export async function setCustomerReturningOverrideAction(orderBatchId: string, v
 // instead of excluding the order; only once refund_amount reaches the order's grand total does it
 // behave like before (dimmed, excluded, "cancelled"). See getMyOnlineOrdersAction's `refunded`
 // computation for that threshold, and getOnlineAnalyticsAction/getCustomerDatabaseAction/
-// fetchOnlineToday/the export route for the netting itself. One refund per order — once
-// refunded_at is set (any amount), the UI replaces the button with a trace line, so this never
-// has to reconcile a second, top-up refund.
+// fetchOnlineToday/the export route for the netting itself.
 // "n'importe quel staff qui a acces a cette interface" — any online_sales/admin write session may
 // refund any order, not just the one they created, so this deliberately skips assertOwnsOrder
 // unlike every other mutation in this file.
+// Adjustable (Axel, 2026-09-14, same day): "faut laisser la possibilite d'ajuster le refund" —
+// several orders were refunded before the amount field existed and sit at refund_amount=0 with no
+// way to fix them, and staff can simply mis-key a number. Re-calling this on an already-refunded
+// order now OVERWRITES refund_amount (and refreshes refunded_at/refunded_by/refunded_by_name to
+// the adjuster) instead of the old idempotent no-op — every reader (analytics, customer database,
+// shop-manager recap, export) reads refund_amount fresh each time, so an adjustment flows through
+// everywhere with no extra plumbing. The UI always shows the latest adjuster/time, not the
+// original one — that's the point (a corrected trail, not a stale one).
 export async function refundOnlineOrderAction(orderBatchId: string, amount: number): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
@@ -852,7 +858,6 @@ export async function refundOnlineOrderAction(orderBatchId: string, amount: numb
     .select('source, refunded_at, delivery_fee').eq('order_batch_id', orderBatchId).maybeSingle();
   if (!order) return { error: 'Not found' };
   if (order.source === 'excel_import') return { error: 'Cannot refund an imported order' };
-  if (order.refunded_at) return { ok: true }; // already refunded — idempotent, no double-write
 
   // Grand total = every line (product + fee lines share lab_online_sale_lines/lab_manual_cakes)
   // plus the order-level delivery fee — the same figure the order card shows (o.total +

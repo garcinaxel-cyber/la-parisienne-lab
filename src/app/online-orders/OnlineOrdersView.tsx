@@ -864,7 +864,11 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
   // fine here (unlike the shop portal).
   async function refundOrder(o: OnlineOrderSummary) {
     const max = Math.round(o.total + o.deliveryFee);
-    const raw = window.prompt(tr('refundPrompt'), String(max));
+    // Adjusting an existing refund (Axel, 2026-09-14): pre-fill with the amount already on file
+    // instead of the order total, so fixing a mis-keyed or pre-amount-feature (0đ) refund starts
+    // from what's there rather than resetting to a full refund by default.
+    const prefill = o.refundAmount > 0 ? o.refundAmount : max;
+    const raw = window.prompt(tr('refundPrompt'), String(prefill));
     if (raw == null) return; // cancelled
     const amount = Math.round(Number(raw.replace(/[^\d.-]/g, '')));
     if (!Number.isFinite(amount) || amount <= 0) return;
@@ -1047,13 +1051,25 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                         (excel_import refused server-side too), any write-access staff — see
                         refundOnlineOrderAction. Once refunded_at is set (full OR partial amount —
                         Axel: "des fois on rembourse qu'une partie"), the trace line replaces the
-                        button; one refund per order, no top-up. Bug fix 2026-09-14: the amount was
-                        only ever shown for a PARTIAL refund — a full refund's trace line said only
-                        "Hoàn tiền bởi X" with no figure, which is what the online-sales manager
-                        flagged ("elle voit pas le montant du refund"). Now always shown. */}
+                        button. Bug fix 2026-09-14: the amount was only ever shown for a PARTIAL
+                        refund — a full refund's trace line said only "Hoàn tiền bởi X" with no
+                        figure, which is what the online-sales manager flagged ("elle voit pas le
+                        montant du refund"). Now always shown. Adjustable (Axel, same day): "faut
+                        laisser la possibilite d'ajuster le refund" — some orders were refunded
+                        before the amount field existed (stuck at 0đ) and staff can mis-key a
+                        number, so the trace line keeps a small edit action that re-opens the same
+                        prompt, pre-filled with the current amount, and overwrites it. */}
                     {o.refundedAt ? (
-                      <div style={{ fontSize: 10.5, color: '#B91C1C', marginTop: 7 }}>
-                        {tr('refundedAmountLabel')} {fmtVnd(o.refundAmount)} · {tr('refundedByShort')}{o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      <div className="flex items-center justify-between gap-2" style={{ marginTop: 7 }}>
+                        <div style={{ fontSize: 10.5, color: '#B91C1C' }}>
+                          {tr('refundedAmountLabel')} {fmtVnd(o.refundAmount)} · {tr('refundedByShort')}{o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                        {!readOnly && o.source !== 'excel_import' && (
+                          <button onClick={() => refundOrder(o)} style={{
+                            fontSize: 10.5, fontWeight: 700, color: '#B91C1C', backgroundColor: '#FEE2E2',
+                            border: 'none', borderRadius: 6, padding: '2px 8px', flexShrink: 0,
+                          }}>{tr('adjustRefundBtn')}</button>
+                        )}
                       </div>
                     ) : !readOnly && o.source !== 'excel_import' && (
                       <button onClick={() => refundOrder(o)} className="w-full text-center py-1.5 rounded-lg mt-2" style={{
