@@ -47,8 +47,11 @@ export type ManagerOnlineToday = { count: number; total: number };
 async function fetchOnlineToday(svc: ReturnType<typeof service>, shopName: string, date: string): Promise<ManagerOnlineToday> {
   if (!svc) return { count: 0, total: 0 };
   // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction, online-orders/actions.ts)
-  // is a cancelled sale — must not count toward this recap tile either.
-  const { data: orders } = await svc.from('lab_online_orders').select('order_batch_id, source').eq('shop_name', shopName).eq('delivery_date', date).is('refunded_at', null);
+  // must not count toward this recap tile — partial amount added same day: each order's own
+  // refund_amount is netted off its line total below rather than excluding the row outright, so a
+  // partially-refunded order still counts (for the remainder) while a fully-refunded one nets to
+  // 0 and is dropped from both the total and the count, same as before.
+  const { data: orders } = await svc.from('lab_online_orders').select('order_batch_id, source, refund_amount').eq('shop_name', shopName).eq('delivery_date', date);
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
   if (!batchIds.length) return { count: 0, total: 0 };
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id as string);
@@ -58,10 +61,16 @@ async function fetchOnlineToday(svc: ReturnType<typeof service>, shopName: strin
       : Promise.resolve({ data: [] as any[] }),
     svc.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price').in('order_batch_id', batchIds),
   ]);
-  let total = 0;
-  for (const l of lines ?? []) if (!l.cancelled_at) total += Number(l.qty ?? 0) * Number(l.unit_price ?? 0);
-  for (const l of stockLines ?? []) total += Number(l.qty ?? 0) * Number(l.unit_price ?? 0);
-  return { count: batchIds.length, total };
+  const totalByBatch = new Map<string, number>();
+  for (const l of lines ?? []) if (!l.cancelled_at) totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + Number(l.qty ?? 0) * Number(l.unit_price ?? 0));
+  for (const l of stockLines ?? []) totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + Number(l.qty ?? 0) * Number(l.unit_price ?? 0));
+  let total = 0, count = 0;
+  for (const o of orders ?? []) {
+    const net = Math.max(0, (totalByBatch.get(o.order_batch_id) ?? 0) - Number(o.refund_amount ?? 0));
+    if (net <= 0 && Number(o.refund_amount ?? 0) > 0) continue; // fully refunded — drop entirely
+    total += net; count++;
+  }
+  return { count, total };
 }
 
 // ── Today (one shop) ─────────────────────────────────────────────────────────────────────────

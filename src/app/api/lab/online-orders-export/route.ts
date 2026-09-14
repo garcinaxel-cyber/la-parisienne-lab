@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
       o.shop_delivered ? (lang === 'en' ? 'Yes' : 'Có') : (lang === 'en' ? 'No' : 'Chưa'),
       srcLabel[source],
       o.refunded_at
-        ? `${lang === 'en' ? 'Refunded by' : 'Hoàn bởi'} ${o.refunded_by_name ?? ''} · ${new Date(o.refunded_at).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+        ? `${lang === 'en' ? 'Refunded' : 'Hoàn'} ${new Date(o.refunded_at).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} — ${Number(o.refund_amount ?? 0).toLocaleString('vi-VN')}đ ${lang === 'en' ? 'by' : 'bởi'} ${o.refunded_by_name ?? ''}`
         : '',
       o.notes ?? '',
     ]);

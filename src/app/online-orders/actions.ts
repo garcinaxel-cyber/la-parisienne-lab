@@ -463,10 +463,13 @@ export type OnlineOrderSummary = {
   items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null }[];
   total: number; deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
-  // Local refund (Axel, 2026-09-14) — distinct from `cancelled` above, which only ever means a
-  // 'lab' order's Odoo/production cancellation. refunded is zero-Odoo, available on 'lab' and
-  // 'shop_stock' orders alike, and is what actually excludes an order from every revenue total.
-  refunded: boolean; refundedAt: string | null; refundedByName: string | null;
+  // Local refund (Axel, 2026-09-14, partial amount added same day) — distinct from `cancelled`
+  // above, which only ever means a 'lab' order's Odoo/production cancellation. refundAmount is
+  // whatever was actually refunded (can be less than the order total); `refunded` is true only
+  // once refundAmount reaches the order's grand total (total + deliveryFee) — that's the only
+  // case that dims the card / excludes it from revenue. A smaller refundAmount leaves the order
+  // active; readers net it off their totals instead (see getOnlineAnalyticsAction etc.).
+  refunded: boolean; refundAmount: number; refundedAt: string | null; refundedByName: string | null;
   // New-vs-returning (Axel, 2026-09-11): isReturningCustomer is the final answer (auto OR manual
   // override); returningManual marks that a human confirmed it (the auto phone-match can't see
   // pre-app history); priorOrderCount is however many earlier orders that phone number has, for
@@ -561,7 +564,8 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
       shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
-      refunded: !!o.refunded_at, refundedAt: o.refunded_at ?? null, refundedByName: o.refunded_by_name ?? null,
+      refunded: Number(o.refund_amount ?? 0) > 0 && Number(o.refund_amount ?? 0) >= total + Number(o.delivery_fee ?? 0) - 1,
+      refundAmount: Number(o.refund_amount ?? 0), refundedAt: o.refunded_at ?? null, refundedByName: o.refunded_by_name ?? null,
       paymentProofUrl: o.payment_proof_url ?? null,
       isReturningCustomer, returningManual: override != null, priorOrderCount,
     };
@@ -592,9 +596,11 @@ export type CustomerOrderHistoryItem = {
   paymentStatus: 'paid' | 'unpaid' | 'partial' | null; // null = not tracked (shop walk-in orders)
   delivered: boolean | null; // null = not tracked (shop walk-in orders)
   cancelled: boolean;
-  // Local refund (Axel, 2026-09-14) — 'online' origin only (shop walk-in orders have no
-  // lab_online_orders header, so no refund concept here); excluded from totalAmount below.
-  refunded: boolean; refundedByName: string | null;
+  // Local refund (Axel, 2026-09-14, partial amount added same day) — 'online' origin only (shop
+  // walk-in orders have no lab_online_orders header, so no refund concept here). refundAmount is
+  // netted off totalAmount below; `refunded` (fully refunded) still drives the dimmed/"Đã hoàn
+  // tiền" display, same threshold as OnlineOrderSummary.
+  refunded: boolean; refundAmount: number; refundedByName: string | null;
 };
 
 export type CustomerRecord = {
@@ -618,7 +624,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
 
   const [{ data: onlineOrders }, { data: mcRows }] = await Promise.all([
     supabase.from('lab_online_orders')
-      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refunded_by_name, created_at'),
+      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at'),
     supabase.from('lab_manual_cakes')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
@@ -675,6 +681,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
       const amount = [...mcLines, ...slLines].reduce((s: number, l: any) => s + (l.qty ?? 0) * (l.unit_price ?? 0), 0);
       const cancelled = mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at);
       const date = o.delivery_date || o.created_at;
+      const refundAmount = Number(o.refund_amount ?? 0);
       rows.push({
         date, phoneKey, phone: o.customer_phone, name: o.customer_name || '—', address: o.delivery_address ?? null,
         skuKeys: skuKeysOf([...mcLines, ...slLines]),
@@ -682,7 +689,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
           orderBatchId: batchId, date, origin: 'online', shopName: o.shop_name ?? null,
           itemsSummary: summarize(itemLines) || '—', amount, paymentStatus: o.payment_status ?? null,
           delivered: o.shop_delivered ?? false, cancelled,
-          refunded: !!o.refunded_at, refundedByName: o.refunded_by_name ?? null,
+          refunded: refundAmount > 0 && refundAmount >= amount - 1, refundAmount, refundedByName: o.refunded_by_name ?? null,
         },
       });
     } else if (mcLines.length) {
@@ -703,7 +710,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
           orderBatchId: batchId, date, origin: 'shop', shopName: first.shop_name ?? null,
           itemsSummary: summarize(mcLines.map((l: any) => ({ product_name_vi: l.product_name_vi, qty: l.qty }))) || '—',
           amount, paymentStatus: null, delivered, cancelled,
-          refunded: false, refundedByName: null,
+          refunded: false, refundAmount: 0, refundedByName: null,
         },
       });
     }
@@ -728,7 +735,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     });
     const sorted = [...deduped].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const mostRecent = sorted[0];
-    const totalAmount = sorted.reduce((s, r) => s + (r.item.refunded ? 0 : (r.item.amount ?? 0)), 0);
+    const totalAmount = sorted.reduce((s, r) => s + Math.max(0, (r.item.amount ?? 0) - r.item.refundAmount), 0);
     const hasUnknownAmounts = sorted.some(r => r.item.amount == null);
     return {
       phoneKey, phone: mostRecent.phone, name: mostRecent.name,
@@ -817,27 +824,54 @@ export async function setCustomerReturningOverrideAction(orderBatchId: string, v
   return { ok: true };
 }
 
-// ── Refund (Axel, 2026-09-14) ───────────────────────────────────────────────────────────────
+// ── Refund (Axel, 2026-09-14, amount added 2026-09-14) ─────────────────────────────────────
 // "je veux jamais d'ecriture odoo pour ce cas. fais meme pas de retour produit, seulement
 // l'option remboursement qui cancel la commande" — one order-level action, no line-level
 // return, available on both 'lab' and 'shop_stock' orders (the only two he asked for —
 // 'excel_import' is refused below). Purely local: never touches Odoo, lab_manual_cakes or
 // lab_assignments — a 'lab' order's production card and Odoo document are left exactly as they
-// are; only this channel's own tracking/analytics stop counting the sale (see every reader below
-// that now excludes refunded_at). "n'importe quel staff qui a acces a cette interface" — any
-// online_sales/admin write session may refund any order, not just the one they created, so this
-// deliberately skips assertOwnsOrder unlike every other mutation in this file.
-export async function refundOnlineOrderAction(orderBatchId: string): Promise<{ ok?: boolean; error?: string }> {
+// are.
+// "des fois on rembourse qu'une partie" — refund_amount can be less than the order's grand
+// total. Axel's locked answer: a PARTIAL refund leaves the order otherwise active (still
+// delivered/payment-tracked normally) and every revenue reader nets refund_amount off its total
+// instead of excluding the order; only once refund_amount reaches the order's grand total does it
+// behave like before (dimmed, excluded, "cancelled"). See getMyOnlineOrdersAction's `refunded`
+// computation for that threshold, and getOnlineAnalyticsAction/getCustomerDatabaseAction/
+// fetchOnlineToday/the export route for the netting itself. One refund per order — once
+// refunded_at is set (any amount), the UI replaces the button with a trace line, so this never
+// has to reconcile a second, top-up refund.
+// "n'importe quel staff qui a acces a cette interface" — any online_sales/admin write session may
+// refund any order, not just the one they created, so this deliberately skips assertOwnsOrder
+// unlike every other mutation in this file.
+export async function refundOnlineOrderAction(orderBatchId: string, amount: number): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const { data: order } = await supabase.from('lab_online_orders').select('source, refunded_at').eq('order_batch_id', orderBatchId).maybeSingle();
+  const { data: order } = await supabase.from('lab_online_orders')
+    .select('source, refunded_at, delivery_fee').eq('order_batch_id', orderBatchId).maybeSingle();
   if (!order) return { error: 'Not found' };
   if (order.source === 'excel_import') return { error: 'Cannot refund an imported order' };
   if (order.refunded_at) return { ok: true }; // already refunded — idempotent, no double-write
+
+  // Grand total = every line (product + fee lines share lab_online_sale_lines/lab_manual_cakes)
+  // plus the order-level delivery fee — the same figure the order card shows (o.total +
+  // o.deliveryFee in OnlineOrderSummary) and what the client pre-fills the amount with.
+  const isLab = order.source === 'lab';
+  const { data: mcLines } = isLab
+    ? await supabase.from('lab_manual_cakes').select('qty, unit_price, cancelled_at').eq('order_batch_id', orderBatchId)
+    : { data: [] as any[] };
+  const { data: slLines } = await supabase.from('lab_online_sale_lines').select('qty, unit_price').eq('order_batch_id', orderBatchId);
+  const linesTotal = [...(mcLines ?? []).filter((l: any) => !l.cancelled_at), ...(slLines ?? [])]
+    .reduce((s: number, l: any) => s + Number(l.qty ?? 0) * Number(l.unit_price ?? 0), 0);
+  const grandTotal = linesTotal + Number(order.delivery_fee ?? 0);
+
+  const amt = Math.round(Number(amount));
+  if (!Number.isFinite(amt) || amt <= 0) return { error: 'Số tiền không hợp lệ' };
+  if (amt > grandTotal + 1) return { error: 'Số tiền vượt quá tổng đơn' }; // +1 — rounding slack
+
   const { error } = await supabase.from('lab_online_orders').update({
-    refunded_at: new Date().toISOString(), refunded_by: auth.userId, refunded_by_name: auth.fullName,
+    refund_amount: amt, refunded_at: new Date().toISOString(), refunded_by: auth.userId, refunded_by_name: auth.fullName,
   }).eq('order_batch_id', orderBatchId);
   if (error) return { error: error.message };
   revalidatePath('/online-orders');
@@ -1007,9 +1041,12 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
   // Axel, 2026-09-08: see the note in getMyOnlineOrdersAction -- analytics must reflect every
   // online order (imports included), not just the ones this account created.
-  // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction) must vanish from every
-  // total/breakdown here — excluded at the source query so nothing downstream needs its own check.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee').gte('created_at', since).is('refunded_at', null).limit(5000);
+  // Axel, 2026-09-14: a refunded order (see refundOnlineOrderAction) must stop counting toward
+  // revenue. Partial-amount refunds added same day: rather than excluding the whole order here,
+  // every order is still fetched (with its refund_amount) and a dedicated pass below nets that
+  // amount off the totals/breakdowns it touches — a fully-refunded order (refund_amount >= its
+  // grand total) ends up netted to exactly 0, the same as the old full exclusion.
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').gte('created_at', since).limit(5000);
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
@@ -1107,6 +1144,36 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
       byShop.set(shop, (byShop.get(shop) ?? 0) + fee);
     }
   }
+
+  // Refund netting (Axel, 2026-09-14): same one-pass-per-order shape as the delivery_fee pass
+  // above, subtracting instead of adding. Nets todayTotal/monthTotal/rangeTotal (merch) the same
+  // as the Grand variants — a refund undoes a sale regardless of the fee/merch split — and also
+  // byShop/byChannel/byDay, the order-level breakdowns. byCategory/productsByCategory are
+  // deliberately left un-netted: attributing a partial refund back to one SKU/category among
+  // several in the same order isn't worth the complexity for what Axel described as an occasional
+  // case — those breakdowns can run slightly high on an order with a partial refund. Every total
+  // this pass touches is clamped to >= 0 below (in case a same-day refund pushes a bucket under 0).
+  for (const o of orders ?? []) {
+    const refund = Number(o.refund_amount ?? 0);
+    if (!refund) continue;
+    const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
+    if (day === todayStr) { todayGrandTotal -= refund; todayTotal -= refund; }
+    if (day.slice(0, 7) === monthStr) { monthGrandTotal -= refund; monthTotal -= refund; }
+    if (day >= rangeStart) {
+      rangeGrandTotal -= refund; rangeTotal -= refund;
+      const shop = o.shop_name ?? 'Khác';
+      byShop.set(shop, (byShop.get(shop) ?? 0) - refund);
+      const ch = (o.channel ?? '').trim() || '—';
+      byChannel.set(ch, (byChannel.get(ch) ?? 0) - refund);
+      if (day) byDay.set(day, (byDay.get(day) ?? 0) - refund);
+    }
+  }
+  todayTotal = Math.max(0, todayTotal); todayGrandTotal = Math.max(0, todayGrandTotal);
+  monthTotal = Math.max(0, monthTotal); monthGrandTotal = Math.max(0, monthGrandTotal);
+  rangeTotal = Math.max(0, rangeTotal); rangeGrandTotal = Math.max(0, rangeGrandTotal);
+  byShop.forEach((v, k) => byShop.set(k, Math.max(0, v)));
+  byChannel.forEach((v, k) => byChannel.set(k, Math.max(0, v)));
+  byDay.forEach((v, k) => byDay.set(k, Math.max(0, v)));
 
   const daily: { date: string; total: number }[] = [];
   for (let i = 13; i >= 0; i--) {

@@ -147,6 +147,9 @@ function HistoryCard({ item: h, lang, tr }: { item: CustomerOrderHistoryItem; la
           {h.refunded && (
             <span style={{ fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px', backgroundColor: '#FEE2E2', color: '#B91C1C' }} title={h.refundedByName ?? undefined}>{tr('custRefunded')}</span>
           )}
+          {!h.refunded && h.refundAmount > 0 && (
+            <span style={{ fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px', backgroundColor: '#FEF3C7', color: '#B45309' }} title={h.refundedByName ?? undefined}>{tr('custPartiallyRefunded')}</span>
+          )}
           {!h.refunded && h.cancelled && (
             <span style={{ fontSize: 9.5, fontWeight: 700, borderRadius: 999, padding: '2px 7px', backgroundColor: '#FEE2E2', color: '#B91C1C' }}>{tr('custCancelled')}</span>
           )}

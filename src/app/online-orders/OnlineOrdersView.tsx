@@ -857,11 +857,19 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
     load(jumpDate || undefined);
   }
   // Axel, 2026-09-14: "je veux jamais d'ecriture odoo ... seulement l'option remboursement qui
-  // cancel la commande" — order-level, no line-level return. Same window.confirm pattern this
-  // file already uses for logout, since a browser dialog is fine here (unlike the shop portal).
+  // cancel la commande" — order-level, no line-level return. Partial amount added same day
+  // ("des fois on rembourse qu'une partie"): window.prompt pre-filled with the order's grand
+  // total — staff validates as-is for a full refund, or edits the number down for a partial one.
+  // Same window.prompt/confirm pattern this file already uses for logout — a browser dialog is
+  // fine here (unlike the shop portal).
   async function refundOrder(o: OnlineOrderSummary) {
-    if (!window.confirm(tr('refundConfirm'))) return;
-    await actions.refundOnlineOrderAction(o.orderBatchId);
+    const max = Math.round(o.total + o.deliveryFee);
+    const raw = window.prompt(tr('refundPrompt'), String(max));
+    if (raw == null) return; // cancelled
+    const amount = Math.round(Number(raw.replace(/[^\d.-]/g, '')));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const res = await actions.refundOnlineOrderAction(o.orderBatchId, amount);
+    if (res?.error) { window.alert(res.error); return; }
     load(jumpDate || undefined);
   }
 
@@ -933,6 +941,9 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                   <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
                   {o.refunded && (
                     <span style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedBadge')}</span>
+                  )}
+                  {!o.refunded && o.refundAmount > 0 && (
+                    <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedPartialBadge')}: {fmtVnd(o.refundAmount)}</span>
                   )}
                   {o.source === 'excel_import' ? (
                     <span style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('importBadge')}</span>
@@ -1034,10 +1045,15 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                     </div>
                     {/* Refund (Axel, 2026-09-14): order-level only, 'lab'/'shop_stock' sources only
                         (excel_import refused server-side too), any write-access staff — see
-                        refundOnlineOrderAction. Once refunded, the trace line replaces the button. */}
-                    {o.refunded ? (
+                        refundOnlineOrderAction. Once refunded_at is set (full OR partial amount —
+                        Axel: "des fois on rembourse qu'une partie"), the trace line replaces the
+                        button; one refund per order, no top-up. */}
+                    {o.refundedAt ? (
                       <div style={{ fontSize: 10.5, color: '#B91C1C', marginTop: 7 }}>
-                        {tr('refundedByPrefix')}{o.refundedByName ?? '—'}{o.refundedAt ? ` · ${new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+                        {o.refunded
+                          ? tr('refundedByPrefix')
+                          : `${tr('refundedPartialPrefix')}${fmtVnd(o.refundAmount)} · ${tr('refundedByShort')}`}
+                        {o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </div>
                     ) : !readOnly && o.source !== 'excel_import' && (
                       <button onClick={() => refundOrder(o)} className="w-full text-center py-1.5 rounded-lg mt-2" style={{
