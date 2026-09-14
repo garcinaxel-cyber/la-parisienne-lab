@@ -486,7 +486,11 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // Default (no deliveryDate): unchanged behaviour — most recent 200 by created_at, exactly as
   // before. When a specific day is picked (calendar jump, Axel 2026-09-08 — growing history made
   // the single created_at-ordered list impractical to scroll through), fetch that day only, no cap.
-  let oq = supabase.from('lab_online_orders').select('*');
+  // Axel, 2026-09-14: "je sais pas pourquoi ça s'affiche sur cette interface" — an event's mini-
+  // caisse sale (source='event_stock') is a point-of-sale transaction already handed over in
+  // person; it has no lab/shop delivery to track and refunding it here made no sense. Events get
+  // their own revenue summary (getEventSalesSummaryAction, EventCaisseTab), so excluded here.
+  let oq = supabase.from('lab_online_orders').select('*').neq('source', 'event_stock');
   if (opts?.deliveryDate) {
     oq = oq.eq('delivery_date', opts.deliveryDate).order('created_at', { ascending: false });
   } else {
@@ -623,8 +627,11 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   if (!supabase) return { error: 'Server not configured' };
 
   const [{ data: onlineOrders }, { data: mcRows }] = await Promise.all([
+    // event_stock excluded (Axel, 2026-09-14) — same reasoning as getMyOnlineOrdersAction: an
+    // event sale isn't a shop customer relationship, it has its own tracking in the event tab.
     supabase.from('lab_online_orders')
-      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at'),
+      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
+      .neq('source', 'event_stock'),
     supabase.from('lab_manual_cakes')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
@@ -1051,7 +1058,9 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // every order is still fetched (with its refund_amount) and a dedicated pass below nets that
   // amount off the totals/breakdowns it touches — a fully-refunded order (refund_amount >= its
   // grand total) ends up netted to exactly 0, the same as the old full exclusion.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').gte('created_at', since).limit(5000);
+  // Axel, 2026-09-14: event_stock excluded — event sales have their own revenue summary
+  // (getEventSalesSummaryAction) and shouldn't be mixed into the online-sales channel's figures.
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').neq('source', 'event_stock').gte('created_at', since).limit(5000);
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);

@@ -60,7 +60,10 @@ export async function GET(req: NextRequest) {
   const supabase = service();
   if (!supabase) return NextResponse.json({ error: 'Server not configured' }, { status: 500 });
 
+  // event_stock excluded (Axel, 2026-09-14) — same as the Suivi/Analytic tabs this export
+  // mirrors: an event's mini-caisse sale has no delivery/payment tracking to export here.
   const { data: orders } = await supabase.from('lab_online_orders').select('*')
+    .neq('source', 'event_stock')
     .gte('delivery_date', from).lte('delivery_date', to).order('delivery_date');
   const rows = orders ?? [];
 
