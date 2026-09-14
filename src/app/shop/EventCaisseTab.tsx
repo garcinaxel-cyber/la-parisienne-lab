@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift } from 'lucide-react';
-import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, type EventCaisseProduct, type EventSaleHistoryLine } from './actions';
+import { useEffect, useMemo, useState } from 'react';
+import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, Search, Cake, ChevronDown, ChevronUp } from 'lucide-react';
+import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, getEventSalesSummaryAction, type EventCaisseProduct, type EventSaleHistoryLine, type EventSalesSummary } from './actions';
 import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 
 // "Thu ngân" — the event's mini cash register (Axel, 2026-09-12): "une sorte de mini caisse
@@ -34,16 +34,34 @@ export default function EventCaisseTab() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [history, setHistory] = useState<EventSaleHistoryLine[] | null>(null);
+  const [summary, setSummary] = useState<EventSalesSummary | null>(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  // Axel, 2026-09-14: "un filtre par nom et aussi par categorie" — name search + category pills
+  // over the product grid; category comes from the fiche (see getEventCaisseCatalogAction).
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   // 'idle' = cart view; 'choosing' = pick cash/transfer; 'transferQr' = showing the QR to confirm.
   const [paymentStep, setPaymentStep] = useState<'idle' | 'choosing' | 'transferQr'>('idle');
 
   async function load() {
-    const [p, h] = await Promise.all([getEventCaisseCatalogAction(), getEventSalesHistoryAction()]);
+    const [p, h, s] = await Promise.all([getEventCaisseCatalogAction(), getEventSalesHistoryAction(), getEventSalesSummaryAction()]);
     setProducts(p.products ?? []);
     setQrCodeUrl(p.qrCodeUrl ?? null);
     setHistory(h.sales ?? []);
+    setSummary(s.summary ?? null);
   }
   useEffect(() => { load(); }, []);
+
+  const categories = useMemo(
+    () => Array.from(new Set((products ?? []).map(p => p.category).filter((c): c is string => !!c))).sort((a, b) => a.localeCompare(b)),
+    [products],
+  );
+  const filteredProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (products ?? []).filter(p =>
+      (!q || p.name.toLowerCase().includes(q)) && (!categoryFilter || p.category === categoryFilter),
+    );
+  }, [products, search, categoryFilter]);
 
   function changeQty(sku: string, delta: number, max: number) {
     const next = Math.max(0, Math.min(max, (cart[sku] ?? 0) + delta));
@@ -91,13 +109,43 @@ export default function EventCaisseTab() {
           Chưa có sản phẩm nào để bán — kiểm kho trước ở tab &quot;Kiểm kho&quot;.
         </div>
       ) : (
+        <>
+          <div className="flex items-center gap-1.5 rounded-xl px-3 py-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+            <Search size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm sản phẩm…"
+              className="flex-1 text-[13px]" style={{ border: 'none', outline: 'none', color: INK, background: 'transparent' }} />
+          </div>
+          {categories.length > 1 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+              <button onClick={() => setCategoryFilter(null)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
+                backgroundColor: categoryFilter === null ? NAVY : '#fff', color: categoryFilter === null ? '#FFFAEE' : INK,
+                border: categoryFilter === null ? 'none' : `1px solid ${BORDER}`,
+              }}>Tất cả</button>
+              {categories.map(c => (
+                <button key={c} onClick={() => setCategoryFilter(c === categoryFilter ? null : c)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
+                  backgroundColor: categoryFilter === c ? NAVY : '#fff', color: categoryFilter === c ? '#FFFAEE' : INK,
+                  border: categoryFilter === c ? 'none' : `1px solid ${BORDER}`,
+                }}>{c}</button>
+              ))}
+            </div>
+          )}
+          {!filteredProducts.length && (
+            <div className="text-center py-6 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy sản phẩm.</div>
+          )}
         <div className="grid grid-cols-2 gap-2.5">
-          {products.map(p => {
+          {filteredProducts.map(p => {
             const qty = cart[p.sku] ?? 0;
             const free = Math.min(freeCart[p.sku] ?? 0, qty);
             const remaining = p.available - qty;
             return (
               <div key={p.sku} className="bg-white rounded-2xl p-3" style={{ border: `1px solid ${BORDER}` }}>
+                <div className="w-full aspect-square rounded-xl mb-2 flex items-center justify-center overflow-hidden" style={{ backgroundColor: GOLD_PALE }}>
+                  {p.imageUrl ? (
+                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Cake size={26} style={{ color: GOLD }} />
+                  )}
+                </div>
                 <div className="text-[13px] font-bold leading-tight" style={{ color: INK }}>{p.name}</div>
                 <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>Còn <b>{remaining}</b></div>
                 <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
@@ -132,11 +180,41 @@ export default function EventCaisseTab() {
             );
           })}
         </div>
+        </>
       )}
 
       {msg && (
         <div className="text-xs font-semibold text-center rounded-lg px-3 py-2" style={{ backgroundColor: msg.startsWith('✓') ? '#EAF6EC' : '#FBEAE8', color: msg.startsWith('✓') ? GREEN : RED }}>
           {msg}
+        </div>
+      )}
+
+      {/* Sales summary (Axel, 2026-09-14): "le total sales et la repartition par produit" — sums
+          EVERY sale ever recorded for this event (not just the last 50 the trace list below
+          shows), broken down per product on request. */}
+      {summary && summary.orderCount > 0 && (
+        <div className="bg-white rounded-2xl p-3.5" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Tổng doanh thu event</div>
+              <div className="text-lg font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(summary.totalRevenue)}</div>
+            </div>
+            <button onClick={() => setShowBreakdown(v => !v)}
+              className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5"
+              style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
+              Theo sản phẩm {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+          </div>
+          {showBreakdown && (
+            <div className="mt-2.5 pt-2.5 space-y-1.5" style={{ borderTop: `1px solid ${BORDER}` }}>
+              {summary.byProduct.map(p => (
+                <div key={p.sku} className="flex items-center justify-between gap-2 text-xs">
+                  <span style={{ color: INK }}>{p.name} <span style={{ color: '#9CA3AF' }}>×{p.qty}</span></span>
+                  <span className="font-bold tabular-nums flex-shrink-0" style={{ color: '#8A6D14' }}>{fmt(p.revenue)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -203,23 +281,31 @@ export default function EventCaisseTab() {
         </div>
       )}
 
+      {/* Full-screen QR (Axel, 2026-09-14): "pour que le client scan le QR faut que la photo se
+          mette en pleine ecran" — the small in-sheet thumbnail was too small to scan comfortably;
+          this now takes over the whole screen so the QR itself can be shown as large as possible
+          when the phone is turned toward the customer. */}
       {paymentStep === 'transferQr' && (
-        <div className="fixed inset-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(26,71,49,0.55)' }} onClick={() => setPaymentStep('choosing')}>
-          <div className="bg-white rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-20 flex flex-col" style={{ backgroundColor: '#fff' }}>
+          <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
             <button onClick={() => setPaymentStep('choosing')} className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: '#9CA3AF' }}>
               <ArrowLeft size={12} /> Quay lại
             </button>
-            <div className="text-center">
-              <div className="text-[10.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>Chuyển khoản</div>
-              <div className="text-xl font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(total)}</div>
+            <div className="text-right">
+              <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>Chuyển khoản</div>
+              <div className="text-sm font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(total)}</div>
             </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
             {qrCodeUrl ? (
-              <img src={qrCodeUrl} alt="QR chuyển khoản" className="w-48 h-48 mx-auto rounded-lg object-contain" style={{ border: `1px solid ${BORDER}` }} />
+              <img src={qrCodeUrl} alt="QR chuyển khoản" className="max-w-full max-h-full rounded-xl object-contain" style={{ border: `1px solid ${BORDER}` }} />
             ) : (
               <div className="text-xs text-center rounded-lg px-3 py-4" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
                 Chưa có QR cho event này — nhờ admin tải lên ở trang quản lý Event.
               </div>
             )}
+          </div>
+          <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: `1px solid ${BORDER}` }}>
             <button onClick={() => confirmSale('transfer')} disabled={submitting}
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3 disabled:opacity-60"
               style={{ backgroundColor: '#1A4731', color: '#FFFAEE' }}>

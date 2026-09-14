@@ -1947,7 +1947,14 @@ async function requireEventSession(): Promise<{ event: EventShop } | { error: st
   return { event };
 }
 
-export type EventCaisseProduct = { sku: string; name: string; unitPrice: number; available: number };
+export type EventCaisseProduct = {
+  sku: string; name: string; unitPrice: number; available: number;
+  // Axel, 2026-09-14: "faudra que les produits affichent les images ... et un filtre ... par
+  // categorie" — imageUrl/category resolved below (same sku -> lab_fiche_variants.image_url,
+  // falling back to lab_fiche_meta.image_url, pattern fetchDeliveryOrders already uses; category
+  // always comes from the fiche, variants don't have their own).
+  imageUrl: string | null; category: string | null;
+};
 
 // Promo (Axel, 2026-09-14): "buy one get one free, buy 2 get one free ... buy 5 macaron get one
 // free" — staff's locked-in answer: no pre-configured rules, decided at the till each time, and
@@ -1991,6 +1998,28 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   const priceBySku = new Map<string, number>();
   for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
 
+  // Images + category (Axel, 2026-09-14) — best-effort only, a missing match just renders without
+  // a thumbnail/category, same as every other sku->image lookup in this file.
+  const { data: variantRows } = await supabase.from('lab_fiche_variants').select('sku, image_url, fiche_id').in('sku', skus);
+  const imageBySku = new Map<string, string>();
+  const ficheIdBySku = new Map<string, string>();
+  for (const v of variantRows ?? []) {
+    if (v.sku && v.image_url && !imageBySku.has(v.sku)) imageBySku.set(v.sku, v.image_url);
+    if (v.sku && v.fiche_id && !ficheIdBySku.has(v.sku)) ficheIdBySku.set(v.sku, v.fiche_id);
+  }
+  const ficheIds = Array.from(new Set(Array.from(ficheIdBySku.values())));
+  const { data: ficheRows } = ficheIds.length
+    ? await supabase.from('lab_fiche_meta').select('id, image_url, category').in('id', ficheIds)
+    : { data: [] as any[] };
+  const ficheById = new Map<string, { image_url: string | null; category: string | null }>();
+  for (const f of ficheRows ?? []) ficheById.set(f.id, { image_url: f.image_url ?? null, category: f.category ?? null });
+  const categoryBySku = new Map<string, string | null>();
+  for (const sku of skus) {
+    const fiche = ficheIdBySku.has(sku) ? ficheById.get(ficheIdBySku.get(sku)!) : undefined;
+    if (!imageBySku.has(sku) && fiche?.image_url) imageBySku.set(sku, fiche.image_url);
+    categoryBySku.set(sku, fiche?.category ?? null);
+  }
+
   const { data: orders } = await supabase.from('lab_online_orders').select('order_batch_id').eq('shop_name', shopName).eq('source', 'event_stock');
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
   const soldBySku = new Map<string, number>();
@@ -2000,7 +2029,10 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   }
 
   const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
-    .map(([sku, o]) => ({ sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: Math.max(0, o.qty - (soldBySku.get(sku) ?? 0)) }))
+    .map(([sku, o]) => ({
+      sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: Math.max(0, o.qty - (soldBySku.get(sku) ?? 0)),
+      imageUrl: imageBySku.get(sku) ?? null, category: categoryBySku.get(sku) ?? null,
+    }))
     .filter(p => p.available > 0 && p.unitPrice > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
   return { products, qrCodeUrl: auth.event.qrCodeUrl };
@@ -2098,4 +2130,41 @@ export async function getEventSalesHistoryAction(): Promise<{ sales?: EventSaleH
       amount: Number(o.amount_paid ?? 0), time: fmtTime.format(new Date(o.created_at)),
     })),
   };
+}
+
+// Axel, 2026-09-14: "je veux le total sales et la repartition par produit" — unlike
+// getEventSalesHistoryAction (capped at 50, most-recent-first, one row per ORDER) this sums
+// EVERY event_stock order ever recorded for this event, aggregated per SKU. Revenue naturally
+// nets out free units: their sale line carries unit_price=0 (see recordEventSaleAction), so a
+// "(miễn phí)" row folds into the same sku's totals contributing qty but 0 revenue.
+export type EventSalesSummary = {
+  totalRevenue: number; orderCount: number;
+  byProduct: { sku: string; name: string; qty: number; revenue: number }[];
+};
+
+export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSalesSummary; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: orders } = await supabase.from('lab_online_orders')
+    .select('order_batch_id, amount_paid').eq('shop_name', auth.event.name).eq('source', 'event_stock');
+  const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
+  const totalRevenue = (orders ?? []).reduce((s: number, o: any) => s + Number(o.amount_paid ?? 0), 0);
+  const { data: lines } = batchIds.length
+    ? await supabase.from('lab_online_sale_lines').select('sku, product_name_vi, qty, unit_price').in('order_batch_id', batchIds).eq('is_fee', false)
+    : { data: [] as any[] };
+  const bySku = new Map<string, { name: string; qty: number; revenue: number }>();
+  for (const l of lines ?? []) {
+    if (!l.sku) continue;
+    const name = String(l.product_name_vi ?? l.sku).replace(/ \(miễn phí\)$/, '');
+    const cur = bySku.get(l.sku) ?? { name, qty: 0, revenue: 0 };
+    cur.qty += Number(l.qty ?? 0);
+    cur.revenue += Number(l.qty ?? 0) * Number(l.unit_price ?? 0);
+    bySku.set(l.sku, cur);
+  }
+  const byProduct = Array.from(bySku.entries())
+    .map(([sku, v]) => ({ sku, ...v }))
+    .sort((a, b) => b.revenue - a.revenue);
+  return { summary: { totalRevenue, orderCount: (orders ?? []).length, byProduct } };
 }
