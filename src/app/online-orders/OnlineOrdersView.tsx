@@ -1047,13 +1047,13 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                         (excel_import refused server-side too), any write-access staff — see
                         refundOnlineOrderAction. Once refunded_at is set (full OR partial amount —
                         Axel: "des fois on rembourse qu'une partie"), the trace line replaces the
-                        button; one refund per order, no top-up. */}
+                        button; one refund per order, no top-up. Bug fix 2026-09-14: the amount was
+                        only ever shown for a PARTIAL refund — a full refund's trace line said only
+                        "Hoàn tiền bởi X" with no figure, which is what the online-sales manager
+                        flagged ("elle voit pas le montant du refund"). Now always shown. */}
                     {o.refundedAt ? (
                       <div style={{ fontSize: 10.5, color: '#B91C1C', marginTop: 7 }}>
-                        {o.refunded
-                          ? tr('refundedByPrefix')
-                          : `${tr('refundedPartialPrefix')}${fmtVnd(o.refundAmount)} · ${tr('refundedByShort')}`}
-                        {o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        {tr('refundedAmountLabel')} {fmtVnd(o.refundAmount)} · {tr('refundedByShort')}{o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </div>
                     ) : !readOnly && o.source !== 'excel_import' && (
                       <button onClick={() => refundOrder(o)} className="w-full text-center py-1.5 rounded-lg mt-2" style={{
