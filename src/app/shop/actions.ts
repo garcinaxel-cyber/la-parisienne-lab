@@ -1949,6 +1949,13 @@ async function requireEventSession(): Promise<{ event: EventShop } | { error: st
 
 export type EventCaisseProduct = { sku: string; name: string; unitPrice: number; available: number };
 
+// Promo (Axel, 2026-09-14): "buy one get one free, buy 2 get one free ... buy 5 macaron get one
+// free" — staff's locked-in answer: no pre-configured rules, decided at the till each time, and
+// since the items concerned share the same price ("c'est par categorie avec des prix identiques")
+// it never matters WHICH unit ends up free. So the whole mechanic is just: how many of the units
+// already in the cart for this SKU are free. getEventCaisseCatalogAction/recordEventSaleAction
+// below never need to know about categories or rules at all — see EventCaisseTab's freeCart state.
+
 // Reworked, Axel 2026-09-13: "je dois pas avoir de dependance avec l'interface d'un des shops,
 // c'est a part" — the caisse must NOT depend on the clicked-into shop's own Kiểm kho stock count
 // (that count is the SHOP's, not the event's — this used to leak whatever shop a staff member had
@@ -1960,7 +1967,7 @@ export type EventCaisseProduct = { sku: string; name: string; unitPrice: number;
 // toutes les commandes et pas seulement la premiere" — no delivery_date filter at all, unlike
 // getRecentManagerOrdersAction's today/tomorrow window: every order ever logged for this event's
 // shop_name is summed, so a SKU that only showed up on day 2's order still appears here.
-export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; error?: string }> {
+export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
   const shopName = auth.event.name;
@@ -1977,7 +1984,7 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
       orderedBySku.set(l.sku, { name: l.name || cur?.name || l.sku, qty: (cur?.qty ?? 0) + Number(l.qty) });
     }
   }
-  if (!orderedBySku.size) return { products: [] };
+  if (!orderedBySku.size) return { products: [], qrCodeUrl: auth.event.qrCodeUrl };
 
   const skus = Array.from(orderedBySku.keys());
   const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus);
@@ -1996,24 +2003,37 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
     .map(([sku, o]) => ({ sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: Math.max(0, o.qty - (soldBySku.get(sku) ?? 0)) }))
     .filter(p => p.available > 0 && p.unitPrice > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
-  return { products };
+  return { products, qrCodeUrl: auth.event.qrCodeUrl };
 }
 
-export type EventSaleItem = { sku: string; qty: number };
+// freeQty (Axel, 2026-09-14): however many of this line's units the staff marked free at the
+// till — "buy 2 get 1 free", "buy 5 macaron get 1 free", whatever they agreed with the customer.
+// Always <= qty. Still counts against stock (the unit physically left the shelf) but contributes
+// 0 revenue — see the split into a paid row + a free row below.
+export type EventSaleItem = { sku: string; qty: number; freeQty?: number };
 
-export async function recordEventSaleAction(items: EventSaleItem[]): Promise<{ ok?: boolean; total?: number; error?: string }> {
+export async function recordEventSaleAction(
+  items: EventSaleItem[],
+  paymentMethod: 'cash' | 'transfer',
+): Promise<{ ok?: boolean; total?: number; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
   const shopName = auth.event.name;
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
+  if (!['cash', 'transfer'].includes(paymentMethod)) return { error: 'Invalid payment method' };
   const clean = (Array.isArray(items) ? items : []).slice(0, 50)
-    .map(i => ({ sku: String(i.sku ?? '').trim(), qty: Math.round(Number(i.qty)) }))
+    .map(i => {
+      const qty = Math.round(Number(i.qty));
+      const freeQty = Math.max(0, Math.min(qty, Math.round(Number(i.freeQty ?? 0))));
+      return { sku: String(i.sku ?? '').trim(), qty, freeQty };
+    })
     .filter(i => i.sku && i.qty > 0);
   if (!clean.length) return { error: 'Giỏ hàng trống' };
 
   // Re-check against CURRENT availability server-side — never trust the client's cart qty, the
   // gating is the whole point of this feature (Axel: never sell past what's physically there).
+  // Availability is checked against the FULL qty (free units still leave the shelf).
   const { products, error } = await getEventCaisseCatalogAction();
   if (error) return { error };
   const bySku = new Map((products ?? []).map(p => [p.sku, p]));
@@ -2024,15 +2044,24 @@ export async function recordEventSaleAction(items: EventSaleItem[]): Promise<{ o
 
   const today = vnDateStr();
   const orderBatchId = crypto.randomUUID();
-  const total = clean.reduce((sum, i) => sum + i.qty * (bySku.get(i.sku)!.unitPrice), 0);
+  // Free units contribute 0 to `total` (their row's unit_price is 0 — see rows below), so this
+  // naturally already nets out every promo without any separate discount calculation.
+  const total = clean.reduce((sum, i) => sum + (i.qty - i.freeQty) * (bySku.get(i.sku)!.unitPrice), 0);
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
     order_batch_id: orderBatchId, source: 'event_stock', shop_name: shopName, channel: 'Event',
-    delivery_date: today, payment_status: 'paid', amount_paid: total,
+    delivery_date: today, payment_status: 'paid', amount_paid: total, payment_method: paymentMethod,
   });
   if (ooErr) return { error: ooErr.message };
-  const rows = clean.map(i => {
+  const rows = clean.flatMap(i => {
     const p = bySku.get(i.sku)!;
-    return { sku: p.sku, product_name_vi: p.name, qty: i.qty, unit_price: p.unitPrice, is_fee: false, order_batch_id: orderBatchId };
+    const paidQty = i.qty - i.freeQty;
+    const out: any[] = [];
+    if (paidQty > 0) out.push({ sku: p.sku, product_name_vi: p.name, qty: paidQty, unit_price: p.unitPrice, is_fee: false, order_batch_id: orderBatchId });
+    // Separate 0-price row for the free units — keeps them out of `total`/revenue while still
+    // counting toward stock consumed (getEventCaisseCatalogAction sums qty across every
+    // non-fee line for this SKU, this row included) and toward the sales-history line label.
+    if (i.freeQty > 0) out.push({ sku: p.sku, product_name_vi: `${p.name} (miễn phí)`, qty: i.freeQty, unit_price: 0, is_fee: false, order_batch_id: orderBatchId });
+    return out;
   });
   const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(rows);
   if (lErr) {

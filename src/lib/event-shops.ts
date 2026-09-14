@@ -20,12 +20,17 @@ function service() {
 export type EventShop = {
   id: string; name: string; warehouseCode: string; odooWarehouseId: number;
   active: boolean; createdAt: string; closedAt: string | null;
+  // Payment QR (Axel, 2026-09-14): "le QR code de paiement ... que l'on met nous meme avant que
+  // l'event commence" — one image per event, uploaded by the admin ahead of time (see
+  // uploadEventQrAction in admin/events/actions.ts), shown at the mini-caisse whenever staff picks
+  // "chuyển khoản" (bank transfer) as the payment method. Null until uploaded.
+  qrCodeUrl: string | null;
 };
 
 function fromRow(r: any): EventShop {
   return {
     id: r.id, name: r.name, warehouseCode: r.warehouse_code, odooWarehouseId: r.odoo_warehouse_id,
-    active: r.active, createdAt: r.created_at, closedAt: r.closed_at,
+    active: r.active, createdAt: r.created_at, closedAt: r.closed_at, qrCodeUrl: r.qr_code_url ?? null,
   };
 }
 
@@ -119,6 +124,14 @@ export async function closeEventShop(id: string): Promise<{ ok?: boolean; error?
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { error } = await supabase.from('lab_event_shops').update({ active: false, closed_at: new Date().toISOString() }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function setEventQrCodeUrl(id: string, url: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { error } = await supabase.from('lab_event_shops').update({ qr_code_url: url }).eq('id', id);
   if (error) return { error: error.message };
   return { ok: true };
 }

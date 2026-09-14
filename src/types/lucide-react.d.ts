@@ -86,4 +86,7 @@ declare module 'lucide-react' {
   export const ExternalLink: LucideIcon;
   export const PlayCircle: LucideIcon;
   export const ArrowLeftRight: LucideIcon;
+  export const QrCode: LucideIcon;
+  export const Banknote: LucideIcon;
+  export const Gift: LucideIcon;
 }
