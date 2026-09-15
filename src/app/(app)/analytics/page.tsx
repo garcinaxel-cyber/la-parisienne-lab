@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import AnalyticsView from './AnalyticsView';
 import { collectMtoExplanations, STOCK_CATEGORIES } from '@/lib/checks';
 import { collectStockTrace } from '@/lib/stock-trace';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 // 2026-09-15 (Axel): was `revalidate = 300` (5 min). Each ?range=X value is a separate
 // cached page, and its underlying Supabase reads get cached independently starting from
@@ -34,52 +35,66 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const toStr = today.toISOString().split('T')[0];
 
 
-  // Published imports in range
-  const { data: imports } = await supabase
-    .from('lab_imports')
-    .select('id, delivery_date')
-    .eq('status', 'published')
-    .gte('delivery_date', fromStr)
-    .lte('delivery_date', toStr);
-  const importIds = (imports ?? []).map((i: any) => i.id);
+  // Published imports in range — paginated (see 2026-09-16 note below): a wide range (60/90d)
+  // can hold well over 1000 published imports, and PostgREST silently caps a single request at
+  // 1000 rows with no error, so an un-paginated fetch would quietly drop the rest.
+  const imports = await fetchAllPages<{ id: string; delivery_date: string }>((from_, to_) =>
+    supabase.from('lab_imports').select('id, delivery_date')
+      .eq('status', 'published').gte('delivery_date', fromStr).lte('delivery_date', toStr)
+      .order('id').range(from_, to_));
+  const importIds = imports.map((i) => i.id);
   const dateByImport: Record<string, string> = {};
-  for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
+  for (const i of imports) dateByImport[i.id] = i.delivery_date;
 
-  // 2026-09-16 (Axel): "Published imports"/"Blocked products" (and completion-by-team) could
-  // come back LOWER for 30 days than for 7 — impossible if 7 days is a true subset of 30. Root
-  // cause: this filters lab_assignments by import_id, and that id list grows with the date
-  // range (478 imports over 30d vs 121 over 7d here) — a single .in(importIds) call turns into
-  // an ~18KB+ query string for the wide range, right at the edge of what the request path
-  // reliably carries, and it was silently returning fewer rows rather than erroring. Batching
-  // the .in() into fixed-size chunks removes any dependency on how many ids fit in one request.
+  // 2026-09-16 (Axel): "Published imports"/"Blocked products"/"Units produced" (and completion-
+  // by-team) could come back LOWER for 30 days than for 7 — impossible if 7 days is a true
+  // subset of 30. First fix attempt chunked the .in(importIds) call into fixed-size batches on
+  // the theory that a single ~18KB+ query string for the wide range was the culprit — that
+  // shipped but Axel still saw 20,947 "Units produced" over 30d live in the app when a direct
+  // DB query (and Odoo's own manufacturing totals for the same window) both independently landed
+  // around ~30,000. Real root cause, confirmed by cross-checking live in Chrome: PostgREST caps
+  // a SINGLE REQUEST at 1000 rows with NO error (db-max-rows default) — already bitten 3 times
+  // elsewhere in this codebase per lib/fetch-all-pages.ts ("delivery-check 2026-08-20, odoo-sync
+  // anti-duplicate scans 2026-08-26, station History badge 2026-09-01"), now a 4th time here. A
+  // chunk of 150 import_ids can easily carry well over 1000 assignment rows on a busy 30-day
+  // window, so each chunk ALSO needs its own .range() pagination — chunking alone (bounding the
+  // .in() list length) was necessary but not sufficient; only real pagination (bounding rows
+  // returned per request) fixes the silent truncation.
   const ASSIGNMENTS_CHUNK = 150;
   async function fetchAssignmentsBatched(ids: string[]) {
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += ASSIGNMENTS_CHUNK) chunks.push(ids.slice(i, i + ASSIGNMENTS_CHUNK));
     const results = await Promise.all(chunks.map(chunk =>
-      supabase.from('lab_assignments')
-        .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
-        .in('import_id', chunk).limit(20000)
+      fetchAllPages<any>((from_, to_) =>
+        supabase.from('lab_assignments')
+          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
+          .in('import_id', chunk).order('id').range(from_, to_))
     ));
-    return { data: results.flatMap(r => r.data ?? []), error: results.find(r => r.error)?.error ?? null };
+    return { data: results.flat() };
   }
 
   // 2026-08-20 — Order-modification analysis removed (Axel: "plus interessant"). Production
   // cards now also carry blocked_at/blocked_by_name (lab_v46) for traceability, and delivery-
   // check lines are read for the two new team-level metrics below.
-  const [{ data: assignments }, { data: checkLines }, { data: excludedRows }] = await Promise.all([
+  const [{ data: assignments }, checkLines, { data: excludedRows }] = await Promise.all([
     importIds.length
       ? fetchAssignmentsBatched(importIds)
       : Promise.resolve({ data: [] as any[] }),
     // Only for the raw (≤60d) window — no daily-aggregate table exists yet for delivery-check
     // data (unlike production, which has lab_daily_stats), so a wide aggregated range would mean
     // an unbounded scan. Follow-up worth doing if these metrics prove useful long-range.
+    // 2026-09-16: paginated for the same reason as lab_assignments above — a 30-day window alone
+    // holds several thousand category='production' check-lines, well past PostgREST's 1000-row
+    // silent cap; this query had NO batching at all before, so it was the most-truncated of the
+    // three (confirmed live: "Completion by team" showed Team Hung 68% · 2,825/4,144 vs. ~90% ·
+    // 14,540/16,125 from a direct, unpaginated-limit DB query).
     !aggregated
-      ? supabase.from('lab_delivery_check_lines')
-          .select('sku, team, product_name_vi, status, qty_expected, qty_checked')
-          .eq('category', 'production').not('team', 'is', null)
-          .gte('delivery_date', fromStr).lte('delivery_date', toStr).limit(20000)
-      : Promise.resolve({ data: [] as any[] }),
+      ? fetchAllPages<any>((from_, to_) =>
+          supabase.from('lab_delivery_check_lines')
+            .select('sku, team, product_name_vi, status, qty_expected, qty_checked')
+            .eq('category', 'production').not('team', 'is', null)
+            .gte('delivery_date', fromStr).lte('delivery_date', toStr).order('id').range(from_, to_))
+      : Promise.resolve([] as any[]),
     // category='production' isn't a fully reliable "actually produced" filter on its own — a
     // SKU added to lab_excluded_skus AFTER its check line already existed stays category=
     // 'production' forever (ensureDeliveryOrderChecklist only re-buckets on next open — same
@@ -234,9 +249,12 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   let kpisOut = kpis, teamsOut = teams, topOut = topProducts, reasonsOut = reasons, dailyOut = daily;
   let blockedCardsOut = blockedCards, blockTrendOut = blockTrend, teamDominantReasonOut = teamDominantReason;
   if (aggregated) {
-    const { data: stats } = await supabase.from('lab_daily_stats')
-      .select('day, team, sku, product_name, qty_ordered, qty_produced, qty_extra, cards_total, cards_done, cards_blocked')
-      .gte('day', fromStr).lte('day', toStr).limit(50000);
+    // 2026-09-16: paginated for the same PostgREST 1000-row cap as the raw-window queries above —
+    // day × team × product easily exceeds 1000 rows over a 6-month/1-year range.
+    const stats = await fetchAllPages<any>((from_, to_) =>
+      supabase.from('lab_daily_stats')
+        .select('day, team, sku, product_name, qty_ordered, qty_produced, qty_extra, cards_total, cards_done, cards_blocked')
+        .gte('day', fromStr).lte('day', toStr).order('day').order('team').order('sku').range(from_, to_));
     let sUnitsProduced = 0, sUnitsPlanned = 0, sCardsTotal = 0, sCardsDone = 0, sBlocked = 0;
     const sTeam: Record<string, { total: number; done: number; units: number }> = {};
     const sProduct: Record<string, number> = {};
