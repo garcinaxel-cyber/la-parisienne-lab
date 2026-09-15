@@ -118,7 +118,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
 
       const { data: asgRows } = await supabase
         .from('lab_assignments')
-        .select('id, total_qty, qty_to_produce, qty_produced, status, breakdown, notes')
+        .select('id, total_qty, qty_to_produce, qty_produced, status, breakdown, notes, cancelled')
         .eq('import_id', first.import_id)
         .eq('team', first.team)
         .eq('variant_label', first.variant_label)
@@ -169,6 +169,20 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         }
         const { error: updErr } = await supabase.from('lab_assignments').update(update).eq('id', asg.id);
         if (updErr) errors.push({ order_ref: ch.order_ref, sku: item.sku, name: item.name, reason: `update card ${asg.id}: ${updErr.message}` });
+        else if (update.cancelled && !asg.cancelled && first.team && TEAMS.includes(first.team)) {
+          // Push to the chef station the moment a card goes to 0 because Odoo's own demand for
+          // this order_ref+sku dropped to 0 (order cancelled/deleted in Odoo, or its line
+          // removed) — Axel, 2026-09-15: before this a cancellation only showed up as a
+          // struck-through card next time someone opened the station page, so a chef mid-shift
+          // could keep producing something nobody needs anymore. `!asg.cancelled` keeps this to
+          // the actual transition (the `delta === 0` guard above already stops this whole block
+          // from re-running once local qty has converged to Odoo's, but this stays safe even if
+          // the same order_ref+sku is ever touched twice in one sync pass). Same
+          // team-match-or-all_teams delivery as every other sendTeamPush call — Axel gets it too.
+          const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `❌ Đơn ${ch.order_ref} đã huỷ trên Odoo — ngừng làm ${first.product_name_vi}`, url: `/station/${first.team}` };
+          const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `❌ Order ${ch.order_ref} cancelled on Odoo — stop making ${first.product_name_vi}`, url: `/station/${first.team}` };
+          await awaitPush(sendTeamPush(supabase, first.team, viPayload, enPayload));
+        }
       } else if (delta > 0) {
         // No tracking card exists for this product on this order. Normally that means it's
         // fully covered by a matched manual cake (by design — see manual-cake-coverage.ts). If
@@ -214,13 +228,25 @@ async function cancelMatchedManualCake(supabase: SupabaseClient, orderRef: strin
       cancelled_at: now, cancel_reason: 'Annulée dans Odoo (détecté au sync)', needs_odoo: false,
     }).eq('id', mc.id);
     if (mc.assignment_id) {
-      const { data: asg } = await supabase.from('lab_assignments').select('notes').eq('id', mc.assignment_id).maybeSingle();
+      const { data: asg } = await supabase.from('lab_assignments')
+        .select('notes, team, product_name_vi, cancelled').eq('id', mc.assignment_id).maybeSingle();
       const note = `⚠ Commande Odoo annulée (détecté au sync ${nowLabStamp()}) — carte annulée automatiquement`;
       await supabase.from('lab_assignments').update({
         cancelled: true, total_qty: 0, qty_to_produce: 0,
         notes: asg?.notes ? `${asg.notes}\n${note}` : note,
         updated_at: now,
       }).eq('id', mc.assignment_id);
+
+      // Same chef-facing push as the plain-order-line cancellation path below, for a manual cake
+      // (birthday cake / commande exceptionnelle) matched to an Odoo order that got cancelled or
+      // deleted (Axel, 2026-09-15). `!asg.cancelled` skips it if the card was already cancelled —
+      // nothing fresh to tell the team.
+      if (asg && !asg.cancelled && asg.team && TEAMS.includes(asg.team)) {
+        const productName = asg.product_name_vi ?? sku;
+        const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `❌ Đơn ${orderRef} đã huỷ trên Odoo — ngừng làm ${productName}`, url: `/station/${asg.team}` };
+        const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `❌ Order ${orderRef} cancelled on Odoo — stop making ${productName}`, url: `/station/${asg.team}` };
+        await awaitPush(sendTeamPush(supabase, asg.team, viPayload, enPayload));
+      }
     }
   }
 }
