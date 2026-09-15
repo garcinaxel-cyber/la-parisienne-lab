@@ -2,6 +2,15 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
 import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
+import { canonicalizePhone } from '@/lib/phone-format';
+import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
+
+// district (Axel, 2026-09-15): optional, validated against the known list — never blocks the
+// order if missing or unrecognized, just silently stored as null (see online-orders/actions.ts
+// for the same helper, duplicated here since this file has no shared-server-lib import path).
+function cleanDistrict(raw: string | null | undefined): string | null {
+  return isKnownHanoiDistrict(raw) ? (raw as string) : null;
+}
 
 // Public shop order form — server actions.
 // No session here: the token in the URL is the access key, checked on EVERY call.
@@ -99,7 +108,7 @@ export type ShopOrderItem = {
 // matches its own Odoo order line independently.
 export async function submitShopOrderAction(token: string, input: {
   shop: string; deliveryDate: string; readyTime: string | null;
-  deliveredBy: string | null; deliveryAddress: string | null;
+  deliveredBy: string | null; deliveryAddress: string | null; district?: string | null;
   customerName: string | null; customerPhone: string | null; notes: string | null;
   items: ShopOrderItem[]; clientSubmissionKey: string;
 }): Promise<{ ok?: boolean; error?: string }> {
@@ -234,9 +243,9 @@ export async function submitShopOrderAction(token: string, input: {
       product_name_vi: r.nameVi, product_name_en: r.nameEn, image_url: r.imageUrl,
       team: r.team, qty: r.qty, delivery_date: input.deliveryDate,
       ready_time: clean(input.readyTime, 8), delivered_by: deliveredBy,
-      delivery_address: clean(input.deliveryAddress, 300),
+      delivery_address: clean(input.deliveryAddress, 300), district: cleanDistrict(input.district),
       message: r.message, design_notes: r.designNotes, design_photo_url: r.designPhotoUrl,
-      customer_name: clean(input.customerName, 120), customer_phone: clean(input.customerPhone, 40),
+      customer_name: clean(input.customerName, 120), customer_phone: canonicalizePhone(clean(input.customerPhone, 40)),
       notes: clean(input.notes, 500),
       shop_name: input.shop, created_by_name: `${input.shop} (shop)`,
       needs_odoo: true, assignment_id: asg.id, import_id: importId,

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, Minus, X, Loader2, Bell, Settings, CalendarDays, LogOut } from 'lucide-react';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
+import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
@@ -114,6 +115,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [district, setDistrict] = useState('');
   // 'shop' (default, existing behaviour) or 'direct' — who delivers to the end customer
   // (Axel, 2026-09-09). Only meaningful for source==='lab'; ignored for shop_stock sales.
   const [deliveryMode, setDeliveryMode] = useState<'shop' | 'direct'>('shop');
@@ -180,7 +182,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       const res = await actions.submitShopStockSaleAction({
         shop, channel: channel.trim(), saleDate: deliveryDate,
         customerName: customerName || null, customerPhone: customerPhone || null,
-        deliveryAddress: deliveryAddress || null, notes: notes || null,
+        deliveryAddress: deliveryAddress || null, district: district || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
         items: cart.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, lineNote: l.lineNote ?? null })),
         fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
@@ -192,7 +194,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       const res = await actions.submitOnlineOrderAction({
         shop, channel: channel.trim(), deliveryDate, readyTime: readyTime || null,
         customerName: customerName || null, customerPhone: customerPhone || null,
-        deliveryAddress: deliveryAddress || null, notes: notes || null,
+        deliveryAddress: deliveryAddress || null, district: district || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
         deliveryMode,
         items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
@@ -203,7 +205,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
       else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
     }
-    setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setNotes(''); setDeliveryMode('shop');
+    setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setDistrict(''); setNotes(''); setDeliveryMode('shop');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
   }
 
@@ -222,6 +224,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
               customerName={customerName} setCustomerName={setCustomerName}
               customerPhone={customerPhone} setCustomerPhone={setCustomerPhone}
               deliveryAddress={deliveryAddress} setDeliveryAddress={setDeliveryAddress}
+              district={district} setDistrict={setDistrict}
               deliveryMode={deliveryMode} setDeliveryMode={setDeliveryMode}
               notes={notes} setNotes={setNotes}
               deliveryFee={deliveryFee} setDeliveryFee={setDeliveryFee}
@@ -341,7 +344,7 @@ function OrderTab(props: any) {
     source, setSource,
     shop, setShop, channel, setChannel, channels, newChannel, setNewChannel, addChannel, deleteChannel,
     deliveryDate, setDeliveryDate, readyTime, setReadyTime,
-    customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress, deliveryMode, setDeliveryMode,
+    customerName, setCustomerName, customerPhone, setCustomerPhone, deliveryAddress, setDeliveryAddress, district, setDistrict, deliveryMode, setDeliveryMode,
     notes, setNotes, deliveryFee, setDeliveryFee, paymentStatus, setPaymentStatus, amountPaid, setAmountPaid,
     cart, updateLine, removeLine, onDesignPhoto, query, setQuery, results, searching, addToCart, searchOpen, setSearchOpen,
     feeTypes, feeCart, addFeeToCart, updateFeeLine, removeFeeLine, manageFeesOpen, setManageFeesOpen,
@@ -591,10 +594,15 @@ function OrderTab(props: any) {
       <div className="rounded-xl p-3 mb-4 space-y-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder={tr('custName')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
-        <input value={customerPhone} onChange={(e: any) => setCustomerPhone(e.target.value)} placeholder={tr('custPhone')}
+        <input type="tel" inputMode="numeric" value={customerPhone} onChange={(e: any) => setCustomerPhone(e.target.value)} placeholder={tr('custPhone')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
         <input value={deliveryAddress} onChange={(e: any) => setDeliveryAddress(e.target.value)} placeholder={tr('address')}
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+        <select value={district} onChange={(e: any) => setDistrict(e.target.value)}
+          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', color: district ? INK : INK_LIGHT }}>
+          <option value="">{tr('districtPlaceholder')}</option>
+          {HANOI_DISTRICTS.map((d: string) => <option key={d} value={d}>{d}</option>)}
+        </select>
         <div className="flex gap-2">
           <input type="date" value={deliveryDate} onChange={(e: any) => setDeliveryDate(e.target.value)}
             className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />

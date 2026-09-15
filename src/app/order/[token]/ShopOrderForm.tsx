@@ -4,6 +4,7 @@ import { Search, Plus, Minus, X, CheckCircle2, Send, Upload, Loader2 } from 'luc
 import { searchShopProductsAction, submitShopOrderAction, uploadDesignPhotoAction, getShopOrdersAction, type ShopProduct, type ShopOrderStatus } from './actions';
 import { thumb } from '@/lib/img-thumb';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
+import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
 
 // Single source of truth: src/lib/shops.ts (pure data, safe to import in this client
 // component -- unlike odoo-shop-order-sync.ts, which would drag Odoo client code into the bundle).
@@ -36,6 +37,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
   const [readyTime, setReadyTime] = useState('');
   const [deliveredBy, setDeliveredBy] = useState('');
   const [address, setAddress] = useState('');
+  const [district, setDistrict] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [notes, setNotes] = useState('');
@@ -77,7 +79,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
 
   function resetAll() {
     setQuery(''); setResults([]); setItems([]);
-    setDate(today); setReadyTime(''); setAddress(''); setCustomerName(''); setCustomerPhone(''); setNotes('');
+    setDate(today); setReadyTime(''); setAddress(''); setDistrict(''); setCustomerName(''); setCustomerPhone(''); setNotes('');
     setErr(null); setDone(false); setSubmissionKey(crypto.randomUUID()); setViewTab('order');
   }
 
@@ -115,7 +117,7 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
     setSending(true);
     const res = await submitShopOrderAction(token, {
       shop, deliveryDate: date, readyTime: readyTime || null,
-      deliveredBy: deliveredBy || null, deliveryAddress: address || null,
+      deliveredBy: deliveredBy || null, deliveryAddress: address || null, district: district || null,
       customerName: customerName || null, customerPhone: customerPhone || null,
       notes: notes || null, clientSubmissionKey: submissionKey,
       items: items.map(i => ({
@@ -344,6 +346,15 @@ export default function ShopOrderForm({ token, today }: { token: string; today: 
         <div>
           {label(labDelivery ? 'Địa chỉ giao' : 'Địa chỉ giao (nếu có)', 'delivery address', labDelivery)}
           <input value={address} onChange={e => setAddress(e.target.value)} placeholder="Địa chỉ giao đến khách…" className={inputCls} style={inputStyle} />
+        </div>
+
+        <div>
+          {label('Quận/huyện (không bắt buộc)', 'district (optional)')}
+          <select value={district} onChange={e => setDistrict(e.target.value)} className={inputCls}
+            style={{ ...inputStyle, height: 46, backgroundColor: 'white' }}>
+            <option value="">— Chọn —</option>
+            {HANOI_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
         </div>
 
         <div>

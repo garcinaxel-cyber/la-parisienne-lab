@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, Search } from 'lucide-react';
 import * as actions from './actions';
 import type { CustomerRecord, CustomerOrderHistoryItem } from './actions';
 import { NAVY, CREAM, INK, INK_LIGHT, BORDER, useL, fmtVnd } from './shared';
+import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
 
 // "Base de données client" (Axel, 2026-09-11): merges customers from shop-placed orders (via the
 // public /order/[token] link) and from the online-sales orders in Track/Stats, grouped by phone
@@ -17,6 +18,7 @@ export default function CustomersTab() {
   const [customers, setCustomers] = useState<CustomerRecord[] | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [district, setDistrict] = useState<string>('');
   const [selected, setSelected] = useState<string | null>(null); // phoneKey
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export default function CustomersTab() {
   const q = query.trim().toLowerCase();
   const filtered = customers
     .filter(c => (filter === 'new' ? c.orderCount === 1 : filter === 'returning' ? c.orderCount >= 2 : true))
+    .filter(c => !district || c.lastDistrict === district)
     .filter(c => !q || c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q));
 
   return (
@@ -50,6 +53,14 @@ export default function CustomersTab() {
             border: filter === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}
+      </div>
+      <div className="mb-3">
+        <select value={district} onChange={e => setDistrict(e.target.value)}
+          className="w-full px-2 py-1.5 rounded-lg text-sm"
+          style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', color: district ? INK : INK_LIGHT }}>
+          <option value="">{tr('custDistrictFilterAll')}</option>
+          {HANOI_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
       </div>
       <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 8 }}>{filtered.length} {tr('custCountSuffix')}</div>
       {filtered.length === 0 && <div className="text-center py-10 text-sm" style={{ color: INK_LIGHT }}>{tr('custNoResults')}</div>}
@@ -99,6 +110,7 @@ function CustomerDetail({ customer: c, onBack, lang, tr }: { customer: CustomerR
       <div className="rounded-2xl p-3 mb-3" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <Row label={tr('custPhoneLabel')} value={c.phone} />
         {c.lastAddress && <Row label={tr('custLastAddress')} value={c.lastAddress} swipe />}
+        {c.lastDistrict && <Row label={tr('custLastDistrict')} value={c.lastDistrict} />}
         <div style={{ height: 1, backgroundColor: '#F3F4F6', margin: '6px 0' }} />
         <Row label={tr('custTotalOrdersLabel')} value={`${c.orderCount} ${tr('orders')} · ${fmtVnd(c.totalAmount)}${c.hasUnknownAmounts ? '+' : ''}`} strong />
       </div>

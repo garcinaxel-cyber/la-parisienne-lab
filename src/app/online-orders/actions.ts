@@ -5,6 +5,15 @@ import { SHOP_ODOO_MAP, createOdooOrderForSelection } from '@/lib/odoo-shop-orde
 import { ONLINE_PUSH_KEY } from '@/lib/online-sales';
 import { sendShopPush, sendAdminPush, awaitPush, type PushPayload } from '@/lib/push-notify';
 import { revalidatePath } from 'next/cache';
+import { canonicalizePhone } from '@/lib/phone-format';
+import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
+
+// district (Axel, 2026-09-15): optional, free client input validated against the known list —
+// never blocks the order if it's missing or garbage, just silently stored as null so a stale
+// client build or an unexpected value can never stop a submission ("ne casse rien").
+function cleanDistrict(raw: string | null | undefined): string | null {
+  return isKnownHanoiDistrict(raw) ? (raw as string) : null;
+}
 
 // Online-sales interface (Axel, 2026-09-06) — her own space, replacing her personal Google
 // Sheet. She keeps ordering through the existing manual/exceptional-order mechanism
@@ -185,7 +194,7 @@ function buildFeeLineRows(fees: ExtraFeeLineInput[] | undefined): { fiche_id: nu
 // Odoo document for by hand later (existing /exceptional-orders flow) — never silently lost.
 export async function submitOnlineOrderAction(input: {
   shop: string; channel: string; deliveryDate: string; readyTime: string | null;
-  customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
+  customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; district?: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   // Who delivers to the end customer — 'shop' (lab -> shop -> customer, existing flow) or
   // 'direct' (lab delivers straight to the customer's address, bypassing the shop). Axel,
@@ -272,8 +281,9 @@ export async function submitOnlineOrderAction(input: {
 
   const orderBatchId = crypto.randomUUID();
   const customerName = clean(input.customerName, 120);
-  const customerPhone = clean(input.customerPhone, 40);
+  const customerPhone = canonicalizePhone(clean(input.customerPhone, 40));
   const deliveryAddress = clean(input.deliveryAddress, 300);
+  const district = cleanDistrict(input.district);
   const readyTime = clean(input.readyTime, 8);
   const notes = clean(input.notes, 500);
 
@@ -297,7 +307,7 @@ export async function submitOnlineOrderAction(input: {
       fiche_id: r.ficheId, variant_id: r.variantId, product_sku: r.sku,
       product_name_vi: r.nameVi, product_name_en: r.nameEn, image_url: r.imageUrl,
       team: r.team, qty: r.qty, unit_price: r.unitPrice, delivery_date: input.deliveryDate,
-      ready_time: readyTime, delivered_by: input.shop, delivery_address: deliveryAddress,
+      ready_time: readyTime, delivered_by: input.shop, delivery_address: deliveryAddress, district,
       message: r.message, design_notes: r.designNotes, design_photo_url: r.designPhotoUrl,
       customer_name: customerName, customer_phone: customerPhone,
       notes: [r.lineNote, notes].filter(Boolean).join(' · ') || null,
@@ -327,7 +337,7 @@ export async function submitOnlineOrderAction(input: {
     order_batch_id: orderBatchId,
     source: 'lab',
     shop_name: input.shop, channel, delivery_date: input.deliveryDate,
-    customer_name: customerName, customer_phone: customerPhone, delivery_address: deliveryAddress, notes,
+    customer_name: customerName, customer_phone: customerPhone, delivery_address: deliveryAddress, district, notes,
     delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
@@ -369,7 +379,7 @@ export type ShopStockSaleItem = {
 };
 export async function submitShopStockSaleAction(input: {
   shop: string; channel: string; saleDate: string;
-  customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; notes: string | null;
+  customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; district?: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   items: ShopStockSaleItem[]; fees?: ExtraFeeLineInput[];
 }): Promise<{ ok?: boolean; orderBatchId?: string; warning?: string; error?: string }> {
@@ -418,13 +428,13 @@ export async function submitShopStockSaleAction(input: {
 
   const orderBatchId = crypto.randomUUID();
   const customerName = clean(input.customerName, 80);
-  const customerPhone = clean(input.customerPhone, 30);
+  const customerPhone = canonicalizePhone(clean(input.customerPhone, 30));
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
     order_batch_id: orderBatchId,
     source: 'shop_stock',
     shop_name: input.shop, channel, delivery_date: input.saleDate,
     customer_name: customerName, customer_phone: customerPhone,
-    delivery_address: clean(input.deliveryAddress, 300), notes: clean(input.notes, 500),
+    delivery_address: clean(input.deliveryAddress, 300), district: cleanDistrict(input.district), notes: clean(input.notes, 500),
     delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
@@ -612,6 +622,7 @@ export type CustomerRecord = {
   phone: string;
   name: string;
   lastAddress: string | null;
+  lastDistrict: string | null;
   orderCount: number;
   totalAmount: number; // sum of known amounts only
   hasUnknownAmounts: boolean;
@@ -630,10 +641,10 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     // event_stock excluded (Axel, 2026-09-14) — same reasoning as getMyOnlineOrdersAction: an
     // event sale isn't a shop customer relationship, it has its own tracking in the event tab.
     supabase.from('lab_online_orders')
-      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
+      .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, district, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
       .neq('source', 'event_stock'),
     supabase.from('lab_manual_cakes')
-      .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, matched_order_ref, cancelled_at, created_at')
+      .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
   ]);
   if (!onlineOrders?.length && !mcRows?.length) return { customers: [] };
@@ -671,7 +682,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   };
   const sharesSku = (a: Set<string>, b: Set<string>): boolean => Array.from(a).some(k => b.has(k));
 
-  type Row = { date: string; phoneKey: string; phone: string; name: string; address: string | null; skuKeys: Set<string>; item: CustomerOrderHistoryItem };
+  type Row = { date: string; phoneKey: string; phone: string; name: string; address: string | null; district: string | null; skuKeys: Set<string>; item: CustomerOrderHistoryItem };
   const rows: Row[] = [];
 
   for (const batchId of allBatchIds) {
@@ -690,7 +701,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
       const date = o.delivery_date || o.created_at;
       const refundAmount = Number(o.refund_amount ?? 0);
       rows.push({
-        date, phoneKey, phone: o.customer_phone, name: o.customer_name || '—', address: o.delivery_address ?? null,
+        date, phoneKey, phone: o.customer_phone, name: o.customer_name || '—', address: o.delivery_address ?? null, district: o.district ?? null,
         skuKeys: skuKeysOf([...mcLines, ...slLines]),
         item: {
           orderBatchId: batchId, date, origin: 'online', shopName: o.shop_name ?? null,
@@ -711,7 +722,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
       const delivered = mcLines.some((l: any) => l.matched_order_ref && deliveredRefs.has(l.matched_order_ref)) ? true : null;
       const date = first.delivery_date || first.created_at;
       rows.push({
-        date, phoneKey, phone: first.customer_phone, name: first.customer_name || '—', address: first.delivery_address ?? null,
+        date, phoneKey, phone: first.customer_phone, name: first.customer_name || '—', address: first.delivery_address ?? null, district: first.district ?? null,
         skuKeys: skuKeysOf(mcLines),
         item: {
           orderBatchId: batchId, date, origin: 'shop', shopName: first.shop_name ?? null,
@@ -747,6 +758,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     return {
       phoneKey, phone: mostRecent.phone, name: mostRecent.name,
       lastAddress: sorted.find(r => r.address)?.address ?? null,
+      lastDistrict: sorted.find(r => r.district)?.district ?? null,
       orderCount: sorted.length, totalAmount, hasUnknownAmounts,
       lastOrderDate: mostRecent.date, isReturning: sorted.length >= 2,
       history: sorted.map(r => r.item),
