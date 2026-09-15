@@ -45,14 +45,31 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: { 
   const dateByImport: Record<string, string> = {};
   for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
 
+  // 2026-09-16 (Axel): "Published imports"/"Blocked products" (and completion-by-team) could
+  // come back LOWER for 30 days than for 7 — impossible if 7 days is a true subset of 30. Root
+  // cause: this filters lab_assignments by import_id, and that id list grows with the date
+  // range (478 imports over 30d vs 121 over 7d here) — a single .in(importIds) call turns into
+  // an ~18KB+ query string for the wide range, right at the edge of what the request path
+  // reliably carries, and it was silently returning fewer rows rather than erroring. Batching
+  // the .in() into fixed-size chunks removes any dependency on how many ids fit in one request.
+  const ASSIGNMENTS_CHUNK = 150;
+  async function fetchAssignmentsBatched(ids: string[]) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += ASSIGNMENTS_CHUNK) chunks.push(ids.slice(i, i + ASSIGNMENTS_CHUNK));
+    const results = await Promise.all(chunks.map(chunk =>
+      supabase.from('lab_assignments')
+        .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
+        .in('import_id', chunk).limit(20000)
+    ));
+    return { data: results.flatMap(r => r.data ?? []), error: results.find(r => r.error)?.error ?? null };
+  }
+
   // 2026-08-20 — Order-modification analysis removed (Axel: "plus interessant"). Production
   // cards now also carry blocked_at/blocked_by_name (lab_v46) for traceability, and delivery-
   // check lines are read for the two new team-level metrics below.
   const [{ data: assignments }, { data: checkLines }, { data: excludedRows }] = await Promise.all([
     importIds.length
-      ? supabase.from('lab_assignments')
-          .select('import_id, team, product_name_vi, total_qty, qty_produced, status, blocked_reason, blocked_at, blocked_by_name, cancelled')
-          .in('import_id', importIds).limit(20000)
+      ? fetchAssignmentsBatched(importIds)
       : Promise.resolve({ data: [] as any[] }),
     // Only for the raw (≤60d) window — no daily-aggregate table exists yet for delivery-check
     // data (unlike production, which has lab_daily_stats), so a wide aggregated range would mean
