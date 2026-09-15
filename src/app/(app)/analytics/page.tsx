@@ -4,7 +4,15 @@ import AnalyticsView from './AnalyticsView';
 import { collectMtoExplanations, STOCK_CATEGORIES } from '@/lib/checks';
 import { collectStockTrace } from '@/lib/stock-trace';
 
-export const revalidate = 300; // 5 min cache — analytics don't need to be real-time
+// 2026-09-15 (Axel): was `revalidate = 300` (5 min). Each ?range=X value is a separate
+// cached page, and its underlying Supabase reads get cached independently starting from
+// whenever THAT range was last visited — not a shared "snapshot" moment across ranges.
+// Delivery-check lines accumulate live through the day, so a 30-day view cached earlier
+// could show a smaller total than a 7-day view refreshed later the same day, even though
+// 7 days is always a subset of 30 — exactly what Axel spotted (7j > 30j for several
+// teams). This is an admin-only, low-traffic page, so the Supabase cost of always
+// reading fresh is negligible next to showing numbers that contradict each other.
+export const revalidate = 0;
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: { range?: string } }) {
   const supabase = createClient();
