@@ -537,7 +537,7 @@ export default function StationView({
             for (let page = 0; page < 20; page++) { // 20 * 1000 = safety ceiling, never expected to hit
               const { data, error } = await supabase
                 .from('lab_assignments')
-                .select('import_id, qty_to_produce, status, product_name_vi, variant_label, transferred, cancelled')
+                .select('import_id, qty_to_produce, status, product_name_vi, variant_label, transferred, cancelled, qty_produced, total_qty, qty_sent_total')
                 .in('import_id', importIds)
                 .eq('team', team)
                 .order('id', { ascending: true })
@@ -576,10 +576,22 @@ export default function StationView({
             s.totalQty += a.qty_to_produce ?? 0;
             if (a.status === 'done' || a.status === 'skip') s.doneQty += a.qty_to_produce ?? 0;
             if (a.status === 'skip') s.stockQty += a.qty_to_produce ?? 0;
-            if (!isUpcoming && a.status === 'done' && !a.cancelled && !a.transferred) {
-              const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
-              set.add(`${a.product_name_vi ?? ''}||${a.variant_label ?? 'Standard'}`);
-              unsentByDate.set(imp.delivery_date, set);
+            // Use the same numeric qty_produced/total_qty vs qty_sent_total invariant as
+            // groupHistoryProd (the expanded view's actionable "Not sent to stock" list) instead
+            // of trusting the `transferred` boolean — several write paths (e.g. cancelling a
+            // stock-transfer note) can roll back qty_sent_total without correctly recomputing
+            // `transferred`, which used to leave this badge flagging a product as unsent while
+            // the expanded view had nothing left to send for it (Axel, 2026-09-15: "1 not sent
+            // to stock" on a day with no visible way to send it). Computing both from the same
+            // numbers makes them structurally unable to disagree.
+            if (!isUpcoming && a.status === 'done' && !a.cancelled) {
+              const produced = a.qty_produced || a.total_qty || 0;
+              const remaining = Math.max(0, produced - (a.qty_sent_total ?? 0));
+              if (remaining > 0) {
+                const set = unsentByDate.get(imp.delivery_date) ?? new Set<string>();
+                set.add(`${a.product_name_vi ?? ''}||${a.variant_label ?? 'Standard'}`);
+                unsentByDate.set(imp.delivery_date, set);
+              }
             }
           }
           unsentByDate.forEach((set, date) => { byDate.get(date)!.unsentCount = set.size; });

@@ -122,12 +122,24 @@ export async function cancelStockTransferAction(
 
   // Roll back qty_sent_total on every card this note touched, so the real remaining quantity
   // becomes sendable again instead of looking already-covered forever.
+  //
+  // 2026-09-15 fix: this used to force `transferred: false` unconditionally. A card that had
+  // been sent across TWO transfer notes (e.g. a duplicate send, or a partial send topped up
+  // later) could have its total still fully cover its produced quantity even after ONE of those
+  // notes was cancelled — but the unconditional `false` still flipped it, leaving
+  // qty_sent_total >= produced (so the card has nothing left to send — it doesn't show up in
+  // the "Not sent to stock" list) while `transferred` claimed otherwise (so the History tab
+  // badge kept counting it as unsent, with no way to act on it). Recompute `transferred`
+  // against the same qty_produced/total_qty target `submitStockTransferAction` uses instead of
+  // assuming a cancellation always uncovers the card.
   for (const l of lines ?? []) {
     if (!l.assignment_id) continue;
     const { data: card } = await supabase.from('lab_assignments')
-      .select('qty_sent_total').eq('id', l.assignment_id).maybeSingle();
+      .select('qty_produced, total_qty, qty_sent_total').eq('id', l.assignment_id).maybeSingle();
     const newTotal = Math.max(0, (card?.qty_sent_total ?? 0) - (l.qty_sent ?? 0));
-    await supabase.from('lab_assignments').update({ qty_sent_total: newTotal, transferred: false }).eq('id', l.assignment_id);
+    const target = card?.qty_produced || card?.total_qty || 0;
+    await supabase.from('lab_assignments')
+      .update({ qty_sent_total: newTotal, transferred: newTotal >= target }).eq('id', l.assignment_id);
   }
 
   revalidatePath('/reception');
