@@ -22,7 +22,7 @@ function fmtDT(iso: string) {
   return `${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-export default function ShopTransfersTab({ shopName, readOnly, staffNames, onManageStaff, setZoomImage, transfers, reload }: {
+export default function ShopTransfersTab({ shopName, readOnly, staffNames, onManageStaff, setZoomImage, transfers, reload, hideSend }: {
   shopName: string;
   readOnly: boolean;
   staffNames: ShopStaffName[] | null;
@@ -30,6 +30,11 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
   setZoomImage: (url: string | null) => void;
   transfers: ShopTransfer[] | null;
   reload: () => Promise<void>;
+  // Axel, 2026-09-16: the Lab admin sub-tab only ever RECEIVES — shops already send via their own
+  // interface, and nobody is meant to click "send" as "Lab" from the admin dashboard. Set true to
+  // drop the whole outgoing side (new-transfer form, product picker, outgoing-pending list) and
+  // show reception + history only.
+  hideSend?: boolean;
 }) {
   const shopArg = readOnly ? shopName : undefined;
   const [peers, setPeers] = useState<string[] | null>(null);
@@ -67,6 +72,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
       setSenderName(localStorage.getItem(SENDER_NAME_KEY) ?? '');
       setReceiverName(localStorage.getItem(RECEIVER_NAME_KEY) ?? '');
     } catch { /* ignore */ }
+    if (hideSend) return; // nothing to send from here — skip peers/categories entirely
     (async () => {
       const actions = await import('./actions');
       const [p, c] = await Promise.all([actions.getTransferPeersAction(shopArg), actions.getManagerOrderCategoriesAction(shopArg)]);
@@ -175,7 +181,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
       ? <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: GOLD_PALE, color: '#6B7280' }}>ĐÃ HUỶ</span>
       : <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>CHỜ NHẬN</span>;
 
-  if (!canTransfer && peers !== null) {
+  if (!hideSend && !canTransfer && peers !== null) {
     return (
       <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
         Cửa hàng của bạn chưa được bật tính năng chuyển kho.
@@ -245,7 +251,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
       )}
 
       {/* ── Outgoing, not yet received ── */}
-      {outgoingPending.length > 0 && (
+      {!hideSend && outgoingPending.length > 0 && (
         <div className="space-y-2">
           <div className="text-xs font-bold uppercase tracking-wide px-1" style={{ color: '#6B7280' }}>📤 Đã gửi — chờ kho nhận xác nhận</div>
           {outgoingPending.map(t => (
@@ -266,7 +272,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
       )}
 
       {/* ── New outgoing transfer ── */}
-      {result ? (
+      {!hideSend && (result ? (
         <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: `1px solid ${BORDER}` }}>
           <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
           <div className="text-sm font-bold text-navy">Đã gửi phiếu chuyển kho</div>
@@ -384,7 +390,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
             <Send size={14} /> Gửi chuyển kho{toShop ? ` → ${shortShop(toShop)}` : ''}
           </button>
         </>
-      )}
+      ))}
 
       {/* ── History ── */}
       <div className="space-y-2">

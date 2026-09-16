@@ -58,7 +58,7 @@ export default function ShopLabReceptionTab({ vi }: { vi: boolean }) {
         <div className="text-sm font-bold text-navy mb-2">
           {vi ? '📦 Chuyển kho từ shop về Lab' : '📦 Transferts de stock des boutiques vers le Lab'}
         </div>
-        <ShopTransfersTab shopName="Lab" readOnly staffNames={staffNames} onManageStaff={onManageStaff}
+        <ShopTransfersTab shopName="Lab" readOnly hideSend staffNames={staffNames} onManageStaff={onManageStaff}
           setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
       </div>
 
