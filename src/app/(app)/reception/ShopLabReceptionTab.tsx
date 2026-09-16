@@ -20,8 +20,6 @@ import type { ShopTransfer, ShopLossForLabReception } from '@/app/shop/actions';
 // Client-fetched (own useEffect calls into shop/actions.ts), not server-rendered from
 // reception/page.tsx — keeps that page's existing props untouched, this tab is fully additive.
 
-const RECEIVER_NAME_KEY = 'lab_reception_shoplab_receiver_name';
-
 function vnDay(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
@@ -56,24 +54,12 @@ function groupByDayShop<T>(items: T[], dayOf: (t: T) => string, shopOf: (t: T) =
 const shortShop = (s: string) => s.replace(/^La Paris\s+/i, '');
 
 export default function ShopLabReceptionTab({ vi }: { vi: boolean }) {
-  const [receiverName, setReceiverName] = useState('');
   const [zoomImage, setZoomImage] = useState<string | null>(null);
-
-  useEffect(() => {
-    try { setReceiverName(localStorage.getItem(RECEIVER_NAME_KEY) ?? ''); } catch { /* ignore */ }
-  }, []);
-  useEffect(() => { try { if (receiverName) localStorage.setItem(RECEIVER_NAME_KEY, receiverName); } catch { /* ignore */ } }, [receiverName]);
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-2xl p-4" style={{ border: '1px solid #E5E7EB' }}>
-        <label className="text-xs font-semibold text-gray-600 block mb-1">{vi ? 'Tên người nhận (Lab)' : 'Nom du réceptionnaire (Lab)'}</label>
-        <input type="text" value={receiverName} onChange={e => setReceiverName(e.target.value)}
-          placeholder={vi ? 'Tên của bạn' : 'Ton nom'} className="w-full text-sm rounded-lg px-3 py-2" style={{ border: '1px solid #E5E7EB' }} />
-      </div>
-
-      <TransfersReception vi={vi} receiverName={receiverName} setZoomImage={setZoomImage} />
-      <LossesReception vi={vi} receiverName={receiverName} setZoomImage={setZoomImage} />
+      <TransfersReception vi={vi} setZoomImage={setZoomImage} />
+      <LossesReception vi={vi} setZoomImage={setZoomImage} />
 
       {zoomImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={() => setZoomImage(null)}>
@@ -85,7 +71,7 @@ export default function ShopLabReceptionTab({ vi }: { vi: boolean }) {
 }
 
 // ── Section 1: stock transfers to Lab ────────────────────────────────────────────────────────
-function TransfersReception({ vi, receiverName, setZoomImage }: { vi: boolean; receiverName: string; setZoomImage: (url: string | null) => void }) {
+function TransfersReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url: string | null) => void }) {
   const [transfers, setTransfers] = useState<ShopTransfer[] | null>(null);
   const [qtyDraft, setQtyDraft] = useState<Record<string, Record<string, string>>>({}); // transferId -> sku -> qty
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({}); // transferId -> note
@@ -116,13 +102,12 @@ function TransfersReception({ vi, receiverName, setZoomImage }: { vi: boolean; r
   }
 
   async function receive(t: ShopTransfer) {
-    if (!receiverName.trim()) { setMsg(vi ? 'Chọn tên người nhận' : 'Indique ton nom'); return; }
     const note = (noteDraft[t.id] ?? '').trim();
     if (hasDiff(t) && !note) { setMsg(vi ? 'Số lượng khác — ghi rõ lý do' : 'Quantité différente — indique la raison'); return; }
     setBusyId(t.id); setMsg(null);
     const actions = await import('@/app/shop/actions');
     const res = await actions.receiveShopTransferAction({
-      shopName: 'Lab', transferId: t.id, receivedByName: receiverName.trim(),
+      shopName: 'Lab', transferId: t.id,
       lines: t.lines.map(l => ({ sku: l.sku, qtyReceived: Math.max(0, Math.floor(Number(qtyFor(t, l.sku, l.qtySent)) || 0)) })),
       receiveNote: note || undefined,
     });
@@ -237,7 +222,7 @@ function TransfersReception({ vi, receiverName, setZoomImage }: { vi: boolean; r
 }
 
 // ── Section 2: shop-declared losses/scrap returns ────────────────────────────────────────────
-function LossesReception({ vi, receiverName, setZoomImage }: { vi: boolean; receiverName: string; setZoomImage: (url: string | null) => void }) {
+function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url: string | null) => void }) {
   const [losses, setLosses] = useState<ShopLossForLabReception[] | null>(null);
   const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
@@ -263,11 +248,10 @@ function LossesReception({ vi, receiverName, setZoomImage }: { vi: boolean; rece
     const qty = Math.max(0, Math.floor(Number(qtyFor(l)) || 0));
     const diff = qty !== l.qty;
     const note = (noteDraft[l.id] ?? '').trim();
-    if (!receiverName.trim()) { setMsg(vi ? 'Chọn tên người nhận' : 'Indique ton nom'); return; }
     if (diff && !note) { setMsg(vi ? 'Số lượng khác — ghi rõ lý do' : 'Quantité différente — indique la raison'); return; }
     setBusyId(l.id); setMsg(null);
     const actions = await import('@/app/shop/actions');
-    const res = await actions.receiveShopLossAction({ lossId: l.id, qtyReceived: qty, receivedByName: receiverName.trim(), note: note || undefined });
+    const res = await actions.receiveShopLossAction({ lossId: l.id, qtyReceived: qty, note: note || undefined });
     setBusyId(null);
     if (res.error) { setMsg(res.error); return; }
     await load();

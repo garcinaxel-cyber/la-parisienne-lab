@@ -122,11 +122,11 @@ async function resolveShopManagerByUserId(userId: string): Promise<ShopManager &
 // explicitShopName is only ever trusted after the role check — a shop user's own shopName always
 // comes from their OWN lab_profiles row, never from client input; a manager's explicitShopName
 // is re-checked against their own lab_shop_managers.shops, never trusted blindly either.
-async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean } | { error: string }> {
+async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean; staffName?: string | null } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
 
   // Event override — checked once here, after confirming a real shop/staff session exists
   // (never in place of one), so it applies uniformly whether the caller is a shop's own login,
@@ -153,7 +153,10 @@ async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ s
   }
   if (['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) {
     if (!explicitShopName) return { error: 'Shop name required' };
-    return { shopName: explicitShopName, isStaffTest: true };
+    // staffName (Axel, 2026-09-16): unlike a real shop's shared login, admin/lab_manager/assistant
+    // are individual accounts — no need to ask "who are you" when the session already knows. Used
+    // to auto-fill the receiver on staff-test reception instead of a manually typed name.
+    return { shopName: explicitShopName, isStaffTest: true, staffName: profile?.full_name ?? null };
   }
   return { error: 'Forbidden' };
 }
@@ -758,13 +761,15 @@ export async function getShopLossesDailyRecapForStaffAction(shopName: string): P
 // shop), admin/lab_manager/assistant only, and — same posture as receiveShopTransferAction — the
 // receiver must validate the quantity actually received and explain any discrepancy. No Odoo call
 // here at all.
-async function requireLabReceptionStaff(): Promise<{ ok: true } | { error: string }> {
+async function requireLabReceptionStaff(): Promise<{ ok: true; name: string | null } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
-  return { ok: true };
+  // name (Axel, 2026-09-16): individually-logged-in staff, no manual "who received this" input —
+  // same posture as the internal-transfer reception tab (reception/actions.ts's guard()).
+  return { ok: true, name: profile?.full_name ?? null };
 }
 
 export type ShopLossForLabReception = {
@@ -806,14 +811,14 @@ export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: S
 }
 
 export async function receiveShopLossAction(input: {
-  lossId: string; qtyReceived: number; receivedByName: string; note?: string;
+  lossId: string; qtyReceived: number; note?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireLabReceptionStaff();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const receivedByName = String(input.receivedByName ?? '').trim().slice(0, 80);
-  if (!receivedByName) return { error: 'Chọn tên người nhận' };
+  const receivedByName = String(auth.name ?? '').trim().slice(0, 80);
+  if (!receivedByName) return { error: 'Tài khoản chưa có tên — liên hệ admin' };
 
   const { data: row } = await supabase.from('lab_shop_losses').select('id, qty, lab_received_at').eq('id', input.lossId).maybeSingle();
   if (!row) return { error: 'Không tìm thấy' };
@@ -1893,7 +1898,7 @@ export async function submitShopTransferAction(input: {
 export async function receiveShopTransferAction(input: {
   shopName?: string;
   transferId: string;
-  receivedByName: string;
+  receivedByName?: string;
   lines: { sku: string; qtyReceived: number }[];
   receiveNote?: string; // required (validated below) whenever a received qty differs from sent
 }): Promise<{ transfer?: ShopTransfer; warning?: string; error?: string }> {
@@ -1901,8 +1906,15 @@ export async function receiveShopTransferAction(input: {
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const receivedByName = String(input.receivedByName ?? '').trim().slice(0, 80);
-  if (!receivedByName) return { error: 'Chọn tên người nhận' };
+  // Staff (admin/lab_manager/assistant) receiving on behalf of a shop — e.g. the Lab reception
+  // tab — are individually logged in, so the receiver is always their own session name, never a
+  // manually typed one (Axel, 2026-09-16: "pas besoin de mettre son nom pour les assistantes , tu
+  // as leurs access pour savoir a quelle heure et qui receptionne"). A real shop's own login or a
+  // shop_manager still picks from that shop's shared staff roster, unchanged.
+  const receivedByName = auth.isStaffTest
+    ? String(auth.staffName ?? '').trim().slice(0, 80)
+    : String(input.receivedByName ?? '').trim().slice(0, 80);
+  if (!receivedByName) return { error: auth.isStaffTest ? 'Tài khoản chưa có tên — liên hệ admin' : 'Chọn tên người nhận' };
 
   const { data: t } = await supabase.from('lab_shop_transfers').select('*').eq('id', input.transferId).maybeSingle();
   if (!t) return { error: 'Phiếu chuyển kho không tìm thấy' };

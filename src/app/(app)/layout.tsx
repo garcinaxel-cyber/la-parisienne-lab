@@ -35,11 +35,29 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const chefAllowed = profile.role === 'chef' && pathname.startsWith('/admin/fiches/');
   if ((profile.role === 'chef' || profile.role === 'worker') && !chefAllowed) redirect('/station/me');
 
-  // Badges: transfer notes awaiting reception + manual orders still to enter in Odoo
-  const [{ count: pendingTransfers }, { count: pendingExceptional }] = await Promise.all([
+  // Badges: transfer notes awaiting reception (both reception sub-tabs — internal AND
+  // Shop ↔ Lab, Axel 2026-09-16: "l onglet qui averti du nombre de reception a check doit
+  // prendre en compte le deuxieme sous onglet") + manual orders still to enter in Odoo.
+  // Shop ↔ Lab counts mirror ShopLabReceptionTab's own "from today" (Vietnam calendar day)
+  // cutoff — same vnTodayStartIso() logic as shop/actions.ts, duplicated here since that file
+  // is 'use server' (exports must be async actions, not a plain helper to import).
+  function vnTodayStartIso(): string {
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+    return new Date(`${fmt.format(new Date())}T00:00:00+07:00`).toISOString();
+  }
+  const todayVNIso = vnTodayStartIso();
+  const [
+    { count: pendingInternalTransfers },
+    { count: pendingShopLabTransfers },
+    { count: pendingShopLabLosses },
+    { count: pendingExceptional },
+  ] = await Promise.all([
     supabase.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+    supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', todayVNIso),
+    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).gte('reported_at', todayVNIso),
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
   ]);
+  const pendingTransfers = (pendingInternalTransfers ?? 0) + (pendingShopLabTransfers ?? 0) + (pendingShopLabLosses ?? 0);
 
   // Check badge: admin-only table (RLS), so only fetched for admins. Sums all 4 checks
   // (2026-08-20) — issue_count alone used to mean "reconciliation only".
