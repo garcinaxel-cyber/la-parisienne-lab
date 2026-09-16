@@ -27,12 +27,15 @@ export type ShopConfig = {
 };
 
 export const SHOP_CONFIG: Record<string, ShopConfig> = {
-  'Moon Flower':        { docType: 'quotation',     partnerName: 'MOON FLOWER', portalAccount: true },
-  'Lab':                { docType: 'quotation',     partnerName: 'LAB',         portalAccount: false },
-  'La Paris Tây Hồ':    { docType: 'replenishment', warehouseCode: 'LP',        portalAccount: true },
-  'La Paris Long Biên': { docType: 'replenishment', warehouseCode: 'PARIS',     portalAccount: true },
-  'La Paris Bà Triệu':  { docType: 'replenishment', warehouseCode: 'LPBT',      portalAccount: true },
-  'La Paris Timecity':  { docType: 'replenishment', warehouseCode: 'LPTC',      portalAccount: true },
+  'Moon Flower':         { docType: 'quotation',     partnerName: 'MOON FLOWER', portalAccount: true },
+  'Lab':                 { docType: 'quotation',     partnerName: 'LAB',         portalAccount: false },
+  'La Paris Tây Hồ':     { docType: 'replenishment', warehouseCode: 'LP',        portalAccount: true },
+  'La Paris Long Biên':  { docType: 'replenishment', warehouseCode: 'PARIS',     portalAccount: true },
+  'La Paris Bà Triệu':   { docType: 'replenishment', warehouseCode: 'LPBT',      portalAccount: true },
+  'La Paris Timecity':   { docType: 'replenishment', warehouseCode: 'LPTC',      portalAccount: true },
+  // New shop, added 2026-09-16 (Axel). Odoo warehouse "La Paris Thăng Long - warehouse" (id 20),
+  // code confirmed live via the Odoo connector — matches the Short Name field in its Odoo form.
+  'La Paris Thăng Long': { docType: 'replenishment', warehouseCode: 'LPTL',      portalAccount: true },
 };
 
 // Every shop the order form / exceptional orders can address (Moon Flower first, then Lab,
