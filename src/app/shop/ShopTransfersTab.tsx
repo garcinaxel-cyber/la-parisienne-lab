@@ -55,6 +55,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
   const [receiverName, setReceiverName] = useState('');
   const [recvQty, setRecvQty] = useState<Record<string, Record<string, number>>>({}); // transferId -> sku -> qty
   const [recvConfirm, setRecvConfirm] = useState<ShopTransfer | null>(null);
+  const [recvNote, setRecvNote] = useState('');
   const [recvSubmitting, setRecvSubmitting] = useState(false);
   const [recvMsg, setRecvMsg] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -134,18 +135,22 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
     setRecvQty(prev => ({ ...prev, [t.id]: { ...(prev[t.id] ?? {}), [sku]: q } }));
   }
 
+  const recvHasDiff = (t: ShopTransfer) => t.lines.some(l => recvValue(t, l.sku, l.qtySent) !== l.qtySent);
+
   async function confirmReceive() {
     if (!recvConfirm) return;
     if (!receiverName.trim()) { setRecvMsg('Chọn tên người nhận'); return; }
+    if (recvHasDiff(recvConfirm) && !recvNote.trim()) { setRecvMsg('Số lượng khác — ghi rõ lý do'); return; }
     setRecvSubmitting(true); setRecvMsg(null);
     const actions = await import('./actions');
     const res = await actions.receiveShopTransferAction({
       shopName: shopArg, transferId: recvConfirm.id, receivedByName: receiverName.trim(),
       lines: recvConfirm.lines.map(l => ({ sku: l.sku, qtyReceived: recvValue(recvConfirm, l.sku, l.qtySent) })),
+      receiveNote: recvNote.trim() || undefined,
     });
     setRecvSubmitting(false);
     if (res.error) { setRecvMsg(res.error); return; }
-    setRecvConfirm(null);
+    setRecvConfirm(null); setRecvNote('');
     setGlobalMsg(res.warning ? `✅ Đã nhận ${recvConfirm.ref} · ⚠ ${res.warning}` : `✅ Đã nhận ${recvConfirm.ref} — kho Odoo đã cập nhật`);
     await reload();
   }
@@ -229,7 +234,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                   <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Người nhận</div>
                   <NamePicker value={receiverName} onChange={setReceiverName} names={staffNames} onManage={onManageStaff} />
                 </div>
-                <button onClick={() => { setRecvMsg(null); setRecvConfirm(t); }} disabled={!receiverName.trim()}
+                <button onClick={() => { setRecvMsg(null); setRecvNote(''); setRecvConfirm(t); }} disabled={!receiverName.trim()}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                   <CheckCircle2 size={14} /> Xác nhận đã nhận hàng
                 </button>
@@ -407,6 +412,7 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
               {diffs.length > 0 && (
                 <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
                   ⚠ Chênh lệch: {diffs.map(l => `${l.name} ${(l.qtyReceived ?? 0) - l.qtySent}`).join(', ')}
+                  {t.receiveNote ? ` — ${t.receiveNote}` : ''}
                 </div>
               )}
             </div>
@@ -468,19 +474,26 @@ export default function ShopTransfersTab({ shopName, readOnly, staffNames, onMan
                 );
               })}
             </div>
-            {recvConfirm.lines.some(l => recvValue(recvConfirm, l.sku, l.qtySent) !== l.qtySent) && (
-              <div className="flex items-start gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
-                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                <span>Có chênh lệch: {recvConfirm.fromIsVirtual
-                  ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(recvConfirm.toShop)}`
-                  : `phần thiếu vẫn nằm trong kho ${shortShop(recvConfirm.fromShop)} trên Odoo — ${shortShop(recvConfirm.fromShop)} sẽ được báo để ghi hao hụt nếu hàng bị mất`}.</span>
+            {recvHasDiff(recvConfirm) && (
+              <div className="space-y-1.5">
+                <div className="flex items-start gap-1.5 text-[11px] rounded-lg px-3 py-2" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>Có chênh lệch: {recvConfirm.fromIsVirtual
+                    ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(recvConfirm.toShop)}`
+                    : `phần thiếu vẫn nằm trong kho ${shortShop(recvConfirm.fromShop)} trên Odoo — ${shortShop(recvConfirm.fromShop)} sẽ được báo để ghi hao hụt nếu hàng bị mất`}.</span>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Lý do chênh lệch (bắt buộc)</div>
+                  <input type="text" value={recvNote} onChange={e => setRecvNote(e.target.value)} placeholder="VD: thiếu 2 cái do vỡ khi vận chuyển"
+                    className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                </div>
               </div>
             )}
             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Người nhận: <b>{receiverName}</b>. Tồn kho Odoo của hai cửa hàng sẽ đổi ngay khi bấm xác nhận — không thể hoàn tác trong app.</div>
             {recvMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{recvMsg}</div>}
             <div className="flex gap-2">
               <button onClick={() => setRecvConfirm(null)} className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
-              <button onClick={confirmReceive} disabled={recvSubmitting} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+              <button onClick={confirmReceive} disabled={recvSubmitting || (recvHasDiff(recvConfirm) && !recvNote.trim())} className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {recvSubmitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Xác nhận
               </button>
             </div>

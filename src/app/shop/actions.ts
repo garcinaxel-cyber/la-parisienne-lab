@@ -750,6 +750,79 @@ export async function getShopLossesDailyRecapForStaffAction(shopName: string): P
   return { recap: await fetchDailyLossRecap(auth.shopName) };
 }
 
+// ── Lab reception of shop-declared losses ("Chuyển kho Shop ↔ Lab" admin sub-tab) ──────────────
+// Axel, 2026-09-16: every loss a shop declares (casse/périmé/etc., see lab_shop_losses above) is
+// physically sent back to the Lab, even though the Odoo scrap stays booked on the SHOP's own
+// warehouse (unchanged, see recordShopLossAction). This is a purely in-app reception step on top
+// of that: cross-shop (unlike every other lab_shop_losses reader above, which is scoped to one
+// shop), admin/lab_manager/assistant only, and — same posture as receiveShopTransferAction — the
+// receiver must validate the quantity actually received and explain any discrepancy. No Odoo call
+// here at all.
+async function requireLabReceptionStaff(): Promise<{ ok: true } | { error: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
+  return { ok: true };
+}
+
+export type ShopLossForLabReception = {
+  id: string; shopName: string; sku: string | null; productName: string; qty: number;
+  reasonTagName: string; note: string | null; reportedByName: string; reportedAt: string;
+  labReceivedQty: number | null; labReceivedByName: string | null; labReceivedAt: string | null; labReceiveNote: string | null;
+};
+
+// Every not-yet-received loss (whatever its age) plus the last 30 days already received — same
+// "never silently drop a pending item" shape as getMyShopTransfersAction.
+export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: ShopLossForLabReception[]; error?: string }> {
+  const auth = await requireLabReceptionStaff();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+  const { data, error } = await supabase.from('lab_shop_losses')
+    .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note')
+    .or(`lab_received_at.is.null,reported_at.gte.${since}`)
+    .order('reported_at', { ascending: false })
+    .limit(300);
+  if (error) return { error: error.message };
+  return {
+    losses: (data ?? []).map((r: any) => ({
+      id: r.id, shopName: r.shop_name, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
+      reasonTagName: r.reason_tag_name, note: r.note, reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+      labReceivedQty: r.lab_received_qty == null ? null : Number(r.lab_received_qty),
+      labReceivedByName: r.lab_received_by_name ?? null, labReceivedAt: r.lab_received_at ?? null, labReceiveNote: r.lab_receive_note ?? null,
+    })),
+  };
+}
+
+export async function receiveShopLossAction(input: {
+  lossId: string; qtyReceived: number; receivedByName: string; note?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireLabReceptionStaff();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const receivedByName = String(input.receivedByName ?? '').trim().slice(0, 80);
+  if (!receivedByName) return { error: 'Chọn tên người nhận' };
+
+  const { data: row } = await supabase.from('lab_shop_losses').select('id, qty, lab_received_at').eq('id', input.lossId).maybeSingle();
+  if (!row) return { error: 'Không tìm thấy' };
+  if (row.lab_received_at) return { error: 'Đã nhận rồi' };
+
+  const qty = Math.max(0, Math.floor(Number(input.qtyReceived)));
+  if (!(qty >= 0)) return { error: 'Số lượng không hợp lệ' };
+  const note = (input.note ?? '').trim().slice(0, 500);
+  if (qty !== Number(row.qty) && !note) return { error: 'Số lượng nhận khác số lượng đã báo — cần ghi rõ lý do' };
+
+  const { error } = await supabase.from('lab_shop_losses').update({
+    lab_received_qty: qty, lab_received_by_name: receivedByName, lab_received_at: new Date().toISOString(), lab_receive_note: note || null,
+  }).eq('id', input.lossId);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
 // ── Daily stock count ("Kiểm kho") ──────────────────────────────────────────
 // Axel, 2026-09-03: shops count their own stock every day, in-app only — no Odoo write for now
 // ("je veux pas encore que ça se comptabilise sur Odoo, c'est pour leur info perso"; the table
@@ -1677,7 +1750,7 @@ export type ShopTransfer = {
   id: string; ref: string; fromShop: string; toShop: string; status: ShopTransferStatus;
   odooPickingName: string | null; sentByName: string | null; sentAt: string;
   receivedByName: string | null; receivedAt: string | null; cancelledByName: string | null; cancelledAt: string | null;
-  note: string | null; lineCount: number; unitCount: number; lines: ShopTransferLine[];
+  note: string | null; receiveNote: string | null; lineCount: number; unitCount: number; lines: ShopTransferLine[];
   fromIsVirtual: boolean; toIsVirtual: boolean;
 };
 
@@ -1699,7 +1772,7 @@ function mapTransferRow(t: any, lines: any[]): ShopTransfer {
     odooPickingName: t.odoo_picking_name ?? null, sentByName: t.sent_by_name ?? null, sentAt: t.sent_at,
     receivedByName: t.received_by_name ?? null, receivedAt: t.received_at ?? null,
     cancelledByName: t.cancelled_by_name ?? null, cancelledAt: t.cancelled_at ?? null,
-    note: t.note ?? null, lineCount: Number(t.line_count ?? 0), unitCount: Number(t.unit_count ?? 0),
+    note: t.note ?? null, receiveNote: t.receive_note ?? null, lineCount: Number(t.line_count ?? 0), unitCount: Number(t.unit_count ?? 0),
     fromIsVirtual: isVirtualTransferShop(t.from_shop), toIsVirtual: isVirtualTransferShop(t.to_shop),
     lines: lines.map((l: any) => ({
       id: l.id, sku: l.sku, name: l.product_name_vi, category: l.category ?? null, imageUrl: l.image_url ?? null,
@@ -1814,6 +1887,7 @@ export async function receiveShopTransferAction(input: {
   transferId: string;
   receivedByName: string;
   lines: { sku: string; qtyReceived: number }[];
+  receiveNote?: string; // required (validated below) whenever a received qty differs from sent
 }): Promise<{ transfer?: ShopTransfer; warning?: string; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
@@ -1844,6 +1918,13 @@ export async function receiveShopTransferAction(input: {
   for (const sku of Object.keys(sentBySku)) if (!(sku in received)) received[sku] = 0;
   if (!Object.values(received).some(q => q > 0)) return { error: 'Không có sản phẩm nào được nhận — nếu không nhận được gì, kho gửi cần huỷ phiếu' };
 
+  // Axel, 2026-09-16: any discrepancy between sent and received quantities needs an explanation,
+  // not just a silent warning — required here, before Odoo is touched, same posture as the qty
+  // validation right above.
+  const hasDiff = Object.entries(received).some(([sku, q]) => q !== sentBySku[sku]);
+  const receiveNote = (input.receiveNote ?? '').trim().slice(0, 500);
+  if (hasDiff && !receiveNote) return { error: 'Số lượng nhận khác số lượng gửi — cần ghi rõ lý do' };
+
   const odoo = await receiveInterShopTransfer(Number(t.odoo_picking_id), Object.entries(received).map(([sku, qtyReceived]) => ({ sku, qtyReceived })));
   if (!odoo.ok) {
     const viPayload: PushPayload = { title: auth.shopName, body: `⚠️ Nhận chuyển kho ${t.ref} thất bại trên Odoo: ${odoo.error ?? '?'}` };
@@ -1856,7 +1937,7 @@ export async function receiveShopTransferAction(input: {
     await supabase.from('lab_shop_transfer_lines').update({ qty_received: q }).eq('transfer_id', t.id).eq('sku', sku);
   }
   const { data: updated } = await supabase.from('lab_shop_transfers')
-    .update({ status: 'received', received_by_name: receivedByName, received_at: now })
+    .update({ status: 'received', received_by_name: receivedByName, received_at: now, receive_note: receiveNote || null })
     .eq('id', t.id).select('*').single();
   const { data: freshLines } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id).order('product_name_vi');
 

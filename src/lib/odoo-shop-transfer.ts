@@ -51,9 +51,13 @@ type TransferEndpoint =
   | { kind: 'warehouse'; warehouse: Warehouse; label: string }
   | { kind: 'virtual'; locationId: number; label: string };
 
+// Not gated on docType==='replenishment' (dropped 2026-09-16): Lab itself now carries a
+// warehouseCode (see shops.ts) so it can be a transfer endpoint too, even though its docType
+// stays 'quotation' for the unrelated ordering flow. Any shop with a real Odoo warehouse code is
+// a valid transfer endpoint, regardless of how it places its own orders.
 export function transferWarehouseCode(shopName: string): string | null {
   const cfg = SHOP_CONFIG[shopName];
-  if (!cfg || cfg.docType !== 'replenishment' || !cfg.warehouseCode) return null;
+  if (!cfg || !cfg.warehouseCode) return null;
   return cfg.warehouseCode;
 }
 

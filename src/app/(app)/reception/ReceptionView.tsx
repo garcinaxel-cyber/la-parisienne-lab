@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { PackageCheck, AlertTriangle, CheckCircle2, Clock, ChevronRight, CalendarDays, X } from 'lucide-react';
 import { thumb } from '@/lib/img-thumb';
+import ShopLabReceptionTab from './ShopLabReceptionTab';
 
 type RecapRow = { team: string; name: string; sku: string | null; variant: string | null; sent: number; received: number; pending: number };
 type Recap = { date: string; totalSent: number; totalReceived: number; totalPending: number; notesCount: number; rows: RecapRow[] };
@@ -28,6 +29,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const [showHistory, setShowHistory] = useState(false);
+  const [tab, setTab] = useState<'internal' | 'shoplab'>('internal');
   const reasonLabel = (v: string | null | undefined) => {
     const r = REASONS.find(x => x.v === v); return r ? (vi ? r.vi : r.en) : (v ?? '');
   };
@@ -151,6 +153,30 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
           </span>
         )}
       </div>
+
+      {/* ── Sub-tabs (Axel, 2026-09-16): internal station transfers vs. the Shop ↔ Lab
+          reception — stock transfers shops send to the Lab, and physical returns of shop-declared
+          losses/scrap. Own component (ShopLabReceptionTab), fetches its own data client-side so
+          this page's server-rendered props stay untouched. ── */}
+      <div className="flex gap-1.5 border-b" style={{ borderColor: '#E5E7EB' }}>
+        {([
+          { key: 'internal' as const, label: vi ? 'Chuyển kho nội bộ' : 'Transferts internes' },
+          { key: 'shoplab' as const, label: vi ? 'Chuyển kho Shop ↔ Lab' : 'Transferts Shop ↔ Lab' },
+        ]).map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className="px-3.5 py-2 text-sm font-bold -mb-px"
+            style={{
+              color: tab === t.key ? '#1A4731' : '#9CA3AF',
+              borderBottom: tab === t.key ? '2px solid #1A4731' : '2px solid transparent',
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'shoplab' && <ShopLabReceptionTab vi={vi} />}
+
+      {tab === 'internal' && (<>
 
       {/* ── Récap consolidé par jour d'envoi × produit × équipe ── */}
       <div className="card overflow-hidden">
@@ -413,6 +439,8 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
           })()}
         </div>
       )}
+
+      </>)}
     </div>
   );
 }

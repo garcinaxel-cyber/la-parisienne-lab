@@ -28,7 +28,13 @@ export type ShopConfig = {
 
 export const SHOP_CONFIG: Record<string, ShopConfig> = {
   'Moon Flower':         { docType: 'quotation',     partnerName: 'MOON FLOWER', portalAccount: true },
-  'Lab':                 { docType: 'quotation',     partnerName: 'LAB',         portalAccount: false },
+  // warehouseCode added 2026-09-16 (Axel: shops must be able to transfer stock back to the Lab)
+  // -- Odoo warehouse "Lab" (id 1), code confirmed live via the Odoo connector, already used as a
+  // hard-coded literal elsewhere (odoo-shop-order-sync.ts's replenishment source warehouse) so
+  // this is not a new fact, just the first place it's declared centrally. docType stays
+  // 'quotation' -- Lab is not a replenishment-ordering shop, this warehouseCode is read only by
+  // the inter-shop transfer module (odoo-shop-transfer.ts), which doesn't care about docType.
+  'Lab':                 { docType: 'quotation',     partnerName: 'LAB', warehouseCode: 'LAB', portalAccount: false },
   'La Paris Tây Hồ':     { docType: 'replenishment', warehouseCode: 'LP',        portalAccount: true },
   'La Paris Long Biên':  { docType: 'replenishment', warehouseCode: 'PARIS',     portalAccount: true },
   'La Paris Bà Triệu':   { docType: 'replenishment', warehouseCode: 'LPBT',      portalAccount: true },
