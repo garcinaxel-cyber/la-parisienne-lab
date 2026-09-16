@@ -775,17 +775,25 @@ export type ShopLossForLabReception = {
 
 // Every not-yet-received loss (whatever its age) plus the last 30 days already received — same
 // "never silently drop a pending item" shape as getMyShopTransfersAction.
+// "à partir d'aujourd'hui" (Axel, 2026-09-16): this reception step is brand new, so every loss
+// ever declared by a shop has lab_received_at still null -- an unbounded "or still pending"
+// window would dump weeks/months of history on the Lab all at once. Cut hard at the start of
+// today (Vietnam calendar day) instead: nothing declared before today needs confirming here.
+function vnTodayStartIso(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  return new Date(`${fmt.format(new Date())}T00:00:00+07:00`).toISOString();
+}
+
 export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: ShopLossForLabReception[]; error?: string }> {
   const auth = await requireLabReceptionStaff();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note')
-    .or(`lab_received_at.is.null,reported_at.gte.${since}`)
+    .gte('reported_at', vnTodayStartIso())
     .order('reported_at', { ascending: false })
-    .limit(300);
+    .limit(500);
   if (error) return { error: error.message };
   return {
     losses: (data ?? []).map((r: any) => ({
