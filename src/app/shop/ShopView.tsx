@@ -356,6 +356,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [recentOrders, setRecentOrders] = useState<{ orderRef: string; deliveryDate: string; deliveryTime: string | null; managerName: string | null; createdAt: string; itemCount: number; totalQty: number }[] | null>(null);
   const [recentOrdersDates, setRecentOrdersDates] = useState<{ today: string; tomorrow: string } | null>(null);
   const [invAsOf, setInvAsOf] = useState<string | null>(null);
+  // Axel, 2026-09-17: "afficher le dernier inventaire qui a ete fait ... et mettre la date du
+  // dernier inventaire et qui l a fait" — "le dernier inventaire ca peut etre celui de la veille",
+  // i.e. this must fall back past today to whatever date the shop last actually counted, not just
+  // show empty until today's count starts. invAsOfDate/invAsOfBy carry that date + who did it.
+  const [invAsOfDate, setInvAsOfDate] = useState<string | null>(null);
+  const [invAsOfBy, setInvAsOfBy] = useState<string | null>(null);
   const [invFilter, setInvFilter] = useState<'all' | 'in' | 'out'>('all');
   const [invQuery, setInvQuery] = useState('');
 
@@ -511,6 +517,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       const res = await actions.getShopCurrentStockLevelsAction(readOnly ? shopName : undefined);
       setInvLevels(res.levels ?? []);
       setInvAsOf(res.asOf ?? null);
+      setInvAsOfDate(res.asOfDate ?? null);
+      setInvAsOfBy(res.asOfBy ?? null);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -2082,16 +2090,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center justify-between">
                     <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tồn kho gần nhất</div>
-                    {invAsOf && (
-                      <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>
-                        Kiểm {new Date(invAsOf).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                    {invAsOfDate && (
+                      // Axel, 2026-09-17: date + người kiểm, gọn trên 1 dòng ("concis ... pour pas
+                      // que ca mange trop la place") — "gần nhất" giờ có thể là hôm qua hoặc trước
+                      // đó, không chỉ hôm nay, nên luôn ghi rõ ngày thay vì chỉ giờ.
+                      <div className="text-[10.5px] text-right" style={{ color: '#9CA3AF' }}>
+                        {invAsOfDate === todayDate ? 'Hôm nay' : fmtDate(invAsOfDate)}
+                        {invAsOf ? ` ${new Date(invAsOf).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                        {invAsOfBy ? ` · ${invAsOfBy}` : ''}
                       </div>
                     )}
                   </div>
                   {invLevels === null ? (
                     <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Đang tải…</div>
                   ) : !invLevels.length ? (
-                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Chưa có dữ liệu kiểm kho hôm nay</div>
+                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Chưa từng kiểm kho</div>
                   ) : (
                     <>
                       <div className="flex rounded-lg p-0.5" style={{ border: `1px solid ${BORDER}` }}>

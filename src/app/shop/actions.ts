@@ -1403,17 +1403,38 @@ export async function getDailyReportRangeForStaffAction(shopName: string): Promi
 // here rather than tracked as a separate "not counted" state nothing asked for.
 export type ShopStockLevel = { sku: string; name: string; qty: number; category: string };
 
-export async function getShopCurrentStockLevelsAction(shopName?: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; error?: string }> {
+// Axel, 2026-09-17 ("quand les shops font leur commande ... afficher le dernier inventaire qui a
+// ete fait ... et mettre la date du dernier inventaire et qui l a fait"; clarified: "le dernier
+// inventaire ca peut etre celui de la veille"): this used to look at TODAY only, so a shop that
+// hadn't yet counted today (order time is often before the day's count) saw a flat "no data"
+// here even if it counted stock yesterday or a few days ago. Falls back to the most recent
+// count_date with any data at all when today has none, and returns who counted it alongside the
+// date so the order screen can show both without a second round trip.
+export async function getShopCurrentStockLevelsAction(shopName?: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; asOfDate?: string | null; asOfBy?: string | null; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const today = vnDateStr();
-  const sessions = await fetchStockSessions(auth.shopName, today);
-  if (!sessions.length) return { levels: [], asOf: null };
+  let date = today;
+  let sessions = await fetchStockSessions(auth.shopName, today);
+  if (!sessions.length) {
+    const supabase = service();
+    const { data: latestRow } = supabase
+      ? await supabase.from('lab_shop_stock_counts').select('count_date')
+          .eq('shop_name', auth.shopName).order('count_date', { ascending: false }).limit(1).maybeSingle()
+      : { data: null };
+    if (!latestRow?.count_date) return { levels: [], asOf: null, asOfDate: null, asOfBy: null };
+    date = latestRow.count_date as string;
+    sessions = await fetchStockSessions(auth.shopName, date);
+    if (!sessions.length) return { levels: [], asOf: null, asOfDate: null, asOfBy: null };
+  }
   const latest = sessions.reduce((a, b) => (b.seq > a.seq ? b : a));
-  const list = await fetchStockCountList(auth.shopName, today, latest.seq);
+  const list = await fetchStockCountList(auth.shopName, date, latest.seq);
+  const byNames = latest.finishedByName ? [latest.finishedByName] : latest.updatedByNames;
   return {
     levels: list.map(l => ({ sku: l.sku, name: l.name, qty: l.qty ?? 0, category: l.category })),
     asOf: latest.updatedAt,
+    asOfDate: date,
+    asOfBy: byNames.length ? byNames.join(', ') : null,
   };
 }
 
