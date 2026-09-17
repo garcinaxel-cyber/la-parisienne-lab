@@ -730,7 +730,14 @@ export async function checkShopHasOdooWarehouseAction(): Promise<{ hasWarehouse?
   return { hasWarehouse: !!loc };
 }
 
-export type ShopLossDailyRecapProduct = { productName: string; qty: number };
+export type ShopLossDailyRecapProduct = {
+  productName: string; qty: number; reasonTagName: string; note: string | null;
+  // followUpNote (Axel, 2026-09-17): the shop-editable note added *after* reporting the loss
+  // (updateShopLossFollowUpNoteAction, "+ Thêm ghi chú" on the loss card) — what Axel actually
+  // meant by "note supplémentaire", distinct from `note` above (set once at submission time).
+  // Both are surfaced since either can carry the useful detail depending on when it was added.
+  followUpNote: string | null;
+};
 export type ShopLossDailyRecap = { date: string; totalQty: number; reportCount: number; products: ShopLossDailyRecapProduct[] };
 
 // Axel, 2026-08-29: "je veux que dans l'onglet des shops on voit dans un tableau le recap des
@@ -741,6 +748,13 @@ export type ShopLossDailyRecap = { date: string; totalQty: number; reportCount: 
 // Axel, 2026-08-29 (follow-up): "je veux que dans ce tableau il y ait le detail des produits par
 // jours" — each day now also carries a per-product qty breakdown (summed across that day's
 // reports), not just the daily total.
+// Axel, 2026-09-17: "je voudrais que le champs de note supplementaire s'affiche dans le tableau
+// recap et dans le rapport du shop quotidien, idem pour le tag de raison de perte" — grouping key
+// widened from productName alone to productName+reasonTagName, so two reports of the same product
+// with different reasons on the same day stay on separate lines instead of silently merging their
+// reason/note away; note and followUpNote from multiple reports sharing the same (product, reason)
+// are each joined. NB: followUpNote can still change *after* this recap is read (it has no
+// deadline) — this is always a snapshot at fetch time, same as everything else here.
 function vnLossDateStr(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
@@ -750,23 +764,34 @@ async function fetchDailyLossRecap(shopName: string): Promise<ShopLossDailyRecap
   if (!supabase) return [];
   const since = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data } = await supabase.from('lab_shop_losses')
-    .select('qty, reported_at, product_name')
+    .select('qty, reported_at, product_name, reason_tag_name, note, follow_up_note')
     .eq('shop_name', shopName)
     .gte('reported_at', since);
-  const byDate = new Map<string, { totalQty: number; reportCount: number; productsByName: Map<string, number> }>();
+  type ProductAgg = { productName: string; reasonTagName: string; qty: number; notes: Set<string>; followUpNotes: Set<string> };
+  const byDate = new Map<string, { totalQty: number; reportCount: number; productsByKey: Map<string, ProductAgg> }>();
   for (const r of data ?? []) {
     const d = vnLossDateStr(r.reported_at);
-    const cur = byDate.get(d) ?? { totalQty: 0, reportCount: 0, productsByName: new Map<string, number>() };
+    const cur = byDate.get(d) ?? { totalQty: 0, reportCount: 0, productsByKey: new Map<string, ProductAgg>() };
     cur.totalQty += Number(r.qty);
     cur.reportCount += 1;
-    cur.productsByName.set(r.product_name, (cur.productsByName.get(r.product_name) ?? 0) + Number(r.qty));
+    const reasonTagName = r.reason_tag_name ?? '';
+    const key = `${r.product_name}${reasonTagName}`;
+    const agg = cur.productsByKey.get(key) ?? { productName: r.product_name, reasonTagName, qty: 0, notes: new Set<string>(), followUpNotes: new Set<string>() };
+    agg.qty += Number(r.qty);
+    if (r.note && r.note.trim()) agg.notes.add(r.note.trim());
+    if (r.follow_up_note && r.follow_up_note.trim()) agg.followUpNotes.add(r.follow_up_note.trim());
+    cur.productsByKey.set(key, agg);
     byDate.set(d, cur);
   }
   return Array.from(byDate.entries())
     .map(([date, v]) => ({
       date, totalQty: v.totalQty, reportCount: v.reportCount,
-      products: Array.from(v.productsByName.entries())
-        .map(([productName, qty]) => ({ productName, qty }))
+      products: Array.from(v.productsByKey.values())
+        .map(p => ({
+          productName: p.productName, qty: p.qty, reasonTagName: p.reasonTagName,
+          note: p.notes.size ? Array.from(p.notes).join(' · ') : null,
+          followUpNote: p.followUpNotes.size ? Array.from(p.followUpNotes).join(' · ') : null,
+        }))
         .sort((a, b) => b.qty - a.qty),
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -816,21 +841,25 @@ export type ShopLossForLabReception = {
 // ever declared by a shop has lab_received_at still null -- an unbounded "or still pending"
 // window would dump weeks/months of history on the Lab all at once. Cut hard at the start of
 // today (Vietnam calendar day) instead: nothing declared before today needs confirming here.
-function vnTodayStartIso(): string {
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
-  return new Date(`${fmt.format(new Date())}T00:00:00+07:00`).toISOString();
-}
-
+//
+// Axel, 2026-09-17 (correction): that "today only" cut turned out to hide exactly the cases that
+// matter most — a loss the Lab forgot to receive just silently disappeared from this tab once its
+// day rolled over, with no trace anywhere ("je veux qu'on puisse voir l'historique des pertes
+// reçues et oublié de réception"). Fixed to match the doc comment's original intent above, which
+// the query never actually implemented: pending rows are NEVER date-cut (a forgotten loss must
+// stay visible however old), only the already-received rows are capped to a rolling 30-day
+// window so this tab doesn't have to render months of settled history.
 export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: ShopLossForLabReception[]; error?: string }> {
   const auth = await requireLabReceptionStaff();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
+  const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note, follow_up_note, follow_up_note_by_name, follow_up_note_at')
-    .gte('reported_at', vnTodayStartIso())
+    .or(`lab_received_at.is.null,reported_at.gte.${since30}`)
     .order('reported_at', { ascending: false })
-    .limit(500);
+    .limit(1000);
   if (error) return { error: error.message };
   return {
     losses: (data ?? []).map((r: any) => ({

@@ -171,9 +171,13 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
             ) : (
               <div className="divide-y" style={{ borderColor: '#F3F4F6' }}>
                 {selected.losses.map(p => (
-                  <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
-                    <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                    <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
+                  <div key={p.productName + p.reasonTagName} className="px-4 py-2 space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
+                      <span className="text-sm font-bold shrink-0" style={{ color: '#DC2626' }}>×{p.qty}</span>
+                    </div>
+                    <div className="text-xs" style={{ color: INK_LIGHT }}>{p.reasonTagName}{p.note ? ` · ${p.note}` : ''}</div>
+                    {p.followUpNote && <div className="text-xs" style={{ color: '#8A6D14' }}>🗒️ {p.followUpNote}</div>}
                   </div>
                 ))}
               </div>

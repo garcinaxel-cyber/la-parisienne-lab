@@ -1507,11 +1507,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       </span>
                     </div>
                     {r.products.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
+                      <div className="mt-1 space-y-1">
                         {r.products.map(p => (
-                          <div key={p.productName} className="flex items-center justify-between gap-2 text-xs" style={{ color: '#6B7280' }}>
-                            <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                            <span className="font-semibold shrink-0" style={{ color: INK }}>×{p.qty}</span>
+                          <div key={p.productName + p.reasonTagName}>
+                            <div className="flex items-center justify-between gap-2 text-xs" style={{ color: '#6B7280' }}>
+                              <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
+                              <span className="font-semibold shrink-0" style={{ color: INK }}>×{p.qty}</span>
+                            </div>
+                            {/* Axel, 2026-09-17: "je voudrais que le champs de note supplementaire
+                                s'affiche dans le tableau recap ... idem pour le tag de raison de
+                                perte" — reasonTagName + the submission-time note on one line,
+                                the shop's own later-added follow-up note ("+ Thêm ghi chú" on the
+                                loss card) on its own line since it's a distinct field. */}
+                            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{p.reasonTagName}{p.note ? ` · ${p.note}` : ''}</div>
+                            {p.followUpNote && <div className="text-[11px]" style={{ color: '#8A6D14' }}>🗒️ {p.followUpNote}</div>}
                           </div>
                         ))}
                       </div>
@@ -1900,9 +1909,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       ) : (
                         <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                           {dailyReport.losses.map(p => (
-                            <div key={p.productName} className="px-4 py-2 flex items-center justify-between gap-2">
-                              <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
-                              <span className="text-sm font-bold shrink-0" style={{ color: RED }}>×{p.qty}</span>
+                            <div key={p.productName + p.reasonTagName} className="px-4 py-2 space-y-0.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.productName}</span>
+                                <span className="text-sm font-bold shrink-0" style={{ color: RED }}>×{p.qty}</span>
+                              </div>
+                              <div className="text-xs" style={{ color: '#9CA3AF' }}>{p.reasonTagName}{p.note ? ` · ${p.note}` : ''}</div>
+                              {p.followUpNote && <div className="text-xs" style={{ color: '#8A6D14' }}>🗒️ {p.followUpNote}</div>}
                             </div>
                           ))}
                         </div>

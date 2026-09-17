@@ -11,7 +11,7 @@
 // Vietnamese diacritics need a font that actually has those glyphs (jsPDF's built-in fonts
 // don't), so a Noto Sans subset is embedded from src/lib/pdf-fonts.ts (regenerating that file is
 // documented there).
-import type { ShopDailyReport, ShopStockCountLine } from '@/app/shop/actions';
+import type { ShopDailyReport, ShopStockCountLine, ShopLossDailyRecapProduct } from '@/app/shop/actions';
 
 export function groupStockByCategory(lines: ShopStockCountLine[]): { category: string; lines: ShopStockCountLine[] }[] {
   const byCategory = new Map<string, ShopStockCountLine[]>();
@@ -116,6 +116,38 @@ export async function exportShopDailyReportPdf(shopName: string, report: ShopDai
     cursorY += ROW_H;
   };
 
+  // Axel, 2026-09-17: "je voudrais que le champs de note supplementaire s'affiche ... dans le
+  // rapport du shop quotidien, idem pour le tag de raison de perte" — losses need a second, small
+  // gray sub-line under the product name/qty for the reason tag + note, unlike every other
+  // product row in this PDF (stock lines have neither). Its own row-height variant of
+  // drawProductRow above rather than a param on it, since only losses ever carry this sub-line.
+  const SUB_FONT = 6.5;
+  const SUB_H = 9;
+  const GOLD_DARK: [number, number, number] = [138, 109, 20];
+  const drawLossRow = (p: ShopLossDailyRecapProduct) => {
+    const subLabel = [p.reasonTagName, p.note].filter(Boolean).join(' · ');
+    // followUpNote (Axel, 2026-09-17): the shop's own later-added note ("+ Thêm ghi chú"),
+    // distinct from `note` above (set once at submission) — its own sub-line, gold-colored to
+    // match how it reads in the app, so it isn't mistaken for the submission-time note/reason.
+    const subLines = [subLabel, p.followUpNote ? `🗒 ${p.followUpNote}` : ''].filter(Boolean);
+    const rowH = ROW_H + subLines.length * SUB_H;
+    ensureSpace(rowH);
+    const qtyWidth = 64;
+    pdf.setFont('NotoSansVN', 'bold');
+    pdf.setFontSize(ROW_FONT);
+    pdf.setTextColor(...RED);
+    pdf.text(fitText(p.productName, contentWidth - qtyWidth - 10), MARGIN + 6, cursorY + ROW_H / 2, { baseline: 'middle' });
+    pdf.text(`×${p.qty}`, pageWidth - MARGIN - 6, cursorY + ROW_H / 2, { baseline: 'middle', align: 'right' });
+    pdf.setFont('NotoSansVN', 'normal');
+    pdf.setFontSize(SUB_FONT);
+    subLines.forEach((line, i) => {
+      pdf.setTextColor(...(i === 0 && subLabel ? GRAY : GOLD_DARK));
+      pdf.text(fitText(line, contentWidth - 12), MARGIN + 6, cursorY + ROW_H + SUB_H * i + SUB_H / 2, { baseline: 'middle' });
+    });
+    drawDivider(cursorY + rowH);
+    cursorY += rowH;
+  };
+
   // ── Header ──
   pdf.setFont('NotoSansVN', 'bold');
   pdf.setFontSize(13);
@@ -170,7 +202,7 @@ export async function exportShopDailyReportPdf(shopName: string, report: ShopDai
     cursorY += ROW_H;
   } else {
     for (const p of report.losses) {
-      drawProductRow(p.productName, `×${p.qty}`, RED, true);
+      drawLossRow(p);
     }
   }
 

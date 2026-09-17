@@ -270,7 +270,17 @@ function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url
           <div className="text-center text-xs py-4" style={{ color: '#9CA3AF' }}>{vi ? 'Không có hàng hao hụt nào chờ nhận' : 'Aucun retour de perte en attente'}</div>
         ) : pendingGrouped.map(({ day, shops }) => (
           <div key={day}>
-            <div className="text-xs font-bold uppercase tracking-wide mb-2 capitalize" style={{ color: '#6B7280' }}>{dayLabel(day, vi)}</div>
+            <div className="flex items-center gap-1.5 mb-2">
+              <div className="text-xs font-bold uppercase tracking-wide capitalize" style={{ color: '#6B7280' }}>{dayLabel(day, vi)}</div>
+              {/* Axel, 2026-09-17: pending losses are no longer cut to "from today" (a forgotten
+                  one must stay visible however old) — flag any day that isn't today so an old,
+                  easy-to-miss backlog reads as overdue rather than as an ordinary day group. */}
+              {day !== todayVN && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: '#B45309', backgroundColor: '#FEF3C7' }}>
+                  {vi ? '⚠ quá hạn' : '⚠ en retard'}
+                </span>
+              )}
+            </div>
             <div className="space-y-3">
               {shops.map(({ shop, items }) => (
                 <div key={shop}>
@@ -321,8 +331,11 @@ function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url
 
         {historyGrouped.length > 0 && (
           <div className="pt-1 border-t" style={{ borderColor: '#F3F4F6' }}>
+            {/* Axel, 2026-09-17: this used to say "hôm nay"/"du jour" (today only) because the
+                underlying query was hard-cut to today — now a rolling 30-day window (see
+                getShopLossesForLabReceptionAction), so the label no longer claims "today". */}
             <button onClick={() => setShowHistory(v => !v)} className="text-xs font-semibold text-gray-500 hover:text-navy mt-2">
-              {showHistory ? (vi ? '▾ Ẩn lịch sử hôm nay' : '▾ Masquer l’historique du jour') : (vi ? '▸ Xem lịch sử hôm nay' : '▸ Voir l’historique du jour')} · {history.length}
+              {showHistory ? (vi ? '▾ Ẩn lịch sử (30 ngày qua)' : '▾ Masquer l’historique (30 derniers jours)') : (vi ? '▸ Xem lịch sử (30 ngày qua)' : '▸ Voir l’historique (30 derniers jours)')} · {history.length}
             </button>
             {showHistory && (
               <div className="mt-2 space-y-3">
