@@ -38,18 +38,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Badges: transfer notes awaiting reception (both reception sub-tabs — internal AND
   // Shop ↔ Lab, Axel 2026-09-16: "l onglet qui averti du nombre de reception a check doit
   // prendre en compte le deuxieme sous onglet") + manual orders still to enter in Odoo.
-  // Shop ↔ Lab transfers count mirrors ShopLabReceptionTab's own "from today" (Vietnam calendar
-  // day) cutoff — same vnTodayStartIso() logic as shop/actions.ts, duplicated here since that
-  // file is 'use server' (exports must be async actions, not a plain helper to import).
-  // Losses count: NOT date-cut (Axel, 2026-09-17: "voir l'historique des pertes reçu et oublié
-  // de reception" — getShopLossesForLabReceptionAction dropped its own "today only" cut on
-  // pending losses for the same reason; a forgotten loss must keep showing on this badge however
-  // old, or the whole point of surfacing it is defeated).
-  function vnTodayStartIso(): string {
+  // Shop ↔ Lab transfers + losses counts mirror shop/actions.ts's since-yesterday (VN calendar
+  // day) cutoff on getMyShopTransfersAction('Lab')/getShopLossesForLabReceptionAction — same
+  // vnYesterdayStartIso() logic, duplicated here since that file is 'use server' (exports must be
+  // async actions, not a plain helper to import).
+  // Axel, 2026-09-17 (2nd correction): the unbounded "however old" losses count above (badge was
+  // showing 318 — everything ever reported, since this reception step is brand new) was reverted
+  // for the same reason the reception query itself was: "on avait rien mis en place avant ...
+  // plus de 300 pertes a check c'est pas possible". Both badges now count only what's actually
+  // reachable in the reception tab: reported since yesterday, still unconfirmed.
+  function vnYesterdayStartIso(): string {
     const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
-    return new Date(`${fmt.format(new Date())}T00:00:00+07:00`).toISOString();
+    const yesterday = fmt.format(new Date(Date.now() - 24 * 3600 * 1000));
+    return new Date(`${yesterday}T00:00:00+07:00`).toISOString();
   }
-  const todayVNIso = vnTodayStartIso();
+  const yesterdayVNIso = vnYesterdayStartIso();
   const [
     { count: pendingInternalTransfers },
     { count: pendingShopLabTransfers },
@@ -57,8 +60,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { count: pendingExceptional },
   ] = await Promise.all([
     supabase.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', todayVNIso),
-    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null),
+    supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
+    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).gte('reported_at', yesterdayVNIso),
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
   ]);
   const pendingTransfers = (pendingInternalTransfers ?? 0) + (pendingShopLabTransfers ?? 0) + (pendingShopLabLosses ?? 0);
