@@ -286,6 +286,11 @@ function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url
                             <div className="text-xs text-gray-400">{l.reportedByName} · {fmtTime(l.reportedAt)}</div>
                           </div>
                           {l.note && <div className="text-xs text-gray-500">📝 {l.note}</div>}
+                          {l.followUpNote && (
+                            <div className="text-xs" style={{ color: '#92600A' }}>
+                              🗒️ {vi ? 'Shop cập nhật' : 'Note boutique'}: {l.followUpNote}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-gray-500">{vi ? 'Đã báo' : 'Déclaré'}: ×{l.qty}</span>
                             <input type="number" value={qty} min={0}

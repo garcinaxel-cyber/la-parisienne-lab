@@ -260,6 +260,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   const [lossName, setLossName] = useState('');
 
+  // Axel, 2026-09-16: per-loss follow-up note the shop can add/edit at any time after
+  // reporting a loss (no deadline). Purely informational, app-only — no Odoo impact. Editing
+  // state is keyed by loss id so only one card is ever in edit mode at a time.
+  const [lossNoteEditingId, setLossNoteEditingId] = useState<string | null>(null);
+  const [lossNoteDraft, setLossNoteDraft] = useState('');
+  const [lossNoteSaving, setLossNoteSaving] = useState(false);
+
   // ── Kiểm kho (daily stock count) — Axel, 2026-09-03: shops count their own stock every day,
   // in-app only, no Odoo write for now. The checklist (which SKUs) is auto-built server-side
   // from this shop's own order history (rolling 2-week window) + any manually-added extras;
@@ -667,6 +674,35 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setLossItems([]);
     setLosses(null);
     loadLosses();
+  }
+
+  function startEditLossNote(l: ShopLoss) {
+    setLossNoteEditingId(l.id);
+    setLossNoteDraft(l.followUpNote ?? '');
+  }
+
+  function cancelEditLossNote() {
+    setLossNoteEditingId(null);
+    setLossNoteDraft('');
+  }
+
+  async function saveLossNote(lossId: string) {
+    const byName = lossName.trim() || shopName;
+    setLossNoteSaving(true);
+    const { updateShopLossFollowUpNoteAction } = await import('./actions');
+    const res = await updateShopLossFollowUpNoteAction({
+      lossId, note: lossNoteDraft, byName,
+      ...(readOnly ? { shopName } : {}),
+    });
+    setLossNoteSaving(false);
+    if (!res.error) {
+      const saved = lossNoteDraft.trim();
+      setLosses(prev => prev?.map(l => l.id === lossId
+        ? { ...l, followUpNote: saved || null, followUpNoteByName: saved ? byName : null, followUpNoteAt: saved ? new Date().toISOString() : null }
+        : l) ?? null);
+      setLossNoteEditingId(null);
+      setLossNoteDraft('');
+    }
   }
 
   // `silent` (Axel, 2026-08-29: shop staff report "everytime we click ok its loaded again")
@@ -1505,6 +1541,35 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{l.reasonTagName}{l.note ? ` · ${l.note}` : ''}</div>
                     <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>{l.reportedByName} · {new Date(l.reportedAt).toLocaleString('vi-VN')}</div>
+                    {lossNoteEditingId === l.id ? (
+                      <div className="mt-2 rounded-xl p-2 space-y-1.5" style={{ background: GOLD_PALE, border: `1px solid ${BORDER}` }}>
+                        <textarea
+                          value={lossNoteDraft}
+                          onChange={e => setLossNoteDraft(e.target.value)}
+                          placeholder="Ghi chú thêm…"
+                          rows={2}
+                          className="w-full text-xs rounded-lg px-2 py-1.5 bg-white resize-none"
+                          style={{ border: `1px solid ${BORDER}`, color: INK }}
+                          autoFocus
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={cancelEditLossNote} disabled={lossNoteSaving} className="text-[11px] font-semibold px-2.5 py-1" style={{ color: '#6B7280' }}>Hủy</button>
+                          <button onClick={() => saveLossNote(l.id)} disabled={lossNoteSaving} className="text-[11px] font-bold px-3 py-1 rounded-lg text-white flex items-center gap-1" style={{ background: NAVY }}>
+                            {lossNoteSaving ? <Loader2 size={11} className="animate-spin" /> : null} Lưu
+                          </button>
+                        </div>
+                      </div>
+                    ) : l.followUpNote ? (
+                      <button onClick={() => startEditLossNote(l)} className="mt-2 w-full text-left rounded-xl p-2 flex items-start gap-1.5" style={{ background: GOLD_PALE, border: `1px solid ${BORDER}` }}>
+                        <StickyNote size={12} className="mt-0.5 shrink-0" style={{ color: '#8A6D14' }} />
+                        <span className="text-xs flex-1" style={{ color: INK }}>{l.followUpNote}</span>
+                        <Pencil size={11} className="mt-0.5 shrink-0" style={{ color: '#9CA3AF' }} />
+                      </button>
+                    ) : (
+                      <button onClick={() => startEditLossNote(l)} className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
+                        <StickyNote size={11} /> + Thêm ghi chú
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

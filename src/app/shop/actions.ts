@@ -468,7 +468,7 @@ export async function getShopLossesForStaffAction(shopName: string): Promise<{ l
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { data, error } = await supabase.from('lab_shop_losses')
-    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
+    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .eq('shop_name', auth.shopName)
     .order('reported_at', { ascending: false })
     .limit(50);
@@ -478,6 +478,7 @@ export async function getShopLossesForStaffAction(shopName: string): Promise<{ l
       id: r.id, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
       reasonTagName: r.reason_tag_name, note: r.note, odooScrapId: r.odoo_scrap_id, odooSyncError: r.odoo_sync_error,
       reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+      followUpNote: r.follow_up_note ?? null, followUpNoteByName: r.follow_up_note_by_name ?? null, followUpNoteAt: r.follow_up_note_at ?? null,
     })),
   };
 }
@@ -537,6 +538,9 @@ export type ShopLoss = {
   id: string; sku: string | null; productName: string; qty: number;
   reasonTagName: string; note: string | null; odooScrapId: number | null; odooSyncError: string | null;
   reportedByName: string; reportedAt: string;
+  // Axel, 2026-09-16: shop-editable follow-up note, addable/editable any time after the loss was
+  // reported. Purely informational, app-only — never touches Odoo. Visible to lab reception too.
+  followUpNote: string | null; followUpNoteByName: string | null; followUpNoteAt: string | null;
 };
 
 export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; error?: string }> {
@@ -545,7 +549,7 @@ export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; er
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { data, error } = await supabase.from('lab_shop_losses')
-    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
+    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .eq('shop_name', auth.shopName)
     .order('reported_at', { ascending: false })
     .limit(50);
@@ -555,6 +559,7 @@ export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; er
       id: r.id, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
       reasonTagName: r.reason_tag_name, note: r.note, odooScrapId: r.odoo_scrap_id, odooSyncError: r.odoo_sync_error,
       reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+      followUpNote: r.follow_up_note ?? null, followUpNoteByName: r.follow_up_note_by_name ?? null, followUpNoteAt: r.follow_up_note_at ?? null,
     })),
   };
 }
@@ -624,6 +629,32 @@ export async function recordShopLossAction(input: {
   await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
 
   return { ok: true, odooSynced: !!odooScrapId, odooError: odooSyncError ?? undefined };
+}
+
+// Axel, 2026-09-16: free-text note the shop can add (or edit) on a loss AFTER it's been
+// declared, at any time, no deadline. Purely informational / app-only — never touches Odoo,
+// distinct from `note` (set once at submission) and from the lab's own `lab_receive_note`
+// (set by the assistant on reception). Surfaced to lab reception so assistants see it too.
+export async function updateShopLossFollowUpNoteAction(input: {
+  lossId: string; note: string; byName: string; shopName?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const name = (input.byName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Name required' };
+  const note = (input.note ?? '').trim().slice(0, 500);
+  // Defense in depth: only ever touch a row that actually belongs to this shop.
+  const { data: row } = await supabase.from('lab_shop_losses').select('id').eq('id', input.lossId).eq('shop_name', auth.shopName).maybeSingle();
+  if (!row) return { error: 'Not found' };
+  const { error } = await supabase.from('lab_shop_losses').update({
+    follow_up_note: note || null,
+    follow_up_note_by_name: note ? name : null,
+    follow_up_note_at: note ? new Date().toISOString() : null,
+  }).eq('id', input.lossId);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
 // ── Staff roster (per-shop list of names, so staff pick instead of typing) ──────────────
@@ -776,6 +807,7 @@ export type ShopLossForLabReception = {
   id: string; shopName: string; sku: string | null; productName: string; qty: number;
   reasonTagName: string; note: string | null; reportedByName: string; reportedAt: string;
   labReceivedQty: number | null; labReceivedByName: string | null; labReceivedAt: string | null; labReceiveNote: string | null;
+  followUpNote: string | null; followUpNoteByName: string | null; followUpNoteAt: string | null;
 };
 
 // Every not-yet-received loss (whatever its age) plus the last 30 days already received — same
@@ -795,7 +827,7 @@ export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: S
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { data, error } = await supabase.from('lab_shop_losses')
-    .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note')
+    .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .gte('reported_at', vnTodayStartIso())
     .order('reported_at', { ascending: false })
     .limit(500);
@@ -806,6 +838,7 @@ export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: S
       reasonTagName: r.reason_tag_name, note: r.note, reportedByName: r.reported_by_name, reportedAt: r.reported_at,
       labReceivedQty: r.lab_received_qty == null ? null : Number(r.lab_received_qty),
       labReceivedByName: r.lab_received_by_name ?? null, labReceivedAt: r.lab_received_at ?? null, labReceiveNote: r.lab_receive_note ?? null,
+      followUpNote: r.follow_up_note ?? null, followUpNoteByName: r.follow_up_note_by_name ?? null, followUpNoteAt: r.follow_up_note_at ?? null,
     })),
   };
 }
