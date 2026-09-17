@@ -230,6 +230,20 @@ function labTodayTomorrow(): [string, string] {
   return [today, tomorrow];
 }
 
+// Axel, 2026-09-17 (2nd correction on the Lab reception window): the previous fix ("never
+// date-cut pending rows") immediately surfaced 318 losses the Lab had simply never confirmed —
+// this reception step is brand new, so every loss ever declared by a shop started out pending,
+// and 295 of those were already more than 2 days old ("on avait rien mis en place avant ... plus
+// de 300 pertes a check c'est pas possible"). Nothing before this point was ever meant to be
+// triaged through this screen, so it's written off as pre-existing backlog rather than queued for
+// review: cut hard at the start of yesterday (VN calendar day) for BOTH pending and received rows
+// — a loss/transfer reported before that is simply never shown here, forgotten or not.
+function vnYesterdayStartIso(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const yesterday = fmt.format(new Date(Date.now() - 24 * 3600 * 1000));
+  return `${yesterday}T00:00:00+07:00`;
+}
+
 export type ShopDeliveryOrder = {
   header: Pick<DeliveryOrderHeader, 'id' | 'order_ref' | 'delivery_date' | 'shop_name'>;
   lines: (CheckLine & { receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string } | null; image_url: string | null })[];
@@ -835,29 +849,20 @@ export type ShopLossForLabReception = {
   followUpNote: string | null; followUpNoteByName: string | null; followUpNoteAt: string | null;
 };
 
-// Every not-yet-received loss (whatever its age) plus the last 30 days already received — same
-// "never silently drop a pending item" shape as getMyShopTransfersAction.
-// "à partir d'aujourd'hui" (Axel, 2026-09-16): this reception step is brand new, so every loss
-// ever declared by a shop has lab_received_at still null -- an unbounded "or still pending"
-// window would dump weeks/months of history on the Lab all at once. Cut hard at the start of
-// today (Vietnam calendar day) instead: nothing declared before today needs confirming here.
-//
-// Axel, 2026-09-17 (correction): that "today only" cut turned out to hide exactly the cases that
-// matter most — a loss the Lab forgot to receive just silently disappeared from this tab once its
-// day rolled over, with no trace anywhere ("je veux qu'on puisse voir l'historique des pertes
-// reçues et oublié de réception"). Fixed to match the doc comment's original intent above, which
-// the query never actually implemented: pending rows are NEVER date-cut (a forgotten loss must
-// stay visible however old), only the already-received rows are capped to a rolling 30-day
-// window so this tab doesn't have to render months of settled history.
+// Everything reported since the start of yesterday (VN calendar day) — pending or already
+// received alike. See vnYesterdayStartIso() above for why: an unbounded "or still pending" window
+// (tried 2026-09-17) surfaced 318 losses that had simply never been confirmed since this
+// reception step didn't exist before, 295 of them already stale — not a queue anyone could
+// realistically work through. Anything older than yesterday is written off as pre-existing
+// backlog rather than shown here.
 export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: ShopLossForLabReception[]; error?: string }> {
   const auth = await requireLabReceptionStaff();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note, follow_up_note, follow_up_note_by_name, follow_up_note_at')
-    .or(`lab_received_at.is.null,reported_at.gte.${since30}`)
+    .gte('reported_at', vnYesterdayStartIso())
     .order('reported_at', { ascending: false })
     .limit(1000);
   if (error) return { error: error.message };
@@ -1863,10 +1868,19 @@ export async function getMyShopTransfersAction(shopName?: string): Promise<{ sho
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const since = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
-  const { data: rows, error } = await supabase.from('lab_shop_transfers').select('*')
+  // Lab reception (ShopLabReceptionTab, called with shopName='Lab') gets the same tight
+  // since-yesterday floor as getShopLossesForLabReceptionAction above, for the same reason (Axel,
+  // 2026-09-17: "dans reception stock pour les pertes et transfert des shops , je veux qu elles
+  // aient l'historique depuis hier") — no "still pending" exception, even a stale unconfirmed
+  // transfer older than yesterday is simply not shown there. A normal shop's own transfer list
+  // keeps the wider 30-day-or-still-pending window, since that view has never had a backlog
+  // problem and a shop should still see its own old pending transfers.
+  const isLabReception = auth.shopName === 'Lab';
+  const dateQuery = isLabReception
+    ? supabase.from('lab_shop_transfers').select('*').gte('sent_at', vnYesterdayStartIso())
+    : supabase.from('lab_shop_transfers').select('*').or(`sent_at.gte.${new Date(Date.now() - 30 * 86400 * 1000).toISOString()},status.eq.sent`);
+  const { data: rows, error } = await dateQuery
     .or(`from_shop.eq.${JSON.stringify(auth.shopName)},to_shop.eq.${JSON.stringify(auth.shopName)}`)
-    .or(`sent_at.gte.${since},status.eq.sent`)
     .order('sent_at', { ascending: false }).limit(200);
   if (error) return { error: error.message };
   const ids = (rows ?? []).map((r: any) => r.id);
