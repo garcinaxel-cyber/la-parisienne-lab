@@ -95,12 +95,12 @@ export default async function DeliveryCheckPage() {
   // Progress: any lab_delivery_orders header already started for these (date, ref)
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
-        .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status')
+        .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status, marked_not_delivered')
         .in('delivery_date', dateWindow)
         .limit(5000)
     : { data: [] as any[] };
-  const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null }> = {};
-  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null };
+  const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null; marked_not_delivered: boolean }> = {};
+  for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null, marked_not_delivered: (h as any).marked_not_delivered ?? false };
   const headerIds = (headers ?? []).map((h: any) => h.id);
 
   // Lines checked so far, to show an "X/Y" progress badge without opening the order
@@ -141,6 +141,10 @@ export default async function DeliveryCheckPage() {
       total: counts?.total ?? o.lineCount,
       printed_at: h?.printed_at ?? null,
       odoo_push_status: h?.odoo_push_status ?? null,
+      // App-only "ne sera pas livrée" flag (Axel, 2026-09-18) — surfaced here too so the
+      // recap list matches the red "100% (non livrée)" the order's own page already shows,
+      // instead of the plain green "validé" it fell back to before.
+      marked_not_delivered: h?.marked_not_delivered ?? false,
     };
   });
 

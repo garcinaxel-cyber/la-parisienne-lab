@@ -10,6 +10,8 @@ type OrderRow = {
   order_ref: string; delivery_date: string; shop_name: string;
   status: string; checked: number; total: number; printed_at: string | null;
   odoo_push_status: string | null;
+  // App-only "ne sera pas livrée" (Axel, 2026-09-18) — voir DeliveryCheckOrderView.tsx.
+  marked_not_delivered?: boolean;
   // Vérifié en direct contre Odoo, scopé aux commandes en retard côté app (Axel, 2026-09-03 :
   // une commande traitée directement sur Odoo, jamais poussée depuis l'app, restait "en retard"
   // pour toujours sans aucun signal). Absent/false pour aujourd'hui/demain — jamais vérifié là,
@@ -255,11 +257,15 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
     // itself pushed it); this is the one case the app never initiated but still needs a clear
     // positive signal rather than the order just vanishing from the late list.
     const odooDoneExternal = !!o.odoo_done_external && !odooDone;
-    const dotColor = odooDoneExternal ? '#16A34A' : odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
+    // Marquée "ne sera pas livrée" (Axel, 2026-09-18) — priorité la plus haute : sans ça, la
+    // ligne retombait sur le vert "validé" générique, masquant le fait qu'elle ne sera jamais
+    // réellement livrée. Même rouge que le badge sur la page de la commande.
+    const notDelivered = !!o.marked_not_delivered;
+    const dotColor = notDelivered ? '#DC2626' : odooDoneExternal ? '#16A34A' : odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
     // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
     // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
-    const bg = odooDoneExternal ? '#F0FDF4' : odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
-    const border = odooDoneExternal ? '#BBF7D0' : odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
+    const bg = notDelivered ? '#FEF2F2' : odooDoneExternal ? '#F0FDF4' : odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+    const border = notDelivered ? '#FECACA' : odooDoneExternal ? '#BBF7D0' : odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
     return (
       // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
       // captures them as separate segments, so no encoding here.
@@ -278,7 +284,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           </div>
           <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
         </div>
-        {odooDoneExternal ? (
+        {notDelivered ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#B91C1C' }}>
+            <CheckCheck size={15} /> {vi ? '100% (không giao)' : '100% (non livrée)'}
+          </span>
+        ) : odooDoneExternal ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#166534' }}>
             <CheckCheck size={15} /> {vi ? 'Xong trên Odoo' : 'Fait sur Odoo'}
           </span>

@@ -310,14 +310,22 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
                 title={vi ? 'Nhấn để hủy đánh dấu' : 'Cliquer pour annuler ce marquage'}>
                 <CheckCheck size={16} /> {vi ? 'Đã xử lý 100% (không giao)' : 'Traité à 100% (non livrée)'}
               </button>
-            ) : header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
+            ) : header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
               <>
-                <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
-                  className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
-                  style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}
-                  title={header.odoo_push_error ?? undefined}>
-                  <AlertTriangle size={15} /> {vi ? 'Cần xác nhận trên Odoo' : 'À valider sur Odoo'}
-                </Link>
+                {/* Le lien "valider sur Odoo" n'a de sens qu'une fois imprimé (c'est le flux
+                    impression -> validation) — mais "Ne sera pas livrée" doit rester
+                    disponible AVANT l'impression aussi : une commande qu'on sait déjà ne
+                    jamais livrer n'a souvent aucune raison d'être imprimée du tout (Axel,
+                    2026-09-18 — le bouton n'apparaissait qu'après impression, ce qui ratait
+                    exactement ce cas). */}
+                {header.printed_at && (
+                  <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
+                    className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
+                    style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}
+                    title={header.odoo_push_error ?? undefined}>
+                    <AlertTriangle size={15} /> {vi ? 'Cần xác nhận trên Odoo' : 'À valider sur Odoo'}
+                  </Link>
+                )}
                 {/* Commande clôturée sur Odoo à 0 livré car elle ne sera jamais réellement
                     livrée — bouton purement local/réversible, aucun impact Odoo (Axel,
                     2026-09-18). */}
