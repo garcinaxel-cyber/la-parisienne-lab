@@ -747,7 +747,12 @@ export default function StationView({
     const supabase = createClient();
     const update: any = { status: next, updated_at: new Date().toISOString() };
     if (next === 'done') {
-      update.qty_produced = a.qty_to_produce; update.produced_ahead = isAhead;
+      // partial -> done must keep whatever qty was actually confirmed via "Enter qty" instead
+      // of silently bumping it up to the full target — "Mark done" on a partial card means "no
+      // more coming", not "the missing units magically appeared" (2026-09-18, team Hung: 3/4
+      // confirmed, Mark done was about to record 4 produced when only 3 were really made).
+      const finalQty = a.status === 'partial' ? a.qty_produced : a.qty_to_produce;
+      update.qty_produced = finalQty; update.produced_ahead = isAhead;
       update.produced_by = userId; update.produced_by_name = userName; update.produced_at = new Date().toISOString();
       // Re-derive `transferred` from the actual sent-vs-produced invariant instead of leaving
       // a stale value. A card reopened by the same-day merge (fix/card-fragmentation-and-
@@ -755,7 +760,7 @@ export default function StationView({
       // was merged in — if that was already true (fully sent at the smaller old total), it must
       // become false again now that qty_produced just jumped to the new, bigger target, or the
       // freshly produced remainder becomes permanently invisible to "Send to stock".
-      update.transferred = (a.qty_sent_total ?? 0) >= a.qty_to_produce;
+      update.transferred = (a.qty_sent_total ?? 0) >= finalQty;
     }
     if (a.status === 'blocked') update.blocked_reason = null;
     await supabase.from('lab_assignments').update(update).eq('id', a.id);
