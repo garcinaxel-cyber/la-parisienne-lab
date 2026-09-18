@@ -140,6 +140,28 @@ export async function unlockOrderAction(deliveryOrderId: string): Promise<{ ok?:
   return { ok: true };
 }
 
+// "Ne sera pas livré" (Axel, 2026-09-18) — une commande REP/SO qu'Odoo force à clôturer
+// avec 0 unité livrée (impossible d'y supprimer une commande) restait bloquée avec le badge
+// "À valider sur Odoo" pour toujours, alors qu'il n'y a plus rien à valider là-bas. Purement
+// app-only et réversible : aucune écriture Odoo, n'affecte ni odoo_push_status ni aucun
+// calcul de réconciliation/KPI — seulement l'affichage de cette page. toggle=false annule.
+export async function setMarkedNotDeliveredAction(deliveryOrderId: string, marked: boolean): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+
+  const { error } = await supabase.from('lab_delivery_orders').update({
+    marked_not_delivered: marked,
+    marked_not_delivered_at: marked ? new Date().toISOString() : null,
+    marked_not_delivered_by_name: marked ? (auth.profile?.full_name ?? null) : null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', deliveryOrderId);
+  if (error) return { error: error.message };
+  revalidatePath('/delivery-check');
+  revalidatePath('/delivery-check/category');
+  return { ok: true };
+}
+
 // Called when someone actually clicks "Imprimer" on the print page (not just opens it) — drives
 // the "already printed" color-code Axel asked for (2026-08-11) on the index + order views.
 export async function markPrintedAction(deliveryOrderId: string): Promise<{ ok?: boolean; error?: string }> {

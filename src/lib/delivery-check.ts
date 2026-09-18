@@ -51,6 +51,10 @@ export interface DeliveryOrderHeader {
   print_count: number;
   unlocked_at: string | null;
   unlocked_by_name: string | null;
+  // App-only, reversible, no Odoo write — see lab_v84 migration comment.
+  marked_not_delivered: boolean;
+  marked_not_delivered_at: string | null;
+  marked_not_delivered_by_name: string | null;
 }
 
 // Packaging lines for one order_ref — plain Supabase read from the cron-synced table, no

@@ -171,6 +171,9 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     Object.fromEntries(lines.map(l => [l.id, l.hidden_from_print])));
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  // "Ne sera pas livrée" — app-only, réversible, aucun impact Odoo (Axel, 2026-09-18).
+  const [markedNotDelivered, setMarkedNotDelivered] = useState(header.marked_not_delivered);
+  const [togglingNotDelivered, setTogglingNotDelivered] = useState(false);
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -207,6 +210,15 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     const res = await unlockOrderAction(header.id);
     setUnlocking(false);
     if (res.ok) setValidated(false);
+  }
+
+  async function toggleNotDelivered() {
+    setTogglingNotDelivered(true);
+    const next = !markedNotDelivered;
+    const { setMarkedNotDeliveredAction } = await import('../../actions');
+    const res = await setMarkedNotDeliveredAction(header.id, next);
+    setTogglingNotDelivered(false);
+    if (res.ok) setMarkedNotDelivered(next);
   }
 
   // Manual "Sync Odoo" for when an assistant can't find a product that should be on this order
@@ -288,13 +300,34 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
                 <CheckCheck size={16} /> {vi ? 'Đã xử lý xong 100%' : 'Traité à 100%'}
               </span>
             )}
-            {header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
-              <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
-                className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
-                style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}
-                title={header.odoo_push_error ?? undefined}>
-                <AlertTriangle size={15} /> {vi ? 'Cần xác nhận trên Odoo' : 'À valider sur Odoo'}
-              </Link>
+            {markedNotDelivered ? (
+              // Marquage local "ne sera pas livrée" (Axel, 2026-09-18) — commande clôturée sur
+              // Odoo avec 0 unité livrée car elle ne sera jamais réellement livrée (Odoo ne
+              // permet pas de supprimer une commande). Cliquer annule le marquage (réversible).
+              <button onClick={toggleNotDelivered} disabled={togglingNotDelivered}
+                className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 disabled:opacity-50"
+                style={{ backgroundColor: '#FEE2E2', color: '#B91C1C' }}
+                title={vi ? 'Nhấn để hủy đánh dấu' : 'Cliquer pour annuler ce marquage'}>
+                <CheckCheck size={16} /> {vi ? 'Đã xử lý 100% (không giao)' : 'Traité à 100% (non livrée)'}
+              </button>
+            ) : header.printed_at && header.odoo_push_status !== 'validated' && header.odoo_push_status !== 'already_done' && (
+              <>
+                <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
+                  className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"
+                  style={{ backgroundColor: header.odoo_push_status === 'error' ? '#FEE2E2' : '#FEF2F2', color: '#B91C1C' }}
+                  title={header.odoo_push_error ?? undefined}>
+                  <AlertTriangle size={15} /> {vi ? 'Cần xác nhận trên Odoo' : 'À valider sur Odoo'}
+                </Link>
+                {/* Commande clôturée sur Odoo à 0 livré car elle ne sera jamais réellement
+                    livrée — bouton purement local/réversible, aucun impact Odoo (Axel,
+                    2026-09-18). */}
+                <button onClick={toggleNotDelivered} disabled={togglingNotDelivered}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 disabled:opacity-50"
+                  style={{ border: '1px solid #D1D5DB', color: '#374151' }}
+                  title={vi ? 'Đơn sẽ không giao (đã xử lý trên Odoo với số lượng 0)' : 'Ne sera pas livrée (clôturée sur Odoo à 0)'}>
+                  {togglingNotDelivered ? '…' : (vi ? 'Không giao' : 'Ne sera pas livrée')}
+                </button>
+              </>
             )}
             {header.printed_at && (
               <span className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}
