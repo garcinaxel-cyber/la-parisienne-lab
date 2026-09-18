@@ -881,12 +881,21 @@ export async function refundOnlineOrderAction(orderBatchId: string, amount: numb
   // Grand total = every line (product + fee lines share lab_online_sale_lines/lab_manual_cakes)
   // plus the order-level delivery fee — the same figure the order card shows (o.total +
   // o.deliveryFee in OnlineOrderSummary) and what the client pre-fills the amount with.
+  // BUG FIX 2026-09-18 (Axel, S03847): this used to filter out cancelled_at manual-cake lines,
+  // but OnlineOrderSummary's own `total` (actions.ts ~line 562, what the card displays and what
+  // the refund prompt pre-fills) does NOT exclude them — so a single-line order whose only cake
+  // gets auto-cancelled by the Odoo sync (odoo-apply.ts's cancelMatchedManualCake, e.g. the order
+  // was cancelled directly on Odoo) collapsed this total to 0, and the prompt's own pre-filled,
+  // untouched amount ("499000") was then rejected as "exceeds total" — the exact case this
+  // button exists for (closing out a cancelled order) was the one case it couldn't handle.
+  // Keeping cancelled lines in the sum here matches the display exactly, so what the user is
+  // shown is always what the server will accept.
   const isLab = order.source === 'lab';
   const { data: mcLines } = isLab
-    ? await supabase.from('lab_manual_cakes').select('qty, unit_price, cancelled_at').eq('order_batch_id', orderBatchId)
+    ? await supabase.from('lab_manual_cakes').select('qty, unit_price').eq('order_batch_id', orderBatchId)
     : { data: [] as any[] };
   const { data: slLines } = await supabase.from('lab_online_sale_lines').select('qty, unit_price').eq('order_batch_id', orderBatchId);
-  const linesTotal = [...(mcLines ?? []).filter((l: any) => !l.cancelled_at), ...(slLines ?? [])]
+  const linesTotal = [...(mcLines ?? []), ...(slLines ?? [])]
     .reduce((s: number, l: any) => s + Number(l.qty ?? 0) * Number(l.unit_price ?? 0), 0);
   const grandTotal = linesTotal + Number(order.delivery_fee ?? 0);
 
