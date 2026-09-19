@@ -89,4 +89,5 @@ declare module 'lucide-react' {
   export const QrCode: LucideIcon;
   export const Banknote: LucideIcon;
   export const Gift: LucideIcon;
+  export const FolderArchive: LucideIcon;
 }

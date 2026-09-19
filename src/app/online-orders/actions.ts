@@ -520,7 +520,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // (never in lab_manual_cakes, see buildFeeLineRows) only live here.
   const [{ data: lines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
-      ? supabase.from('lab_manual_cakes')
+      ? supabase.from('lab_manual_cake_ledger')
           .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
           .in('order_batch_id', labBatchIds)
       : Promise.resolve({ data: [] as any[] }),
@@ -643,7 +643,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     supabase.from('lab_online_orders')
       .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, district, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
       .neq('source', 'event_stock'),
-    supabase.from('lab_manual_cakes')
+    supabase.from('lab_manual_cake_ledger')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
   ]);
@@ -892,7 +892,7 @@ export async function refundOnlineOrderAction(orderBatchId: string, amount: numb
   // shown is always what the server will accept.
   const isLab = order.source === 'lab';
   const { data: mcLines } = isLab
-    ? await supabase.from('lab_manual_cakes').select('qty, unit_price').eq('order_batch_id', orderBatchId)
+    ? await supabase.from('lab_manual_cake_ledger').select('qty, unit_price').eq('order_batch_id', orderBatchId)
     : { data: [] as any[] };
   const { data: slLines } = await supabase.from('lab_online_sale_lines').select('qty, unit_price').eq('order_batch_id', orderBatchId);
   const linesTotal = [...(mcLines ?? []), ...(slLines ?? [])]
@@ -1094,7 +1094,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // buildFeeLineRows), so its fee lines only show up via this table regardless of source.
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labIds.length
-      ? supabase.from('lab_manual_cakes').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+      ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
       : Promise.resolve({ data: [] as any[] }),
     batchIds.length
       ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at, is_fee').in('order_batch_id', batchIds).limit(20000)

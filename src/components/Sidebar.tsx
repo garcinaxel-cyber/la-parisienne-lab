@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops, UserCog, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops, UserCog, CalendarDays, FolderArchive } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -53,6 +53,9 @@ const ADMIN_NAV = [
   // Temporary "event" shops (2026-09-12) — create/close, linked to an Odoo warehouse Axel
   // configures himself; the app only looks it up by code, never creates it.
   { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', adminOnly: true },
+  // Archives (2026-09-19) — exports Excel mensuels + sauvegardes hebdo (bucket lab-archives) et
+  // état de la rétention. Lecture seule, admin-only.
+  { href: '/admin/archives', icon: FolderArchive, labelVi: 'Lưu trữ', labelEn: 'Archives', adminOnly: true },
 ];
 
 export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {

@@ -52,6 +52,11 @@ export function middleware(req: NextRequest) {
   // itself, called by hand via curl (no session). Learned the same lesson again: forgetting
   // this exemption silently redirects the curl call to /login (200 OK, no error, no push sent).
   if (pathname.startsWith('/api/admin/order-date-change-notify')) return NextResponse.next();
+  // Rétention v2 (2026-09-19) : purge quotidienne + archives mensuelles / sauvegarde hebdo,
+  // appelées par pg_cron, secret-gated elles-mêmes. Même leçon : sans cette exemption, l'appel
+  // est redirigé vers /login en 200 OK et le job ne tourne jamais.
+  if (pathname.startsWith('/api/lab/retention')) return NextResponse.next();
+  if (pathname.startsWith('/api/lab/archive-monthly')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 

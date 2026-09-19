@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
   const labBatchIds = rows.filter(o => (o.source ?? 'lab') === 'lab').map(o => o.order_batch_id);
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
-      ? supabase.from('lab_manual_cakes')
+      ? supabase.from('lab_manual_cake_ledger')
           .select('order_batch_id, product_name_vi, qty, unit_price, matched_order_ref, cancelled_at')
           .in('order_batch_id', labBatchIds)
       : Promise.resolve({ data: [] as any[] }),
