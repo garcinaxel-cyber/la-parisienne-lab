@@ -1,5 +1,6 @@
 'use server';
 import { createHash } from 'crypto';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { ensureDeliveryOrderChecklist, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
@@ -1323,11 +1324,17 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
   const entries = await stockCountEntries(shopName);
   const skus = Array.from(entries.keys());
 
-  const [countsRes, pricesRes, lossRecap] = await Promise.all([
+  // 2026-09-19 (Moon Flower: "17/9 hôm nay app mới hiện đủ, 18/9 kiểm sai số lượng, 19/9 kiểm
+  // không lưu"): 7 days × 226 SKUs = ~1 580 rows, and PostgREST silently caps a single request
+  // at 1 000 — so the OLDEST days filled the page and the most recent day(s) came back partial
+  // (17/09: 51/226) or empty (18/09: "Chưa kiểm kho") while the rows were in fact saved. Same
+  // bug as delivery-check 08-20 / station History 09-01 — hence fetchAllPages here.
+  const [countRows, pricesRes, lossRecap] = await Promise.all([
     supabase
-      ? supabase.from('lab_shop_stock_counts').select('sku, qty, count_date, session_seq')
-          .eq('shop_name', shopName).gte('count_date', minDate)
-      : Promise.resolve({ data: [] as any[] }),
+      ? fetchAllPages<{ sku: string; qty: number; count_date: string; session_seq: number }>((f, t) =>
+          supabase.from('lab_shop_stock_counts').select('sku, qty, count_date, session_seq')
+            .eq('shop_name', shopName).gte('count_date', minDate).order('id').range(f, t))
+      : Promise.resolve([] as { sku: string; qty: number; count_date: string; session_seq: number }[]),
     supabase && skus.length
       ? supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
       : Promise.resolve({ data: [] as any[] }),
@@ -1338,7 +1345,7 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
   for (const r of pricesRes.data ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
 
   const rowsByDate = new Map<string, { sku: string; qty: number; session_seq: number }[]>();
-  for (const r of countsRes.data ?? []) {
+  for (const r of countRows) {
     const d = r.count_date as string;
     const arr = rowsByDate.get(d) ?? [];
     arr.push({ sku: r.sku, qty: Number(r.qty), session_seq: Number(r.session_seq) });

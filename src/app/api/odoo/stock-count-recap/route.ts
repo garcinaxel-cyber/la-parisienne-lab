@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendAdminPush, type PushPayload } from '@/lib/push-notify';
 import { PORTAL_SHOP_NAMES } from '@/lib/shops';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -24,11 +25,16 @@ export async function GET(req: Request) {
   // Today in VN (the count_date convention used by the shop portal).
   const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
-  const [{ data: counts, error }, { data: done }] = await Promise.all([
-    supabase.from('lab_shop_stock_counts').select('shop_name, session_seq, sku').eq('count_date', today),
-    supabase.from('lab_shop_stock_sessions_done').select('shop_name, session_seq, sku_count, valuation').eq('count_date', today),
-  ]);
-  if (error) return NextResponse.json({ error: error.message }, { status: 502 });
+  // All shops × ~226 SKUs > the 1 000-row PostgREST cap (2026-09-19) — paginate, or the recap
+  // wrongly reports the last shops as "chưa kiểm kho".
+  let counts: { shop_name: string; session_seq: number; sku: string }[];
+  try {
+    counts = await fetchAllPages<{ shop_name: string; session_seq: number; sku: string }>((f, t) =>
+      supabase.from('lab_shop_stock_counts').select('shop_name, session_seq, sku').eq('count_date', today).order('id').range(f, t));
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+  }
+  const { data: done } = await supabase.from('lab_shop_stock_sessions_done').select('shop_name, session_seq, sku_count, valuation').eq('count_date', today);
 
   const byShop = new Map<string, { skus: Set<string>; sessions: Set<number> }>();
   for (const r of counts ?? []) {
