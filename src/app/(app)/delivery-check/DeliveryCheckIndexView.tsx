@@ -17,6 +17,13 @@ type OrderRow = {
   // pour toujours sans aucun signal). Absent/false pour aujourd'hui/demain — jamais vérifié là,
   // volontairement (voir late-delivery-odoo-cache.ts).
   odoo_done_external?: boolean;
+  // "Qui a passé commande" (Axel, 2026-09-20) — manager_name comes from lab_shop_manager_orders
+  // (a shop staff member confirmed via PIN through the app); is_online_order flags an order_ref
+  // that instead came from an admin's "Créer commande Odoo" on /exceptional-orders (manual/online
+  // cakes, no PIN/manager concept at all). Both optional/absent for anything neither covers
+  // (e.g. a shop ordering straight in Odoo) — deliberately left blank there, not guessed at.
+  manager_name?: string | null;
+  is_online_order?: boolean;
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -282,7 +289,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
               </span>
             )}
           </div>
-          <div className="text-xs text-ink-light truncate">{o.shop_name}</div>
+          <div className="text-xs text-ink-light truncate">
+            {o.shop_name}
+            {o.manager_name ? ` · ${o.manager_name}` : ''}
+            {o.is_online_order ? ` · ${vi ? 'Bán online' : 'Vente en ligne'}` : ''}
+          </div>
         </div>
         {notDelivered ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#B91C1C' }}>

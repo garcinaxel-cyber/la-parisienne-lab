@@ -92,6 +92,29 @@ export default async function DeliveryCheckPage() {
   }
   const orders = Object.values(byKey).sort((a, b) => a.delivery_date.localeCompare(b.delivery_date) || a.order_ref.localeCompare(b.order_ref));
 
+  // "Qui a passé commande" (Axel, 2026-09-20 diagnostic) — additive, read-only display info,
+  // never touches the check flow itself. Two sources, deliberately not merged into one concept:
+  //  - manager_name: a shop staff member confirmed this order with their PIN through the app's
+  //    own Đặt hàng flow (submitManagerOrderAction, src/app/shop/actions.ts) — lab_shop_manager_orders
+  //    is the audit trail written at that moment, keyed by the same order_ref shown here.
+  //  - is_online_order: this order_ref was instead created by an ADMIN from /exceptional-orders
+  //    ("Créer commande Odoo" on a manual/online-sale cake — createOdooOrderForSelection,
+  //    odoo-shop-order-sync.ts). There's no manager/PIN concept there at all — lab_manual_cakes
+  //    is what links a matched_order_ref back to that origin. Confirmed 2026-09-20: of the
+  //    order_refs with no manager_name, the vast majority are exactly this case (Set Lettre de
+  //    Shanghai, mini cakes, etc.) — a handful of remaining ones are shops ordering straight in
+  //    Odoo (no app trail at all), which neither source covers — left blank for those, on purpose.
+  const orderRefs = orders.map(o => o.order_ref);
+  const [{ data: managerOrders }, { data: onlineMatches }] = orderRefs.length
+    ? await Promise.all([
+        supabase.from('lab_shop_manager_orders').select('order_ref, manager_name').in('order_ref', orderRefs),
+        supabase.from('lab_manual_cakes').select('matched_order_ref').in('matched_order_ref', orderRefs),
+      ])
+    : [{ data: [] as any[] }, { data: [] as any[] }];
+  const managerNameByRef: Record<string, string> = {};
+  for (const m of managerOrders ?? []) if (m.order_ref && m.manager_name) managerNameByRef[m.order_ref] = m.manager_name;
+  const onlineOrderRefs = new Set((onlineMatches ?? []).map((m: any) => m.matched_order_ref).filter(Boolean));
+
   // Progress: any lab_delivery_orders header already started for these (date, ref)
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
@@ -145,6 +168,10 @@ export default async function DeliveryCheckPage() {
       // recap list matches the red "100% (non livrée)" the order's own page already shows,
       // instead of the plain green "validé" it fell back to before.
       marked_not_delivered: h?.marked_not_delivered ?? false,
+      // "Qui a passé commande" (Axel, 2026-09-20) — see the comment above managerNameByRef/
+      // onlineOrderRefs for what each of these does and doesn't cover.
+      manager_name: managerNameByRef[o.order_ref] ?? null,
+      is_online_order: onlineOrderRefs.has(o.order_ref),
     };
   });
 
