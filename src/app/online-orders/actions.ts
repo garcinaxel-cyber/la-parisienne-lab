@@ -929,6 +929,26 @@ export async function setPaymentStatusAction(orderBatchId: string, status: 'paid
   return { ok: true };
 }
 
+// Delivery-fee correction (Axel's staff, 2026-09-20, S03847/Kim Mỹ Tun): the fee is only ever
+// keyed in once, at order creation ("submitOnlineOrderAction"/"submitShopStockSaleAction") — a
+// staff member forgetting it there had no way to add it after the fact. Same ownership rule as
+// the other order-field edits above (assertOwnsOrder: the creator, or any admin) rather than the
+// refund action's "any staff" carve-out, since this isn't the order-level cancel/refund case.
+export async function updateDeliveryFeeAction(orderBatchId: string, deliveryFee: number): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireOnlineWriteSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const ownErr = await assertOwnsOrder(supabase, orderBatchId, auth);
+  if (ownErr) return { error: ownErr };
+  const fee = Math.max(0, Math.round(Number(deliveryFee) || 0));
+  if (!Number.isFinite(fee)) return { error: 'Invalid amount' };
+  const { error } = await supabase.from('lab_online_orders').update({ delivery_fee: fee }).eq('order_batch_id', orderBatchId);
+  if (error) return { error: error.message };
+  revalidatePath('/online-orders');
+  return { ok: true };
+}
+
 // ── Sales channels (editable list, lab_v70) ──
 export async function listOnlineChannelsAction(): Promise<{ channels?: string[]; error?: string }> {
   const auth = await requireOnlineSession();

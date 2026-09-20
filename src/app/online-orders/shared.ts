@@ -187,6 +187,8 @@ export const L = {
     adjustRefundBtn: 'Sửa',
     custRefunded: 'Đã hoàn tiền',
     custPartiallyRefunded: 'Hoàn 1 phần',
+    editDeliveryFeeBtn: 'Sửa phí ship',
+    deliveryFeePrompt: 'Phí giao hàng (₫). Sửa xong sẽ cộng vào tổng đơn ngay. Không ảnh hưởng Odoo.',
   },
   en: {
     titleOrder: 'Online orders',
@@ -343,6 +345,8 @@ export const L = {
     adjustRefundBtn: 'Edit',
     custRefunded: 'Refunded',
     custPartiallyRefunded: 'Partially refunded',
+    editDeliveryFeeBtn: 'Edit delivery fee',
+    deliveryFeePrompt: 'Delivery fee. Updating it adds straight to the order total. No impact on Odoo.',
   },
 } as const;
 export type LKey = keyof typeof L.vi;

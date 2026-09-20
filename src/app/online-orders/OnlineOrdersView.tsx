@@ -884,6 +884,17 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
     if (res?.error) { window.alert(res.error); return; }
     load(jumpDate || undefined);
   }
+  // Fix a delivery fee forgotten at order creation (staff request, 2026-09-20) — same
+  // window.prompt pattern as refundOrder above, pre-filled with the fee currently on file.
+  async function editDeliveryFee(o: OnlineOrderSummary) {
+    const raw = window.prompt(tr('deliveryFeePrompt'), String(o.deliveryFee || 0));
+    if (raw == null) return; // cancelled
+    const fee = Math.round(Number(raw.replace(/[^\d.-]/g, '')));
+    if (!Number.isFinite(fee) || fee < 0) return;
+    const res = await actions.updateDeliveryFeeAction(o.orderBatchId, fee);
+    if (res?.error) { window.alert(res.error); return; }
+    load(jumpDate || undefined);
+  }
 
   return (
     <div>
@@ -1003,7 +1014,15 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                 <ReconstructPanel order={o} onDone={() => { setReconstructing(null); load(jumpDate || undefined); }} onCancel={() => setReconstructing(null)} />
               )}
               <div className="flex justify-between items-center mb-2">
-                <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
+                <span className="flex items-center gap-1.5">
+                  <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
+                  {!readOnly && o.source !== 'excel_import' && (
+                    <button onClick={() => editDeliveryFee(o)} title={tr('editDeliveryFeeBtn')} style={{
+                      fontSize: 10, fontWeight: 700, color: '#8a7326', backgroundColor: CREAM,
+                      border: 'none', borderRadius: 999, padding: '2px 7px', flexShrink: 0,
+                    }}>🚚 {tr('editDeliveryFeeBtn')}</button>
+                  )}
+                </span>
                 {readOnly ? (
                   <span style={{
                     backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
