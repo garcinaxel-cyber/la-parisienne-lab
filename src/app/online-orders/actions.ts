@@ -1105,7 +1105,12 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
   // Accept the old bare-number call shape too (rangeDays), so nothing else calling this needs
   // to change.
   const params: AnalyticsRangeOpts = typeof opts === 'number' ? { rangeDays: opts } : (opts ?? {});
-  const customRange = !!(params.from && params.to);
+  // Only trust from/to as a well-formed YYYY-MM-DD date (Axel, 2026-09-23: the month/day picker
+  // crashed the page — a stray malformed value reaching the date math below (Invalid Date ->
+  // NaN -> .toISOString() throwing) is the likeliest cause; falling back to the rangeDays preset
+  // instead of ever passing a bad string through keeps that from taking the whole page down).
+  const validDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + 'T00:00:00Z').getTime());
+  const customRange = validDate(params.from) && validDate(params.to);
   const rangeDaysParam = [14, 30, 90, 365].includes(Number(params.rangeDays)) ? Number(params.rangeDays) : 14;
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
@@ -1365,60 +1370,63 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
 }
 
 // Axel, 2026-09-22: "je veux pouvoir avoir la possibilite du detail commande sur chaque canal" —
-// the per-channel order list behind a byChannel row in getOnlineAnalyticsAction, fetched on
-// demand when a channel row is expanded rather than shipped with every analytics call (channels
-// can have many orders, and most are never expanded). `channel` is matched case/whitespace-
-// insensitively, same normalisation as chKey() above, so it lines up with a byChannel row however
-// that row's canonical casing was picked.
-export type ChannelOrderDetail = {
-  orderBatchId: string; customerName: string | null; customerPhone: string | null;
-  deliveryDate: string; shopName: string | null; total: number; source: string;
-};
+// then 2026-09-23: "je parlais des produits, pas du client dans le detail" — so this is a
+// PRODUCT breakdown for the channel (name, qty, revenue), the same shape as byCategory's
+// `products` list in getOnlineAnalyticsAction, not a per-order customer list. Fetched on demand
+// when a byChannel row is expanded rather than shipped with every analytics call. `channel` is
+// matched case/whitespace-insensitively, same normalisation as chKey() above, so it lines up
+// with a byChannel row however that row's canonical casing was picked.
+export type ChannelProductDetail = { name: string; sku: string | null; qty: number; total: number };
 
-export async function getChannelOrderDetailsAction(channel: string, from: string, to: string): Promise<{ data?: ChannelOrderDetail[]; error?: string }> {
-  const auth = await requireOnlineSession();
-  if ('error' in auth) return { error: auth.error };
-  const supabase = service();
-  if (!supabase) return { error: 'Server not configured' };
-  const target = (channel ?? '').trim().toLowerCase();
-  const since = new Date(new Date(from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString();
-  const { data: orders, error } = await supabase.from('lab_online_orders')
-    .select('order_batch_id, customer_name, customer_phone, delivery_date, created_at, source, shop_name, channel, refund_amount')
-    .neq('source', 'event_stock').gte('created_at', since).limit(5000);
-  if (error) return { error: error.message };
-  const matched = (orders ?? []).filter((o: any) => {
-    const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
-    if (day < from || day > to) return false;
-    const ch = (o.channel ?? '').trim().toLowerCase();
-    return target === '—' ? !ch : ch === target;
-  });
-  if (!matched.length) return { data: [] };
-  const batchIds = matched.map((o: any) => o.order_batch_id);
-  const labIds = matched.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
-  const [{ data: labLines }, { data: stockLines }] = await Promise.all([
-    labIds.length
-      ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, cancelled_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
-      : Promise.resolve({ data: [] as any[] }),
-    batchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, is_fee').in('order_batch_id', batchIds).limit(20000)
-      : Promise.resolve({ data: [] as any[] }),
-  ]);
-  const totalByBatch = new Map<string, number>();
-  for (const l of labLines ?? []) totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + (l.qty ?? 0) * (l.unit_price ?? 0));
-  for (const l of stockLines ?? []) {
-    if (l.is_fee) continue; // merchandise only, same as byChannel's rangeTotal above
-    totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + (l.qty ?? 0) * (l.unit_price ?? 0));
+export async function getChannelProductDetailsAction(channel: string, from: string, to: string): Promise<{ data?: ChannelProductDetail[]; error?: string }> {
+  try {
+    const auth = await requireOnlineSession();
+    if ('error' in auth) return { error: auth.error };
+    const supabase = service();
+    if (!supabase) return { error: 'Server not configured' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return { error: 'Invalid date range' };
+    const target = (channel ?? '').trim().toLowerCase();
+    const since = new Date(new Date(from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString();
+    const { data: orders, error } = await supabase.from('lab_online_orders')
+      .select('order_batch_id, delivery_date, created_at, source, channel')
+      .neq('source', 'event_stock').gte('created_at', since).limit(5000);
+    if (error) return { error: error.message };
+    const matched = (orders ?? []).filter((o: any) => {
+      const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
+      if (day < from || day > to) return false;
+      const ch = (o.channel ?? '').trim().toLowerCase();
+      return target === '—' ? !ch : ch === target;
+    });
+    if (!matched.length) return { data: [] };
+    const batchIds = matched.map((o: any) => o.order_batch_id);
+    const labIds = matched.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
+    const [{ data: labLines }, { data: stockLines }] = await Promise.all([
+      labIds.length
+        ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, product_sku, product_name_vi, cancelled_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+        : Promise.resolve({ data: [] as any[] }),
+      batchIds.length
+        ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, product_name_vi, is_fee').in('order_batch_id', batchIds).limit(20000)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const products = new Map<string, ChannelProductDetail>();
+    const bump = (key: string, name: string, sku: string | null, qty: number, unitPrice: number) => {
+      const e = products.get(key) ?? { name, sku, qty: 0, total: 0 };
+      e.qty += qty; e.total += qty * unitPrice;
+      products.set(key, e);
+    };
+    for (const l of labLines ?? []) {
+      const key = l.product_sku ?? l.product_name_vi ?? '?';
+      bump(key, l.product_name_vi ?? l.product_sku ?? '?', l.product_sku ?? null, l.qty ?? 0, l.unit_price ?? 0);
+    }
+    for (const l of stockLines ?? []) {
+      if (l.is_fee) continue; // merchandise only, same as byChannel's rangeTotal above
+      const key = l.sku ?? l.product_name_vi ?? '?';
+      bump(key, l.product_name_vi ?? l.sku ?? '?', l.sku ?? null, l.qty ?? 0, l.unit_price ?? 0);
+    }
+    return { data: Array.from(products.values()).sort((a, b) => b.total - a.total) };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Unexpected error' };
   }
-  const result: ChannelOrderDetail[] = matched.map((o: any) => ({
-    orderBatchId: o.order_batch_id,
-    customerName: o.customer_name ?? null,
-    customerPhone: o.customer_phone ?? null,
-    deliveryDate: (o.delivery_date ?? o.created_at ?? '').slice(0, 10),
-    shopName: o.shop_name ?? null,
-    total: Math.max(0, (totalByBatch.get(o.order_batch_id) ?? 0) - Number(o.refund_amount ?? 0)),
-    source: o.source ?? 'lab',
-  })).sort((a, b) => b.deliveryDate.localeCompare(a.deliveryDate));
-  return { data: result };
 }
 
 // ── Push notifications (reuses sendShopPush/sendAdminPush with a pseudo shop_name) ──

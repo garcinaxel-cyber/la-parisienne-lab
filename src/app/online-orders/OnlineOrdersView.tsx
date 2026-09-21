@@ -7,7 +7,7 @@ import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
-import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType, ChannelOrderDetail } from './actions';
+import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType, ChannelProductDetail } from './actions';
 import CustomersTab from './CustomersTab';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
@@ -1130,32 +1130,56 @@ function StatsTab() {
   const [customDay, setCustomDay] = useState<string | null>(null); // 'YYYY-MM-DD'
   const [openCat, setOpenCat] = useState<string | null>(null);
   const [openChannel, setOpenChannel] = useState<string | null>(null);
-  const [channelOrders, setChannelOrders] = useState<Record<string, ChannelOrderDetail[]>>({});
+  const [channelProducts, setChannelProducts] = useState<Record<string, ChannelProductDetail[]>>({});
   const [channelLoading, setChannelLoading] = useState<string | null>(null);
   const [data, setData] = useState<OnlineAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    setOpenChannel(null); setChannelOrders({}); // stale detail lists would show the wrong period
+    setLoadError(false);
+    setOpenChannel(null); setChannelProducts({}); // stale detail lists would show the wrong period
     const opts = customMonth
       ? { from: `${customMonth}-01`, to: monthLastDay(customMonth) }
       : customDay
       ? { from: customDay, to: customDay }
       : { rangeDays: range };
-    actions.getOnlineAnalyticsAction(opts).then(res => { if (alive) { setData(res.data ?? null); setLoading(false); } });
+    actions.getOnlineAnalyticsAction(opts)
+      .then(res => { if (!alive) return; if (res.error) { setLoadError(true); setLoading(false); return; } setData(res.data ?? null); setLoading(false); })
+      // A thrown/rejected server action must never take the whole page down (Axel, 2026-09-23:
+      // month/day picker crashed to a blank "Application error" page) — show an inline retry
+      // state instead.
+      .catch(() => { if (alive) { setLoadError(true); setLoading(false); } });
     return () => { alive = false; };
   }, [range, customMonth, customDay]);
   async function toggleChannel(channel: string) {
     if (openChannel === channel) { setOpenChannel(null); return; }
     setOpenChannel(channel);
-    if (!channelOrders[channel] && data) {
+    if (!channelProducts[channel] && data) {
       setChannelLoading(channel);
-      const res = await actions.getChannelOrderDetailsAction(channel, data.rangeStart, data.rangeEnd);
-      setChannelOrders(prev => ({ ...prev, [channel]: res.data ?? [] }));
-      setChannelLoading(null);
+      try {
+        const res = await actions.getChannelProductDetailsAction(channel, data.rangeStart, data.rangeEnd);
+        setChannelProducts(prev => ({ ...prev, [channel]: res.data ?? [] }));
+      } catch {
+        setChannelProducts(prev => ({ ...prev, [channel]: [] }));
+      } finally {
+        setChannelLoading(null);
+      }
     }
+  }
+  if (loadError) {
+    return (
+      <div className="text-center py-10" style={{ color: INK_LIGHT, fontSize: 13 }}>
+        {lang === 'en' ? 'Could not load stats for this period.' : 'Không tải được thống kê cho kỳ này.'}
+        <div className="mt-2">
+          <button onClick={() => { setCustomMonth(null); setCustomDay(null); setRange(14); }} style={{
+            border: `1px solid ${BORDER}`, borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 600, color: INK,
+          }}>{lang === 'en' ? 'Reset period' : 'Đặt lại khoảng thời gian'}</button>
+        </div>
+      </div>
+    );
   }
   if (!data) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
 
@@ -1329,7 +1353,8 @@ function StatsTab() {
         {data.byChannel.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
         {data.byChannel.map((c, i) => {
           const open = openChannel === c.channel;
-          const orders = channelOrders[c.channel];
+          const products = channelProducts[c.channel];
+          const channelSum = (products ?? []).reduce((a, p) => a + p.total, 0) || 1;
           return (
           <div key={c.channel}>
             <button onClick={() => toggleChannel(c.channel)} className="w-full text-left">
@@ -1347,16 +1372,12 @@ function StatsTab() {
                   <div className="flex items-center gap-1.5 px-2.5 py-2" style={{ fontSize: 12, color: INK_LIGHT }}>
                     <Loader2 size={12} className="animate-spin" /> {tr('channelOrdersLoading')}
                   </div>
-                ) : !orders || orders.length === 0 ? (
+                ) : !products || products.length === 0 ? (
                   <div className="px-2.5 py-2" style={{ fontSize: 12, color: INK_LIGHT }}>{tr('channelOrdersEmpty')}</div>
-                ) : orders.map((o, j) => (
-                  <div key={o.orderBatchId} className="flex justify-between items-center px-2.5 py-1.5" style={{ fontSize: 12, borderTop: j ? `1px solid ${CREAM_DARK}` : 'none' }}>
-                    <span className="min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
-                      {fmtDayLabel(o.deliveryDate, lang)}
-                      {o.customerName ? <> · {o.customerName}</> : null}
-                      {o.shopName ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {o.shopName}</span> : null}
-                    </span>
-                    <span className="shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(o.total)}</b></span>
+                ) : products.map((p, j) => (
+                  <div key={`${p.sku ?? p.name}-${j}`} className="flex justify-between items-center px-2.5 py-1.5" style={{ fontSize: 12, borderTop: j ? `1px solid ${CREAM_DARK}` : 'none' }}>
+                    <span className="min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>{p.name}{p.sku ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {p.sku}</span> : null}</span>
+                    <span className="shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}>×{p.qty} · <b>{fmtCompactVnd(p.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11 }}>· {pct(p.total, channelSum)}</span></span>
                   </div>
                 ))}
               </div>
