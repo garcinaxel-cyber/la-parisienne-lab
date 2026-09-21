@@ -1,16 +1,16 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Upload, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, ClipboardList as ClipboardListShops, UserCog, CalendarDays, FolderArchive } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const },
-  // Import / Production export: admin-only per Axel (2026-08-08) — decluttering the
-  // lab_manager/assistant sidebar, they don't use these day to day.
-  { href: '/import',    icon: Upload,          key: 'import'    as const, adminOnly: true },
+  // Import orders: hidden from the sidebar (Axel, 2026-09-21 — "cache-le", unused day to day
+  // since the Odoo auto-sync cron replaces it every 15 min). Route + code left in place as the
+  // manual-upload fallback if Odoo/the cron is ever unreachable — reachable directly at /import.
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
   { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check' },
   { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes' },
@@ -43,13 +43,15 @@ const ADMIN_NAV = [
   // only, deliberately excluded from lab_manager per Axel's explicit request. Renamed "Check"
   // 2026-08-20 — URL kept as /admin/reconciliation on purpose (zero churn).
   { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true },
-  // Per-shop process recap (2026-09-08, Axel: "recap du respect du process des shops") —
-  // control/audit tool over the shops' own workflow (réception, comptage, commande, pertes,
-  // transferts), read-only, today/yesterday only. Same admin-only posture as Check.
-  { href: '/admin/shop-process', icon: ClipboardListShops, labelVi: 'Theo dõi cửa hàng', labelEn: 'Suivi shops', adminOnly: true },
   // Shop manager accounts (2026-09-10) — individual logins for the shop managers, admin-only
   // provisioning (create/update the 3 real accounts) + a read-only roster.
   { href: '/admin/shop-managers', icon: UserCog, labelVi: 'Quản lý cửa hàng', labelEn: 'Shop managers', adminOnly: true },
+  // One-click preview of the managers' own cockpit (Axel, 2026-09-21 — "comme les QR codes des
+  // chefs, accéder à leur interface facilement en un clic"). Opens /shop-manager directly, same
+  // "Open →" pattern as the station QR codes page; admin is now allowed through that route's own
+  // gate too (src/app/shop-manager/page.tsx). Read-only in spirit — the cockpit's own action file
+  // only exposes the two recap reads, no write action lives there.
+  { href: '/shop-manager', icon: Eye, labelVi: 'Xem giao diện quản lý', labelEn: 'Interface managers', adminOnly: true, newTab: true },
   // Temporary "event" shops (2026-09-12) — create/close, linked to an Odoo warehouse Axel
   // configures himself; the app only looks it up by code, never creates it.
   { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', adminOnly: true },
@@ -115,9 +117,9 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             <div className="pt-4 mt-4 border-t border-white/10">
               <p className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">Admin</p>
               {ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
-                const { href, icon: Icon } = item;
+                const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
                 return (
-                  <Link key={href} href={href}
+                  <Link key={href} href={href} {...(item.newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                       pathname.startsWith(href) ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
                     }`}>
@@ -179,10 +181,10 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
         </div>
         <nav className="flex overflow-x-auto border-t border-white/10">
           {[...NAV.filter(n => !n.adminOnly || profile?.role === 'admin'), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
-            const { href, icon: Icon } = item;
+            const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
-              <Link key={href} href={href}
+              <Link key={href} href={href} {...((item as any).newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                 className={`relative flex-1 min-w-[64px] flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
                   active ? 'text-gold border-b-2 border-gold' : 'text-white/60 border-b-2 border-transparent'
                 }`}>

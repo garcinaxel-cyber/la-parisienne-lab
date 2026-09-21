@@ -20,14 +20,23 @@ export default async function ShopManagerStorePage({ searchParams }: { searchPar
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (profile?.role !== 'shop_manager') redirect('/dashboard');
+  if (profile?.role !== 'shop_manager' && profile?.role !== 'admin') redirect('/dashboard');
 
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) redirect('/shop-manager');
-  const svc = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-  const { data: manager } = await svc.from('lab_shop_managers')
-    .select('shops').eq('user_id', session.user.id).eq('active', true).maybeSingle();
   const shopName = searchParams?.shop ?? '';
-  if (!manager || !PORTAL_SHOP_NAMES.includes(shopName) || !(manager.shops ?? []).includes(shopName)) redirect('/shop-manager');
+  // Admin one-click preview (2026-09-21) — same reasoning as page.tsx/actions.ts: no
+  // lab_shop_managers row of their own, so skip that lookup and just allow any portal shop; this
+  // sub-page is `readOnly` for everyone (see the ShopView prop below) so there's nothing to guard.
+  let managerShops: string[];
+  if (profile.role === 'admin') {
+    managerShops = [...PORTAL_SHOP_NAMES];
+  } else {
+    const svc = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: manager } = await svc.from('lab_shop_managers')
+      .select('shops').eq('user_id', session.user.id).eq('active', true).maybeSingle();
+    managerShops = manager?.shops ?? [];
+  }
+  if (!PORTAL_SHOP_NAMES.includes(shopName) || !managerShops.includes(shopName)) redirect('/shop-manager');
 
   const initialTab = (VALID_TABS as readonly string[]).includes(searchParams?.tab ?? '') ? (searchParams!.tab as typeof VALID_TABS[number]) : 'deliveries';
 

@@ -2,6 +2,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { computeShopRecaps, type ShopRecap } from '@/lib/shop-recap';
+import { PORTAL_SHOP_NAMES } from '@/lib/shops';
 
 // Shop Manager cockpit (Axel, 2026-09-10) — its own thin action file, same one-file-per-route
 // convention as shop/actions.ts and online-orders/actions.ts. Deliberately does NOT duplicate
@@ -26,7 +27,10 @@ async function currentManager(): Promise<{ userId: string; shops: string[] } | {
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (profile?.role !== 'shop_manager') return { error: 'Forbidden' };
+  if (profile?.role !== 'shop_manager' && profile?.role !== 'admin') return { error: 'Forbidden' };
+  // Admin one-click preview (2026-09-21) — same route, no lab_shop_managers row of their own;
+  // every manager covers the same 5 portal shops anyway (see page.tsx), so admin just gets them all.
+  if (profile.role === 'admin') return { userId: session.user.id, shops: [...PORTAL_SHOP_NAMES] };
   const svc = service();
   if (!svc) return { error: 'Server not configured' };
   const { data: manager } = await svc.from('lab_shop_managers')
