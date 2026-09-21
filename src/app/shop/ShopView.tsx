@@ -10,6 +10,7 @@ import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-report-pdf';
+import { groupByCategory } from '@/lib/group-by-category';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
@@ -2122,19 +2123,29 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           placeholder="Lọc theo tên…" className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                       </div>
                       <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: `1px solid ${GOLD_PALE}` }}>
-                        {invLevels
-                          .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
-                          .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
-                          .slice(0, 80)
-                          .map(l => (
-                            <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: GOLD_PALE }}>
-                              <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
-                              <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
-                                style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FBEAE8' }}>
-                                {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
-                              </span>
+                        {/* Axel, 2026-09-21: "range la liste par catégorie" + the old .slice(0, 80)
+                            was silently cutting off the tail of the catalogue (not a data bug —
+                            the server already returns everything, this was a display-only cap). */}
+                        {groupByCategory(
+                          invLevels
+                            .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
+                            .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
+                        ).map(g => (
+                          <div key={g.category}>
+                            <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wide sticky top-0" style={{ color: NAVY, backgroundColor: GOLD_PALE }}>
+                              {g.category}
                             </div>
-                          ))}
+                            {g.items.map(l => (
+                              <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: GOLD_PALE }}>
+                                <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
+                                <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
+                                  style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FBEAE8' }}>
+                                  {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
                       </div>
                     </>
                   )}

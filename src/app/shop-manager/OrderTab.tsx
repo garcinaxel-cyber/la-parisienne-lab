@@ -14,6 +14,7 @@ import {
   type ShopRecentOrder,
 } from '@/app/shop/actions';
 import { thumb } from '@/lib/img-thumb';
+import { groupByCategory } from '@/lib/group-by-category';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, GREEN, AMBER, RED } from './ShopManagerView';
 
 // Dedicated manager Order screen (Axel, 2026-09-10 follow-up) — replaces jumping into the full
@@ -458,22 +459,32 @@ export default function OrderTab({ activeShop, managerName }: { activeShop: stri
                 placeholder={tr('filterPh')} className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
             </div>
             <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: `1px solid ${CREAM}` }}>
-              {invLevels
-                .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
-                .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
-                .slice(0, 80)
-                .map(l => (
-                  <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: CREAM }}>
-                    <div className="min-w-0 flex-1">
-                      <div className="overflow-x-auto whitespace-nowrap no-scrollbar font-semibold" style={{ WebkitOverflowScrolling: 'touch', color: INK }}>{l.name}</div>
-                      <div style={{ color: '#9CA3AF' }}>{l.qty > 0 ? (lang === 'en' ? `${l.qty} in stock` : `${l.qty} còn`) : tr('outOfStock')}</div>
-                    </div>
-                    <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
-                      style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FDECEC' }}>
-                      {l.qty > 0 ? tr('inStock') : tr('outOfStock')}
-                    </span>
+              {/* Axel, 2026-09-21: "range la liste par catégorie" + the old .slice(0, 80) was
+                  silently cutting off the tail of the catalogue (display-only cap, the server
+                  action already returns the full list). */}
+              {groupByCategory(
+                invLevels
+                  .filter(l => invFilter === 'all' || (invFilter === 'in' ? l.qty > 0 : l.qty <= 0))
+                  .filter(l => !invQuery.trim() || l.name.toLowerCase().includes(invQuery.trim().toLowerCase()))
+              ).map(g => (
+                <div key={g.category}>
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wide sticky top-0" style={{ color: NAVY, backgroundColor: CREAM }}>
+                    {g.category}
                   </div>
-                ))}
+                  {g.items.map(l => (
+                    <div key={l.sku} className="px-3 py-1.5 text-xs border-t first:border-t-0 flex items-center justify-between gap-2" style={{ borderColor: CREAM }}>
+                      <div className="min-w-0 flex-1">
+                        <div className="overflow-x-auto whitespace-nowrap no-scrollbar font-semibold" style={{ WebkitOverflowScrolling: 'touch', color: INK }}>{l.name}</div>
+                        <div style={{ color: '#9CA3AF' }}>{l.qty > 0 ? (lang === 'en' ? `${l.qty} in stock` : `${l.qty} còn`) : tr('outOfStock')}</div>
+                      </div>
+                      <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
+                        style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FDECEC' }}>
+                        {l.qty > 0 ? tr('inStock') : tr('outOfStock')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
           </>
         )}
