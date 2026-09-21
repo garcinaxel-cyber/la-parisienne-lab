@@ -20,10 +20,10 @@ const FAMILY_LABEL: Record<string, { vi: string; en: string }> = {
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const, family: 'today' },
-  // Import orders: hidden from the sidebar (Axel, 2026-09-21 — "cache-le", unused day to day
-  // since the Odoo auto-sync cron replaces it every 15 min). Route + code left in place as the
-  // manual-upload fallback if Odoo/the cron is ever unreachable — reachable directly at /import.
-  { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const, family: 'production' },
+  // "Production Orders" (t('orders')) — hidden from the assistant role specifically (Axel,
+  // 2026-09-21, prod pass: "enlève de la vue des assistantes le production order"). Still
+  // visible to admin/lab_manager. Route + component untouched — visibility only.
+  { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const, family: 'production', hideFor: ['assistant'] as UserRole[] },
   { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check', family: 'production' },
   { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes', family: 'production' },
   { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders', family: 'production' },
@@ -35,6 +35,8 @@ const NAV = [
   { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
   // Online-sales interface (2026-09-06): admin entry point to the online seller's space
   // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).
+  // adminOnly already keeps this out of the assistant's view (Axel, 2026-09-21 confirmed it
+  // should stay that way) — literal role === 'admin' below, lab_manager doesn't see it either.
   { href: '/online-orders', icon: ShoppingBag,     labelVi: 'Bán hàng online', labelEn: 'Ventes en ligne', adminOnly: true, family: 'shops' },
   // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
   // assistants need to open a chef's station view same as a chef would, e.g. to check what's
@@ -110,7 +112,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             just under a small uppercase section header instead of one 20-item flat list. */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
           {(() => {
-            const visibleNav = NAV.filter(n => !n.adminOnly || profile?.role === 'admin');
+            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role));
             const visibleAdmin = isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [];
             const all = [...visibleNav, ...visibleAdmin];
             return FAMILY_ORDER.map((fam) => {
@@ -196,17 +198,22 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             </button>
           </div>
         </div>
+        {/* Fixed-width, non-shrinking tabs (2026-09-21 fix — Axel: "beaucoup d'onglets texte qui
+            se chevauche, pas lisible"). The old flex-1+min-w combo let flex-shrink compress each
+            tab below its label's natural width once there were 10+ of them, so labels and badges
+            bled into the next tab. w-16 + shrink-0 gives every tab the same fixed width and lets
+            overflow-x-auto do the scrolling instead — no more overlap, whatever the tab count. */}
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV.filter(n => !n.adminOnly || profile?.role === 'admin'), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
+          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role)), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
             const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
             const active = pathname === href || pathname.startsWith(href + '/');
             return (
               <Link key={href} href={href} {...((item as any).newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                className={`relative flex-1 min-w-[64px] flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
+                className={`relative shrink-0 w-16 flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
                   active ? 'text-gold border-b-2 border-gold' : 'text-white/60 border-b-2 border-transparent'
                 }`}>
                 <Icon size={17} />
-                <span className="truncate max-w-[72px]">{labelFor(item)}</span>
+                <span className="truncate max-w-[60px] text-center leading-tight">{labelFor(item)}</span>
                 {href === '/reception' && pendingTransfers > 0 && (
                   <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{pendingTransfers}</span>
                 )}
