@@ -967,6 +967,15 @@ export async function addOnlineChannelAction(name: string): Promise<{ ok?: boole
   if (!supabase) return { error: 'Server not configured' };
   const n = clean(name, 60);
   if (!n) return { error: 'Empty name' };
+  // Case-insensitive dedupe (Axel, 2026-09-21): the DB's unique constraint on `name` is
+  // case-sensitive by default, so typing "website" when "Website" already exists used to slip
+  // past it and create a second, near-identical channel that splits the sales chart in two. Look
+  // for an existing channel that only differs by case/whitespace and reuse it instead of inserting
+  // a new row.
+  const { data: existing, error: listErr } = await supabase.from('lab_online_channels').select('name');
+  if (listErr) return { error: listErr.message };
+  const dup = (existing ?? []).find((r: any) => typeof r.name === 'string' && r.name.trim().toLowerCase() === n.toLowerCase());
+  if (dup) return { ok: true };
   const { error } = await supabase.from('lab_online_channels').upsert({ name: n, created_by: auth.userId }, { onConflict: 'name', ignoreDuplicates: true });
   if (error) return { error: error.message };
   return { ok: true };
@@ -1156,7 +1165,21 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const byShop = new Map<string, number>();
   const byCategory = new Map<string, number>();
   const productsByCategory = new Map<string, Map<string, { name: string; sku: string | null; qty: number; total: number }>>();
+  // byChannel is keyed by a normalised (trim + lowercase) form of the channel text so that
+  // "Website" and "website" — two channels a user can create separately via addOnlineChannelAction
+  // since Postgres unique constraints are case-sensitive by default — land in the same bucket here
+  // instead of splitting the chart (Axel, 2026-09-21: "elle arrive a me creer des doublons comme le
+  // canal website"). channelDisplay remembers the first-seen original-case spelling to show in the
+  // UI; the raw text stored per order is never rewritten.
   const byChannel = new Map<string, number>();
+  const channelDisplay = new Map<string, string>();
+  function chKey(raw: string | null | undefined): string {
+    const t = (raw ?? '').trim();
+    if (!t) return '—';
+    const norm = t.toLowerCase();
+    if (!channelDisplay.has(norm)) channelDisplay.set(norm, t);
+    return norm;
+  }
   const byDay = new Map<string, number>();
   const rangeStart = new Date(Date.now() - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
   let rangeTotal = 0, rangeGrandTotal = 0; const rangeBatches = new Set<string>();
@@ -1178,7 +1201,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const pm = productsByCategory.get(cat) ?? new Map();
     const pe = pm.get(pkey) ?? { name: l.product_name_vi ?? l.product_sku ?? '?', sku: l.product_sku ?? null, qty: 0, total: 0 };
     pe.qty += l.qty ?? 0; pe.total += lineTotal; pm.set(pkey, pe); productsByCategory.set(cat, pm);
-    const ch = (l.channel ?? '').trim() || '—';
+    const ch = chKey(l.channel);
     byChannel.set(ch, (byChannel.get(ch) ?? 0) + lineTotal);
     if (day) byDay.set(day, (byDay.get(day) ?? 0) + lineTotal);
   }
@@ -1218,7 +1241,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
       rangeGrandTotal -= refund; rangeTotal -= refund;
       const shop = o.shop_name ?? 'Khác';
       byShop.set(shop, (byShop.get(shop) ?? 0) - refund);
-      const ch = (o.channel ?? '').trim() || '—';
+      const ch = chKey(o.channel);
       byChannel.set(ch, (byChannel.get(ch) ?? 0) - refund);
       if (day) byDay.set(day, (byDay.get(day) ?? 0) - refund);
     }
@@ -1299,7 +1322,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
         category, total,
         products: Array.from((productsByCategory.get(category) ?? new Map()).values()).sort((a: any, b: any) => b.total - a.total),
       })).sort((a, b) => b.total - a.total),
-      byChannel: Array.from(byChannel.entries()).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total),
+      byChannel: Array.from(byChannel.entries()).map(([key, total]) => ({ channel: key === '—' ? '—' : (channelDisplay.get(key) ?? key), total })).sort((a, b) => b.total - a.total),
       // Axel, 2026-09-08: "on comptabilise tout ensemble" -- one combined online-orders total
       // regardless of how an order was recorded (live app order vs backfilled excel_import
       // history). No per-source breakdown in the analytics; `source` is still tracked per-order
