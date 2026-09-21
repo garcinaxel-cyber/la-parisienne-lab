@@ -121,6 +121,17 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
     setPlan(res.plan ?? []); setAlreadyDone(!!res.alreadyDoneOnOdoo); setPickingName(res.pickingName ?? null);
     setPlannedCreations(res.plannedCreations ?? []);
     setInvoiceAlreadyExisted(!!res.invoiceAlreadyExisted); setInvoiceName(res.invoiceName ?? null);
+    // "Déjà validé sur Odoo — rien à faire de plus" (Axel, 2026-09-21): when there's genuinely
+    // nothing left to write, the preview screen used to only offer "Fermer", which meant
+    // confirmReal() — the ONLY place that persists odoo_push_status on our own order row — was
+    // never called. The order stayed stuck below 100% in the delivery-check list forever, even
+    // though Odoo itself was already done. Since a real confirm is a safe no-op here (the write/
+    // validate block in odoo-delivery-validate.ts is skipped whenever alreadyDoneOnOdoo is true,
+    // and the invoice step is skipped too once invoiceAlreadyExisted), just run it automatically
+    // instead of waiting for a click that the UI doesn't even offer — this is what finally writes
+    // odoo_push_status = 'already_done', which is what turns the list row gold "100%".
+    const nothingLeftToDo = !!res.ok && !!res.alreadyDoneOnOdoo && (!isSo || !!res.invoiceAlreadyExisted);
+    if (nothingLeftToDo) { confirmReal(); return; }
     setStep('preview');
   }
 
