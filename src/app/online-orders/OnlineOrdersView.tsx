@@ -7,7 +7,7 @@ import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import * as actions from './actions';
-import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType } from './actions';
+import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType, ChannelOrderDetail } from './actions';
 import CustomersTab from './CustomersTab';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
@@ -31,6 +31,12 @@ async function compressImage(file: File, maxSide = 1200, quality = 0.72): Promis
     if (!blob) return file;
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
   } catch { return file; }
+}
+
+// 'YYYY-MM' -> 'YYYY-MM-DD' of that month's last calendar day (for the StatsTab month filter).
+function monthLastDay(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 }
 
 type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
@@ -1115,18 +1121,42 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
 }
 
 function StatsTab() {
-  const { tr } = useL();
+  const { tr, lang } = useL();
   const [range, setRange] = useState<14 | 30 | 90 | 365>(14);
+  // Custom period (Axel, 2026-09-22: "filtrer les stats sur une date donnee ou un mois donnee") —
+  // either overrides the rolling `range` presets above. Only one of the two is ever set; picking
+  // a month clears the day and vice versa, and either clears back to `range` via pClear.
+  const [customMonth, setCustomMonth] = useState<string | null>(null); // 'YYYY-MM'
+  const [customDay, setCustomDay] = useState<string | null>(null); // 'YYYY-MM-DD'
   const [openCat, setOpenCat] = useState<string | null>(null);
+  const [openChannel, setOpenChannel] = useState<string | null>(null);
+  const [channelOrders, setChannelOrders] = useState<Record<string, ChannelOrderDetail[]>>({});
+  const [channelLoading, setChannelLoading] = useState<string | null>(null);
   const [data, setData] = useState<OnlineAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    actions.getOnlineAnalyticsAction(range).then(res => { if (alive) { setData(res.data ?? null); setLoading(false); } });
+    setOpenChannel(null); setChannelOrders({}); // stale detail lists would show the wrong period
+    const opts = customMonth
+      ? { from: `${customMonth}-01`, to: monthLastDay(customMonth) }
+      : customDay
+      ? { from: customDay, to: customDay }
+      : { rangeDays: range };
+    actions.getOnlineAnalyticsAction(opts).then(res => { if (alive) { setData(res.data ?? null); setLoading(false); } });
     return () => { alive = false; };
-  }, [range]);
+  }, [range, customMonth, customDay]);
+  async function toggleChannel(channel: string) {
+    if (openChannel === channel) { setOpenChannel(null); return; }
+    setOpenChannel(channel);
+    if (!channelOrders[channel] && data) {
+      setChannelLoading(channel);
+      const res = await actions.getChannelOrderDetailsAction(channel, data.rangeStart, data.rangeEnd);
+      setChannelOrders(prev => ({ ...prev, [channel]: res.data ?? [] }));
+      setChannelLoading(null);
+    }
+  }
   if (!data) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
 
   const maxShop = Math.max(1, ...data.byShop.map(s => s.total));
@@ -1180,14 +1210,36 @@ function StatsTab() {
       </div>
 
       <SectionLabel>{tr('period')}</SectionLabel>
-      <div className="flex gap-2 mb-3 overflow-x-auto">
+      <div className="flex gap-2 mb-2 overflow-x-auto">
         {([[14, tr('p14')], [30, tr('p30')], [90, tr('p90')], [365, tr('p365')]] as const).map(([d, label]) => (
-          <button key={d} onClick={() => setRange(d)} style={{
-            backgroundColor: range === d ? NAVY : '#fff', color: range === d ? '#FFFAEE' : INK,
-            border: range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
+          <button key={d} onClick={() => { setRange(d); setCustomMonth(null); setCustomDay(null); }} style={{
+            backgroundColor: !customMonth && !customDay && range === d ? NAVY : '#fff', color: !customMonth && !customDay && range === d ? '#FFFAEE' : INK,
+            border: !customMonth && !customDay && range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}
         {loading && <Loader2 size={14} className="animate-spin self-center" color={INK_LIGHT} />}
+      </div>
+      {/* Custom period (Axel, 2026-09-22): a specific month or a single day, instead of only a
+          rolling window. Either input overrides the presets above; the ✕ clears back to them. */}
+      <div className="flex gap-2 mb-3 items-center overflow-x-auto">
+        <label className="flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{
+          border: customMonth ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: customMonth ? '#fff' : '#fff',
+        }}>
+          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pMonth')}</span>
+          <input type="month" value={customMonth ?? ''} onChange={(e: any) => { setCustomMonth(e.target.value || null); setCustomDay(null); }}
+            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 118 }} />
+        </label>
+        <label className="flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{
+          border: customDay ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: '#fff',
+        }}>
+          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pDay')}</span>
+          <input type="date" value={customDay ?? ''} onChange={(e: any) => { setCustomDay(e.target.value || null); setCustomMonth(null); }}
+            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 118 }} />
+        </label>
+        {(customMonth || customDay) && (
+          <button onClick={() => { setCustomMonth(null); setCustomDay(null); }} aria-label={tr('pClear')}
+            style={{ color: INK_LIGHT, padding: '6px 8px', lineHeight: 0 }}><X size={13} /></button>
+        )}
       </div>
 
       <div className="rounded-xl p-3.5 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', opacity: loading ? 0.6 : 1 }}>
@@ -1275,17 +1327,43 @@ function StatsTab() {
       <SectionLabel>{tr('byChannel')}</SectionLabel>
       <div className="rounded-xl p-3.5 mb-4 space-y-2.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         {data.byChannel.length === 0 && <div style={{ fontSize: 13, color: INK_LIGHT }}>{tr('noData')}</div>}
-        {data.byChannel.map((c, i) => (
+        {data.byChannel.map((c, i) => {
+          const open = openChannel === c.channel;
+          const orders = channelOrders[c.channel];
+          return (
           <div key={c.channel}>
-            <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
-              <span style={{ fontWeight: 600 }}>{c.channel}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumChannel)}</span></span>
-            </div>
-            <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
-              <div style={{ width: `${(c.total / maxChannel) * 100}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />
-            </div>
+            <button onClick={() => toggleChannel(c.channel)} className="w-full text-left">
+              <div className="flex justify-between mb-1" style={{ fontSize: 12.5 }}>
+                <span style={{ fontWeight: 600 }}>{open ? '▾' : '▸'} {c.channel}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumChannel)}</span></span>
+              </div>
+              <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
+                <div style={{ width: `${(c.total / maxChannel) * 100}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />
+              </div>
+            </button>
+            {open && (
+              <div className="mt-2 mb-1 rounded-lg" style={{ backgroundColor: '#FFFDF5', border: `1px solid ${CREAM_DARK}` }}>
+                {channelLoading === c.channel ? (
+                  <div className="flex items-center gap-1.5 px-2.5 py-2" style={{ fontSize: 12, color: INK_LIGHT }}>
+                    <Loader2 size={12} className="animate-spin" /> {tr('channelOrdersLoading')}
+                  </div>
+                ) : !orders || orders.length === 0 ? (
+                  <div className="px-2.5 py-2" style={{ fontSize: 12, color: INK_LIGHT }}>{tr('channelOrdersEmpty')}</div>
+                ) : orders.map((o, j) => (
+                  <div key={o.orderBatchId} className="flex justify-between items-center px-2.5 py-1.5" style={{ fontSize: 12, borderTop: j ? `1px solid ${CREAM_DARK}` : 'none' }}>
+                    <span className="min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', paddingRight: 8 }}>
+                      {fmtDayLabel(o.deliveryDate, lang)}
+                      {o.customerName ? <> · {o.customerName}</> : null}
+                      {o.shopName ? <span style={{ color: INK_LIGHT, fontSize: 10.5 }}> · {o.shopName}</span> : null}
+                    </span>
+                    <span className="shrink-0" style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(o.total)}</b></span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -1085,21 +1085,39 @@ export type OnlineAnalytics = {
   byCategory: { category: string; total: number; products: { name: string; sku: string | null; qty: number; total: number }[] }[];
   byChannel: { channel: string; total: number }[];
   // Selected range (Axel, 2026-09-07: 'analyser sur une durée plus longue'): every breakdown
-  // above is computed over rangeDays; today/month tiles are absolute.
+  // above is computed over rangeDays (or the custom from/to window below); today/month tiles
+  // are absolute.
   rangeDays: number; rangeTotal: number; rangeGrandTotal: number; rangeCount: number;
+  // The actual [rangeStart, rangeEnd] window every breakdown above was computed over — echoed
+  // back so the UI (channel drill-down in particular, Axel 2026-09-22: "detail commande sur
+  // chaque canal") can query the exact same window without re-deriving the date math itself.
+  rangeStart: string; rangeEnd: string;
   series: { key: string; label: string; total: number }[]; // day / week / month buckets
   daily: { date: string; total: number }[];
 };
 
-export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise<{ data?: OnlineAnalytics; error?: string }> {
-  const rangeDays = [14, 30, 90, 365].includes(Number(rangeDaysInput)) ? Number(rangeDaysInput) : 14;
+// Axel, 2026-09-22: "je veux pouvoir filtrer les stats sur une date donnee ou un mois donnee" —
+// pass `from`/`to` (YYYY-MM-DD, inclusive) for a specific day or month instead of a rolling
+// rangeDays window. `rangeDays` is ignored when `from`/`to` are both given.
+export type AnalyticsRangeOpts = { rangeDays?: number; from?: string; to?: string };
+
+export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpts): Promise<{ data?: OnlineAnalytics; error?: string }> {
+  // Accept the old bare-number call shape too (rangeDays), so nothing else calling this needs
+  // to change.
+  const params: AnalyticsRangeOpts = typeof opts === 'number' ? { rangeDays: opts } : (opts ?? {});
+  const customRange = !!(params.from && params.to);
+  const rangeDaysParam = [14, 30, 90, 365].includes(Number(params.rangeDays)) ? Number(params.rangeDays) : 14;
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  // Fetch enough for both the selected range and the absolute month tile.
-  const since = new Date(Date.now() - Math.max(rangeDays, 60) * 86400000).toISOString();
+  // Fetch enough for both the selected range and the absolute month tile. In custom mode, look
+  // back 60 days before the window's start too — an order can be created well before its
+  // delivery date, and this only filters by created_at (bucketing below uses delivery_date).
+  const since = customRange
+    ? new Date(new Date(params.from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString()
+    : new Date(Date.now() - Math.max(rangeDaysParam, 60) * 86400000).toISOString();
   // Explicit limits: PostgREST caps unbounded selects at 1000 rows (see the 09-01 Lịch sử bug).
   // Axel, 2026-09-08: see the note in getMyOnlineOrdersAction -- analytics must reflect every
   // online order (imports included), not just the ones this account created.
@@ -1114,7 +1132,19 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
-  const empty: OnlineAnalytics = { todayTotal: 0, todayGrandTotal: 0, todayCount: 0, monthTotal: 0, monthGrandTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays, rangeTotal: 0, rangeGrandTotal: 0, rangeCount: 0, series: [], daily: [] };
+
+  const todayStr0 = new Date().toISOString().slice(0, 10);
+  // rangeStart/rangeEnd: the inclusive [start, end] window every breakdown below is computed
+  // over. Preset mode keeps the old "no upper bound" behaviour (a future-booked delivery inside
+  // the rolling window still shows up, see the seriesEnd comment further down) by pinning
+  // rangeEnd far in the future; custom from/to mode bounds both ends explicitly.
+  const rangeStart = customRange ? params.from! : new Date(Date.now() - (rangeDaysParam - 1) * 86400000).toISOString().slice(0, 10);
+  const rangeEnd = customRange ? params.to! : '9999-12-31';
+  const effectiveRangeDays = customRange
+    ? Math.max(1, Math.round((new Date(rangeEnd + 'T00:00:00Z').getTime() - new Date(rangeStart + 'T00:00:00Z').getTime()) / 86400000) + 1)
+    : rangeDaysParam;
+
+  const empty: OnlineAnalytics = { todayTotal: 0, todayGrandTotal: 0, todayCount: 0, monthTotal: 0, monthGrandTotal: 0, monthCount: 0, byShop: [], byCategory: [], byChannel: [], rangeDays: effectiveRangeDays, rangeStart, rangeEnd: customRange ? rangeEnd : todayStr0, rangeTotal: 0, rangeGrandTotal: 0, rangeCount: 0, series: [], daily: [] };
   if (!batchIds.length) return { data: empty };
 
   const labIds = (orders ?? []).filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
@@ -1156,7 +1186,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   const deliveryDateByBatch = new Map<string, string>();
   for (const o of orders ?? []) deliveryDateByBatch.set(o.order_batch_id, o.delivery_date ?? o.created_at);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayStr0;
   const monthStr = todayStr.slice(0, 7);
   // todayTotal/monthTotal/rangeTotal: merchandise only (is_fee lines excluded).
   // todayGrandTotal/monthGrandTotal/rangeGrandTotal: merchandise + fee-lines + delivery_fee.
@@ -1181,7 +1211,6 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     return norm;
   }
   const byDay = new Map<string, number>();
-  const rangeStart = new Date(Date.now() - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
   let rangeTotal = 0, rangeGrandTotal = 0; const rangeBatches = new Set<string>();
 
   for (const l of lines ?? []) {
@@ -1190,7 +1219,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const day = (deliveryDate ?? '').slice(0, 10);
     if (day === todayStr) { todayGrandTotal += lineTotal; todayBatches.add(l.order_batch_id); if (!l.is_fee) todayTotal += lineTotal; }
     if (day.slice(0, 7) === monthStr) { monthGrandTotal += lineTotal; monthBatches.add(l.order_batch_id); if (!l.is_fee) monthTotal += lineTotal; }
-    if (day < rangeStart) continue; // breakdowns below are scoped to the selected range
+    if (day < rangeStart || day > rangeEnd) continue; // breakdowns below are scoped to the selected range
     rangeGrandTotal += lineTotal; if (!l.is_fee) rangeTotal += lineTotal; rangeBatches.add(l.order_batch_id);
     const shop = l.shop_name ?? 'Khác';
     byShop.set(shop, (byShop.get(shop) ?? 0) + lineTotal);
@@ -1216,7 +1245,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
     if (day === todayStr) todayGrandTotal += fee;
     if (day.slice(0, 7) === monthStr) monthGrandTotal += fee;
-    if (day >= rangeStart) {
+    if (day >= rangeStart && day <= rangeEnd) {
       rangeGrandTotal += fee;
       const shop = o.shop_name ?? 'Khác';
       byShop.set(shop, (byShop.get(shop) ?? 0) + fee);
@@ -1237,7 +1266,7 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
     const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
     if (day === todayStr) { todayGrandTotal -= refund; todayTotal -= refund; }
     if (day.slice(0, 7) === monthStr) { monthGrandTotal -= refund; monthTotal -= refund; }
-    if (day >= rangeStart) {
+    if (day >= rangeStart && day <= rangeEnd) {
       rangeGrandTotal -= refund; rangeTotal -= refund;
       const shop = o.shop_name ?? 'Khác';
       byShop.set(shop, (byShop.get(shop) ?? 0) - refund);
@@ -1262,15 +1291,17 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
   // Extended forward past "today" when a delivery already booked lands later than the window's
   // end (Axel, 2026-09-07): an order taken now for a delivery next week must show up on that
   // future day instead of being invisible until it arrives.
-  const futureDays = Array.from(byDay.keys()).filter(d => d > todayStr).sort();
-  const seriesEnd = futureDays.length ? futureDays[futureDays.length - 1] : todayStr;
+  // In custom (from/to) mode the window is explicit, so neither extend past `to` nor trim its
+  // start — the user picked that exact month/day and expects to see it in full.
+  const futureDays = customRange ? [] : Array.from(byDay.keys()).filter(d => d > todayStr).sort();
+  const seriesEnd = customRange ? rangeEnd : (futureDays.length ? futureDays[futureDays.length - 1] : todayStr);
   // Don't waste chart width on empty days/weeks/months before the earliest real data (Axel,
   // 2026-09-08: "ca commence le 1er ... on pourrait exploiter plus la largeur" -- a fixed
   // 365-day lookback with all the actual data landing in the last week squeezed nearly every
   // bar to nothing and piled their labels on top of each other at the right edge). Only ever
   // trims the front, never extends past the user-selected rangeDays window.
   const earliestDataDay = Array.from(byDay.keys()).sort()[0];
-  const effectiveStart = earliestDataDay && earliestDataDay > rangeStart ? earliestDataDay : rangeStart;
+  const effectiveStart = customRange ? rangeStart : (earliestDataDay && earliestDataDay > rangeStart ? earliestDataDay : rangeStart);
   const startDate = new Date(effectiveStart + 'T00:00:00Z');
   const endDate = new Date(seriesEnd + 'T00:00:00Z');
   const totalSpanDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
@@ -1278,12 +1309,12 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
 
   const series: { key: string; label: string; total: number }[] = [];
   const dd = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-  if (rangeDays <= 30) {
+  if (effectiveRangeDays <= 30) {
     for (let i = 0; i < totalSpanDays; i++) {
       const d = dateAt(i);
       series.push({ key: d, label: dd(d), total: byDay.get(d) ?? 0 });
     }
-  } else if (rangeDays <= 90) {
+  } else if (effectiveRangeDays <= 90) {
     const weeks = Math.ceil(totalSpanDays / 7);
     for (let w = 0; w < weeks; w++) {
       let t = 0; let firstDay = '';
@@ -1327,10 +1358,67 @@ export async function getOnlineAnalyticsAction(rangeDaysInput?: number): Promise
       // regardless of how an order was recorded (live app order vs backfilled excel_import
       // history). No per-source breakdown in the analytics; `source` is still tracked per-order
       // for the reconstruction feature, just not split out here.
-      rangeDays, rangeTotal, rangeGrandTotal, rangeCount: rangeBatches.size, series,
+      rangeDays: effectiveRangeDays, rangeStart, rangeEnd: customRange ? rangeEnd : seriesEnd, rangeTotal, rangeGrandTotal, rangeCount: rangeBatches.size, series,
       daily,
     },
   };
+}
+
+// Axel, 2026-09-22: "je veux pouvoir avoir la possibilite du detail commande sur chaque canal" —
+// the per-channel order list behind a byChannel row in getOnlineAnalyticsAction, fetched on
+// demand when a channel row is expanded rather than shipped with every analytics call (channels
+// can have many orders, and most are never expanded). `channel` is matched case/whitespace-
+// insensitively, same normalisation as chKey() above, so it lines up with a byChannel row however
+// that row's canonical casing was picked.
+export type ChannelOrderDetail = {
+  orderBatchId: string; customerName: string | null; customerPhone: string | null;
+  deliveryDate: string; shopName: string | null; total: number; source: string;
+};
+
+export async function getChannelOrderDetailsAction(channel: string, from: string, to: string): Promise<{ data?: ChannelOrderDetail[]; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const target = (channel ?? '').trim().toLowerCase();
+  const since = new Date(new Date(from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString();
+  const { data: orders, error } = await supabase.from('lab_online_orders')
+    .select('order_batch_id, customer_name, customer_phone, delivery_date, created_at, source, shop_name, channel, refund_amount')
+    .neq('source', 'event_stock').gte('created_at', since).limit(5000);
+  if (error) return { error: error.message };
+  const matched = (orders ?? []).filter((o: any) => {
+    const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
+    if (day < from || day > to) return false;
+    const ch = (o.channel ?? '').trim().toLowerCase();
+    return target === '—' ? !ch : ch === target;
+  });
+  if (!matched.length) return { data: [] };
+  const batchIds = matched.map((o: any) => o.order_batch_id);
+  const labIds = matched.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
+  const [{ data: labLines }, { data: stockLines }] = await Promise.all([
+    labIds.length
+      ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, cancelled_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+      : Promise.resolve({ data: [] as any[] }),
+    batchIds.length
+      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, is_fee').in('order_batch_id', batchIds).limit(20000)
+      : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const totalByBatch = new Map<string, number>();
+  for (const l of labLines ?? []) totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + (l.qty ?? 0) * (l.unit_price ?? 0));
+  for (const l of stockLines ?? []) {
+    if (l.is_fee) continue; // merchandise only, same as byChannel's rangeTotal above
+    totalByBatch.set(l.order_batch_id, (totalByBatch.get(l.order_batch_id) ?? 0) + (l.qty ?? 0) * (l.unit_price ?? 0));
+  }
+  const result: ChannelOrderDetail[] = matched.map((o: any) => ({
+    orderBatchId: o.order_batch_id,
+    customerName: o.customer_name ?? null,
+    customerPhone: o.customer_phone ?? null,
+    deliveryDate: (o.delivery_date ?? o.created_at ?? '').slice(0, 10),
+    shopName: o.shop_name ?? null,
+    total: Math.max(0, (totalByBatch.get(o.order_batch_id) ?? 0) - Number(o.refund_amount ?? 0)),
+    source: o.source ?? 'lab',
+  })).sort((a, b) => b.deliveryDate.localeCompare(a.deliveryDate));
+  return { data: result };
 }
 
 // ── Push notifications (reuses sendShopPush/sendAdminPush with a pseudo shop_name) ──
