@@ -33,12 +33,6 @@ async function compressImage(file: File, maxSide = 1200, quality = 0.72): Promis
   } catch { return file; }
 }
 
-// 'YYYY-MM' -> 'YYYY-MM-DD' of that month's last calendar day (for the StatsTab month filter).
-function monthLastDay(month: string): string {
-  const [y, m] = month.split('-').map(Number);
-  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-}
-
 type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
 type Tab = 'order' | 'track' | 'stats' | 'customers';
 
@@ -1123,11 +1117,14 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
 function StatsTab() {
   const { tr, lang } = useL();
   const [range, setRange] = useState<14 | 30 | 90 | 365>(14);
-  // Custom period (Axel, 2026-09-22: "filtrer les stats sur une date donnee ou un mois donnee") —
-  // either overrides the rolling `range` presets above. Only one of the two is ever set; picking
-  // a month clears the day and vice versa, and either clears back to `range` via pClear.
-  const [customMonth, setCustomMonth] = useState<string | null>(null); // 'YYYY-MM'
-  const [customDay, setCustomDay] = useState<string | null>(null); // 'YYYY-MM-DD'
+  // Custom period (Axel, 2026-09-22: "filtrer les stats sur une date donnee ou un mois donnee",
+  // then 2026-09-23 after the month-picker input crashed: "tu peux laisser la possibilite du
+  // calendrier mais selectionner entre 2 dates" — dropped the separate month/day pickers
+  // entirely in favour of a plain from/to date range; a single day is just from === to, and a
+  // full month is picking the 1st through the last day by hand). Overrides the rolling `range`
+  // presets above once both dates are set; pClear resets back to them.
+  const [customFrom, setCustomFrom] = useState<string | null>(null); // 'YYYY-MM-DD'
+  const [customTo, setCustomTo] = useState<string | null>(null); // 'YYYY-MM-DD'
   const [openCat, setOpenCat] = useState<string | null>(null);
   const [openChannel, setOpenChannel] = useState<string | null>(null);
   const [channelProducts, setChannelProducts] = useState<Record<string, ChannelProductDetail[]>>({});
@@ -1141,19 +1138,17 @@ function StatsTab() {
     setLoading(true);
     setLoadError(false);
     setOpenChannel(null); setChannelProducts({}); // stale detail lists would show the wrong period
-    const opts = customMonth
-      ? { from: `${customMonth}-01`, to: monthLastDay(customMonth) }
-      : customDay
-      ? { from: customDay, to: customDay }
+    const opts = customFrom && customTo && customTo >= customFrom
+      ? { from: customFrom, to: customTo }
       : { rangeDays: range };
     actions.getOnlineAnalyticsAction(opts)
       .then(res => { if (!alive) return; if (res.error) { setLoadError(true); setLoading(false); return; } setData(res.data ?? null); setLoading(false); })
       // A thrown/rejected server action must never take the whole page down (Axel, 2026-09-23:
-      // month/day picker crashed to a blank "Application error" page) — show an inline retry
-      // state instead.
+      // the old month-picker input crashed to a blank "Application error" page) — show an inline
+      // retry state instead.
       .catch(() => { if (alive) { setLoadError(true); setLoading(false); } });
     return () => { alive = false; };
-  }, [range, customMonth, customDay]);
+  }, [range, customFrom, customTo]);
   async function toggleChannel(channel: string) {
     if (openChannel === channel) { setOpenChannel(null); return; }
     setOpenChannel(channel);
@@ -1174,7 +1169,7 @@ function StatsTab() {
       <div className="text-center py-10" style={{ color: INK_LIGHT, fontSize: 13 }}>
         {lang === 'en' ? 'Could not load stats for this period.' : 'Không tải được thống kê cho kỳ này.'}
         <div className="mt-2">
-          <button onClick={() => { setCustomMonth(null); setCustomDay(null); setRange(14); }} style={{
+          <button onClick={() => { setCustomFrom(null); setCustomTo(null); setRange(14); }} style={{
             border: `1px solid ${BORDER}`, borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 600, color: INK,
           }}>{lang === 'en' ? 'Reset period' : 'Đặt lại khoảng thời gian'}</button>
         </div>
@@ -1236,32 +1231,35 @@ function StatsTab() {
       <SectionLabel>{tr('period')}</SectionLabel>
       <div className="flex gap-2 mb-2 overflow-x-auto">
         {([[14, tr('p14')], [30, tr('p30')], [90, tr('p90')], [365, tr('p365')]] as const).map(([d, label]) => (
-          <button key={d} onClick={() => { setRange(d); setCustomMonth(null); setCustomDay(null); }} style={{
-            backgroundColor: !customMonth && !customDay && range === d ? NAVY : '#fff', color: !customMonth && !customDay && range === d ? '#FFFAEE' : INK,
-            border: !customMonth && !customDay && range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
+          <button key={d} onClick={() => { setRange(d); setCustomFrom(null); setCustomTo(null); }} style={{
+            backgroundColor: !customFrom && !customTo && range === d ? NAVY : '#fff', color: !customFrom && !customTo && range === d ? '#FFFAEE' : INK,
+            border: !customFrom && !customTo && range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}
         {loading && <Loader2 size={14} className="animate-spin self-center" color={INK_LIGHT} />}
       </div>
-      {/* Custom period (Axel, 2026-09-22): a specific month or a single day, instead of only a
-          rolling window. Either input overrides the presets above; the ✕ clears back to them. */}
+      {/* Custom period (Axel, 2026-09-22, then simplified 2026-09-23 after the month-picker
+          input crashed the page: "laisser la possibilite du calendrier mais selectionner entre 2
+          dates") — a plain from/to date range instead of separate month/day pickers. Both inputs
+          override the presets above once filled; the ✕ clears back to them. A single day is
+          just picking the same date twice. */}
       <div className="flex gap-2 mb-3 items-center overflow-x-auto">
         <label className="flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{
-          border: customMonth ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: customMonth ? '#fff' : '#fff',
+          border: customFrom ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: '#fff',
         }}>
-          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pMonth')}</span>
-          <input type="month" value={customMonth ?? ''} onChange={(e: any) => { setCustomMonth(e.target.value || null); setCustomDay(null); }}
-            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 118 }} />
+          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pFrom')}</span>
+          <input type="date" value={customFrom ?? ''} onChange={(e: any) => setCustomFrom(e.target.value || null)}
+            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 128 }} />
         </label>
         <label className="flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{
-          border: customDay ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: '#fff',
+          border: customTo ? `1px solid ${NAVY}` : `1px solid ${BORDER}`, backgroundColor: '#fff',
         }}>
-          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pDay')}</span>
-          <input type="date" value={customDay ?? ''} onChange={(e: any) => { setCustomDay(e.target.value || null); setCustomMonth(null); }}
-            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 118 }} />
+          <span style={{ fontSize: 11, color: INK_LIGHT, fontWeight: 600, whiteSpace: 'nowrap' }}>{tr('pTo')}</span>
+          <input type="date" value={customTo ?? ''} onChange={(e: any) => setCustomTo(e.target.value || null)}
+            style={{ fontSize: 12, border: 'none', outline: 'none', color: INK, backgroundColor: 'transparent', width: 128 }} />
         </label>
-        {(customMonth || customDay) && (
-          <button onClick={() => { setCustomMonth(null); setCustomDay(null); }} aria-label={tr('pClear')}
+        {(customFrom || customTo) && (
+          <button onClick={() => { setCustomFrom(null); setCustomTo(null); }} aria-label={tr('pClear')}
             style={{ color: INK_LIGHT, padding: '6px 8px', lineHeight: 0 }}><X size={13} /></button>
         )}
       </div>
