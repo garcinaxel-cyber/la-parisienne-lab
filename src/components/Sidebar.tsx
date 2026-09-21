@@ -6,59 +6,72 @@ import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
 
+// `family` groups items under a section header on the DESKTOP sidebar only (Axel, 2026-09-21 —
+// "Atelier" design pass: 20 flat links → 4 pliable families: Aujourd'hui/Production/Boutiques/
+// Pilotage). Purely presentational — same hrefs, same adminOnly gating, same badges as before.
+// The MOBILE top bar stays flat/scrollable and ungrouped on purpose: Axel chose to keep it
+// exactly as-is for the assistant role ("10 onglets à plat, c'est mieux" — zero relearning).
+const FAMILY_LABEL: Record<string, { vi: string; en: string }> = {
+  today:      { vi: 'Hôm nay',      en: "Aujourd'hui" },
+  production: { vi: 'Sản xuất',     en: 'Production' },
+  shops:      { vi: 'Cửa hàng',     en: 'Boutiques' },
+  piloting:   { vi: 'Điều hành',    en: 'Pilotage' },
+};
+
 const NAV = [
-  { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const },
+  { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const, family: 'today' },
   // Import orders: hidden from the sidebar (Axel, 2026-09-21 — "cache-le", unused day to day
   // since the Odoo auto-sync cron replaces it every 15 min). Route + code left in place as the
   // manual-upload fallback if Odoo/the cron is ever unreachable — reachable directly at /import.
-  { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const },
-  { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check' },
-  { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes' },
-  { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders' },
-  { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception' },
-  { href: '/inventory', icon: Box,            labelVi: 'Kiểm kê', labelEn: 'Inventaire' },
+  { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const, family: 'production' },
+  { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check', family: 'production' },
+  { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes', family: 'production' },
+  { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders', family: 'production' },
+  { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception', family: 'production' },
+  { href: '/inventory', icon: Box,            labelVi: 'Kiểm kê', labelEn: 'Inventaire', family: 'production' },
   // LAB's own scrap/loss report (2026-08-27, Axel: "fonction de scrap... pour les produits casse
   // du lab") — same visibility as the other operational items above, no adminOnly.
-  { href: '/lab-scrap', icon: Trash2,         labelVi: 'Hao hụt Lab', labelEn: 'Lab scrap' },
-  { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques' },
+  { href: '/lab-scrap', icon: Trash2,         labelVi: 'Hao hụt Lab', labelEn: 'Lab scrap', family: 'production' },
+  { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
   // Online-sales interface (2026-09-06): admin entry point to the online seller's space
   // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).
-  { href: '/online-orders', icon: ShoppingBag,     labelVi: 'Bán hàng online', labelEn: 'Ventes en ligne', adminOnly: true },
+  { href: '/online-orders', icon: ShoppingBag,     labelVi: 'Bán hàng online', labelEn: 'Ventes en ligne', adminOnly: true, family: 'shops' },
   // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
   // assistants need to open a chef's station view same as a chef would, e.g. to check what's
   // showing on their tablet). The page itself has no role gate of its own, just this sidebar
   // entry, so this alone is enough to unlock it — no adminOnly, visible to admin/lab_manager/
   // assistant (everyone who reaches this sidebar; chef/worker never do, they're on /station/me).
-  { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const },
+  { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const, family: 'shops' },
 ];
 const ADMIN_NAV = [
-  { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true },
+  { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true, family: 'piloting' },
   // Users: admin-only per Axel (2026-08-08) — was already page-blocked for lab_manager,
   // just wasn't hidden from the sidebar yet.
-  { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true },
-  { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const },
-  { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const },
+  { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true, family: 'piloting' },
+  { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const, family: 'piloting' },
+  { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const, family: 'piloting' },
   // Control tool over everyone else's work (4 automated checks: Odoo reconciliation,
   // delivery-check coverage, production→stock, stock→Odoo), not an operational page — admin
   // only, deliberately excluded from lab_manager per Axel's explicit request. Renamed "Check"
   // 2026-08-20 — URL kept as /admin/reconciliation on purpose (zero churn).
-  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true },
+  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true, family: 'piloting' },
   // Shop manager accounts (2026-09-10) — individual logins for the shop managers, admin-only
   // provisioning (create/update the 3 real accounts) + a read-only roster.
-  { href: '/admin/shop-managers', icon: UserCog, labelVi: 'Quản lý cửa hàng', labelEn: 'Shop managers', adminOnly: true },
+  { href: '/admin/shop-managers', icon: UserCog, labelVi: 'Quản lý cửa hàng', labelEn: 'Shop managers', adminOnly: true, family: 'shops' },
   // One-click preview of the managers' own cockpit (Axel, 2026-09-21 — "comme les QR codes des
   // chefs, accéder à leur interface facilement en un clic"). Opens /shop-manager directly, same
   // "Open →" pattern as the station QR codes page; admin is now allowed through that route's own
   // gate too (src/app/shop-manager/page.tsx). Read-only in spirit — the cockpit's own action file
   // only exposes the two recap reads, no write action lives there.
-  { href: '/shop-manager', icon: Eye, labelVi: 'Xem giao diện quản lý', labelEn: 'Interface managers', adminOnly: true, newTab: true },
+  { href: '/shop-manager', icon: Eye, labelVi: 'Xem giao diện quản lý', labelEn: 'Interface managers', adminOnly: true, newTab: true, family: 'shops' },
   // Temporary "event" shops (2026-09-12) — create/close, linked to an Odoo warehouse Axel
   // configures himself; the app only looks it up by code, never creates it.
-  { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', adminOnly: true },
+  { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', adminOnly: true, family: 'shops' },
   // Archives (2026-09-19) — exports Excel mensuels + sauvegardes hebdo (bucket lab-archives) et
   // état de la rétention. Lecture seule, admin-only.
-  { href: '/admin/archives', icon: FolderArchive, labelVi: 'Lưu trữ', labelEn: 'Archives', adminOnly: true },
+  { href: '/admin/archives', icon: FolderArchive, labelVi: 'Lưu trữ', labelEn: 'Archives', adminOnly: true, family: 'piloting' },
 ];
+const FAMILY_ORDER = ['today', 'production', 'shops', 'piloting'] as const;
 
 export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; reconciliationIssues?: number }) {
   const { t, lang, setLang } = useI18n();
@@ -92,46 +105,50 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
         {/* Nav — scrolls internally now that the list has grown (inventaire + accès boutiques
             added 2026-08-19) so the footer (lang toggle + logout) never gets pushed off-screen
             with no way to reach it. min-h-0 is required alongside flex-1 for a flex child to
-            actually be allowed to shrink and scroll instead of just overflowing its parent. */}
-        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
-          {NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
-            const { href, icon: Icon } = item;
-            return (
-              <Link key={href} href={href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                  pathname === href || pathname.startsWith(href + '/')
-                    ? 'bg-white/15 text-white'
-                    : 'text-white/70 hover:bg-white/10 hover:text-white'
-                }`}>
-                <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
-                {href === '/reception' && pendingTransfers > 0 && (
-                  <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingTransfers}</span>
-                )}
-                {href === '/exceptional-orders' && pendingExceptional > 0 && (
-                  <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingExceptional}</span>
-                )}
-              </Link>
-            );
-          })}
-          {isAdmin && (
-            <div className="pt-4 mt-4 border-t border-white/10">
-              <p className="px-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-2">Admin</p>
-              {ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin').map((item) => {
-                const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
-                return (
-                  <Link key={href} href={href} {...(item.newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                      pathname.startsWith(href) ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'
-                    }`}>
-                    <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
-                    {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
-                      <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{reconciliationIssues}</span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
+            actually be allowed to shrink and scroll instead of just overflowing its parent.
+            Grouped by family (Atelier pass, 2026-09-21) — same items, same hrefs, same badges,
+            just under a small uppercase section header instead of one 20-item flat list. */}
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
+          {(() => {
+            const visibleNav = NAV.filter(n => !n.adminOnly || profile?.role === 'admin');
+            const visibleAdmin = isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [];
+            const all = [...visibleNav, ...visibleAdmin];
+            return FAMILY_ORDER.map((fam) => {
+              const items = all.filter(it => it.family === fam);
+              if (items.length === 0) return null;
+              return (
+                <div key={fam} className="mb-1">
+                  <p className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/40">
+                    {lang === 'vi' ? FAMILY_LABEL[fam].vi : FAMILY_LABEL[fam].en}
+                  </p>
+                  <div className="space-y-1">
+                    {items.map((item) => {
+                      const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
+                      return (
+                        <Link key={href} href={href} {...((item as any).newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                            pathname === href || pathname.startsWith(href + '/')
+                              ? 'bg-white/15 text-white'
+                              : 'text-white/70 hover:bg-white/10 hover:text-white'
+                          }`}>
+                          <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
+                          {href === '/reception' && pendingTransfers > 0 && (
+                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingTransfers}</span>
+                          )}
+                          {href === '/exceptional-orders' && pendingExceptional > 0 && (
+                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingExceptional}</span>
+                          )}
+                          {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
+                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{reconciliationIssues}</span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            });
+          })()}
         </nav>
 
         {/* Footer */}
