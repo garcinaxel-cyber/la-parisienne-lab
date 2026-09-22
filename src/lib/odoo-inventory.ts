@@ -1,15 +1,38 @@
-// Server-only: finished-goods inventory count → Odoo stock.quant.
-// Read-only account resolves the LAB/Stock location + product ids + current on-hand.
-// Write account (same as delivery validation, odoo-delivery-validate.ts) applies the count.
-// Nothing is written to Odoo until the caller passes dryRun=false — the UI always previews
-// first (see lab_v43_finished_goods_inventory.sql).
+// Server-only: finished-goods inventory count → Odoo's structured "Inventory Adjustment"
+// workflow (stock.inventory + lpr.stock.inventory.line — a custom La Parisienne module, NOT
+// standard Odoo/OCA), replacing the old direct stock.quant.inventory_quantity overwrite this
+// file used before 2026-09-22.
 //
-// Odoo's inventory-count mechanism (modern stock.quant, no more stock.inventory wizard):
-// write `inventory_quantity` (+ `inventory_date`) on the quant, then call the recordset method
-// `action_apply_inventory()`. Writing `inventory_quantity` alone does NOT take effect — confirmed
-// live during research: several LAB/Stock quants had stale unapplied `inventory_quantity` values
-// sitting in the DB from a prior manual count that was entered but never applied. This module
-// always calls action_apply_inventory in the same request as the write, never leaves it pending.
+// Why this changed (Axel, 2026-09-22): a "kiểm kê" session in the app can stay open for hours
+// (staff count progressively, category by category, then submit once at the end). The old
+// mechanism read Odoo's CURRENT on-hand only at the final "Gửi lên Odoo" click and overwrote it
+// with the counted number — so any real stock move that happened on that SKU between when it was
+// physically counted and when the session was finally submitted (a shop transfer, a fresh
+// production batch, a scrap) got silently erased.
+//
+// The new Odoo module fixes exactly this, via a frozen cut-off + delta reconciliation:
+//   1. `stock.inventory.action_state_to_in_progress()` freezes `theoretical_qty` on a
+//      `lpr.stock.inventory.line` the INSTANT it's called — this is the "Count Cut-off" moment,
+//      captured once and never recomputed.
+//   2. Later, whenever the count is actually entered (`counted_qty` written on the line) and the
+//      whole `stock.inventory` is applied (`action_state_to_done()`), Odoo computes
+//      `diff_qty = counted_qty - theoretical_qty` (the TRUE physical gap at cut-off time) and
+//      writes `target_qty = current_on_hand_NOW + diff_qty` into the quant's own
+//      `inventory_quantity`, then applies it — i.e. it replays the counted DELTA on top of
+//      whatever happened since, instead of overwriting with a stale absolute number.
+//
+// This module mirrors that: one small `stock.inventory` per SKU, opened (and its cut-off frozen)
+// the moment that SKU is first entered in an app count session — not at final submit — so the
+// cut-off matches when the product actually entered the count, exactly like clicking "Begin
+// Adjustments" on that one product right away. Nothing is written to real stock until the
+// session is submitted (`applyInventoryLines`, called from confirmSubmitAction).
+//
+// NOTE: this module was implemented against `lpr.stock.inventory.line`'s own field help text
+// (confirmed live via read-only + a zero-diff dry-run) and the state machine was verified live
+// (draft → in_progress → counted → done), but a REAL non-zero diff was deliberately never fired
+// during that research — doing so would have changed real LAB stock. Axel: test once on a real,
+// low-stakes product after deploy, watching the resulting stock.quant directly, before trusting
+// this for the daily count.
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from './odoo';
 
 const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true };
@@ -41,112 +64,169 @@ export interface InventoryCountInput { sku: string; qtyCounted: number; }
 export interface InventoryLineResult {
   sku: string;
   found: boolean;            // product exists on Odoo (default_code match)
-  qtySystem: number | null;  // on-hand at LAB/Stock at the time of this call
+  qtySystem: number | null;  // theoretical qty frozen at cut-off (when the SKU was first counted)
   qtyCounted: number;
-  diff: number | null;
+  diff: number | null;       // qtyCounted - qtySystem (the true physical gap at cut-off)
   ok: boolean;
   error?: string;
 }
 
-export interface InventoryPushResult {
+// ── Step 1: open (or reuse) the cut-off the instant a SKU is first entered in a count ──
+export interface StartLineResult {
   ok: boolean;
-  dryRun: boolean;
-  lines: InventoryLineResult[];
+  odooInventoryId?: number;
+  odooCountLineId?: number;
+  qtyTheoretical?: number;
   error?: string;
 }
 
-async function pushInventory(
-  lines: InventoryCountInput[], inventoryDate: string, dryRun: boolean,
-): Promise<InventoryPushResult> {
-  if (!lines.length) return { ok: false, dryRun, lines: [], error: 'Aucune ligne comptée' };
-  if (!dryRun && !odooWriteConfigured()) return { ok: false, dryRun, lines: [], error: 'Compte Odoo en écriture non configuré' };
-
+/**
+ * Ensures a `stock.inventory` "Inventory Adjustment" is open (in_progress) for this one SKU at
+ * LAB/Stock, freezing its theoretical_qty cut-off NOW if it isn't open already. Reuses an
+ * existing in_progress adjustment for the same product if Odoo already has one — both because
+ * Odoo itself refuses to open a second one for the same product ("There are active adjustments
+ * for the requested products"), and because reusing is the correct behavior: whichever cut-off
+ * was frozen FIRST is the one that matters (e.g. re-entering a line that was deleted and re-added
+ * in the same session, or a stray adjustment left open by an earlier session for this SKU).
+ * Called once per SKU per session — on the FIRST save of that line, never on a later correction
+ * (correcting a typo in the counted number must never move the cut-off).
+ */
+export async function ensureInventoryLineStarted(sku: string): Promise<StartLineResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   try {
     const locationId = await getLabStockLocationId();
-    const skus = lines.map(l => l.sku);
-    const productBySku = await resolveProductsBySku(skus);
-    const foundIds = Object.values(productBySku).map(p => p.id);
+    const productBySku = await resolveProductsBySku([sku]);
+    const prod = productBySku[sku];
+    if (!prod) return { ok: false, error: 'SKU introuvable sur Odoo (default_code)' };
 
-    // Existing quants at LAB/Stock for these products (normally 1 per product; sum in case of lots).
-    const quants = foundIds.length ? await odooExecute<any[]>('stock.quant', 'search_read',
-      [[['product_id', 'in', foundIds], ['location_id', '=', locationId]]],
-      { fields: ['id', 'product_id', 'quantity'] }) : [];
-    const quantsByProductId: Record<number, { ids: number[]; qty: number }> = {};
-    for (const q of quants) {
-      const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
-      const e = quantsByProductId[pid] ??= { ids: [], qty: 0 };
-      e.ids.push(q.id); e.qty += Number(q.quantity ?? 0);
-    }
+    const openInv = await odooExecute<any[]>('stock.inventory', 'search_read',
+      [[['state', '=', 'in_progress'], ['product_ids', 'in', [prod.id]]]],
+      { fields: ['id'], limit: 1 });
 
-    const results: InventoryLineResult[] = [];
-    const toApplyQuantIds: number[] = [];
-
-    for (const l of lines) {
-      const prod = productBySku[l.sku];
-      if (!prod) {
-        results.push({ sku: l.sku, found: false, qtySystem: null, qtyCounted: l.qtyCounted, diff: null, ok: false, error: 'SKU introuvable sur Odoo (default_code)' });
-        continue;
-      }
-      const existing = quantsByProductId[prod.id];
-      const qtySystem = existing?.qty ?? 0;
-      const diff = l.qtyCounted - qtySystem;
-
-      if (dryRun) {
-        results.push({ sku: l.sku, found: true, qtySystem, qtyCounted: l.qtyCounted, diff, ok: true });
-        continue;
-      }
-
+    let invId: number;
+    if (openInv.length) {
+      invId = openInv[0].id;
+    } else {
+      invId = await odooExecuteWrite<number>('stock.inventory', 'create', [{
+        name: `Kiểm kê LAB — ${sku} — ${new Date().toISOString().slice(0, 10)}`,
+        product_selection: 'manual',
+        product_ids: [[6, 0, [prod.id]]],
+        location_ids: [[6, 0, [locationId]]],
+      }], { context: NO_MAIL_CONTEXT });
       try {
-        let quantId: number;
-        if (existing?.ids.length) {
-          // Multiple quants (rare, e.g. lots) — write the count on the first, leave the rest
-          // untouched rather than guess how to split it; flagged in the line result.
-          quantId = existing.ids[0];
-          await odooExecuteWrite('stock.quant', 'write', [[quantId], {
-            inventory_quantity: l.qtyCounted, inventory_date: inventoryDate,
-          }], { context: NO_MAIL_CONTEXT });
-        } else {
-          quantId = await odooExecuteWrite<number>('stock.quant', 'create', [{
-            product_id: prod.id, location_id: locationId,
-            inventory_quantity: l.qtyCounted, inventory_date: inventoryDate,
-          }], { context: NO_MAIL_CONTEXT });
-        }
-        toApplyQuantIds.push(quantId);
-        results.push({
-          sku: l.sku, found: true, qtySystem, qtyCounted: l.qtyCounted, diff, ok: true,
-          error: (existing?.ids.length ?? 0) > 1
-            ? `Plusieurs lots Odoo pour ce produit — seul le premier a été mis à jour (${existing!.ids.length} au total)`
-            : undefined,
-        });
+        await odooExecuteWrite('stock.inventory', 'action_state_to_in_progress', [[invId]], { context: NO_MAIL_CONTEXT });
       } catch (e: any) {
-        results.push({ sku: l.sku, found: true, qtySystem, qtyCounted: l.qtyCounted, diff, ok: false, error: String(e?.message ?? e) });
+        // Creation went through but the freeze didn't — never leave an empty draft adjustment
+        // behind with no count line and no way for the app to find it again.
+        try { await odooExecuteWrite('stock.inventory', 'unlink', [[invId]], {}); } catch { /* best-effort */ }
+        throw e;
       }
     }
 
-    if (!dryRun && toApplyQuantIds.length) {
-      try {
-        await odooExecuteWrite('stock.quant', 'action_apply_inventory', [toApplyQuantIds], { context: NO_MAIL_CONTEXT });
-      } catch (e: any) {
-        // The write succeeded but applying it didn't — surface this on every line we just queued,
-        // since those counts are now sitting unapplied in Odoo (the exact stale-data trap found
-        // during research). Better to loudly flag it than silently leave it half-done.
-        const msg = `Écrit mais non appliqué sur Odoo : ${String(e?.message ?? e)}`;
-        for (const r of results) if (r.ok) { r.ok = false; r.error = r.error ? `${r.error} / ${msg}` : msg; }
-      }
-    }
+    const [inv] = await odooExecute<any[]>('stock.inventory', 'search_read',
+      [[['id', '=', invId]]], { fields: ['count_line_ids'] });
+    const lineIds: number[] = inv?.count_line_ids ?? [];
+    if (!lineIds.length) return { ok: false, error: 'Aucune ligne de comptage générée sur Odoo (cut-off)' };
 
-    return { ok: true, dryRun, lines: results };
+    const lines = await odooExecute<any[]>('lpr.stock.inventory.line', 'search_read',
+      [[['id', 'in', lineIds], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 });
+    const line = lines[0];
+    if (!line) return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
+
+    return { ok: true, odooInventoryId: invId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0) };
   } catch (e: any) {
-    return { ok: false, dryRun, lines: [], error: String(e?.message ?? e) };
+    return { ok: false, error: String(e?.message ?? e) };
   }
 }
 
-export async function previewInventoryPush(lines: InventoryCountInput[]): Promise<InventoryPushResult> {
-  return pushInventory(lines, '', true);
+/**
+ * Best-effort: cancel the Odoo adjustment behind a line the shop deletes from an in-progress app
+ * session BEFORE it was ever submitted. Never blocks the app-side delete on this — Odoo's cancel
+ * button has its own gating (state, assignment) this module doesn't fully control, so a failure
+ * here just leaves a harmless, never-applied draft/in_progress adjustment in Odoo for a human to
+ * clean up later, rather than erroring the delete.
+ */
+export async function tryCancelInventoryLine(odooInventoryId: number): Promise<void> {
+  if (!odooWriteConfigured()) return;
+  try {
+    await odooExecuteWrite('stock.inventory', 'action_state_to_cancel', [[odooInventoryId]], { context: NO_MAIL_CONTEXT });
+  } catch { /* best-effort, see doc comment */ }
 }
 
-export async function applyInventoryPush(lines: InventoryCountInput[], inventoryDate: string): Promise<InventoryPushResult> {
-  return pushInventory(lines, inventoryDate, false);
+// ── Step 2: at final submit, write the counted numbers and apply the delta on top of current stock ──
+export interface ApplyLineInput { odooCountLineId: number; qtyCounted: number; }
+
+export interface ApplyPushResult {
+  ok: boolean;
+  lines: (InventoryLineResult & { odooCountLineId: number })[];
+  error?: string;
+}
+
+/**
+ * Writes `counted_qty` on each already-frozen count line, then applies every distinct
+ * `stock.inventory` involved in one batched `action_state_to_done()` call — this is the step that
+ * makes Odoo compute `diff_qty = counted − theoretical` and write
+ * `target_qty = current_on_hand_now + diff_qty` back onto the real stock.quant, replaying the
+ * counted delta on top of whatever happened since the cut-off instead of overwriting it.
+ */
+export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<ApplyPushResult> {
+  if (!entries.length) return { ok: false, lines: [], error: 'Aucune ligne comptée' };
+  if (!odooWriteConfigured()) return { ok: false, lines: [], error: 'Compte Odoo en écriture non configuré' };
+
+  const lineIds = entries.map(e => e.odooCountLineId);
+  const results: (InventoryLineResult & { odooCountLineId: number })[] = [];
+
+  try {
+    // Write the counted quantity on every line first (per-id: qty differs per line).
+    for (const e of entries) {
+      try {
+        await odooExecuteWrite('lpr.stock.inventory.line', 'write',
+          [[e.odooCountLineId], { counted_qty: e.qtyCounted, counted_set: true }], { context: NO_MAIL_CONTEXT });
+      } catch (err: any) {
+        results.push({
+          odooCountLineId: e.odooCountLineId, sku: '', found: true, qtySystem: null,
+          qtyCounted: e.qtyCounted, diff: null, ok: false, error: String(err?.message ?? err),
+        });
+      }
+    }
+    const writtenIds = lineIds.filter(id => !results.some(r => r.odooCountLineId === id && !r.ok));
+    if (!writtenIds.length) return { ok: true, lines: results };
+
+    const preRows = await odooExecute<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
+      { fields: ['id', 'inventory_id', 'product_id'] });
+    const invIds = Array.from(new Set(preRows.map(r => Array.isArray(r.inventory_id) ? r.inventory_id[0] : r.inventory_id)));
+    const skuByLineId: Record<number, string> = {};
+    for (const r of preRows) skuByLineId[r.id] = r.product_id?.[1] ?? '';
+
+    if (invIds.length) {
+      try {
+        await odooExecuteWrite('stock.inventory', 'action_state_to_done', [invIds], { context: NO_MAIL_CONTEXT });
+      } catch (e: any) {
+        const msg = `Écrit mais non appliqué sur Odoo : ${String(e?.message ?? e)}`;
+        for (const id of writtenIds) {
+          results.push({ odooCountLineId: id, sku: skuByLineId[id] ?? '', found: true, qtySystem: null, qtyCounted: 0, diff: null, ok: false, error: msg });
+        }
+        return { ok: true, lines: results };
+      }
+    }
+
+    const finalRows = await odooExecute<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
+      { fields: ['id', 'theoretical_qty', 'counted_qty', 'diff_qty', 'target_qty', 'applied_qty', 'state', 'product_id'] });
+    for (const r of finalRows) {
+      results.push({
+        odooCountLineId: r.id,
+        sku: r.product_id?.[1] ?? '',
+        found: true,
+        qtySystem: Number(r.theoretical_qty ?? 0),
+        qtyCounted: Number(r.counted_qty ?? 0),
+        diff: Number(r.diff_qty ?? 0),
+        ok: true,
+      });
+    }
+    return { ok: true, lines: results };
+  } catch (e: any) {
+    return { ok: false, lines: [], error: String(e?.message ?? e) };
+  }
 }
 
 export interface LabStockQuant { sku: string; name: string; qty: number }
@@ -175,10 +255,9 @@ export async function getLabStockAllQuants(): Promise<LabStockQuant[]> {
 
 export interface LabStockLevel { sku: string; name: string; qty: number; found: boolean; }
 
-// Read-only current on-hand at LAB/Stock for a list of SKUs — same lookup as pushInventory()
-// above (getLabStockLocationId + resolveProductsBySku + stock.quant), just without the write/diff
-// half. Used by the station analytics tab (2026-08-21) to show a chef their team's finished-goods
-// stock at a glance. Never writes anything to Odoo.
+// Read-only current on-hand at LAB/Stock for a list of SKUs — same lookup as before, just without
+// the write/diff half. Used by the station analytics tab (2026-08-21) to show a chef their team's
+// finished-goods stock at a glance. Never writes anything to Odoo.
 export async function getLabStockLevels(skus: string[]): Promise<LabStockLevel[]> {
   if (!skus.length) return [];
   const locationId = await getLabStockLocationId();

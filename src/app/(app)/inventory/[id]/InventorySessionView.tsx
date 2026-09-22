@@ -286,8 +286,8 @@ export default function InventorySessionView({
               </div>
               <p className="text-xs text-ink-light">
                 {vi
-                  ? 'Bấm "Gửi lên Odoo" sẽ ghi số lượng đếm được và áp dụng ngay trên Odoo (stock.quant).'
-                  : 'Cliquer sur "Envoyer à Odoo" écrit les quantités comptées et les applique immédiatement sur Odoo (stock.quant).'}
+                  ? 'Mỗi sản phẩm đã được "chốt" trên Odoo ngay khi bạn nhập lần đầu — "Odoo hiện tại" là số liệu tại thời điểm đó. Bấm "Gửi lên Odoo" sẽ tính chênh lệch thực tế và áp dụng lên tồn kho hiện tại trên Odoo, không ghi đè.'
+                  : 'Chaque produit a été "figé" sur Odoo dès sa première saisie — "Odoo actuel" est la valeur à cet instant-là. Cliquer sur "Envoyer à Odoo" calcule l’écart réel et l’applique sur le stock actuel dans Odoo, sans écraser.'}
               </p>
               {submitError && <div className="text-sm font-semibold" style={{ color: '#DC2626' }}>{submitError}</div>}
               <div className="flex justify-between items-center pt-2">
