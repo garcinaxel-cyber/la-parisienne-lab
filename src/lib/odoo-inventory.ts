@@ -99,8 +99,13 @@ export async function ensureInventoryLineStarted(sku: string): Promise<StartLine
     const prod = productBySku[sku];
     if (!prod) return { ok: false, error: 'SKU introuvable sur Odoo (default_code)' };
 
+    // Filtered by location_ids too (not just product_ids) — 2026-09-22, found while designing the
+    // shops' official-inventory feature: without this, two different locations counting the same
+    // SKU the same day would collide (the second one would silently reuse the first location's
+    // still-open cut-off and its diff would land on the WRONG location's stock). Never triggered
+    // for LAB until now since LAB is the only caller of this per-SKU path.
     const openInv = await odooExecute<any[]>('stock.inventory', 'search_read',
-      [[['state', '=', 'in_progress'], ['product_ids', 'in', [prod.id]]]],
+      [[['state', '=', 'in_progress'], ['product_ids', 'in', [prod.id]], ['location_ids', 'in', [locationId]]]],
       { fields: ['id'], limit: 1 });
 
     let invId: number;
@@ -232,13 +237,12 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
 export interface LabStockQuant { sku: string; name: string; qty: number }
 
 // Read-only WIDE snapshot: every product carrying a default_code (SKU) present in stock.quant at
-// LAB/Stock, in 2 Odoo calls total (all quants at the location, then one product read for the
-// codes). Powers the stock checks and the /analytics stock views (2026-09-02) — one shared read
-// per Check run instead of one per consumer (Axel: "il faut que ce soit optimisé").
-// limit 5000: ~1210 quants today; the cap only exists so a runaway location can't blow the
-// payload — revisit if LAB/Stock ever legitimately approaches it.
-export async function getLabStockAllQuants(): Promise<LabStockQuant[]> {
-  const locationId = await getLabStockLocationId();
+// a given location, in 2 Odoo calls total (all quants at the location, then one product read for
+// the codes). `includeArchived` reads with `active_test: false` so a product discontinued in
+// Odoo's catalogue but still physically in stock somewhere (shop official inventory, 2026-09-22 —
+// Axel: "si un produit est archivé sur odoo mais en stock au magasin on fait comment ?") still
+// shows up instead of silently vanishing from the count list.
+export async function getAllStockQuantsAtLocation(locationId: number, includeArchived = false): Promise<LabStockQuant[]> {
   const quants = await odooExecute<any[]>('stock.quant', 'search_read',
     [[['location_id', '=', locationId]]], { fields: ['product_id', 'quantity'], limit: 5000 });
   const qtyByProductId: Record<number, number> = {};
@@ -247,10 +251,93 @@ export async function getLabStockAllQuants(): Promise<LabStockQuant[]> {
     if (pid) qtyByProductId[pid] = (qtyByProductId[pid] ?? 0) + Number(q.quantity ?? 0);
   }
   const ids = Object.keys(qtyByProductId).map(Number);
-  const prods = ids.length ? await odooExecute<any[]>('product.product', 'read', [ids], { fields: ['default_code', 'name'] }) : [];
+  const prods = ids.length ? await odooExecute<any[]>('product.product', 'read', [ids],
+    { fields: ['default_code', 'name'], context: includeArchived ? { active_test: false } : {} }) : [];
   return prods
     .filter(pr => pr.default_code)
     .map(pr => ({ sku: pr.default_code as string, name: pr.name as string, qty: qtyByProductId[pr.id] ?? 0 }));
+}
+
+// Powers the stock checks and the /analytics stock views (2026-09-02) — one shared read per Check
+// run instead of one per consumer (Axel: "il faut que ce soit optimisé").
+// limit 5000: ~1210 quants today; the cap only exists so a runaway location can't blow the
+// payload — revisit if LAB/Stock ever legitimately approaches it.
+export async function getLabStockAllQuants(): Promise<LabStockQuant[]> {
+  const locationId = await getLabStockLocationId();
+  return getAllStockQuantsAtLocation(locationId);
+}
+
+// ── Shop official (monthly) inventory: ONE grouped cut-off covering every SKU at once ──────────
+//
+// The lab's per-SKU cut-off (ensureInventoryLineStarted above) opens one small Odoo record per
+// SKU, lazily, the moment that SKU is first typed — fine for a free-entry session. The shops'
+// monthly official inventory is different on purpose (Axel, 2026-09-22): "si ils comptent pas
+// [un produit], c'est que c'est 0" — every active SKU of the shop's warehouse must be in the count
+// from the start, uncounted ones defaulting to 0 and genuinely pushed as 0 to Odoo. That means the
+// theoretical cut-off has to be frozen for the WHOLE catalogue at once, right when the session
+// starts — so this opens a single `stock.inventory` covering every SKU in one Odoo call, instead
+// of looping ensureInventoryLineStarted per SKU (which would be N Odoo round-trips for one click).
+export interface GroupedCutoffLine { sku: string; odooCountLineId: number; qtyTheoretical: number; }
+export interface GroupedCutoffResult { ok: boolean; odooInventoryId?: number; lines?: GroupedCutoffLine[]; error?: string; }
+
+/**
+ * Opens ONE `stock.inventory` covering `productIds` (already resolved) at `locationId`, freezes
+ * every product's theoretical_qty in a single `action_state_to_in_progress` call, and returns each
+ * SKU's fresh count-line id + theoretical qty. Never reuses an existing Odoo record — the caller
+ * (the shop's own `lab_shop_official_inventory_sessions` row) is the sole source of truth for
+ * "is this month's session already open", so there is no Odoo-side search to get wrong across
+ * shops/months the way the LAB per-SKU path has to guard against.
+ */
+export async function startGroupedInventoryCutoff(
+  locationId: number,
+  products: { sku: string; id: number }[],
+  label: string,
+): Promise<GroupedCutoffResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
+  if (!products.length) return { ok: false, error: 'Aucun produit à geler' };
+  try {
+    const invId = await odooExecuteWrite<number>('stock.inventory', 'create', [{
+      name: label,
+      product_selection: 'manual',
+      product_ids: [[6, 0, products.map(p => p.id)]],
+      location_ids: [[6, 0, [locationId]]],
+    }], { context: NO_MAIL_CONTEXT });
+    try {
+      await odooExecuteWrite('stock.inventory', 'action_state_to_in_progress', [[invId]], { context: NO_MAIL_CONTEXT });
+    } catch (e: any) {
+      try { await odooExecuteWrite('stock.inventory', 'unlink', [[invId]], {}); } catch { /* best-effort */ }
+      throw e;
+    }
+
+    const [inv] = await odooExecute<any[]>('stock.inventory', 'search_read',
+      [[['id', '=', invId]]], { fields: ['count_line_ids'] });
+    const lineIds: number[] = inv?.count_line_ids ?? [];
+    if (!lineIds.length) return { ok: false, error: 'Aucune ligne de comptage générée sur Odoo (cut-off)' };
+
+    const rows = await odooExecute<any[]>('lpr.stock.inventory.line', 'search_read',
+      [[['id', 'in', lineIds]]], { fields: ['id', 'product_id', 'theoretical_qty'], limit: lineIds.length });
+    const skuByProductId: Record<number, string> = {};
+    for (const p of products) skuByProductId[p.id] = p.sku;
+    const lines: GroupedCutoffLine[] = rows.map(r => {
+      const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
+      return { sku: skuByProductId[pid] ?? '', odooCountLineId: r.id, qtyTheoretical: Number(r.theoretical_qty ?? 0) };
+    }).filter(l => l.sku);
+    return { ok: true, odooInventoryId: invId, lines };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/** Resolve product.product ids by default_code, including archived products (same reasoning as
+ *  getAllStockQuantsAtLocation's includeArchived — a shop's catalogue list must never silently
+ *  drop a product just because it was discontinued in Odoo while stock remains in the shop). */
+export async function resolveProductsBySkuIncludingArchived(skus: string[]): Promise<Record<string, { id: number; name: string }>> {
+  if (!skus.length) return {};
+  const prods = await odooExecute<any[]>('product.product', 'search_read',
+    [[['default_code', 'in', skus]]], { fields: ['id', 'name', 'default_code'], limit: 2000, context: { active_test: false } });
+  const map: Record<string, { id: number; name: string }> = {};
+  for (const p of prods) if (p.default_code) map[p.default_code] = { id: p.id, name: p.name };
+  return map;
 }
 
 export interface LabStockLevel { sku: string; name: string; qty: number; found: boolean; }

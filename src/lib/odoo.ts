@@ -146,3 +146,32 @@ export function labTodayUtcThreshold(daysBack: number = 0): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:00:00`;
 }
+
+/** Today's lab-local ('YYYY-MM-DD') calendar date, right now. */
+export function vnTodayStr(): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const p = Object.fromEntries(fmt.formatToParts(new Date()).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** true iff "today" (lab-local) is the LAST calendar day of its month — used to gate the shops'
+ *  monthly official-inventory button (Axel, 2026-09-22: "je veux que ca montre bien le bouton que
+ *  le dernier jour du mois donc le 30 ou le 31 ou pour fevrier ca depend"). Deliberately checks
+ *  "is tomorrow a different month?" instead of hardcoding 28/29/30/31 per month — this needs zero
+ *  calendar-length logic and gets February right for free, leap year or not. */
+export function isLastDayOfMonthVN(): boolean {
+  const today = vnTodayStr();
+  const [y, m, d] = today.split('-').map(Number);
+  // Midnight UTC of "tomorrow's date numbers" is always still the same lab-local calendar day
+  // once converted (VN = UTC+7 ahead, never behind) — so no timezone edge case here.
+  const tomorrowInstant = new Date(Date.UTC(y, m - 1, d + 1));
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const p = Object.fromEntries(fmt.formatToParts(tomorrowInstant).map(x => [x.type, x.value]));
+  return p.month !== today.slice(5, 7);
+}
+
+/** "YYYY-MM" lab-local period for the current moment — the key an official-inventory session is
+ *  scoped by (one per shop per calendar month). */
+export function vnPeriodStr(): string {
+  return vnTodayStr().slice(0, 7);
+}

@@ -123,7 +123,9 @@ async function resolveShopManagerByUserId(userId: string): Promise<ShopManager &
 // explicitShopName is only ever trusted after the role check — a shop user's own shopName always
 // comes from their OWN lab_profiles row, never from client input; a manager's explicitShopName
 // is re-checked against their own lab_shop_managers.shops, never trusted blindly either.
-async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean; staffName?: string | null } | { error: string }> {
+// Exported (2026-09-22) so official-inventory-actions.ts can reuse the exact same auth — one
+// source of truth for "who is this shop session", never a second copy that could drift.
+export async function requireShopOrStaffSession(explicitShopName?: string): Promise<{ shopName: string; isStaffTest: boolean; staffName?: string | null } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };

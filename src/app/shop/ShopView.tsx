@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store } from 'lucide-react';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store } from 'lucide-react';
 import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState } from './actions';
 import { getEventAccessStateAction, enterEventAction, exitEventAction } from './actions';
 import ShopTransfersTab from './ShopTransfersTab';
 import EventCaisseTab from './EventCaisseTab';
+import OfficialInventoryTab from './OfficialInventoryTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
@@ -120,9 +121,9 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
 // own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
 // than "cannot write".
-export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse'; viewerRole?: 'admin' | 'manager' }) {
+export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager' }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse'>(initialTab);
+  const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'>(initialTab);
   // `initialTab` is only the useState *seed* — on a fresh mount it's all that's needed. But
   // /shop-manager/store is one long-lived route the manager cockpit re-navigates to with a new
   // `?tab=` every time (Order quick action vs. Store interface), and Next.js's App Router keeps
@@ -151,6 +152,21 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (!('error' in res)) setEventState(res);
   }, []);
   useEffect(() => { loadEventState(); }, [loadEventState]);
+
+  // Official (monthly) inventory — a lightweight signal only, fetched once regardless of which
+  // tab is active, so the mandatory banner below can show no matter what the shop is doing (Axel,
+  // 2026-09-22: banniere visible peu importe l'onglet, non bloquante). The tab itself
+  // (OfficialInventoryTab) does its own full fetch when actually opened.
+  const [officialInv, setOfficialInv] = useState<{ isLastDay: boolean; hasWarehouse: boolean; submitted: boolean } | null>(null);
+  useEffect(() => {
+    (async () => {
+      const actions = await import('./official-inventory-actions');
+      const res = await actions.getOfficialInventoryStateAction(readOnly ? shopName : undefined);
+      if (res.error) return;
+      setOfficialInv({ isLastDay: !!res.isLastDay, hasWarehouse: res.hasWarehouse !== false, submitted: res.session?.status === 'submitted' });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Axel, 2026-09-13: "je dois pas avoir de dependance avec l'interface d'un des shops, c'est a
   // part" — deliveries/cakes, staff names, pertes, kiểm kho and the order tab's live-inventory
@@ -1153,6 +1169,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           </div>
         )}
+        {officialInv?.isLastDay && officialInv.hasWarehouse && !officialInv.submitted && (
+          <button onClick={() => setTab('official-inventory')} className="w-full text-left rounded-xl px-3.5 py-2.5 flex items-start gap-2"
+            style={{ backgroundColor: '#FBEAE8', border: '1px solid #EFC3BE' }}>
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: RED }} />
+            <div className="text-xs" style={{ color: RED }}>
+              <span className="font-bold">Hôm nay là ngày kiểm kê chính thức.</span> Bắt buộc, sẽ gửi lên Odoo — nhấn để bắt đầu.
+            </div>
+          </button>
+        )}
         <div className="flex flex-wrap gap-1.5">
           <button onClick={() => setTab('deliveries')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
@@ -1202,6 +1227,16 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </span>
             )}
           </button>
+          {officialInv?.hasWarehouse && (
+            <button onClick={() => setTab('official-inventory')}
+              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
+              style={{ backgroundColor: tab === 'official-inventory' ? NAVY : 'white', color: tab === 'official-inventory' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
+              <ClipboardCheck size={16} /> Kiểm kê chính thức
+              {officialInv.isLastDay && !officialInv.submitted && (
+                <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full" style={{ backgroundColor: RED }} />
+              )}
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -1950,6 +1985,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         ) : tab === 'transfer' ? (
           <ShopTransfersTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)}
             setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
+        ) : tab === 'official-inventory' ? (
+          <OfficialInventoryTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)} />
         ) : tab === 'order' ? (
           <div className="space-y-3">
             {orderResult ? (
