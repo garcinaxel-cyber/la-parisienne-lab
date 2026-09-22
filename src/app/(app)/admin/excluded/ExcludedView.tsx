@@ -80,7 +80,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
                     style={{ borderColor: '#E0D49A', backgroundColor: '#F1EFE8' }}
                     title={lang === 'vi' ? 'Thêm ảnh' : 'Ajouter une photo'}>
                     {r.image_url ? (
-                      <img src={thumb(r.image_url, 72)} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                      <img src={thumb(r.image_url, 80)} alt="" className="absolute inset-0 w-full h-full object-cover" />
                     ) : (
                       <Upload size={13} style={{ color: uploading === r.sku ? '#B8AE7A' : '#8A8570' }} />
                     )}
