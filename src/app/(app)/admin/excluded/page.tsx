@@ -12,7 +12,7 @@ export default async function ExcludedPage() {
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
 
   const { data: rows } = await supabase
-    .from('lab_excluded_skus').select('sku, product_name, reason, created_at').order('created_at', { ascending: false });
+    .from('lab_excluded_skus').select('sku, product_name, reason, image_url, created_at').order('created_at', { ascending: false });
 
   return <ExcludedView rows={rows ?? []} />;
 }

@@ -112,3 +112,17 @@ export async function unexcludeSkuAction(sku: string): Promise<{ error?: string 
   revalidatePath('/admin/excluded');
   return {};
 }
+
+// Photo for a non-production/packaging item (Axel, 2026-09-22: "laisse moi la possibilité de
+// mettre une photo" — these items have no fiche/variant, so no lab_fiche_variants.image_url to
+// piggyback on; same 'lab-images' storage bucket + upload pattern as FicheEditor, just its own
+// column on lab_excluded_skus). Also read by shop/actions.ts's packaging branch of
+// searchManagerOrderProductsAction so it shows up for shop managers ordering it, not just here.
+export async function setExcludedSkuImageAction(sku: string, imageUrl: string): Promise<{ error?: string }> {
+  const { supabase, ok } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  const { error } = await supabase.from('lab_excluded_skus').update({ image_url: imageUrl || null }).eq('sku', sku);
+  if (error) return { error: error.message };
+  revalidatePath('/admin/excluded');
+  return {};
+}

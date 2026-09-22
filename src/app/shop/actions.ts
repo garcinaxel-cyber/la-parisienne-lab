@@ -1527,8 +1527,12 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
 
   let packaging: CatalogProductNoPrice[] = [];
   if (!cat || cat === 'Packaging') {
-    const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+    // image_url (Axel, 2026-09-22: "laisse moi la possibilité de mettre une photo") — packaging
+    // items have no fiche/variant, so their photo lives on lab_excluded_skus itself (set from
+    // /admin/excluded), not on lab_fiche_variants like production SKUs.
+    const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku, image_url');
     const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
+    const imageBySku = new Map<string, string | null>((excludedRows ?? []).map((r: any) => [r.sku, r.image_url ?? null]));
     if (excludedSkus.length && odooConfigured()) {
       try {
         const domain: any[] = q
@@ -1538,7 +1542,7 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
           { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: browsingCategory ? 200 : 30 });
         packaging = rows.filter(p => p.default_code).map(p => {
           const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
-          return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: 'Packaging', imageUrl: null, isPackaging: true };
+          return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: 'Packaging', imageUrl: imageBySku.get(p.default_code) ?? null, isPackaging: true };
         });
       } catch {
         // Best-effort — a slow/unreachable Odoo never blocks the production-catalog results.
