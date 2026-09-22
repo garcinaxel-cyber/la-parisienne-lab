@@ -959,7 +959,39 @@ async function resolveFicheMetaBySku(skus: string[]): Promise<Record<string, { c
   return out;
 }
 
-export type ShopStockSearchProduct = { sku: string; name: string; category: string; imageUrl: string | null };
+export type ShopStockSearchProduct = { sku: string; name: string; category: string; imageUrl: string | null; isPackaging?: boolean };
+
+const STOCK_COUNT_PACKAGING_CATEGORY = 'Packaging';
+
+// Packaging/matière SKUs (bao bì / nguyên liệu, non-production) — same live-Odoo resolution as
+// the manager-order catalog's packaging block (lab_excluded_skus + product.product, vi_VN name).
+// Axel, 2026-09-22: "je veux qu'ils puissent compter quotidiennement leur stock de packaging
+// aussi" (Vietnamese + English per Axel's Odoo-note convention: kiểm kê bao bì hàng ngày / daily
+// packaging stock count) — reverses the 2026-09-03 decision to keep packaging out of Kiểm kho
+// entirely; packaging stays manual-add-only here (same posture as birthday cakes/bentos), never
+// on the default checklist, since it's a different rhythm from the finished-goods catalog.
+async function resolvePackagingMetaBySku(skus: string[]): Promise<Record<string, { name: string; category: string; imageUrl: string | null }>> {
+  const out: Record<string, { name: string; category: string; imageUrl: string | null }> = {};
+  if (!skus.length || !odooConfigured()) return out;
+  const supabase = service();
+  if (!supabase) return out;
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  const excludedSkus = new Set((excludedRows ?? []).map((r: any) => r.sku).filter(Boolean));
+  const candidateSkus = skus.filter(sku => excludedSkus.has(sku));
+  if (!candidateSkus.length) return out;
+  try {
+    const rows = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', candidateSkus]]],
+      { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: candidateSkus.length });
+    for (const p of rows) {
+      if (!p.default_code) continue;
+      const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+      out[p.default_code] = { name: variantName || p.name || p.default_code, category: STOCK_COUNT_PACKAGING_CATEGORY, imageUrl: null };
+    }
+  } catch {
+    // Best-effort — a slow/unreachable Odoo never blocks the rest of the checklist from loading.
+  }
+  return out;
+}
 
 // Full active production catalog (every category) — the shared source for both the default
 // checklist (filtered below) and the "add a product" search (unfiltered — birthday cakes and
@@ -1048,11 +1080,15 @@ async function stockCountEntries(shopName: string): Promise<Map<string, StockCou
   const { data: extras } = await supabase.from('lab_shop_stock_count_items').select('sku, product_name').eq('shop_name', shopName);
   const newExtraSkus = (extras ?? []).map((e: any) => e.sku).filter((sku: string) => sku && !out.has(sku));
   const extraMeta = newExtraSkus.length ? await resolveFicheMetaBySku(newExtraSkus) : {};
+  const stillUnresolved = newExtraSkus.filter(sku => !extraMeta[sku]);
+  const packagingMeta = stillUnresolved.length ? await resolvePackagingMetaBySku(stillUnresolved) : {};
   for (const e of extras ?? []) {
     if (!e.sku || out.has(e.sku)) continue; // already in the default catalog, no extra row needed
     const meta = extraMeta[e.sku];
-    if (!meta) continue; // stale/no-longer-valid production sku — defensive backstop
-    out.set(e.sku, { name: e.product_name, category: meta.category, imageUrl: meta.imageUrl, isExtra: true });
+    if (meta) { out.set(e.sku, { name: e.product_name, category: meta.category, imageUrl: meta.imageUrl, isExtra: true }); continue; }
+    const pkg = packagingMeta[e.sku];
+    if (pkg) { out.set(e.sku, { name: e.product_name || pkg.name, category: pkg.category, imageUrl: pkg.imageUrl, isExtra: true }); continue; }
+    // stale/no-longer-valid SKU (neither a production fiche nor a live packaging SKU) — defensive backstop
   }
   return out;
 }
@@ -1253,8 +1289,34 @@ export async function searchStockCountProductsAction(query: string, shopName?: s
   const q = (query ?? '').trim().toLowerCase().slice(0, 60);
   const all = await fetchProductionCatalog();
   const filtered = (q ? all.filter(p => (p.name + ' ' + p.sku).toLowerCase().includes(q)) : all)
-    .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 30);
-  return { products: filtered };
+    .sort((a, b) => a.name.localeCompare(b.name)).slice(0, q ? 20 : 30);
+
+  // Packaging/matière — manual-add only, same as birthday cakes/bentos (Axel, 2026-09-22). Only
+  // searched (never listed by default) so a bare-open of the search doesn't dump the whole
+  // packaging catalogue on top of production results.
+  let packaging: ShopStockSearchProduct[] = [];
+  if (q && odooConfigured()) {
+    const supabase = service();
+    if (supabase) {
+      const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+      const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
+      if (excludedSkus.length) {
+        try {
+          const domain: any[] = ['&', ['default_code', 'in', excludedSkus], '|', ['name', 'ilike', q], ['default_code', 'ilike', q]];
+          const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
+            { fields: ['default_code', 'name', 'display_name'], context: { lang: 'vi_VN' }, limit: 20 });
+          packaging = rows.filter(p => p.default_code).map(p => {
+            const variantName = String(p.display_name || '').replace(/\[.*?\]\s*/, '').trim();
+            return { sku: p.default_code as string, name: variantName || p.name || p.default_code, category: STOCK_COUNT_PACKAGING_CATEGORY, imageUrl: null, isPackaging: true };
+          });
+        } catch {
+          // Best-effort — a slow/unreachable Odoo never blocks the production-catalog search results.
+        }
+      }
+    }
+  }
+
+  return { products: [...filtered, ...packaging].slice(0, 30) };
 }
 
 export async function addStockCountItemAction(input: {
@@ -1270,12 +1332,16 @@ export async function addStockCountItemAction(input: {
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  // Defense in depth: only a real production SKU can be added — packaging/matière is out of
-  // this feature entirely now (2026-09-03), so this rejects a stale/tampered client call the
-  // same way the search endpoint above no longer offers packaging as a candidate.
+  // Defense in depth: only a real production SKU or a live packaging/matière SKU (Odoo,
+  // lab_excluded_skus-gated — see resolvePackagingMetaBySku) can be added, rejecting a
+  // stale/tampered client call the same way the search endpoint above only offers real candidates.
   const ficheMeta = await resolveFicheMetaBySku([sku]);
-  const meta = ficheMeta[sku];
-  if (!meta) return { error: 'SKU không có trong danh mục sản xuất' };
+  let meta = ficheMeta[sku];
+  if (!meta) {
+    const pkgMeta = await resolvePackagingMetaBySku([sku]);
+    if (pkgMeta[sku]) meta = { category: pkgMeta[sku].category, imageUrl: pkgMeta[sku].imageUrl };
+  }
+  if (!meta) return { error: 'SKU không có trong danh mục sản xuất hoặc bao bì' };
 
   const { error } = await supabase.from('lab_shop_stock_count_items')
     .upsert({ shop_name: auth.shopName, sku, product_name: name, added_by_name: addedBy, added_at: new Date().toISOString() }, { onConflict: 'shop_name,sku' });

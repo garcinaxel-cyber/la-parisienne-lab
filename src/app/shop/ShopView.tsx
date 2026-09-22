@@ -1703,7 +1703,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={stockSearchQuery} onChange={e => setStockSearchQuery(e.target.value)}
-                  placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                  placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 {stockSearchQuery.trim().length >= 2 && (
                   <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
                     style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
@@ -1715,7 +1715,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <button key={p.sku} onClick={() => addStockItem(p)}
                         className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
                         {p.imageUrl && <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
-                        <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}</span></span>
+                        <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.name}<span style={{ color: '#9CA3AF' }}> · {p.sku}{p.isPackaging ? ' · packaging' : ''}</span></span>
                       </button>
                     ))}
                   </div>
