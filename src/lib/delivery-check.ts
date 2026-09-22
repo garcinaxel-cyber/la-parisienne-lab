@@ -537,6 +537,57 @@ export async function fetchOnlineOrderInfo(supabase: SupabaseClient, orderRef: s
   };
 }
 
+// Delivery-destination mismatch — "đơn của shop A, giao đến shop B" / "commande du shop A,
+// livrée au shop B" (Axel, 2026-09-22: assistants sending a print to the wrong shop). The ONLY
+// place this can happen is a manual/online/birthday cake matched into a real Odoo order via
+// matched_order_ref: lab_manual_cakes.shop_name is the intended/attributed shop (accounting/
+// channel — who "sold" it), delivered_by is where it ACTUALLY gets handed off (another shop's
+// courier delivering for it, or the lab going straight to the customer). A plain Odoo sales/
+// replenishment order has exactly ONE shop field (lab_order_lines.shop_name) — this mismatch is
+// structurally impossible there (same reasoning as delivery-check/by-shop/page.tsx's own doc
+// comment, which already surfaces this per-line on its dedicated "Theo nơi giao hàng" screen;
+// these two helpers bring the same signal to the main check flow — list + order detail header —
+// so it's visible wherever an assistant might actually act on the wrong address).
+export function normShopName(s: string | null): string {
+  return (s ?? '').trim().toLowerCase();
+}
+
+export interface DeliveryDestination { actualShop: string; mismatch: true }
+
+export async function fetchOrderDeliveryDestination(
+  supabase: SupabaseClient, orderRef: string, intendedShop: string | null,
+): Promise<DeliveryDestination | null> {
+  const { data } = await supabase.from('lab_manual_cakes')
+    .select('delivered_by').eq('matched_order_ref', orderRef).is('cancelled_at', null).not('delivered_by', 'is', null);
+  const distinct = Array.from(new Set((data ?? []).map((r: any) => r.delivered_by as string).filter(Boolean)));
+  const mismatching = distinct.filter(s => normShopName(s) !== normShopName(intendedShop));
+  if (!mismatching.length) return null;
+  return { actualShop: mismatching.join(', '), mismatch: true };
+}
+
+// Batched sibling for LIST pages (the delivery-check index) — one query for every order on the
+// page instead of one per order, same pattern as ensureDeliveryOrderChecklistsBatch above.
+// Returns the distinct delivered_by values per order_ref (caller compares against its own
+// known shop_name to decide mismatch — kept out of this function since the index page already
+// has that value per row and shouldn't need a second round trip to get it back).
+export async function fetchOrderDeliveryDestinationsBatch(
+  supabase: SupabaseClient, orderRefs: string[],
+): Promise<Map<string, string[]>> {
+  const byRef = new Map<string, Set<string>>();
+  if (!orderRefs.length) return new Map();
+  const { data } = await supabase.from('lab_manual_cakes')
+    .select('matched_order_ref, delivered_by').in('matched_order_ref', orderRefs).is('cancelled_at', null).not('delivered_by', 'is', null);
+  for (const row of data ?? []) {
+    const ref = (row as any).matched_order_ref as string | null;
+    const by = (row as any).delivered_by as string | null;
+    if (!ref || !by) continue;
+    (byRef.get(ref) ?? byRef.set(ref, new Set()).get(ref)!).add(by);
+  }
+  const out = new Map<string, string[]>();
+  byRef.forEach((v, k) => out.set(k, Array.from(v)));
+  return out;
+}
+
 export interface UnreconciledLine extends CheckLine {
   manual_cake_id: string;
   customer_name: string | null;

@@ -1,6 +1,6 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect, notFound } from 'next/navigation';
-import { ensureDeliveryOrderChecklist, fetchOnlineOrderInfo } from '@/lib/delivery-check';
+import { ensureDeliveryOrderChecklist, fetchOnlineOrderInfo, fetchOrderDeliveryDestination } from '@/lib/delivery-check';
 import DeliveryCheckOrderView from './DeliveryCheckOrderView';
 
 export const revalidate = 0;
@@ -30,10 +30,13 @@ export default async function DeliveryCheckOrderPage({ params }: { params: { dat
   // Online-sale customer details (name/phone/address/who-delivers) — null for any non-online
   // order. Shown on this detail screen only, never on the print view (Axel, 2026-09-09).
   const onlineInfo = await fetchOnlineOrderInfo(supabase, orderRef);
+  // "Commande de X — à livrer à Y" (Axel, 2026-09-22) — null when the order's own shop already
+  // matches where it's actually delivered (the normal case).
+  const destination = await fetchOrderDeliveryDestination(supabase, orderRef, header.shop_name);
   const today = labToday();
   // A past date (2026-08-26: late-created orders for a manual cake from a prior day) belongs on
   // the "late" tab, not "tomorrow" — the old ternary only ever considered today vs. everything else.
   const backHref = date === today ? '/delivery-check' : date > today ? '/delivery-check?day=tomorrow' : '/delivery-check?day=late';
 
-  return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} onlineInfo={onlineInfo} />;
+  return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} onlineInfo={onlineInfo} destination={destination} />;
 }

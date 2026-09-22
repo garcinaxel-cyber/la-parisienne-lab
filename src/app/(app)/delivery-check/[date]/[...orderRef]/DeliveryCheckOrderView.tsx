@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck } from 'lucide-react';
-import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo } from '@/lib/delivery-check';
+import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck, ArrowRightLeft } from 'lucide-react';
+import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo, DeliveryDestination } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 
 type LineState = { qty: string; reason: string; note: string };
@@ -148,7 +148,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
   );
 }
 
-export default function DeliveryCheckOrderView({ header, lines, backHref, onlineInfo }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string; onlineInfo?: OnlineOrderCheckInfo | null }) {
+export default function DeliveryCheckOrderView({ header, lines, backHref, onlineInfo, destination }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string; onlineInfo?: OnlineOrderCheckInfo | null; destination?: DeliveryDestination | null }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -253,6 +253,21 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
           <div>
             <h1 className="font-serif text-xl sm:text-2xl font-bold text-navy">{header.order_ref}</h1>
             <p className="text-ink-light text-sm">{header.shop_name} · {header.delivery_date}</p>
+            {/* "Commande de X — à livrer à Y" (Axel, 2026-09-22) — a manual/online/birthday cake
+                whose actual delivery destination (lab_manual_cakes.delivered_by) differs from
+                the shop this order is attributed to. Unconditional (not inside the validated/
+                not-validated branches below), so it stays visible before the check, during it,
+                and once the order hits 100% — an assistant printing or handing this off should
+                never lose sight of where it actually goes. */}
+            {destination?.mismatch && (
+              <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold"
+                style={{ backgroundColor: '#F5F3FF', border: '1px solid #C4B5FD', color: '#6D28D9' }}>
+                <ArrowRightLeft size={13} className="shrink-0" />
+                {vi
+                  ? `Đơn của ${header.shop_name} — GIAO ĐẾN ${destination.actualShop}`
+                  : `Commande de ${header.shop_name} — À LIVRER À ${destination.actualShop}`}
+              </div>
+            )}
             {/* Online-sale customer details (Axel, 2026-09-09) — name, delivery mode (via the
                 shop vs lab-direct-to-customer) and address, for an order placed through the
                 online-sales interface. Never shown on the print view — this is the detail

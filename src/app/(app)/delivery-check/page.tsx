@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import DeliveryCheckIndexView from './DeliveryCheckIndexView';
 import { isOrderDone } from '@/lib/delivery-order-status';
 import { getOdooDoneExternalMap } from '@/lib/late-delivery-odoo-cache';
+import { fetchOrderDeliveryDestinationsBatch, normShopName } from '@/lib/delivery-check';
 
 export const revalidate = 0;
 
@@ -115,6 +116,11 @@ export default async function DeliveryCheckPage() {
   for (const m of managerOrders ?? []) if (m.order_ref && m.manager_name) managerNameByRef[m.order_ref] = m.manager_name;
   const onlineOrderRefs = new Set((onlineMatches ?? []).map((m: any) => m.matched_order_ref).filter(Boolean));
 
+  // "Livré ailleurs que son shop" (Axel, 2026-09-22) — same shop-A-vs-shop-B mismatch the
+  // by-shop view already flags, surfaced here too so it's visible on the main check list an
+  // assistant actually works from, not only on the dedicated "Theo nơi giao hàng" screen.
+  const deliveryDestByRef = await fetchOrderDeliveryDestinationsBatch(supabase, orderRefs);
+
   // Progress: any lab_delivery_orders header already started for these (date, ref)
   const { data: headers } = orders.length
     ? await supabase.from('lab_delivery_orders')
@@ -172,6 +178,12 @@ export default async function DeliveryCheckPage() {
       // onlineOrderRefs for what each of these does and doesn't cover.
       manager_name: managerNameByRef[o.order_ref] ?? null,
       is_online_order: onlineOrderRefs.has(o.order_ref),
+      // Delivery-destination mismatch (see fetchOrderDeliveryDestinationsBatch's doc comment).
+      ...(() => {
+        const dests = deliveryDestByRef.get(o.order_ref) ?? [];
+        const mismatching = dests.filter(s => normShopName(s) !== normShopName(o.shop_name));
+        return { mismatch: mismatching.length > 0, actual_shop: mismatching.length ? mismatching.join(', ') : null };
+      })(),
     };
   });
 

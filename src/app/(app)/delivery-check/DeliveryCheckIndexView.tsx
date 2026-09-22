@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin, ArrowRightLeft } from 'lucide-react';
 import { isOrderDone } from '@/lib/delivery-order-status';
 
 type OrderRow = {
@@ -24,6 +24,13 @@ type OrderRow = {
   // (e.g. a shop ordering straight in Odoo) — deliberately left blank there, not guessed at.
   manager_name?: string | null;
   is_online_order?: boolean;
+  // "Livré ailleurs que son shop" (Axel, 2026-09-22) — commande attribuée/comptabilisée à
+  // shop_name mais dont la livraison réelle (lab_manual_cakes.delivered_by) est un autre shop
+  // ou passe par un autre shop — voir fetchOrderDeliveryDestinationsBatch (src/lib/delivery-check.ts).
+  // Gets its own line color regardless of check/validation/100% state, so an assistant never
+  // mistakes it for a normal same-shop delivery at any point in the flow.
+  mismatch?: boolean;
+  actual_shop?: string | null;
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -271,8 +278,11 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
     const dotColor = notDelivered ? '#DC2626' : odooDoneExternal ? '#16A34A' : odooDone ? '#D97706' : validated || full ? '#16A34A' : o.checked > 0 ? '#D97706' : '#9CA3AF';
     // Printed gets its own light-blue tint when nothing stronger (validated/full) applies —
     // a quick visual "already printed, don't reprint" cue on top of the existing progress dot.
-    const bg = notDelivered ? '#FEF2F2' : odooDoneExternal ? '#F0FDF4' : odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
-    const border = notDelivered ? '#FECACA' : odooDoneExternal ? '#BBF7D0' : odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
+    // Delivery-destination mismatch (Axel, 2026-09-22) takes priority over every one of these —
+    // violet, a color used nowhere else in this list, and deliberately independent of check/
+    // validation/100% state so the row reads the same "wrong address" way at every stage.
+    const bg = o.mismatch ? '#F5F3FF' : notDelivered ? '#FEF2F2' : odooDoneExternal ? '#F0FDF4' : odooDone ? '#FFFBEB' : validated || full ? '#F0FDF4' : o.printed_at ? '#EFF6FF' : undefined;
+    const border = o.mismatch ? '#C4B5FD' : notDelivered ? '#FECACA' : odooDoneExternal ? '#BBF7D0' : odooDone ? '#FDE68A' : validated || full ? '#BBF7D0' : o.printed_at ? '#BFDBFE' : '#E5E7EB';
     return (
       // order_ref can contain slashes (e.g. "REP/2026/00985") — a catch-all route
       // captures them as separate segments, so no encoding here.
@@ -294,6 +304,12 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             {o.manager_name ? ` · ${o.manager_name}` : ''}
             {o.is_online_order ? ` · ${vi ? 'Bán online' : 'Vente en ligne'}` : ''}
           </div>
+          {o.mismatch && o.actual_shop && (
+            <div className="text-[11px] font-bold mt-0.5 flex items-center gap-1" style={{ color: '#6D28D9' }}>
+              <ArrowRightLeft size={11} className="shrink-0" />
+              {vi ? `Giao đến: ${o.actual_shop}` : `À livrer à : ${o.actual_shop}`}
+            </div>
+          )}
         </div>
         {notDelivered ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#B91C1C' }}>
