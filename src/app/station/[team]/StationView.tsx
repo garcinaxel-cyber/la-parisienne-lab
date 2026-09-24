@@ -1989,7 +1989,16 @@ export default function StationView({
             // Consolidated recap: total ACTUALLY produced per SKU (qty_produced), across
             // every done card of the day (order + extra together) — same shape as the
             // Production tab's recap, so the two tables are directly comparable at a glance.
-            const doneProduced = termine.filter(a => a.status !== 'skip');
+            // Cards still 'blocked' or 'partial' (chef hit an exception before finishing
+            // the full target) already have real produced units on them — those units
+            // shouldn't vanish from the day's total just because the card isn't 100% done
+            // yet (Axel, 2026-09-24: 4/7 Strawberry Finger Cake produced then blocked for
+            // stock-out were missing from 'Total produit'). They stay OUT of the card list
+            // below (still done-only — not ready to send to stock), but their qty_produced
+            // counts toward the recap totals.
+            const partialProduced = assignments.filter(a => !a.cancelled
+              && (a.status === 'blocked' || a.status === 'partial') && (a.qty_produced ?? 0) > 0);
+            const doneProduced = [...termine.filter(a => a.status !== 'skip'), ...partialProduced];
             const OTHER = lang === 'vi' ? 'Khác' : 'Other';
             const dm = new Map<string, { name: string; sku: string | null; cat: string; qty: number }>();
             for (const a of doneProduced) {
