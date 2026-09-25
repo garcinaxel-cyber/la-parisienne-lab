@@ -31,6 +31,9 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const supabase = useMemo(() => createClient(), []);
   const canManage = MANAGERS.includes(role);
   const canPack = STAFF.includes(role);
+  // Production (kg) log + Settings (Odoo switch, order quantities): admin only (Axel, 2026-09-25).
+  // lab_manager keeps the right to correct any packaging line (canManage) inside the normal tabs.
+  const isAdmin = role === 'admin';
 
   const [tab, setTab] = useState<Tab>('today');
   const [clientName, setClientName] = useState<string | null>(null);
@@ -170,7 +173,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
 
       {/* tabs */}
       <div className="flex gap-1 overflow-x-auto -mx-1 px-1 pb-0.5" style={{ borderBottom: `1px solid ${LINE}` }}>
-        {TABS.filter(t => !t.manage || canManage).map(t => {
+        {TABS.filter(t => !t.manage || isAdmin).map(t => {
           const Icon = t.icon; const on = tab === t.key;
           return (
             <button key={t.key} onClick={() => setTab(t.key)} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 text-sm font-semibold"
@@ -198,9 +201,9 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
             ? <FinishedGoods clients={[client]} items={cItems} d={d} counts={cFg} canCount={canPack} userId={userId} userName={userName} reload={load} L={L} />
             : <RawMaterials items={items} d={d} ingredients={ingredients} usage={usage} counts={rm} prod={prod} canCount={canPack} userId={userId} userName={userName} reload={load} L={L} />}
         </div>
-      ) : tab === 'production' && canManage ? (
+      ) : tab === 'production' && isAdmin ? (
         <ProductionLog logs={cProd} items={cItems} groupName={groupName} canManage={canManage} userId={userId} userName={userName} reload={load} L={L} />
-      ) : tab === 'settings' && canManage ? (
+      ) : tab === 'settings' && isAdmin ? (
         <OrderSettings items={items} hist={hist} odooOn={odooOn} userId={userId} userName={userName} reload={load} L={L} />
       ) : null}
     </div>
