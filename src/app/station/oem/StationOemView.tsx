@@ -1,17 +1,20 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Factory, Loader2, RefreshCw, ExternalLink, Plus, X, Check } from 'lucide-react';
+import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
 // Team Hung only needs one thing: per product, kg baked vs kg to bake. Packaging, deliveries and
-// inventories stay on the office page (/oem-orders) — staff opening the station get a link there.
-type Row = { key: string; name: string; target: number; baked: number; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
+// inventories and tracking stay on the office page (/oem-orders, admin + assistants).
+type Row = { key: string; name: string; group: string; target: number; baked: number; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
 type Entry = { id: string; group_key: string; weight_kg: number; created_at: string; created_by_name: string | null };
 const GREEN = '#1A4731';
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+// Real product name without the pack size ("Bánh quy socola nho khô 80g" → "Bánh quy socola nho khô"),
+// so the 80 g / 100 g formats that share one bulk read as one product with both SKUs.
+const baseName = (n: string) => n.replace(/\s*\(kg\)\s*$/i, '').replace(/\s+\d+\s*g$/i, '').trim();
 
 export default function StationOemView({ role, userId, userName }: { role: string; userId: string | null; userName: string | null }) {
   const { lang, setLang } = useI18n();
@@ -33,13 +36,13 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     const [it, pl] = await Promise.all([
-      supabase.from('lab_mm_order_items').select('sku, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order').eq('is_active', true),
+      supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order').eq('is_active', true),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name').order('created_at', { ascending: false }),
     ]);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
     for (const i of it.data ?? []) {
-      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: i.group_name, target: 0, baked: 0, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
+      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: baseName(i.product_name), group: i.group_name, target: 0, baked: 0, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
       r.skus.push(i.sku); if (i.unit !== 'kg') r.weights.push(Number(i.unit_weight_g));
       r.target += i.unit === 'kg' ? Number(i.qty_ordered) : (Number(i.qty_ordered) * Number(i.unit_weight_g)) / 1000;
       r.sort = Math.min(r.sort, i.sort_order);
@@ -53,7 +56,6 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
-  const staff = ['admin', 'lab_manager', 'assistant'].includes(role);
   // same rule as the station: workers/viewers are read-only
   const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
   const sel = rows.find(r => r.key === gk);
@@ -123,7 +125,10 @@ export default function StationOemView({ role, userId, userName }: { role: strin
               // Phone-first (the team works on phones only): name + kg on one line, full-width bar below.
               <div key={r.key} className="px-4 py-3.5 space-y-2" style={{ borderTop: '1px solid #F3F4F6' }}>
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-[15px] font-bold leading-tight" style={{ color: '#111827' }}>{r.name}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[15px] font-bold leading-tight" style={{ color: '#111827' }}>{r.name}</span>
+                    <span className="block text-[11px] mt-0.5" style={{ color: '#9CA3AF' }}>{r.skus.join(' · ')}</span>
+                  </span>
                   <span className="text-[15px] whitespace-nowrap" style={{ color: '#111827' }}>
                     <b>{fmt(r.baked)}</b><span style={{ color: '#9CA3AF' }}> / {fmt(r.target)} kg</span>
                   </span>
@@ -140,19 +145,6 @@ export default function StationOemView({ role, userId, userName }: { role: strin
               </div>
             );
           })}
-        </div>
-        <div className="text-[11px] sm:text-xs" style={{ color: '#9CA3AF' }}>
-          {vi ? 'Nhập sản lượng bằng nút "Sản xuất thêm" (kg) như thường lệ.' : 'Enter what you bake with the usual "Extra production" button (kg).'}
-        </div>
-        {staff && (
-          <Link href="/oem-orders" className="inline-flex items-center gap-1 text-xs font-bold underline" style={{ color: GREEN }}>
-            {vi ? 'Mở trang theo dõi đầy đủ' : 'Open the full tracker'} <ExternalLink size={11} />
-          </Link>
-        )}
-
-        <div className="rounded-xl px-3 py-2.5 text-xs" style={{ backgroundColor: '#FFF7E6', color: '#8A6A2F', border: '1px solid #F3E3C0' }}>
-          {vi ? 'Sản phẩm OEM không có nút "Chuyển kho": bán thành phẩm vào mục theo dõi OEM, không vào kho cửa hàng. Trợ lý đóng gói sẽ tạo thành phẩm trên Odoo. Hạt điều 120 g của cửa hàng vẫn làm như bình thường.'
-              : 'No "Send to stock" for OEM products: the bulk goes to the OEM tracker, not to shop stock. Packaging (assistants) creates the finished product in Odoo. Shop products (e.g. cashew 120 g) keep the usual flow.'}
         </div>
       </div>
 
@@ -171,8 +163,8 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   <button key={r.key} onClick={() => setGk(r.key)}
                     className="rounded-xl px-3 py-3 text-sm font-semibold text-left leading-tight"
                     style={gk === r.key ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#111827', border: '1px solid #EFE9DC' }}>
-                    <span className="block text-[9px] font-bold uppercase mb-0.5" style={{ opacity: 0.6 }}>{r.kgUnit ? 'OEM' : 'MM'}</span>
                     {r.name}
+                    <span className="block text-[10px] font-normal mt-1" style={{ opacity: 0.65 }}>{r.skus.join(' · ')}</span>
                   </button>
                 ))}
               </div>
