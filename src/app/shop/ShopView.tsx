@@ -12,6 +12,7 @@ import { thumb } from '@/lib/img-thumb';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-report-pdf';
 import { groupByCategory } from '@/lib/group-by-category';
+import { isOemSku } from '@/lib/oem';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
@@ -645,7 +646,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       try {
         const res = await fetch(`/api/lab/products-search?q=${encodeURIComponent(q)}`);
         const data = await res.json();
-        setLossResults(Array.isArray(data) ? data : []);
+        // OEM orders (MM-/OEM-) are never shop products — hidden from the shop loss picker (lib/oem.ts).
+        setLossResults(Array.isArray(data) ? data.filter((p: any) => !isOemSku(p?.sku)) : []);
       } catch { setLossResults([]); }
       setLossSearching(false);
     }, 250);

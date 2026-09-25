@@ -7,6 +7,7 @@ import { sendShopPush, sendAdminPush, awaitPush, type PushPayload } from '@/lib/
 import { revalidatePath } from 'next/cache';
 import { canonicalizePhone } from '@/lib/phone-format';
 import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
+import { isOemSku } from '@/lib/oem';
 
 // district (Axel, 2026-09-15): optional, free client input validated against the known list —
 // never blocks the order if it's missing or garbage, just silently stored as null so a stale
@@ -120,6 +121,7 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
   const all: OnlineProduct[] = (vars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
     if (!f) return [];
+    if (isOemSku(v.sku)) return []; // OEM orders (MM-/OEM-) are never sold online — lib/oem.ts
     const label = v.label && v.label !== 'Standard' ? v.label : '';
     const orderName = v.sku ? nameBySku[v.sku] : null;
     const nameVi = orderName || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : (v.sku || ''));

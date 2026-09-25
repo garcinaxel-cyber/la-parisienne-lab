@@ -128,7 +128,7 @@ export interface CreateShopScrapResult {
 // 2026-08-27) — everything past "which location_id" is identical, including the insufficient-qty
 // wizard handling (see the 2026-08-27 fix note below), so this is the one place either caller
 // hits, never duplicated.
-async function createScrapAtLocation(
+export async function createScrapAtLocation(
   locationId: number,
   input: { productId: number; uomId: number; qty: number; reasonTagIds: number[]; origin: string },
 ): Promise<CreateShopScrapResult> {

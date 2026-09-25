@@ -4,6 +4,7 @@ import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
 import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 import { canonicalizePhone } from '@/lib/phone-format';
 import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
+import { isOemSku } from '@/lib/oem';
 
 // district (Axel, 2026-09-15): optional, validated against the known list — never blocks the
 // order if missing or unrecognized, just silently stored as null (see online-orders/actions.ts
@@ -77,6 +78,7 @@ export async function searchShopProductsAction(token: string, query: string): Pr
   const all: ShopProduct[] = (vars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
     if (!f) return [];
+    if (isOemSku(v.sku)) return []; // OEM orders (MM-/OEM-) are never shop products — lib/oem.ts
     const label = v.label && v.label !== 'Standard' ? v.label : '';
     const orderName = v.sku ? nameBySku[v.sku] : null;
     const nameVi = orderName

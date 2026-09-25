@@ -15,6 +15,7 @@ import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTrans
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
 import { getActiveEventById, getActiveEventByPin, hasAnyActiveEvent, type EventShop } from '@/lib/event-shops';
+import { isOemSku } from '@/lib/oem';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -1024,6 +1025,7 @@ async function fetchProductionCatalog(excludeInactiveVariants = false): Promise<
   return (vars ?? []).flatMap((v: any) => {
     const f = ficheById[v.fiche_id];
     if (!f || !v.sku) return [];
+    if (isOemSku(v.sku)) return []; // OEM orders (MM-/OEM-) are never shop products — lib/oem.ts
     const label = v.label && v.label !== 'Standard' ? v.label : '';
     const name = nameBySku[v.sku] || (f.name_vi ? (label ? `${f.name_vi} · ${label}` : f.name_vi) : v.sku);
     return [{ sku: v.sku as string, name, category: f.category || STOCK_COUNT_FALLBACK_CATEGORY, imageUrl: v.image_url ?? f.image_url ?? null }];

@@ -13,6 +13,7 @@
 // not once per page view.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooConfigured } from '@/lib/odoo';
+import { OemAwareExcludedSet } from '@/lib/oem';
 
 function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
@@ -68,8 +69,8 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
     if (!orders.length) return { ...res, ok: true };
 
     const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
-    const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
-    if (!excludedSet.size) return { ...res, ok: true };
+    // OEM SKUs (MM-/OEM-) count as excluded too — see lib/oem.ts.
+    const excludedSet = new OemAwareExcludedSet((excludedRows ?? []).map((r: any) => r.sku));
 
     const salesRefs = orders.filter(o => o.source_type === 'sales_order').map(o => o.order_ref);
     const replRefs = orders.filter(o => o.source_type === 'replenishment').map(o => o.order_ref);

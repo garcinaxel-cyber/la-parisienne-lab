@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { persistImportsFromLines } from '@/lib/import-persist';
 import { createFicheFromSku, notifyNewOrdersPushAction } from './actions';
 import { excludeSkuAction } from '../odoo-changes-actions';
+import { OemAwareExcludedSet, isOemSku } from '@/lib/oem';
 
 type Step = 'upload' | 'preview' | 'saving' | 'done';
 
@@ -100,8 +101,9 @@ export default function ImportView() {
     const { data: exclRows } = rawSkusForExcl.length
       ? await supabase.from('lab_excluded_skus').select('sku').in('sku', rawSkusForExcl)
       : { data: [] as any[] };
-    const excludedPermanent = new Set((exclRows ?? []).map((r: any) => r.sku));
-    if (excludedPermanent.size > 0) {
+    // + OEM SKUs (MM-/OEM-, lib/oem.ts): never a production card either.
+    const excludedPermanent = new OemAwareExcludedSet((exclRows ?? []).map((r: any) => r.sku));
+    if (excludedPermanent.size > 0 || rawSkusForExcl.some(isOemSku)) {
       parseRaw = parseRaw.map(r => ({ ...r, rawLines: r.rawLines.filter((l: any) => !excludedPermanent.has(l.product_sku)) }));
     }
 

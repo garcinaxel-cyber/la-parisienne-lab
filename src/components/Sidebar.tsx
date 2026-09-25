@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -32,6 +32,9 @@ const NAV = [
   // LAB's own scrap/loss report (2026-08-27, Axel: "fonction de scrap... pour les produits casse
   // du lab") — same visibility as the other operational items above, no adminOnly.
   { href: '/lab-scrap', icon: Trash2,         labelVi: 'Hao hụt Lab', labelEn: 'Lab scrap', family: 'production' },
+  // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake + Tianhe Food. The page itself only
+  // lets admin/lab_manager/assistant in; hideFor just keeps the link away from the other roles.
+  { href: '/oem-orders', icon: Factory,       labelVi: 'Đơn hàng OEM', labelEn: 'OEM Orders', family: 'production', hideFor: ['sales', 'viewer', 'shop', 'online_sales', 'shop_manager'] as UserRole[] },
   { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
   // Online-sales interface (2026-09-06): admin entry point to the online seller's space
   // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).

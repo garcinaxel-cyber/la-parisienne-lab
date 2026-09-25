@@ -78,6 +78,13 @@ declare module 'lucide-react' {
   export const ClipboardCheck: LucideIcon;
   export const CircleAlert: LucideIcon;
   export const Box: LucideIcon;
+  // OEM Orders tracker (2026-09-25)
+  export const Calculator: LucideIcon;
+  export const Lock: LucideIcon;
+  export const Factory: LucideIcon;
+  export const Boxes: LucideIcon;
+  export const Wheat: LucideIcon;
+  export const Settings2: LucideIcon;
   export const LayoutGrid: LucideIcon;
   export const Pencil: LucideIcon;
   export const History: LucideIcon;

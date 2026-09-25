@@ -5,9 +5,10 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { isOemSku } from '@/lib/oem';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
@@ -412,7 +413,10 @@ export default function StationView({
         if (selectedCategory) params.set('category', selectedCategory);
         const res = await fetch(`/api/lab/products-search?${params.toString()}`);
         const data = await res.json();
-        setExtraResults(Array.isArray(data) ? data : []);
+        // OEM products (MM-/OEM-, lib/oem.ts) listed first so they're easy to spot — order of
+        // every other product unchanged (stable sort).
+        const list: SearchProduct[] = Array.isArray(data) ? data : [];
+        setExtraResults([...list.filter(p => isOemSku(p.sku)), ...list.filter(p => !isOemSku(p.sku))]);
       } catch {
         setExtraResults([]);
       } finally {
@@ -835,6 +839,30 @@ export default function StationView({
 
   async function saveExtra() {
     if (!extraProduct || extraQty < 1) return;
+    // OEM orders (MM-/OEM- SKUs — lib/oem.ts): the bulk weight goes ONLY to the OEM Orders
+    // tracker (lab_mm_production_log). No production card is created, so nothing here can ever
+    // be "sent to stock" or counted as shop production — the finished product is created in
+    // Odoo later, when the assistants pack it. Every other product keeps the path below as is.
+    const oemSku = extraVariant?.sku ?? extraProduct.sku ?? null;
+    if (isOemSku(oemSku)) {
+      const kg = canWeighExtra ? extraWeightKgNum : extraQty * ((extraVariantWeightG ?? 0) / 1000);
+      if (!Number.isFinite(kg) || kg <= 0) return;
+      setSavingExtra(true);
+      const supabase = createClient();
+      const { data: item } = await supabase.from('lab_mm_order_items').select('group_key').eq('sku', oemSku).maybeSingle();
+      const { error } = await supabase.from('lab_mm_production_log').insert({
+        prod_date: today,
+        group_key: item?.group_key ?? oemSku,
+        sku: oemSku,
+        weight_kg: Math.round(kg * 1000) / 1000,
+        created_by: userId,
+        created_by_name: userName,
+      });
+      setSavingExtra(false);
+      if (error) { alert(lang === 'vi' ? `Lỗi: ${error.message}` : `Error: ${error.message}`); return; }
+      closeExtraModal();
+      return;
+    }
     setSavingExtra(true);
     const importId = assignments[0]?.import_id;
     if (!importId) { setSavingExtra(false); return; }
@@ -1230,6 +1258,14 @@ export default function StationView({
                 style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: pushState === 'on' ? '#7CD98C' : 'rgba(255,255,255,0.5)' }}>
                 <Bell size={14} />
               </button>
+            )}
+            {team === 'hung' && (
+              // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung only.
+              <Link href="/station/oem" title={lang === 'vi' ? 'Đơn hàng OEM' : 'OEM Orders'}
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
+                <Factory size={14} />
+              </Link>
             )}
             <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
               className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
@@ -2755,6 +2791,11 @@ export default function StationView({
                                 }>
                                 {p.is_lab_only ? 'Lab' : 'Catalogue'}
                               </span>
+                              {isOemSku(p.sku) && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                                  {p.sku?.startsWith('MM-') ? 'Maison Mooncake' : 'OEM'}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </button>

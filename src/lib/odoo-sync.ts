@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooDateTimeToLocal, labTodayUtcThreshold } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
+import { OemAwareExcludedSet } from '@/lib/oem';
 
 // Sales-order shop_name was being written verbatim from Odoo's partner display name
 // (order.partner_id[1], e.g. "MOON FLOWER" — Odoo's own casing) instead of the app's
@@ -195,8 +196,9 @@ for (const p of products) {
 }
 
 // Permanently excluded SKUs (packaging, drinks, stickers…) — never imported
+// + OEM SKUs (MM-/OEM-, see lib/oem.ts): routed to the non-production bucket, never a card.
 const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
-const excludedSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+const excludedSet = new OemAwareExcludedSet((excludedRows ?? []).map((r: any) => r.sku));
 
 // ── 4. Team resolution from lab fiches (SKU → variant → fiche.teams[0]) ──
 const allSkus = Array.from(new Set(Object.values(skuByProductId).map(p => p.sku).filter(Boolean)));

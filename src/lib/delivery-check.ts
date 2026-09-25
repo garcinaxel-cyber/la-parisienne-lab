@@ -8,6 +8,7 @@
 // per order, multiplied across every order on the category view) — Axel asked to piggyback
 // on the existing cron instead of mobilizing a separate on-demand API call (2026-08-08).
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { OemAwareExcludedSet } from '@/lib/oem';
 
 export type SourceType = 'sales_order' | 'replenishment';
 
@@ -138,7 +139,7 @@ export async function ensureDeliveryOrderChecklist(
   const { data: excludedRows } = producibleSkus.length
     ? await supabase.from('lab_excluded_skus').select('sku').in('sku', producibleSkus)
     : { data: [] as any[] };
-  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+  const excludedSkuSet = new OemAwareExcludedSet((excludedRows ?? []).map((r: any) => r.sku)); // + OEM SKUs (lib/oem.ts)
 
   // Self-heal: rows created before this resolution logic existed (or before their fiche had
   // a category set) got stuck with product_category = null forever, since the insert below
@@ -376,7 +377,7 @@ export async function ensureDeliveryOrderChecklistsBatch(
   const { data: excludedRows } = allProducibleSkus.length
     ? await supabase.from('lab_excluded_skus').select('sku').in('sku', allProducibleSkus)
     : { data: [] as any[] };
-  const excludedSkuSet = new Set((excludedRows ?? []).map((r: any) => r.sku));
+  const excludedSkuSet = new OemAwareExcludedSet((excludedRows ?? []).map((r: any) => r.sku)); // + OEM SKUs (lib/oem.ts)
 
   // Per-order computation — IDENTICAL logic to ensureDeliveryOrderChecklist (self-heal,
   // exclusion routing, packaging merge), just sourced from the batch-fetched maps above instead
