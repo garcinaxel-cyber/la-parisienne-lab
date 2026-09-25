@@ -75,7 +75,12 @@ export function derive(items: Item[], prod: ProdLog[], pack: PackLog[], deliveri
   return d;
 }
 
-export type Group = { key: string; name: string; items: Item[] };
+export type Group = { key: string; name: string; title: string; skus: string[]; items: Item[] };
+// Real product name without the pack size ("Bánh quy socola nho khô 80g" → "Bánh quy socola nho khô").
+export const baseName = (n: string) => n.replace(/\s*\(kg\)\s*$/i, '').replace(/\s+\d+\s*g$/i, '').trim();
+export const GOLD = '#B8893B';
+export const CREAM = '#F7F5F0';
+export const LINE = '#EFE9DC';
 export type Client = { name: string; groups: Group[] };
 export function byClient(items: Item[]): Client[] {
   const m = new Map<string, Map<string, Item[]>>();
@@ -84,5 +89,5 @@ export function byClient(items: Item[]): Client[] {
     if (!m.has(c)) m.set(c, new Map());
     const g = m.get(c)!; if (!g.has(it.group_key)) g.set(it.group_key, []); g.get(it.group_key)!.push(it);
   }
-  return Array.from(m.entries()).map(([name, g]) => ({ name, groups: Array.from(g.entries()).map(([key, its]) => ({ key, name: its[0].group_name, items: its })) }));
+  return Array.from(m.entries()).map(([name, g]) => ({ name, groups: Array.from(g.entries()).map(([key, its]) => ({ key, name: its[0].group_name, title: baseName(its[0].product_name), skus: its.map(i => i.sku), items: its })) }));
 }

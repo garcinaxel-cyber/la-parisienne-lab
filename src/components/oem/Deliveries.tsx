@@ -47,7 +47,21 @@ export default function Deliveries({ deliveries, items, d, showCheckLink, L }: {
            'One Odoo sales order per delivery → checked in the usual Delivery check. This tab only reads the result — nobody enters deliveries twice.')}
         {showCheckLink && <> <Link href="/delivery-check" className="inline-flex items-center gap-0.5 font-bold underline">{L('Mở kiểm tra giao hàng', 'Open delivery check')}<ExternalLink size={11} /></Link></>}
       </Banner>
-      <Title>{L('Giao hàng', 'Deliveries')}</Title>
+      <div className="space-y-1.5">
+        <Title>{L('Hàng sẵn sàng giao', 'Ready to deliver')}</Title>
+        <Card className="overflow-hidden">
+          {items.map((i, k) => {
+            const r = Math.max(0, d.fgTheo[i.sku] ?? 0);
+            return (
+              <div key={i.sku} className="flex items-center justify-between gap-2 px-3.5 py-2 text-sm" style={{ borderTop: k ? '1px solid #EFE9DC' : undefined }}>
+                <span className="min-w-0"><span className="block truncate font-semibold">{i.product_name}</span><span className="block text-[11px]" style={{ color: FAINT }}>{i.sku}</span></span>
+                <b className="tabular-nums shrink-0" style={{ color: r > 0 ? '#111827' : FAINT }}>{fmt(r, i.unit === 'kg' ? 1 : 0)} {unitLabel(i, L)}</b>
+              </div>
+            );
+          })}
+        </Card>
+      </div>
+      <Title>{L('Các lần giao', 'Deliveries')}</Title>
       {!orders.length ? <Empty text={L('Chưa có đơn giao OEM nào. Đang chờ lịch giao hàng.', 'No OEM delivery order yet — waiting for the delivery schedule.')} /> : (
         <Card className="overflow-hidden">
           {orders.map((o, oi) => {
