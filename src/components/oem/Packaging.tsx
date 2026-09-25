@@ -1,11 +1,13 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { Loader2, Check, X, Pencil, Trash2, Lock, Send, Minus, Plus, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
-import { Card, Chip, Btn, inputStyle } from './ui';
-import { fmt, dmy, itemKg, unitLabel, localToday, GREEN, GOLD, MUTED, FAINT, LINE, type Client, type Derived, type LFn, type PackLog, type Item, type Group } from './model';
+import { Card, Chip, Btn, ExprInput, inputStyle } from './ui';
+import { evalQty, fmt, dmy, itemKg, unitLabel, localToday, GREEN, GOLD, MUTED, FAINT, LINE, type Client, type Derived, type LFn, type PackLog, type Item, type Group } from './model';
 import { savePackagingAction, pushPackagingToOdooAction, updatePackagingAction, deletePackagingAction } from '@/lib/oem-actions';
 
-const num = (s: string | undefined) => Number((s ?? '').replace(',', '.')) || 0;
+// quantity fields accept "12+3" / "12×24+7" (model.ts evalQty); invalid → 0 here, and Save is blocked
+const num = (s: string | undefined) => { const v = evalQty(s); return v !== null && !Number.isNaN(v) ? v : 0; };
+const isBad = (s: string | undefined) => Number.isNaN(evalQty(s) as number);
 
 // "Today" — the assistants' daily screen (Axel, 2026-09-25 redesign): only products with baked
 // bulk are open, −/+ and quick amounts for phones, a loss button per product, a sticky save bar
@@ -40,7 +42,8 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
   ];
   const bags = packed.filter(([s]) => bySku[s].unit === 'bag').reduce((a, [, v]) => a + num(v), 0);
   const kgTotal = packed.reduce((a, [s, v]) => a + itemKg(bySku[s], num(v)), 0);
-  const canSave = !saving && !over.length && (packed.length > 0 || scraps.length > 0);
+  const anyBad = [...Object.values(qty), ...Object.values(lossBulk), ...Object.values(lossBag)].some(isBad);
+  const canSave = !saving && !over.length && !anyBad && (packed.length > 0 || scraps.length > 0);
 
   const setQ = (sku: string, v: number) => setQty(q => ({ ...q, [sku]: v > 0 ? String(Math.round(v * 1000) / 1000) : '' }));
   const maxFor = (g: Group, i: Item) => {
@@ -92,8 +95,7 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold w-14 shrink-0" style={{ color: '#374151' }}>{i.unit === 'kg' ? 'kg' : `${fmt(i.unit_weight_g, 0)} g`}</span>
                 <button onClick={() => setQ(i.sku, Math.max(0, v - step))} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="minus"><Minus size={16} /></button>
-                <input inputMode="decimal" placeholder="0" value={qty[i.sku] ?? ''} onChange={e => setQty(q => ({ ...q, [i.sku]: e.target.value.replace(/[^0-9.,]/g, '') }))}
-                  className="flex-1 min-w-0 h-10 rounded-xl px-3 text-lg font-bold text-center tabular-nums" style={inputStyle} />
+                <ExprInput big className="flex-1 min-w-0" value={qty[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setQty(q => ({ ...q, [i.sku]: v }))} />
                 <button onClick={() => setQ(i.sku, v + step)} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="plus"><Plus size={16} /></button>
                 <span className="text-xs w-9 shrink-0" style={{ color: MUTED }}>{unitLabel(i, L)}</span>
               </div>
@@ -120,13 +122,13 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
           <div className="rounded-xl p-2.5 space-y-2" style={{ backgroundColor: '#FEF7F7', border: '1px solid #FBE3E3' }}>
             <div className="flex items-center gap-2 text-xs">
               <span className="flex-1" style={{ color: '#374151' }}>{L('Bán TP vỡ (trước khi gói)', 'Broken bulk (before packing)')}</span>
-              <input inputMode="decimal" placeholder="0" value={lossBulk[g.key] ?? ''} onChange={e => setLossBulk(x => ({ ...x, [g.key]: e.target.value.replace(/[^0-9.,]/g, '') }))} className="w-20 h-8 rounded-lg px-2 text-sm font-bold text-right" style={inputStyle} />
+              <ExprInput className="w-36" value={lossBulk[g.key] ?? ''} unit="kg" onChange={v => setLossBulk(x => ({ ...x, [g.key]: v }))} />
               <span className="w-9" style={{ color: MUTED }}>kg</span>
             </div>
             {g.items.map(i => (
               <div key={i.sku} className="flex items-center gap-2 text-xs">
                 <span className="flex-1" style={{ color: '#374151' }}>{L('Gói lỗi', 'Faulty')} {i.unit === 'kg' ? '' : `${fmt(i.unit_weight_g, 0)} g`} {L('(sau khi gói)', '(after packing)')}</span>
-                <input inputMode="decimal" placeholder="0" value={lossBag[i.sku] ?? ''} onChange={e => setLossBag(x => ({ ...x, [i.sku]: e.target.value.replace(/[^0-9.,]/g, '') }))} className="w-20 h-8 rounded-lg px-2 text-sm font-bold text-right" style={inputStyle} />
+                <ExprInput className="w-36" value={lossBag[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setLossBag(x => ({ ...x, [i.sku]: v }))} />
                 <span className="w-9" style={{ color: MUTED }}>{unitLabel(i, L)}</span>
               </div>
             ))}
@@ -161,12 +163,13 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
           )}
           {msg && <div className="text-sm font-bold rounded-xl px-3 py-2.5" style={msg.ok ? { backgroundColor: '#ECFDF5', color: '#047857' } : { backgroundColor: '#FEF2F2', color: '#DC2626' }}>{msg.ok ? '✓ ' : ''}{msg.text}</div>}
 
-          {(packed.length > 0 || scraps.length > 0) && (
+          {(packed.length > 0 || scraps.length > 0 || anyBad) && (
             <div className="sticky bottom-3 z-30">
               <div className="rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg" style={{ backgroundColor: GREEN, color: '#fff' }}>
                 <div className="flex-1 min-w-0 text-sm">
                   <div className="font-bold tabular-nums">{packed.length} {L('SP', 'products')} · {fmt(bags, 0)} {L('gói', 'bags')}{kgTotal ? ` · ${fmt(kgTotal, 1)} kg` : ''}</div>
                   {scraps.length > 0 && <div className="text-[11px] opacity-80">{scraps.length} {L('hao hụt', 'loss line(s)')}</div>}
+                  {anyBad && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Có ô nhập không hợp lệ', 'A quantity is not valid')}</div>}
                 </div>
                 <button onClick={() => setConfirm(true)} disabled={!canSave} className="rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40" style={{ backgroundColor: '#C9A84C', color: GREEN }}>
                   {L('Lưu', 'Save')}

@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { GREEN, BORDER, MUTED } from './model';
+import { GREEN, BORDER, MUTED, evalQty, hasOp, cleanExpr } from './model';
 
 export function Bar({ pct, color = GREEN, h = 2 }: { pct: number; color?: string; h?: number }) {
   return (
@@ -39,5 +39,30 @@ export function Btn({ children, onClick, disabled, primary, danger }: { children
     <button onClick={onClick} disabled={disabled} className="inline-flex items-center justify-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 disabled:opacity-40" style={style}>
       {children}
     </button>
+  );
+}
+
+// Quantity input with the mini calculator: "+" and "×" keys (phone keypads have neither),
+// the result shown under the field while an operation is typed, red border when invalid.
+export function ExprInput({ value, onChange, unit, decimal = true, className = '', big = false, placeholder = '0' }: {
+  value: string; onChange: (v: string) => void; unit?: string; decimal?: boolean; className?: string; big?: boolean; placeholder?: string;
+}) {
+  const v = evalQty(value);
+  const bad = v !== null && Number.isNaN(v);
+  const add = (op: string) => onChange(((value ?? '').replace(/[+×]+$/, '') || '') + op);
+  const key = 'w-7 h-7 shrink-0 rounded-md text-sm font-bold flex items-center justify-center';
+  return (
+    <span className={`inline-flex flex-col items-stretch ${className}`}>
+      <span className="flex items-center gap-1">
+        <input inputMode={decimal ? 'decimal' : 'numeric'} placeholder={placeholder} value={value}
+          onChange={e => onChange(cleanExpr(e.target.value))}
+          className={`min-w-0 flex-1 rounded-lg px-2 ${big ? 'h-10 text-lg text-center' : 'h-8 text-sm text-right'} font-bold tabular-nums`}
+          style={{ border: `1px solid ${bad ? '#DC2626' : '#D1D5DB'}`, backgroundColor: bad ? '#FEF2F2' : '#fff' }} />
+        <button type="button" tabIndex={-1} onClick={() => add('+')} className={key} style={{ backgroundColor: '#F3F4F6', color: '#374151' }} aria-label="plus">+</button>
+        <button type="button" tabIndex={-1} onClick={() => add('×')} className={key} style={{ backgroundColor: '#F3F4F6', color: '#374151' }} aria-label="times">×</button>
+      </span>
+      {bad ? <span className="text-[10px] font-semibold text-right" style={{ color: '#DC2626' }}>✕</span>
+        : hasOp(value) && v !== null ? <span className="text-[11px] font-bold text-right tabular-nums" style={{ color: '#047857' }}>= {v.toLocaleString('en-US', { maximumFractionDigits: 3 })}{unit ? ` ${unit}` : ''}</span> : null}
+    </span>
   );
 }

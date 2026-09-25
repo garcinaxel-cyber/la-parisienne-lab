@@ -2,8 +2,8 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Check, Copy, Calculator } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
-import { Card, Title, Banner, Chip, Btn, inputCls, inputStyle } from './ui';
-import { fmt, dmy, mondayOf, localToday, MUTED, FAINT, GREEN, type Derived, type Ingredient, type Item, type LFn, type ProdLog, type RmCount, type Usage } from './model';
+import { Card, Title, Banner, Chip, Btn, ExprInput, inputCls, inputStyle } from './ui';
+import { fmt, dmy, mondayOf, localToday, MUTED, FAINT, GREEN, type Derived, type Ingredient, type Item, type LFn, type ProdLog, type RmCount, type Usage , evalQty } from './model';
 
 // Inventory → Raw materials. Weekly count of the 29 ingredients; the app estimates today's stock
 // (count − what Hung baked since, per the recipes) and tells how much can still be made:
@@ -63,7 +63,9 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
   const [val, setVal] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
-  const filled = Object.entries(val).filter(([, v]) => v.trim() !== '' && !isNaN(Number(v.replace(',', '.'))));
+  // counts accept "12+3+50" / "12×24+7" (evalQty); an invalid field blocks the save
+  const filled = Object.entries(val).filter(([, v]) => { const x = evalQty(v); return x !== null && !Number.isNaN(x); });
+  const anyBad = Object.values(val).some(v => Number.isNaN(evalQty(v) as number));
   const lastWeek = Object.values(latest).reduce<string | null>((a, c) => (!a || c.week_start > a ? c.week_start : a), null);
   const lastBy = lastWeek ? Array.from(new Set(counts.filter(c => c.week_start === lastWeek).map(c => c.created_by_name).filter(Boolean))).join(', ') : '';
 
@@ -71,7 +73,7 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
     setBusy(true); setMsg(null);
     await supabase.from('lab_mm_rm_inventory').delete().eq('week_start', week).in('ingredient_code', filled.map(([c]) => c));
     const { error } = await supabase.from('lab_mm_rm_inventory').insert(filled.map(([code, v]) => ({
-      week_start: week, ingredient_code: code, qty: Number(v.replace(',', '.')), created_by: userId, created_by_name: userName,
+      week_start: week, ingredient_code: code, qty: evalQty(v) as number, created_by: userId, created_by_name: userName,
     })));
     setBusy(false);
     if (error) { setMsg({ ok: false, t: error.message }); return; }
@@ -150,8 +152,7 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
               <span className="col-span-3 sm:col-span-2 flex justify-end items-center gap-1.5">
                 {cov != null && <Chip tone={cov >= 100 ? 'green' : cov >= 50 ? 'amber' : 'red'}>{fmt(Math.min(cov, 999), 0)}%</Chip>}
                 {canCount && (
-                  <input inputMode="decimal" placeholder="—" value={val[ing.code] ?? ''} onChange={ev => setVal(v => ({ ...v, [ing.code]: ev.target.value.replace(/[^0-9.,]/g, '') }))}
-                    className="w-20 rounded-lg px-2 py-1 text-sm font-bold text-right" style={inputStyle} />
+                  <ExprInput className="w-40" placeholder="—" value={val[ing.code] ?? ''} unit={ing.unit} onChange={x => setVal(v => ({ ...v, [ing.code]: x }))} />
                 )}
               </span>
             </div>
@@ -159,7 +160,7 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
         })}
         {canCount && (
           <div className="flex flex-wrap items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
-            <Btn primary onClick={save} disabled={busy || !filled.length}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {filled.length ? `(${filled.length})` : ''}</Btn>
+            <Btn primary onClick={save} disabled={busy || !filled.length || anyBad}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {filled.length ? `(${filled.length})` : ''}</Btn>
             <Btn onClick={copyLast} disabled={!lastWeek}><Copy size={13} />{L('Chép tuần trước', 'Copy last week')}</Btn>
             {msg && <span className="text-xs font-semibold" style={{ color: msg.ok ? '#059669' : '#DC2626' }}>{msg.t}</span>}
           </div>

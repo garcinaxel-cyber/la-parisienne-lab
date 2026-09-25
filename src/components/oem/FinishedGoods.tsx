@@ -2,8 +2,8 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Check } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
-import { Card, Title, Banner, Chip, Btn, inputCls, inputStyle } from './ui';
-import { fmt, dmy, unitLabel, localToday, MUTED, FAINT, GREEN, type Client, type Derived, type FgCount, type Item, type LFn } from './model';
+import { Card, Title, Banner, Chip, Btn, ExprInput, inputCls, inputStyle } from './ui';
+import { fmt, dmy, unitLabel, localToday, MUTED, FAINT, GREEN, type Client, type Derived, type FgCount, type Item, type LFn , evalQty } from './model';
 
 // Inventory → Finished goods. Theoretical stock = packed − delivered − faulty bags. Weekly count in
 // bags (kg for cashews); the gap vs theoretical is flagged. Nothing here changes operations.
@@ -20,7 +20,9 @@ export default function FinishedGoods({ clients, items, d, counts, canCount, use
   const last: Record<string, FgCount> = {};
   for (const c of counts) if (!last[c.sku] || c.count_date > last[c.sku].count_date || (c.count_date === last[c.sku].count_date && c.created_at > last[c.sku].created_at)) last[c.sku] = c;
   const dates = Array.from(new Set(counts.map(c => c.count_date))).sort().reverse().slice(0, 6);
-  const filled = Object.entries(val).filter(([, v]) => v.trim() !== '' && !isNaN(Number(v.replace(',', '.'))));
+  // counts accept "12+3+50" / "12×24+7" (evalQty); an invalid field blocks the save
+  const filled = Object.entries(val).filter(([, v]) => { const x = evalQty(v); return x !== null && !Number.isNaN(x); });
+  const anyBad = Object.values(val).some(v => Number.isNaN(evalQty(v) as number));
 
   async function save() {
     setBusy(true); setMsg(null);
@@ -28,7 +30,7 @@ export default function FinishedGoods({ clients, items, d, counts, canCount, use
     const skus = filled.map(([s]) => s);
     await supabase.from('lab_mm_fg_counts').delete().eq('count_date', date).in('sku', skus);
     const { error } = await supabase.from('lab_mm_fg_counts').insert(filled.map(([sku, v]) => ({
-      count_date: date, sku, qty_counted: Number(v.replace(',', '.')), qty_theoretical: Math.round((d.fgTheo[sku] ?? 0) * 1000) / 1000,
+      count_date: date, sku, qty_counted: evalQty(v) as number, qty_theoretical: Math.round((d.fgTheo[sku] ?? 0) * 1000) / 1000,
       created_by: userId, created_by_name: userName,
     })));
     setBusy(false);
@@ -80,8 +82,7 @@ export default function FinishedGoods({ clients, items, d, counts, canCount, use
                       </span>
                     )}
                     {canCount && (
-                      <input inputMode="decimal" placeholder="—" value={val[i.sku] ?? ''} onChange={e => setVal(v => ({ ...v, [i.sku]: e.target.value.replace(/[^0-9.,]/g, '') }))}
-                        className="w-20 rounded-lg px-2 py-1 text-sm font-bold text-right" style={inputStyle} />
+                      <ExprInput className="w-40" placeholder="—" value={val[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={x => setVal(v => ({ ...v, [i.sku]: x }))} />
                     )}
                   </span>
                 </div>
@@ -91,7 +92,7 @@ export default function FinishedGoods({ clients, items, d, counts, canCount, use
         ))}
         {canCount && (
           <div className="flex flex-wrap items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
-            <Btn primary onClick={save} disabled={busy || !filled.length}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu kiểm kê', 'Save count')} {filled.length ? `(${filled.length})` : ''}</Btn>
+            <Btn primary onClick={save} disabled={busy || !filled.length || anyBad}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu kiểm kê', 'Save count')} {filled.length ? `(${filled.length})` : ''}</Btn>
             <span className="text-[11px]" style={{ color: FAINT }}>{L('Đếm số gói (kg với hạt điều). Tồn lý thuyết = đã gói − đã giao − gói lỗi.', 'Count bags (kg for cashews). Theoretical = packed − delivered − faulty bags.')}</span>
             {msg && <span className="text-xs font-semibold" style={{ color: msg.ok ? '#059669' : '#DC2626' }}>{msg.t}</span>}
           </div>
