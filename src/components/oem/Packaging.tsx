@@ -81,15 +81,18 @@ export default function Packaging({ clients, items, d, pack, canPack, canManage,
                     <div key={g.key} className="rounded-xl p-2.5 space-y-1.5" style={{ border: `1px solid ${bad ? '#FCA5A5' : '#F3F4F6'}`, backgroundColor: bad ? '#FEF2F2' : '#FCFBF8' }}>
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-sm font-bold truncate">{g.name}</span>
-                        <span className="text-[11px] shrink-0" style={{ color: bad ? '#DC2626' : MUTED }}>
-                          {L('Bán TP', 'Bulk')}: <b>{fmt(avail - used)}</b> / {fmt(avail)} kg
+                        <span className="text-[11px] shrink-0 text-right" style={{ color: bad ? '#DC2626' : MUTED }}>
+                          {avail <= 0.0005
+                            ? <>{L('Chưa nướng gì', 'Nothing baked yet')}</>
+                            : <>{L('Bán TP còn', 'Bulk available')}: <b>{fmt(avail, 2)} kg</b></>}
+                          {used > 0 && <> · {L('sau khi nhập', 'after this entry')}: <b>{fmt(avail - used, 2)} kg</b></>}
                         </span>
                       </div>
                       {g.items.map(i => (
                         <div key={i.sku} className="flex items-center gap-2">
                           <span className="text-xs flex-1 truncate" style={{ color: '#374151' }}>
                             {i.unit === 'kg' ? 'kg' : `${fmt(i.unit_weight_g, 0)} g`}
-                            {i.unit !== 'kg' && <span style={{ color: FAINT }}> · ≈ {fmt(Math.floor((avail * 1000) / i.unit_weight_g), 0)} {L('gói tối đa', 'bags max')}</span>}
+                            {i.unit !== 'kg' && avail > 0.0005 && <span style={{ color: FAINT }}> · {L('tối đa', 'max')} ≈ {fmt(Math.floor((avail * 1000) / i.unit_weight_g), 0)} {L('gói', 'bags')}</span>}
                           </span>
                           <input inputMode="decimal" placeholder="0" value={qty[i.sku] ?? ''} onChange={e => setQty(q => ({ ...q, [i.sku]: e.target.value.replace(/[^0-9.,]/g, '') }))}
                             className="w-20 rounded-lg px-2 py-1 text-sm font-bold text-right" style={inputStyle} />
@@ -139,7 +142,7 @@ export default function Packaging({ clients, items, d, pack, canPack, canManage,
           <input value={note} onChange={e => setNote(e.target.value)} placeholder={L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className={`w-full ${inputCls}`} style={inputStyle} />
           <div className="flex flex-wrap items-center gap-2">
             <Btn primary onClick={save} disabled={!canSave}>{saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')}</Btn>
-            {over.length > 0 && <span className="text-xs font-semibold" style={{ color: '#DC2626' }}>{L('Vượt quá bán thành phẩm còn lại.', 'More than the bulk available.')}</span>}
+            {over.length > 0 && <span className="text-xs font-semibold" style={{ color: '#DC2626' }}>{L('Không lưu được: nhiều hơn bán thành phẩm Hưng đã nướng', 'Cannot save: more than the bulk Hưng has baked')} ({over.map(g => items.find(i => i.group_key === g)?.group_name ?? g).join(', ')}).</span>}
             {msg && <span className="text-xs font-semibold" style={{ color: msg.ok ? '#059669' : '#DC2626' }}>{msg.text}</span>}
           </div>
           <Banner>

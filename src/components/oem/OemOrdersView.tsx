@@ -82,9 +82,11 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const groupName = useCallback((k: string) => items.find(i => i.group_key === k)?.group_name ?? k, [items]);
   const odooOn = settings.odoo_mo_enabled === 'true';
 
-  const TABS: { key: Tab; icon: any; label: string; manage?: boolean; family: 'ops' | 'inv' | 'cfg' }[] = [
+  // Production (kg) is Hưng's own log: shown on his station and to admin/lab_manager (corrections),
+  // not to the assistants — the baked kg they need is already on the Overview (Axel, 2026-09-25).
+  const TABS: { key: Tab; icon: any; label: string; manage?: boolean; hideAssistant?: boolean; family: 'ops' | 'inv' | 'cfg' }[] = [
     { key: 'overview', icon: Factory, label: L('Tổng quan', 'Overview'), family: 'ops' },
-    { key: 'production', icon: History, label: L('Sản xuất (kg)', 'Production (kg)'), family: 'ops' },
+    { key: 'production', icon: History, label: L('Sản xuất (kg)', 'Production (kg)'), family: 'ops', hideAssistant: true },
     { key: 'packaging', icon: Package, label: L('Đóng gói', 'Packaging'), family: 'ops' },
     { key: 'deliveries', icon: Truck, label: L('Giao hàng', 'Deliveries'), family: 'ops' },
     { key: 'fg', icon: Boxes, label: L('Thành phẩm', 'Finished goods'), family: 'inv' },
@@ -109,7 +111,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       )}
       <div className="flex flex-wrap gap-x-5 gap-y-2 items-end">
         {(['ops', 'inv', 'cfg'] as const).map(fam => {
-          const ts = TABS.filter(t => t.family === fam && (!t.manage || canManage));
+          const ts = TABS.filter(t => t.family === fam && (!t.manage || canManage) && !(t.hideAssistant && role === 'assistant'));
           if (!ts.length) return null;
           return (
             <div key={fam}>
