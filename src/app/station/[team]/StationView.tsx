@@ -1259,14 +1259,6 @@ export default function StationView({
                 <Bell size={14} />
               </button>
             )}
-            {team === 'hung' && (
-              // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung only.
-              <Link href="/station/oem" title={lang === 'vi' ? 'Đơn hàng OEM' : 'OEM Orders'}
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
-                style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
-                <Factory size={14} />
-              </Link>
-            )}
             <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
               className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
@@ -1311,6 +1303,17 @@ export default function StationView({
               </span>
             </button>
           ))}
+          {team === 'hung' && (
+            // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung station only, for
+            // everyone who opens it (chef via /station/me, admin via the QR /station/hung).
+            // A link styled like the tabs: it opens its own page, the station tabs stay untouched.
+            <Link href={`/station/oem?team=${teamSlug}`}
+              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 text-[10px] sm:text-xs font-bold transition-all active:scale-95"
+              style={{ color: '#FFF4CC', borderBottom: '2px solid transparent' }}>
+              <Factory size={14} />
+              <span className="truncate max-w-full">{lang === 'vi' ? 'Đơn OEM' : 'OEM Orders'}</span>
+            </Link>
+          )}
         </div>
       </header>
 

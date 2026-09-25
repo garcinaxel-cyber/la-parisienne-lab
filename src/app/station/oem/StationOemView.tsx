@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Factory } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
@@ -7,10 +8,13 @@ import OemOrdersView from '@/components/oem/OemOrdersView';
 export default function StationOemView(props: { role: string; userId: string | null; userName: string | null }) {
   const { lang, setLang } = useI18n();
   const vi = lang === 'vi';
+  // back to the station the user came from (?team=hung from the QR, or 'me' for the chef)
+  const [back, setBack] = useState('/station/me');
+  useEffect(() => { const t = new URLSearchParams(window.location.search).get('team'); if (t && /^[a-z_]+$/.test(t)) setBack(`/station/${t}`); }, []);
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#F7F5F0' }}>
       <div className="sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 text-white" style={{ backgroundColor: '#1A4731' }}>
-        <Link href="/station/me" className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} aria-label="back">
+        <Link href={back} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} aria-label="back">
           <ArrowLeft size={16} />
         </Link>
         <Factory size={18} />
