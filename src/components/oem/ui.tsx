@@ -44,11 +44,12 @@ export function Btn({ children, onClick, disabled, primary, danger }: { children
 
 // Quantity input with the mini calculator: "+" and "×" keys (phone keypads have neither),
 // the result shown under the field while an operation is typed, red border when invalid.
-export function ExprInput({ value, onChange, unit, decimal = true, className = '', big = false, placeholder = '0' }: {
-  value: string; onChange: (v: string) => void; unit?: string; decimal?: boolean; className?: string; big?: boolean; placeholder?: string;
+export function ExprInput({ value, onChange, unit, decimal = true, integer = false, className = '', big = false, placeholder = '0' }: {
+  value: string; onChange: (v: string) => void; unit?: string; decimal?: boolean; integer?: boolean; className?: string; big?: boolean; placeholder?: string;
 }) {
   const v = evalQty(value);
-  const bad = v !== null && Number.isNaN(v);
+  // integer: bags are whole units — 5.5 bags is refused (Axel, 2026-09-26)
+  const bad = v !== null && (Number.isNaN(v) || (integer && !Number.isInteger(v)));
   const add = (op: string) => onChange(((value ?? '').replace(/[+×]+$/, '') || '') + op);
   const key = 'w-7 h-7 shrink-0 rounded-md text-sm font-bold flex items-center justify-center';
   return (
@@ -61,7 +62,7 @@ export function ExprInput({ value, onChange, unit, decimal = true, className = '
         <button type="button" tabIndex={-1} onClick={() => add('+')} className={key} style={{ backgroundColor: '#F3F4F6', color: '#374151' }} aria-label="plus">+</button>
         <button type="button" tabIndex={-1} onClick={() => add('×')} className={key} style={{ backgroundColor: '#F3F4F6', color: '#374151' }} aria-label="times">×</button>
       </span>
-      {bad ? <span className="text-[10px] font-semibold text-right" style={{ color: '#DC2626' }}>✕</span>
+      {bad ? <span className="text-[10px] font-semibold text-right" style={{ color: '#DC2626' }}>{integer && v !== null && !Number.isNaN(v) ? `✕ ${v} — số nguyên / whole number` : '✕'}</span>
         : hasOp(value) && v !== null ? <span className="text-[11px] font-bold text-right tabular-nums" style={{ color: '#047857' }}>= {v.toLocaleString('en-US', { maximumFractionDigits: 3 })}{unit ? ` ${unit}` : ''}</span> : null}
     </span>
   );

@@ -14,15 +14,18 @@ export default function Overview({ client, d, prod, pack, L }: { client: Client;
   const kgUnit = items.every(i => i.unit === 'kg');
   const u = kgUnit ? 'kg' : L('gói', 'bags');
   const dec = kgUnit ? 1 : 0;
-  const target = client.groups.reduce((s, g) => s + (d.targetKg[g.key] ?? 0), 0);
+  const initial = client.groups.reduce((s, g) => s + (d.targetKg[g.key] ?? 0), 0);
+  const remake = client.groups.reduce((s, g) => s + (d.remakeKg[g.key] ?? 0), 0);
+  const target = client.groups.reduce((s, g) => s + (d.toProduceKg[g.key] ?? 0), 0);
   const baked = client.groups.reduce((s, g) => s + (d.producedKg[g.key] ?? 0), 0);
+  const pendingKg = client.groups.reduce((s, g) => s + (d.pendingKg[g.key] ?? 0), 0);
   const ordered = items.reduce((s, i) => s + i.qty_ordered, 0);
   const packed = items.reduce((s, i) => s + (d.packedQty[i.sku] ?? 0), 0);
   const delivered = items.reduce((s, i) => s + (d.deliveredQty[i.sku] ?? 0), 0);
   const ready = items.reduce((s, i) => s + Math.max(0, d.fgTheo[i.sku] ?? 0), 0);
 
   const tiles = [
-    { label: L('Đã nướng', 'Baked'), val: fmt(baked, 0), unit: 'kg', sub: `${fmt(target ? (baked / target) * 100 : 0, 0)}% · ${fmt(target, 0)} kg`, color: '#5E8C74' },
+    { label: L('Đã nhận (nướng)', 'Received (baked)'), val: fmt(baked, 0), unit: 'kg', sub: `${fmt(target ? (baked / target) * 100 : 0, 0)}% · ${fmt(target, 1)} kg${pendingKg > 0 ? ` · ${L('chờ nhận', 'to receive')} ${fmt(pendingKg, 1)}` : ''}`, color: '#5E8C74' },
     { label: L('Đã gói', 'Packed'), val: fmt(packed, dec), unit: u, sub: `${fmt(ordered ? (packed / ordered) * 100 : 0, 0)}% · ${fmt(ordered, 0)} ${u}`, color: GOLD },
     { label: L('Đã giao', 'Delivered'), val: fmt(delivered, dec), unit: u, sub: `${fmt(ordered ? (delivered / ordered) * 100 : 0, 0)}%`, color: C_DELIV },
     { label: L('Sẵn sàng giao', 'Ready'), val: fmt(ready, dec), unit: u, sub: L('đã gói, chưa giao', 'packed, not delivered'), color: '#374151' },
@@ -40,8 +43,14 @@ export default function Overview({ client, d, prod, pack, L }: { client: Client;
         ))}
       </div>
 
+      <Card className="px-3.5 py-2.5 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs tabular-nums">
+        <span style={{ color: MUTED }}>{L('Mục tiêu ban đầu', 'Initial target')} <b style={{ color: '#111827' }}>{fmt(initial, 1)} kg</b></span>
+        <span style={{ color: MUTED }}>+ {L('làm lại do hao hụt', 're-make (losses)')} <b style={{ color: remake > 0 ? '#B91C1C' : '#111827' }}>{fmt(remake, 1)} kg</b></span>
+        <span style={{ color: MUTED }}>= {L('cần sản xuất', 'to produce')} <b style={{ color: GREEN }}>{fmt(target, 1)} kg</b></span>
+      </Card>
+
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]" style={{ color: MUTED }}>
-        {[[C_DELIV, L('Đã giao', 'Delivered')], [C_PACK, L('Đã gói', 'Packed')], [C_BAKED, L('Đã nướng, chưa gói', 'Baked, not packed')], [C_REST, L('Còn phải làm', 'To do')]].map(([c, l]) => (
+        {[[C_DELIV, L('Đã giao', 'Delivered')], [C_PACK, L('Đã gói', 'Packed')], [C_BAKED, L('Đã nhận, chưa gói', 'Received, not packed')], [C_REST, L('Còn phải làm', 'To do')]].map(([c, l]) => (
           <span key={l} className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: c, border: c === C_REST ? `1px solid ${LINE}` : undefined }} />{l}</span>
         ))}
       </div>
@@ -54,7 +63,8 @@ export default function Overview({ client, d, prod, pack, L }: { client: Client;
 }
 
 function GroupCard({ g, d, open, toggle, prod, pack, L }: { g: Group; d: Derived; open: boolean; toggle: () => void; prod: ProdLog[]; pack: PackLog[]; L: LFn }) {
-  const T = d.targetKg[g.key] ?? 0;
+  const T = d.toProduceKg[g.key] ?? 0;
+  const remake = d.remakeKg[g.key] ?? 0; const pend = d.pendingKg[g.key] ?? 0;
   const delivKg = g.items.reduce((s, i) => s + itemKg(i, d.deliveredQty[i.sku] ?? 0), 0);
   const packKg = g.items.reduce((s, i) => s + itemKg(i, d.packedQty[i.sku] ?? 0), 0);
   const bulk = Math.max(0, d.bulkAvail[g.key] ?? 0);
@@ -82,10 +92,16 @@ function GroupCard({ g, d, open, toggle, prod, pack, L }: { g: Group; d: Derived
           {segs.map((s, i) => s.w > 0 && <div key={i} style={{ width: `${s.w}%`, backgroundColor: s.c }} />)}
         </div>
         <div className="grid grid-cols-3 gap-2 text-[11px] tabular-nums" style={{ color: MUTED }}>
-          <span>{L('Nướng', 'Baked')} <b style={{ color: '#111827' }}>{fmt(d.producedKg[g.key] ?? 0, 0)}</b>/{fmt(T, 0)} kg</span>
+          <span>{L('Nhận', 'Received')} <b style={{ color: '#111827' }}>{fmt(d.producedKg[g.key] ?? 0, 1)}</b>/{fmt(T, 1)} kg</span>
           <span>{L('Bán TP chờ gói', 'Bulk to pack')} <b style={{ color: '#111827' }}>{fmt(bulk, 1)}</b> kg</span>
           <span className="text-right">{L('Giao', 'Deliv.')} <b style={{ color: '#111827' }}>{fmt(delivKg, 0)}</b> kg</span>
         </div>
+        {(remake > 0 || pend > 0) && (
+          <div className="flex flex-wrap gap-x-3 text-[11px] tabular-nums" style={{ color: MUTED }}>
+            {remake > 0 && <span>{L('Mục tiêu', 'Target')} {fmt(d.targetKg[g.key] ?? 0, 1)} + <b style={{ color: '#B91C1C' }}>{fmt(remake, 2)} kg</b> {L('làm lại', 're-make')}</span>}
+            {pend > 0 && <span style={{ color: '#B91C1C' }}>{L('Chờ nhận', 'To receive')} <b>{fmt(pend, 2)} kg</b></span>}
+          </div>
+        )}
       </button>
       <div className="px-3.5 pb-3 space-y-1.5">
         {g.items.map(i => <SkuLine key={i.sku} i={i} d={d} L={L} />)}
@@ -111,7 +127,7 @@ function SkuLine({ i, d, L }: { i: Item; d: Derived; L: LFn }) {
 function DayDetail({ g, prod, pack, L }: { g: Group; prod: ProdLog[]; pack: PackLog[]; L: LFn }) {
   const bySku: Record<string, Item> = {}; for (const i of g.items) bySku[i.sku] = i;
   const days: Record<string, { baked: number; packedKg: number; scrap: number }> = {};
-  for (const l of prod) if (l.group_key === g.key) (days[l.prod_date] ??= { baked: 0, packedKg: 0, scrap: 0 }).baked += Number(l.weight_kg);
+  for (const l of prod) if (l.group_key === g.key && l.status === 'received') (days[l.prod_date] ??= { baked: 0, packedKg: 0, scrap: 0 }).baked += Number(l.received_kg ?? 0);
   for (const p of pack) if (p.group_key === g.key) {
     const e = (days[p.pack_date] ??= { baked: 0, packedKg: 0, scrap: 0 });
     if (p.kind === 'packed' && bySku[p.sku]) e.packedKg += itemKg(bySku[p.sku], Number(p.qty));
@@ -122,7 +138,7 @@ function DayDetail({ g, prod, pack, L }: { g: Group; prod: ProdLog[]; pack: Pack
   return (
     <div className="mt-2 rounded-lg overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
       <div className="grid grid-cols-4 text-[10px] font-bold uppercase px-2.5 py-1.5" style={{ backgroundColor: '#FAF8F3', color: FAINT }}>
-        <span>{L('Ngày', 'Day')}</span><span className="text-right">{L('Nướng', 'Baked')}</span><span className="text-right">{L('Gói', 'Packed')}</span><span className="text-right">{L('Hao hụt', 'Loss')}</span>
+        <span>{L('Ngày', 'Day')}</span><span className="text-right">{L('Nhận', 'Received')}</span><span className="text-right">{L('Gói', 'Packed')}</span><span className="text-right">{L('Hao hụt', 'Loss')}</span>
       </div>
       {rows.map(([day, v]) => (
         <div key={day} className="grid grid-cols-4 text-[11px] px-2.5 py-1.5 tabular-nums" style={{ borderTop: `1px solid ${LINE}` }}>

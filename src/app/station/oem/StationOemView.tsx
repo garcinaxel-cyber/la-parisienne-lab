@@ -8,10 +8,11 @@ import { createClient } from '@/lib/supabase-browser';
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
 // Team Hung only needs one thing: per product, kg baked vs kg to bake. Packaging, deliveries and
 // inventories and tracking stay on the office page (/oem-orders, admin + assistants).
-type Row = { key: string; name: string; group: string; target: number; baked: number; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
-type Entry = { id: string; group_key: string; weight_kg: number; created_at: string; created_by_name: string | null };
+type Row = { key: string; name: string; group: string; target: number; remake: number; pending: number; baked: number; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
+type Entry = { id: string; group_key: string; weight_kg: number; created_at: string; created_by_name: string | null; status: string; received_kg: number | null };
 const GREEN = '#1A4731';
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+const fmt1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
 // Real product name without the pack size ("Bánh quy socola nho khô 80g" → "Bánh quy socola nho khô"),
 // so the 80 g / 100 g formats that share one bulk read as one product with both SKUs.
 const baseName = (n: string) => n.replace(/\s*\(kg\)\s*$/i, '').replace(/\s+\d+\s*g$/i, '').trim();
@@ -35,23 +36,36 @@ export default function StationOemView({ role, userId, userName }: { role: strin
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl] = await Promise.all([
+    const [it, pl, pk] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order').eq('is_active', true),
-      supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name').order('created_at', { ascending: false }),
+      supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg').order('created_at', { ascending: false }),
+      supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
     ]);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
     for (const i of it.data ?? []) {
-      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: baseName(i.product_name), group: i.group_name, target: 0, baked: 0, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
+      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: baseName(i.product_name), group: i.group_name, target: 0, remake: 0, pending: 0, baked: 0, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
       r.skus.push(i.sku); if (i.unit !== 'kg') r.weights.push(Number(i.unit_weight_g));
       r.target += i.unit === 'kg' ? Number(i.qty_ordered) : (Number(i.qty_ordered) * Number(i.unit_weight_g)) / 1000;
       r.sort = Math.min(r.sort, i.sort_order);
       m.set(i.group_key, r);
     }
-    for (const l of pl.data ?? []) { const r = m.get(l.group_key); if (r) r.baked += Number(l.weight_kg); }
+    // v2: progress counts RECEIVED kg; declared batches not yet received are shown apart;
+    // losses after reception (broken bulk, faulty/missing bags) are added back to the target.
+    for (const l of pl.data ?? []) {
+      const r = m.get(l.group_key); if (!r) continue;
+      if (l.status === 'received') r.baked += Number(l.received_kg ?? 0); else r.pending += Number(l.weight_kg);
+    }
+    const w: Record<string, { unit: string; g: number }> = {};
+    for (const i of it.data ?? []) w[i.sku] = { unit: i.unit, g: Number(i.unit_weight_g) };
+    for (const p of pk.data ?? []) {
+      const r = m.get(p.group_key); if (!r) continue;
+      if (p.kind === 'scrap_bulk') r.remake += Number(p.qty);
+      else if (w[p.sku]) r.remake += w[p.sku].unit === 'kg' ? Number(p.qty) : (Number(p.qty) * w[p.sku].g) / 1000;
+    }
     setRows(Array.from(m.values()).sort((a, b) => a.sort - b.sort));
     const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); const iso = d.toISOString().slice(0, 10);
-    setToday(((pl.data ?? []) as any[]).filter(l => l.prod_date === iso).map(l => ({ ...l, weight_kg: Number(l.weight_kg) })));
+    setToday(((pl.data ?? []) as any[]).filter(l => l.prod_date === iso).map(l => ({ ...l, weight_kg: Number(l.weight_kg), received_kg: l.received_kg == null ? null : Number(l.received_kg) })));
     setLoading(false);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
@@ -110,7 +124,12 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             {today.map(t => (
               <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
                 <span className="font-semibold">{rows.find(r => r.key === t.group_key)?.name ?? t.group_key}</span>
-                <span><b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.created_by_name ? ` · ${t.created_by_name}` : ''}</span></span>
+                <span className="text-right">
+                  <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#047857' : '#B45309' }}>
+                    {t.status === 'received' ? `${vi ? 'Đã nhận' : 'Received'} ${t.received_kg} kg` : (vi ? 'Chờ trợ lý nhận' : 'Waiting for reception')}
+                  </span>
+                </span>
               </div>
             ))}
           </div>
@@ -119,8 +138,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
           {loading && !rows.length ? (
             <div className="flex justify-center py-10"><Loader2 className="animate-spin" style={{ color: GREEN }} /></div>
           ) : rows.map(r => {
-            const pct = r.target ? Math.min(100, (r.baked / r.target) * 100) : 0;
-            const done = r.target > 0 && r.baked >= r.target;
+            const T = r.target + r.remake;
+            const pct = T ? Math.min(100, (r.baked / T) * 100) : 0;
+            const done = T > 0 && r.baked >= T;
             return (
               // Phone-first (the team works on phones only): name + kg on one line, full-width bar below.
               <div key={r.key} className="px-4 py-3.5 space-y-2" style={{ borderTop: '1px solid #F3F4F6' }}>
@@ -130,7 +150,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                     <span className="block text-[11px] mt-0.5" style={{ color: '#9CA3AF' }}>{r.skus.join(' · ')}</span>
                   </span>
                   <span className="text-[15px] whitespace-nowrap" style={{ color: '#111827' }}>
-                    <b>{fmt(r.baked)}</b><span style={{ color: '#9CA3AF' }}> / {fmt(r.target)} kg</span>
+                    <b>{fmt1(r.baked)}</b><span style={{ color: '#9CA3AF' }}> / {fmt1(T)} kg</span>
                   </span>
                 </div>
                 <div className="flex items-center gap-2.5">
@@ -140,7 +160,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   <span className="w-11 text-right text-sm font-semibold" style={{ color: done ? '#059669' : '#6B7280' }}>{Math.round(pct)}%</span>
                 </div>
                 <div className="text-xs" style={{ color: '#9CA3AF' }}>
-                  {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt(Math.max(0, r.target - r.baked))} kg`}
+                  {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
+                  {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
+                  {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'Chờ nhận' : 'To receive'} {fmt1(r.pending)} kg</span>}
                 </div>
               </div>
             );

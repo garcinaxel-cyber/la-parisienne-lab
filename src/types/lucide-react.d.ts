@@ -79,6 +79,7 @@ declare module 'lucide-react' {
   export const CircleAlert: LucideIcon;
   export const Box: LucideIcon;
   // OEM Orders tracker (2026-09-25)
+  export const Inbox: LucideIcon;
   export const Calculator: LucideIcon;
   export const Lock: LucideIcon;
   export const Factory: LucideIcon;

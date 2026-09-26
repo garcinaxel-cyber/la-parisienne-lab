@@ -2,7 +2,8 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Check, X, Pencil, Trash2, Lock, Send, Minus, Plus, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { Card, Chip, Btn, ExprInput, inputStyle } from './ui';
-import { evalQty, fmt, dmy, itemKg, unitLabel, localToday, GREEN, GOLD, MUTED, FAINT, LINE, type Client, type Derived, type LFn, type PackLog, type Item, type Group } from './model';
+import { evalQty, qtyBad, fmt, dmy, itemKg, unitLabel, localToday, GREEN, GOLD, MUTED, FAINT, LINE, type Client, type Derived, type LFn, type PackLog, type ProdLog, type Item, type Group } from './model';
+import Reception from './Reception';
 import { savePackagingAction, pushPackagingToOdooAction, updatePackagingAction, deletePackagingAction } from '@/lib/oem-actions';
 
 // quantity fields accept "12+3" / "12×24+7" (model.ts evalQty); invalid → 0 here, and Save is blocked
@@ -12,8 +13,8 @@ const isBad = (s: string | undefined) => Number.isNaN(evalQty(s) as number);
 // "Today" — the assistants' daily screen (Axel, 2026-09-25 redesign): only products with baked
 // bulk are open, −/+ and quick amounts for phones, a loss button per product, a sticky save bar
 // with a summary and a confirmation step, then the log grouped by day.
-export default function Packaging({ client, items, d, pack, canPack, canManage, odooOn, userId, reload, L }: {
-  client: Client; items: Item[]; d: Derived; pack: PackLog[]; canPack: boolean; canManage: boolean; odooOn: boolean;
+export default function Packaging({ client, items, d, pack, prod, canPack, canManage, odooOn, userId, reload, L }: {
+  client: Client; items: Item[]; d: Derived; pack: PackLog[]; prod: ProdLog[]; canPack: boolean; canManage: boolean; odooOn: boolean;
   userId: string | null; reload: () => Promise<void>; L: LFn;
 }) {
   const bySku = useMemo(() => Object.fromEntries(items.map(i => [i.sku, i])) as Record<string, Item>, [items]);
@@ -42,7 +43,10 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
   ];
   const bags = packed.filter(([s]) => bySku[s].unit === 'bag').reduce((a, [, v]) => a + num(v), 0);
   const kgTotal = packed.reduce((a, [s, v]) => a + itemKg(bySku[s], num(v)), 0);
-  const anyBad = [...Object.values(qty), ...Object.values(lossBulk), ...Object.values(lossBag)].some(isBad);
+  const isBag = (sku: string) => bySku[sku]?.unit === 'bag';
+  // bags are whole numbers (Axel, 2026-09-26): 5.5 bags is refused; kg (cashews, broken bulk) keep decimals
+  const anyBad = Object.entries(qty).some(([s, v]) => qtyBad(v, isBag(s))) || Object.values(lossBulk).some(v => qtyBad(v, false))
+    || Object.entries(lossBag).some(([s, v]) => qtyBad(v, isBag(s)));
   const canSave = !saving && !over.length && !anyBad && (packed.length > 0 || scraps.length > 0);
 
   const setQ = (sku: string, v: number) => setQty(q => ({ ...q, [sku]: v > 0 ? String(Math.round(v * 1000) / 1000) : '' }));
@@ -55,6 +59,8 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
     if (e.startsWith('bulk:')) { const [, g, a] = e.split(':'); const t = client.groups.find(x => x.key === g)?.title ?? g; return L(`Vượt quá bán thành phẩm của ${t} (${a} kg).`, `More than the bulk left for ${t} (${a} kg).`); }
     if (e === 'locked-odoo') return L('Đã lên Odoo — không sửa được.', 'Already in Odoo — cannot be changed.');
     if (e === 'locked-24h') return L('Chỉ người nhập sửa được trong 24 giờ.', 'Only its author can edit it, within 24 h.');
+    if (e === 'locked-inventory') return L('Dòng từ kiểm kê — không sửa được.', 'Line created by an inventory count — cannot be changed.');
+    if (e === 'integer') return L('Số gói phải là số nguyên.', 'Bags must be a whole number.');
     return e;
   };
 
@@ -95,7 +101,7 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold w-14 shrink-0" style={{ color: '#374151' }}>{i.unit === 'kg' ? 'kg' : `${fmt(i.unit_weight_g, 0)} g`}</span>
                 <button onClick={() => setQ(i.sku, Math.max(0, v - step))} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="minus"><Minus size={16} /></button>
-                <ExprInput big className="flex-1 min-w-0" value={qty[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setQty(q => ({ ...q, [i.sku]: v }))} />
+                <ExprInput big integer={i.unit === 'bag'} className="flex-1 min-w-0" value={qty[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setQty(q => ({ ...q, [i.sku]: v }))} />
                 <button onClick={() => setQ(i.sku, v + step)} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="plus"><Plus size={16} /></button>
                 <span className="text-xs w-9 shrink-0" style={{ color: MUTED }}>{unitLabel(i, L)}</span>
               </div>
@@ -128,7 +134,7 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
             {g.items.map(i => (
               <div key={i.sku} className="flex items-center gap-2 text-xs">
                 <span className="flex-1" style={{ color: '#374151' }}>{L('Gói lỗi', 'Faulty')} {i.unit === 'kg' ? '' : `${fmt(i.unit_weight_g, 0)} g`} {L('(sau khi gói)', '(after packing)')}</span>
-                <ExprInput className="w-36" value={lossBag[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setLossBag(x => ({ ...x, [i.sku]: v }))} />
+                <ExprInput className="w-36" integer={i.unit === 'bag'} value={lossBag[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setLossBag(x => ({ ...x, [i.sku]: v }))} />
                 <span className="w-9" style={{ color: MUTED }}>{unitLabel(i, L)}</span>
               </div>
             ))}
@@ -141,18 +147,19 @@ export default function Packaging({ client, items, d, pack, canPack, canManage, 
 
   return (
     <div className="space-y-4">
+      {canPack && <Reception client={client} prod={prod} reload={reload} L={L} />}
       {canPack && (
         <>
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs" style={{ color: MUTED }}>{L('Ngày đóng gói', 'Packing date')}</div>
             <input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 rounded-lg px-2 text-sm" style={inputStyle} />
           </div>
-          {!withBulk.length && <Card className="p-5 text-center text-sm" ><span style={{ color: MUTED }}>{L('Chưa có bán thành phẩm để đóng gói. Hưng nhập sản lượng từ trạm của anh ấy.', 'No baked bulk to pack yet. Hưng logs production from his station.')}</span></Card>}
+          {!withBulk.length && <Card className="p-5 text-center text-sm" ><span style={{ color: MUTED }}>{L('Chưa có bán thành phẩm đã nhận để đóng gói. Nhận các mẻ của Hưng ở trên trước.', 'No received bulk to pack. Receive Hưng’s batches above first.')}</span></Card>}
           <div className="grid gap-3 lg:grid-cols-2">{withBulk.map(card)}</div>
           {empty.length > 0 && (
             <div>
               <button onClick={() => setShowEmpty(v => !v)} className="flex items-center gap-1 text-xs font-semibold" style={{ color: FAINT }}>
-                {showEmpty ? <ChevronDown size={13} /> : <ChevronRight size={13} />}{L('Chưa nướng', 'Nothing baked yet')} ({empty.length})
+                {showEmpty ? <ChevronDown size={13} /> : <ChevronRight size={13} />}{L('Không có bán TP để gói', 'No bulk to pack')} ({empty.length})
               </button>
               {showEmpty && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -228,7 +235,7 @@ function DayLog({ pack, bySku, client, canPack, canManage, odooOn, userId, reloa
     for (const p of pack) { if (!m.has(p.pack_date)) m.set(p.pack_date, []); m.get(p.pack_date)!.push(p); }
     return Array.from(m.entries()).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 60);
   }, [pack]);
-  const mayEdit = (p: PackLog) => canPack && !p.odoo_mo_id && p.odoo_status !== 'done'
+  const mayEdit = (p: PackLog) => canPack && !p.odoo_mo_id && p.odoo_status !== 'done' && p.source !== 'inventory'
     && (canManage || (p.created_by === userId && Date.now() - new Date(p.created_at).getTime() < 24 * 3600 * 1000));
 
   async function run(id: string, fn: () => Promise<{ ok?: boolean; error?: string }>) {
@@ -263,8 +270,11 @@ function DayLog({ pack, bySku, client, canPack, canManage, odooOn, userId, reloa
                 <div key={p.id} className="px-3.5 py-2.5 space-y-1" style={{ borderTop: `1px solid ${LINE}` }}>
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold leading-tight" style={{ color: p.kind === 'packed' ? '#111827' : '#DC2626' }}>
-                        {p.kind === 'scrap_bulk' ? `${L('Bán TP vỡ', 'Broken bulk')} · ` : p.kind === 'scrap_finished' ? `${L('Gói lỗi', 'Faulty')} · ` : ''}{title(p)}
+                      <div className="text-sm font-semibold leading-tight" style={{ color: p.kind === 'packed' || p.kind === 'found' ? '#111827' : '#DC2626' }}>
+                        {p.kind === 'scrap_bulk' ? `${L('Bán TP vỡ', 'Broken bulk')} · `
+                          : p.kind === 'scrap_finished' ? (p.source === 'inventory' ? `${L('Thiếu khi kiểm kê', 'Missing at count')} · ` : `${L('Gói lỗi', 'Faulty')} · `)
+                          : p.kind === 'found' ? `${L('Dư khi kiểm kê', 'Surplus at count')} · `
+                          : p.source === 'inventory' ? `${L('Gói chưa ghi (kiểm kê)', 'Unrecorded packing (count)')} · ` : ''}{title(p)}
                       </div>
                       <div className="text-[11px]" style={{ color: FAINT }}>
                         {p.created_by_name || '—'} · {new Date(p.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{p.updated_by_name ? ` · ${L('sửa', 'edited')}` : ''}
@@ -284,7 +294,7 @@ function DayLog({ pack, bySku, client, canPack, canManage, odooOn, userId, reloa
                     )}
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {p.kind === 'scrap_bulk' || p.odoo_status === 'skipped' ? null
+                    {p.kind === 'scrap_bulk' || p.kind === 'found' || p.odoo_status === 'skipped' ? null
                       : p.odoo_status === 'done' ? <Chip tone="green">✓ {p.odoo_ref ?? 'Odoo'}</Chip>
                       : p.odoo_status === 'error' ? <span title={p.odoo_error ?? ''}><Chip tone="red">{L('Lỗi Odoo', 'Odoo error')}</Chip></span>
                       : <Chip tone="amber">{L('Chờ Odoo', 'Odoo pending')}</Chip>}

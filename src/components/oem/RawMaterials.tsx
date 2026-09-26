@@ -1,11 +1,11 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Check, Copy, Calculator } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { Card, Title, Banner, Chip, Btn, ExprInput, inputCls, inputStyle } from './ui';
 import { fmt, dmy, mondayOf, localToday, MUTED, FAINT, GREEN, type Derived, type Ingredient, type Item, type LFn, type ProdLog, type RmCount, type Usage , evalQty } from './model';
 
-// Inventory → Raw materials. Weekly count of the 29 ingredients; the app estimates today's stock
+// Inventory → Raw materials. Weekly count of the 29 ingredients (v2: no estimate — last count as-is)
 // (count − what Hung baked since, per the recipes) and tells how much can still be made:
 // per product (first blocking ingredient) and for one or several TARGETED products together
 // (Axel, 2026-09-25: "savoir combien je peux produire d'un ou plusieurs produits ciblés").
@@ -16,7 +16,8 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
   const supabase = useMemo(() => createClient(), []);
   const groups = useMemo(() => Array.from(new Map(items.map(i => [i.group_key, { key: i.group_key, name: i.group_name, items: items.filter(x => x.group_key === i.group_key) }])).values()), [items]);
   const q = useMemo(() => { const m: Record<string, Record<string, number>> = {}; for (const u of usage) (m[u.group_key] ??= {})[u.ingredient_code] = Number(u.qty_per_kg); return m; }, [usage]);
-  const remaining = useMemo(() => Object.fromEntries(groups.map(g => [g.key, Math.max(0, (d.targetKg[g.key] ?? 0) - (d.producedKg[g.key] ?? 0))])) as Record<string, number>, [groups, d]);
+  // remaining = (initial target + re-make for losses) − received (v2)
+  const remaining = useMemo(() => Object.fromEntries(groups.map(g => [g.key, Math.max(0, (d.toProduceKg[g.key] ?? 0) - (d.producedKg[g.key] ?? 0))])) as Record<string, number>, [groups, d]);
 
   // latest count per ingredient + estimated stock now
   const latest = useMemo(() => {
@@ -24,17 +25,13 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
     for (const c of counts) { const p = m[c.ingredient_code]; if (!p || c.week_start > p.week_start || (c.week_start === p.week_start && c.created_at > p.created_at)) m[c.ingredient_code] = c; }
     return m;
   }, [counts]);
+  // No estimate any more (Axel, 2026-09-26): the lab also bakes shop products with the same
+  // ingredients, so "count − OEM usage" can't be trusted. Calculations use the last count as-is.
   const est = useMemo(() => {
     const m: Record<string, number | null> = {};
-    for (const ing of ingredients) {
-      const c = latest[ing.code];
-      if (!c) { m[ing.code] = null; continue; }
-      let used = 0;
-      for (const l of prod) if (l.created_at > c.created_at) used += Number(l.weight_kg) * (q[l.group_key]?.[ing.code] ?? 0);
-      m[ing.code] = Number(c.qty) - used;
-    }
+    for (const ing of ingredients) { const c = latest[ing.code]; m[ing.code] = c ? Number(c.qty) : null; }
     return m;
-  }, [ingredients, latest, prod, q]);
+  }, [ingredients, latest]);
   const need = useMemo(() => {
     const m: Record<string, number> = {};
     for (const g of groups) for (const [code, per] of Object.entries(q[g.key] ?? {})) m[code] = (m[code] ?? 0) + remaining[g.key] * per;
@@ -64,7 +61,12 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   // counts accept "12+3+50" / "12×24+7" (evalQty); an invalid field blocks the save
+  const draftKey = 'oem-rm-draft';
+  useEffect(() => { try { const r = localStorage.getItem(draftKey); if (r) setVal(JSON.parse(r)); } catch {} }, []);
+  const setField = (code: string, x: string) => setVal(prev => { const n = { ...prev, [code]: x }; try { localStorage.setItem(draftKey, JSON.stringify(n)); } catch {} return n; });
   const filled = Object.entries(val).filter(([, v]) => { const x = evalQty(v); return x !== null && !Number.isNaN(x); });
+  // all 29 must be counted (0 typed explicitly) before saving (Axel, 2026-09-26)
+  const complete = ingredients.length > 0 && ingredients.every(i => { const x = evalQty(val[i.code]); return x !== null && !Number.isNaN(x); });
   const anyBad = Object.values(val).some(v => Number.isNaN(evalQty(v) as number));
   const lastWeek = Object.values(latest).reduce<string | null>((a, c) => (!a || c.week_start > a ? c.week_start : a), null);
   const lastBy = lastWeek ? Array.from(new Set(counts.filter(c => c.week_start === lastWeek).map(c => c.created_by_name).filter(Boolean))).join(', ') : '';
@@ -77,12 +79,13 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
     })));
     setBusy(false);
     if (error) { setMsg({ ok: false, t: error.message }); return; }
+    try { localStorage.removeItem(draftKey); } catch {}
     setVal({}); setMsg({ ok: true, t: L('Đã lưu kiểm kê.', 'Count saved.') }); await reload();
   }
   function copyLast() {
     const v: Record<string, string> = {};
     for (const ing of ingredients) { const c = latest[ing.code]; if (c) v[ing.code] = String(Number(c.qty)); }
-    setVal(v);
+    setVal(v); try { localStorage.setItem(draftKey, JSON.stringify(v)); } catch {}
   }
 
   // ── targeted calculator ──
@@ -117,8 +120,8 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
 
   return (
     <div className="space-y-4">
-      <Banner>{L('Kiểm kê hằng tuần 29 nguyên liệu. App ước tính tồn hiện tại (số đếm − lượng Hưng đã dùng từ lúc đếm) và cho biết còn làm được bao nhiêu.',
-        'Weekly count of the 29 raw materials. The app estimates today\'s stock (count − what Hưng used since, per the recipes) and tells how much can still be made.')}</Banner>
+      <Banner>{L('Kiểm kê thứ Hai hằng tuần 29 nguyên liệu (nhập 0 nếu hết). Các tính toán bên dưới dựa trên lần đếm gần nhất.',
+        'Monday count of the 29 raw materials (type 0 if none left). The calculations below use the last count.')}</Banner>
 
       {/* stock table + count form */}
       <Card className="overflow-hidden">
@@ -135,8 +138,7 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
         </div>
         <div className="hidden sm:grid grid-cols-12 text-[10px] font-bold uppercase px-3 py-1.5" style={{ color: FAINT, borderTop: '1px solid #F3F4F6' }}>
           <span className="col-span-4">{L('Nguyên liệu', 'Ingredient')}</span>
-          <span className="col-span-2 text-right">{L('Đếm', 'Counted')}</span>
-          <span className="col-span-2 text-right">{L('Ước tính nay', 'Est. now')}</span>
+          <span className="col-span-4 text-right">{L('Lần đếm gần nhất', 'Last count')}</span>
           <span className="col-span-2 text-right">{L('Còn cần', 'Still needed')}</span>
           <span className="col-span-2 text-right">{canCount ? L('Số đếm mới', 'New count') : L('Đủ cho', 'Coverage')}</span>
         </div>
@@ -146,13 +148,12 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
           return (
             <div key={ing.code} className="grid grid-cols-12 items-center gap-y-1 px-3 py-1.5 text-xs" style={{ borderTop: '1px solid #F3F4F6' }}>
               <span className="col-span-12 sm:col-span-4 truncate font-semibold">{ing.name} <span className="font-normal" style={{ color: FAINT }}>· {ing.unit}</span></span>
-              <span className="col-span-3 sm:col-span-2 sm:text-right" style={{ color: MUTED }}>{c ? fmt(Number(c.qty), 2) : '—'}</span>
-              <span className="col-span-3 sm:col-span-2 sm:text-right font-bold">{e != null ? fmt(e, 2) : '—'}</span>
+              <span className="col-span-6 sm:col-span-4 sm:text-right"><b>{c ? fmt(Number(c.qty), 2) : '—'}</b>{c && <span className="text-[10px]" style={{ color: FAINT }}> · {dmy(c.week_start)}</span>}</span>
               <span className="col-span-3 sm:col-span-2 sm:text-right" style={{ color: MUTED }}>{fmt(n, 2)}</span>
               <span className="col-span-3 sm:col-span-2 flex justify-end items-center gap-1.5">
                 {cov != null && <Chip tone={cov >= 100 ? 'green' : cov >= 50 ? 'amber' : 'red'}>{fmt(Math.min(cov, 999), 0)}%</Chip>}
                 {canCount && (
-                  <ExprInput className="w-40" placeholder="—" value={val[ing.code] ?? ''} unit={ing.unit} onChange={x => setVal(v => ({ ...v, [ing.code]: x }))} />
+                  <ExprInput className="w-40" placeholder="—" value={val[ing.code] ?? ''} unit={ing.unit} onChange={x => setField(ing.code, x)} />
                 )}
               </span>
             </div>
@@ -160,7 +161,8 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
         })}
         {canCount && (
           <div className="flex flex-wrap items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
-            <Btn primary onClick={save} disabled={busy || !filled.length || anyBad}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {filled.length ? `(${filled.length})` : ''}</Btn>
+            <span className="text-sm font-bold tabular-nums" style={{ color: complete ? GREEN : '#B45309' }}>{filled.length} / {ingredients.length} {L('đã đếm', 'counted')}</span>
+            <Btn primary onClick={save} disabled={busy || !complete || anyBad}>{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')}</Btn>
             <Btn onClick={copyLast} disabled={!lastWeek}><Copy size={13} />{L('Chép tuần trước', 'Copy last week')}</Btn>
             {msg && <span className="text-xs font-semibold" style={{ color: msg.ok ? '#059669' : '#DC2626' }}>{msg.t}</span>}
           </div>
@@ -169,7 +171,7 @@ export default function RawMaterials({ items, d, ingredients, usage, counts, pro
 
       {/* per product */}
       <div className="space-y-1.5">
-        <Title>{L('Với tồn này còn làm được…', 'With this stock we can still make…')}</Title>
+        <Title>{L('Với tồn này còn làm được…', 'With this stock we can still make…')}{lastWeek ? <span className="normal-case font-normal"> · {L('theo lần đếm', 'based on the count of')} {dmy(lastWeek)}</span> : null}</Title>
         <Card className="overflow-hidden">
           <div className="grid grid-cols-12 text-[10px] font-bold uppercase px-3 py-1.5" style={{ color: FAINT }}>
             <span className="col-span-4">{L('Sản phẩm', 'Product')}</span><span className="col-span-2 text-right">{L('Làm được', 'Possible')}</span>
