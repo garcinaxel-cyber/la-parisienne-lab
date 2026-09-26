@@ -7,6 +7,9 @@ import { fmt, dmy, itemKg, unitLabel, GREEN, GOLD, MUTED, FAINT, LINE, type Clie
 // "Progress" — one card per product with a single 3-segment bar over the order (kg):
 // delivered (dark green) · packed, not yet delivered (gold) · baked, not yet packed (light green).
 const C_DELIV = '#1A4731', C_PACK = GOLD, C_BAKED = '#A7C4B5', C_REST = '#F1ECE1';
+// Good bags = packed (+ surplus accepted at count) − faulty / missing at count (Axel, 2026-09-26:
+// 189 packed, 180 counted → progress must show 180).
+const goodQty = (d: Derived, sku: string) => (d.packedQty[sku] ?? 0) + (d.foundQty[sku] ?? 0) - (d.scrapFinished[sku] ?? 0);
 
 export default function Overview({ client, d, prod, pack, L }: { client: Client; d: Derived; prod: ProdLog[]; pack: PackLog[]; L: LFn }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -20,7 +23,7 @@ export default function Overview({ client, d, prod, pack, L }: { client: Client;
   const baked = client.groups.reduce((s, g) => s + (d.producedKg[g.key] ?? 0), 0);
   const pendingKg = client.groups.reduce((s, g) => s + (d.pendingKg[g.key] ?? 0), 0);
   const ordered = items.reduce((s, i) => s + i.qty_ordered, 0);
-  const packed = items.reduce((s, i) => s + (d.packedQty[i.sku] ?? 0), 0);
+  const packed = items.reduce((s, i) => s + goodQty(d, i.sku), 0);
   const delivered = items.reduce((s, i) => s + (d.deliveredQty[i.sku] ?? 0), 0);
   const ready = items.reduce((s, i) => s + Math.max(0, d.fgTheo[i.sku] ?? 0), 0);
 
@@ -66,7 +69,7 @@ function GroupCard({ g, d, open, toggle, prod, pack, L }: { g: Group; d: Derived
   const T = d.toProduceKg[g.key] ?? 0;
   const remake = d.remakeKg[g.key] ?? 0; const pend = d.pendingKg[g.key] ?? 0;
   const delivKg = g.items.reduce((s, i) => s + itemKg(i, d.deliveredQty[i.sku] ?? 0), 0);
-  const packKg = g.items.reduce((s, i) => s + itemKg(i, d.packedQty[i.sku] ?? 0), 0);
+  const packKg = g.items.reduce((s, i) => s + itemKg(i, goodQty(d, i.sku)), 0);
   const bulk = Math.max(0, d.bulkAvail[g.key] ?? 0);
   const pct = (x: number) => (T ? Math.max(0, Math.min(100, (x / T) * 100)) : 0);
   const segs = [
@@ -112,7 +115,7 @@ function GroupCard({ g, d, open, toggle, prod, pack, L }: { g: Group; d: Derived
 }
 
 function SkuLine({ i, d, L }: { i: Item; d: Derived; L: LFn }) {
-  const packed = d.packedQty[i.sku] ?? 0; const dec = i.unit === 'kg' ? 1 : 0;
+  const packed = goodQty(d, i.sku); const dec = i.unit === 'kg' ? 1 : 0;
   return (
     <div className="flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FAF8F3' }}>
       <span className="truncate" style={{ color: '#374151' }}>{i.product_name}</span>
