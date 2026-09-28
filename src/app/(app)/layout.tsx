@@ -58,11 +58,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { count: pendingShopLabTransfers },
     { count: pendingShopLabLosses },
     { count: pendingExceptional },
+    { count: pendingOemReceptions },
   ] = await Promise.all([
     supabase.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
     supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).gte('reported_at', yesterdayVNIso),
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
+    // OEM Orders (Axel, 2026-09-28): batches Hưng declared that no assistant has received yet
+    supabase.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
   ]);
   const pendingTransfers = (pendingInternalTransfers ?? 0) + (pendingShopLabTransfers ?? 0) + (pendingShopLabLosses ?? 0);
 
@@ -80,7 +83,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} reconciliationIssues={reconciliationIssues} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} reconciliationIssues={reconciliationIssues} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>
