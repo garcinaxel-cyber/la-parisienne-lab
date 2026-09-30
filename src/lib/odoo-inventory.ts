@@ -91,6 +91,35 @@ export interface StartLineResult {
  * Called once per SKU per session — on the FIRST save of that line, never on a later correction
  * (correcting a typo in the counted number must never move the cut-off).
  */
+// The lpr module only generates count lines for products that have a NON-ZERO quant at the
+// location (verified live 2026-09-30: BQMVH had no quant, BQMVMD a 0-qty quant — neither got a
+// line, so the count could not be saved). For those, add the line ourselves: make sure a quant
+// exists (a plain empty stock.quant — quantity 0, harmless) and create the count line on it. Its
+// theoretical_qty is then 0, which is the true system quantity.
+async function addMissingCountLines(invId: number, locationId: number, productIds: number[]): Promise<void> {
+  if (!productIds.length) return;
+  const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read',
+    [[['product_id', 'in', productIds], ['location_id', '=', locationId]]], { fields: ['id', 'product_id'] });
+  const quantByProduct: Record<number, number> = {};
+  for (const q of quants) {
+    const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+    if (!quantByProduct[pid]) quantByProduct[pid] = q.id;
+  }
+  // batched: one create call for all missing quants, one for all lines (a shop can have dozens)
+  const noQuant = productIds.filter(pid => !quantByProduct[pid]);
+  if (noQuant.length) {
+    try {
+      const ids = await odooExecuteWrite<number[] | number>('stock.quant', 'create',
+        [noQuant.map(pid => ({ product_id: pid, location_id: locationId }))], { context: NO_MAIL_CONTEXT });
+      const arr = Array.isArray(ids) ? ids : [ids];
+      noQuant.forEach((pid, i) => { if (arr[i]) quantByProduct[pid] = arr[i]; });
+    } catch { /* lines can still exist without a quant */ }
+  }
+  await odooExecuteWrite<number[] | number>('lpr.stock.inventory.line', 'create', [productIds.map(pid => ({
+    inventory_id: invId, product_id: pid, location_id: locationId, ...(quantByProduct[pid] ? { quant_id: quantByProduct[pid] } : {}),
+  }))], { context: NO_MAIL_CONTEXT });
+}
+
 export async function ensureInventoryLineStarted(sku: string): Promise<StartLineResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   // stock.inventory / lpr.stock.inventory.line are read through the WRITE account (2026-09-30):
@@ -131,14 +160,21 @@ export async function ensureInventoryLineStarted(sku: string): Promise<StartLine
       }
     }
 
-    const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
-      [[['id', '=', invId]]], { fields: ['count_line_ids'] });
-    const lineIds: number[] = inv?.count_line_ids ?? [];
-    if (!lineIds.length) return { ok: false, error: 'Aucune ligne de comptage générée sur Odoo (cut-off)' };
-
-    const lines = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
-      [[['id', 'in', lineIds], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 });
-    const line = lines[0];
+    const lineFor = async () => {
+      const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
+        [[['id', '=', invId]]], { fields: ['count_line_ids'] });
+      const lineIds: number[] = inv?.count_line_ids ?? [];
+      if (!lineIds.length) return null;
+      const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
+        [[['id', 'in', lineIds], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 });
+      return rows[0] ?? null;
+    };
+    let line = await lineFor();
+    if (!line) {
+      // product at 0 / never stocked at LAB — add its line ourselves (see addMissingCountLines)
+      await addMissingCountLines(invId, locationId, [prod.id]);
+      line = await lineFor();
+    }
     if (!line) return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
 
     return { ok: true, odooInventoryId: invId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0) };
@@ -343,13 +379,24 @@ export async function startGroupedInventoryCutoff(
       }
     }
 
-    const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
-      [[['id', '=', invId]]], { fields: ['count_line_ids'] });
-    const lineIds: number[] = inv?.count_line_ids ?? [];
-    if (!lineIds.length) throw new Error('Aucune ligne de comptage générée sur Odoo (cut-off)');
-
-    const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
-      [[['id', 'in', lineIds]]], { fields: ['id', 'product_id', 'theoretical_qty'], limit: lineIds.length });
+    const readRows = async () => {
+      const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
+        [[['id', '=', invId]]], { fields: ['count_line_ids'] });
+      const lineIds: number[] = inv?.count_line_ids ?? [];
+      if (!lineIds.length) return [] as any[];
+      return odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
+        [[['id', 'in', lineIds]]], { fields: ['id', 'product_id', 'theoretical_qty'], limit: lineIds.length });
+    };
+    let rows = await readRows();
+    // products whose quant is 0 got no line from the module — add them (a shop's uncounted product
+    // must still be on the list and pushed as counted)
+    const withLine = new Set(rows.map(r => (Array.isArray(r.product_id) ? r.product_id[0] : r.product_id) as number));
+    const missing = products.map(p => p.id).filter(id => !withLine.has(id));
+    if (missing.length) {
+      await addMissingCountLines(invId as number, locationId, missing);
+      rows = await readRows();
+    }
+    if (!rows.length) throw new Error('Aucune ligne de comptage générée sur Odoo (cut-off)');
     const skuByProductId: Record<number, string> = {};
     for (const p of products) skuByProductId[p.id] = p.sku;
     const lines: GroupedCutoffLine[] = rows.map(r => {
