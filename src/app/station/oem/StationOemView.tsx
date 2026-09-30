@@ -103,7 +103,10 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const bagsTotal = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : i.qty_ordered), 0);
   const bagsDone = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : Math.min(i.qty_ordered, delivered[i.sku] ?? 0)), 0);
   const nextIdx = sched.findIndex(x => !x.done);
-  const next = nextIdx >= 0 ? sched[nextIdx] : null;
+  // the chef can open any delivery (tap on the timeline); default = the next one not baked yet
+  const [pickIdx, setPickIdx] = useState<number | null>(null);
+  const shownIdx = pickIdx != null && pickIdx < sched.length ? pickIdx : nextIdx;
+  const next = shownIdx >= 0 ? sched[shownIdx] : null;
   const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(isoToday)) / 86400000);
   const nextByGroup = useMemo(() => Object.fromEntries((next?.need ?? []).map(x => [x.key, x.left])), [next]);
   const dmy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
@@ -176,22 +179,27 @@ export default function StationOemView({ role, userId, userName }: { role: strin
           <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
             <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng · Maison Mooncake' : 'Baking plan · Maison Mooncake'}</div>
             {next ? (() => {
-              const dl = daysTo(next.b.produceBy); const late = dl < 0;
+              const dl = daysTo(next.b.produceBy); const late = dl < 0 && !next.done;
               return (
                 <div className="px-4 pb-3 space-y-2">
-                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: late ? '#FEF2F2' : dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
-                    <div className="text-[15px] font-bold" style={{ color: late ? '#B91C1C' : '#111827' }}>
-                      {vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: bake by ${dmy(next.b.produceBy)}`}
+                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#ECFDF5' : late ? '#FEF2F2' : dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
+                    <div className="text-[15px] font-bold" style={{ color: next.done ? '#047857' : late ? '#B91C1C' : '#111827' }}>
+                      {next.done
+                        ? (vi ? `Đợt ${next.b.row.seq}: đã nướng đủ ✓` : `Delivery ${next.b.row.seq}: fully baked ✓`)
+                        : (vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: bake by ${dmy(next.b.produceBy)}`)}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
-                      {vi ? `Giao ${dmy(next.b.row.delivery_date)} · còn ` : `Delivered ${dmy(next.b.row.delivery_date)} · `}<b>{fmt1(next.left)} kg</b>{vi ? '' : ' left'}
-                      {' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}
+                      {vi ? `Giao ${dmy(next.b.row.delivery_date)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Shipped ${dmy(next.b.row.delivery_date)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
+                      {!next.done && <>{' · '}<b>{fmt1(next.left)} kg</b> {vi ? 'còn thiếu' : 'left'}{' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}</>}
                     </div>
                   </div>
-                  {next.need.filter(x => x.left > 0.05).map(x => (
+                  {next.need.map(x => (
                     <div key={x.key} className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="font-semibold min-w-0 truncate">{x.name}</span>
-                      <b className="whitespace-nowrap">{fmt1(x.left)} kg</b>
+                      <span className="whitespace-nowrap">
+                        {x.left > 0.05 ? <b>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</b> : <b style={{ color: '#047857' }}>✓</b>}
+                        <span className="text-xs" style={{ color: '#9CA3AF' }}> / {fmt1(x.cum)} kg</span>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -210,11 +218,12 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             </div>
             <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
               {sched.map((x, k) => (
-                <div key={x.b.row.id} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center" style={{ minWidth: 64, backgroundColor: x.done ? '#ECFDF5' : k === nextIdx ? '#FFF7E6' : '#F9FAFB', border: `1px solid ${x.done ? '#A7F3D0' : k === nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
-                  <div className="text-[10px] font-bold" style={{ color: '#9CA3AF' }}>{vi ? 'Đợt' : 'Del.'} {x.b.row.seq}</div>
-                  <div className="text-xs font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? '✓' : dmy(x.b.produceBy)}</div>
-                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'giao' : 'del.'} ${dmy(x.b.row.delivery_date)}`}</div>
-                </div>
+                <button key={x.b.row.id} onClick={() => setPickIdx(k)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
+                  style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
+                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{vi ? 'Đợt' : 'Delivery'} {x.b.row.seq}</div>
+                  <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : `${vi ? 'Nướng trước' : 'Bake by'} ${dmy(x.b.produceBy)}`}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dmy(x.b.row.delivery_date)}`}</div>
+                </button>
               ))}
             </div>
           </div>
