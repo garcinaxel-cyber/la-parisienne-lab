@@ -251,12 +251,12 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold truncate" style={{ color: INK }}>{l.productName}</div>
-              <div className="text-[11px] truncate" style={{ color: '#8A9A8F' }}>{l.sku}</div>
+              <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: INK }}>{l.productName}</div>
+              <div className="text-[11px] break-all" style={{ color: '#8A9A8F' }}>{l.sku}</div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
-              <QtyExprInput width={64} borderColor={BORDER} filledBorderColor={GREEN}
+              <QtyExprInput width={56} borderColor={BORDER} filledBorderColor={GREEN}
                 value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
                 onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
                 onBlur={v => commitDraft(l.sku, v)} />
