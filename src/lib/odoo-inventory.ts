@@ -153,9 +153,17 @@ export async function ensureInventoryLineStarted(sku: string): Promise<StartLine
  */
 export async function tryCancelInventoryLine(odooInventoryId: number): Promise<void> {
   if (!odooWriteConfigured()) return;
+  // Odoo refuses to cancel an in_progress adjustment directly ("You can't cancel this inventory"),
+  // verified live 2026-09-30 on Timecity's orphaned cut-off: it must go back to draft first
+  // (which releases the frozen quants), then cancel.
+  try {
+    await odooExecuteWrite('stock.inventory', 'action_state_to_draft', [[odooInventoryId]], { context: NO_MAIL_CONTEXT });
+  } catch { /* already draft, or not resettable — the cancel below will say */ }
   try {
     await odooExecuteWrite('stock.inventory', 'action_state_to_cancel', [[odooInventoryId]], { context: NO_MAIL_CONTEXT });
-  } catch { /* best-effort, see doc comment */ }
+  } catch (e: any) {
+    console.error('[inventory] could not cancel Odoo adjustment', { odooInventoryId, error: String(e?.message ?? e) });
+  }
 }
 
 // ── Step 2: at final submit, write the counted numbers and apply the delta on top of current stock ──
