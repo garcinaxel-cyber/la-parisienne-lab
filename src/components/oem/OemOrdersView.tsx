@@ -67,7 +67,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       supabase.from('lab_mm_ingredient_usage').select('group_key, ingredient_code, qty_per_kg'),
       supabase.from('lab_mm_rm_inventory').select('id, week_start, ingredient_code, qty, created_at, created_by_name').order('week_start', { ascending: false }).limit(2000),
       supabase.from('lab_mm_settings').select('key, value'),
-      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label').order('seq'),
+      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
     ]);
     const e = [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp].find(r => r.error)?.error;
     if (e) setErr(e.message);
@@ -122,10 +122,10 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     else {
       // no Odoo delivery order yet → use the delivery schedule
       const nb = batches.find(b => !cItems.every(i => (d.deliveredQty[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005));
-      if (nb) {
+      if (nb && nb.row.delivery_date) {
         const miss = cItems.reduce((s, i) => s + Math.max(0, (nb.cumQty[i.sku] ?? 0) - (d.deliveredQty[i.sku] ?? 0) - Math.max(0, d.fgTheo[i.sku] ?? 0)), 0);
-        const days = Math.round((Date.parse(nb.row.delivery_date) - Date.parse(today)) / 86400000);
-        if (miss > 0.0005 && days <= 21) out.push({ tone: days <= 7 ? 'red' : 'gold', tab: 'deliveries', text: L(`Đợt ${nb.row.seq} giao ${dmy(nb.row.delivery_date)}: còn thiếu ${fmt(miss, 0)}`, `Delivery ${nb.row.seq} on ${dmy(nb.row.delivery_date)}: ${fmt(miss, 0)} still missing`) });
+        const days = Math.round((Date.parse(nb.row.delivery_date!) - Date.parse(today)) / 86400000);
+        if (miss > 0.0005 && days <= 21) out.push({ tone: days <= 7 ? 'red' : 'gold', tab: 'deliveries', text: L(`Đợt ${nb.row.seq} giao ${dmy(nb.row.delivery_date!)}: còn thiếu ${fmt(miss, 0)}`, `Delivery ${nb.row.seq} on ${dmy(nb.row.delivery_date!)}: ${fmt(miss, 0)} still missing`) });
       }
     }
     const monday = mondayOf(today);

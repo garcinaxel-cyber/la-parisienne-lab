@@ -238,8 +238,8 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
   const [draft, setDraft] = useState<Record<string, { delivery_date?: string; pct?: string; label?: string }>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const val = (r: PlanRow) => ({ delivery_date: draft[r.id]?.delivery_date ?? r.delivery_date, pct: draft[r.id]?.pct ?? String(r.pct), label: draft[r.id]?.label ?? (r.label ?? '') });
-  const changed = plan.filter(r => { const v = val(r); return v.delivery_date !== r.delivery_date || Number(v.pct) !== Number(r.pct) || v.label !== (r.label ?? ''); });
+  const val = (r: PlanRow) => ({ delivery_date: draft[r.id]?.delivery_date ?? (r.delivery_date ?? ''), pct: draft[r.id]?.pct ?? String(r.pct), label: draft[r.id]?.label ?? (r.label ?? '') });
+  const changed = plan.filter(r => { const v = val(r); return v.delivery_date !== (r.delivery_date ?? '') || Number(v.pct) !== Number(r.pct) || v.label !== (r.label ?? ''); });
   const byClient = new Map<string, PlanRow[]>();
   for (const r of plan) { const c = r.client_name || MM_CLIENT; if (!byClient.has(c)) byClient.set(c, []); byClient.get(c)!.push(r); }
   const set = (id: string, k: 'delivery_date' | 'pct' | 'label', v: string) => setDraft(d => ({ ...d, [id]: { ...d[id], [k]: v } }));
@@ -249,8 +249,8 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
     for (const r of changed) {
       const v = val(r);
       const pct = Number(v.pct);
-      if (!v.delivery_date || !(pct >= 0 && pct <= 100)) { setMsg(L('Ngày hoặc % không hợp lệ.', 'Invalid date or %.')); setBusy(false); return; }
-      const u = await supabase.from('lab_mm_delivery_plan').update({ delivery_date: v.delivery_date, pct, label: v.label || null, updated_at: new Date().toISOString(), updated_by_name: userName }).eq('id', r.id);
+      if (!(pct >= 0 && pct <= 100)) { setMsg(L('Ngày hoặc % không hợp lệ.', 'Invalid date or %.')); setBusy(false); return; }
+      const u = await supabase.from('lab_mm_delivery_plan').update({ delivery_date: v.delivery_date || null, pct, label: v.label || null, updated_at: new Date().toISOString(), updated_by_name: userName }).eq('id', r.id);
       if (u.error) { setMsg(u.error.message); setBusy(false); return; }
     }
     setBusy(false); setDraft({}); setMsg(L('Đã lưu.', 'Saved.')); await reload();
@@ -263,7 +263,7 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
         {L('Lịch giao hàng: ngày + % đơn hàng mỗi đợt. Số gói mỗi đợt và hạn nướng của bếp Hưng được tính tự động.', 'Delivery schedule: date + % of the order per delivery. Bags per delivery and Team Hưng\'s bake-by dates are computed from it.')}
       </div>
       {Array.from(byClient.entries()).map(([c, rows]) => {
-        const tot = rows.reduce((s, r) => s + Number(val(r).pct || 0), 0);
+        const tot = rows.some(r => r.qty) ? 100 : rows.reduce((s, r) => s + Number(val(r).pct || 0), 0);
         return (
           <div key={c}>
             <div className="flex items-center justify-between px-3 py-1.5 text-xs font-bold" style={{ borderTop: '1px solid #F3F4F6' }}>
@@ -273,7 +273,8 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
               <div key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
                 <span className="w-14 font-semibold">{L('Đợt', 'Del.')} {r.seq}</span>
                 <input type="date" value={v.delivery_date} onChange={e => set(r.id, 'delivery_date', e.target.value)} className="rounded-lg px-2 py-1 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                <span className="inline-flex items-center gap-1"><input inputMode="decimal" value={v.pct} onChange={e => set(r.id, 'pct', e.target.value.replace(/[^0-9.]/g, ''))} className="w-16 rounded-lg px-2 py-1 text-sm font-bold text-right" style={{ border: '1px solid #D1D5DB' }} /><span className="text-xs" style={{ color: '#6B7280' }}>%</span></span>
+                {r.qty ? <span className="text-xs font-semibold" style={{ color: '#6B7280' }}>{Object.values(r.qty).map(q => fmt(Number(q), 0)).join(' / ')} kg</span> :
+                <span className="inline-flex items-center gap-1"><input inputMode="decimal" value={v.pct} onChange={e => set(r.id, 'pct', e.target.value.replace(/[^0-9.]/g, ''))} className="w-16 rounded-lg px-2 py-1 text-sm font-bold text-right" style={{ border: '1px solid #D1D5DB' }} /><span className="text-xs" style={{ color: '#6B7280' }}>%</span></span>}
                 <input value={v.label} onChange={e => set(r.id, 'label', e.target.value)} placeholder={L('Ghi chú (âm lịch…)', 'Note (lunar date…)')} className="flex-1 min-w-[110px] rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
               </div>
             ); })}

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { buildBatches, planOf, type PlanRow } from '@/components/oem/plan';
+import { buildBatches, dOr, type PlanRow } from '@/components/oem/plan';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
@@ -24,7 +24,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const vi = lang === 'vi';
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Row[]>([]);
-  const [mmItems, setMmItems] = useState<Item[]>([]);
+  const [allItems, setAllItems] = useState<Item[]>([]);
   const [plan, setPlan] = useState<PlanRow[]>([]);
   const [delivered, setDelivered] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -45,13 +45,13 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
-      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label').order('seq'),
+      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
       supabase.rpc('lab_mm_deliveries'),
     ]);
     const dq: Record<string, number> = {};
     for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
     setDelivered(dq);
-    setMmItems(((it.data ?? []) as any[]).filter(i => !i.client_name).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
+    setAllItems(((it.data ?? []) as any[]).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
     setPlan(((dp.data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
@@ -84,32 +84,42 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
-  // Delivery schedule (Maison Mooncake, Axel 2026-09-30): what Hưng must have baked, and by when.
-  // Per product group: cumulative kg of the delivery + re-make for losses − kg already received.
+  // Delivery schedules (Axel 2026-09-30): one baking plan per client that has one (Maison Mooncake,
+  // Tianhe Food…). Per product group: cumulative kg of the delivery + re-make for losses − kg baked.
   const isoToday = useMemo(() => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }, []);
-  const sched = useMemo(() => {
-    const batches = buildBatches(mmItems, planOf(plan, null, MM_CLIENT));
+  const plans = useMemo(() => {
     const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
-    return batches.map(b => {
-      const need = Object.entries(b.cumKgByGroup).map(([g, kg]) => {
-        const r = byKey[g]; const left = r ? Math.max(0, kg + r.remake - r.baked) : kg;
-        return { key: g, name: r?.name ?? g, cum: kg, left };
+    const clients = Array.from(new Set(plan.map(p => p.client_name || MM_CLIENT)));
+    return clients.map(client => {
+      const items = allItems.filter(i => (i.client_name || MM_CLIENT) === client);
+      const batches = buildBatches(items, plan.filter(p => (p.client_name || MM_CLIENT) === client));
+      const sched = batches.map(b => {
+        const need = Object.entries(b.cumKgByGroup).map(([g, kg]) => {
+          const r = byKey[g]; const left = r ? Math.max(0, kg + r.remake - r.baked) : kg;
+          return { key: g, name: r?.name ?? g, cum: kg, left };
+        });
+        const left = need.reduce((s, x) => s + x.left, 0);
+        const shipped = items.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
+        return { b, need, left, done: left < 0.05, shipped };
       });
-      const left = need.reduce((s, x) => s + x.left, 0);
-      const shipped = mmItems.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
-      return { b, need, left, done: left < 0.05, shipped };
-    });
-  }, [mmItems, plan, rows, delivered]);
-  const bagsTotal = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : i.qty_ordered), 0);
-  const bagsDone = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : Math.min(i.qty_ordered, delivered[i.sku] ?? 0)), 0);
-  const nextIdx = sched.findIndex(x => !x.done);
+      const kgUnits = items.every(i => i.unit === 'kg');
+      const total = items.reduce((s, i) => s + i.qty_ordered, 0);
+      const done = items.reduce((s, i) => s + Math.min(i.qty_ordered, delivered[i.sku] ?? 0), 0);
+      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done };
+    }).filter(p => p.sched.length);
+  }, [allItems, plan, rows, delivered]);
   // the chef can open any delivery (tap on the timeline); default = the next one not baked yet
-  const [pickIdx, setPickIdx] = useState<number | null>(null);
-  const shownIdx = pickIdx != null && pickIdx < sched.length ? pickIdx : nextIdx;
-  const next = shownIdx >= 0 ? sched[shownIdx] : null;
+  const [pick, setPick] = useState<Record<string, number>>({});
+  const shownOf = (p: { client: string; sched: unknown[]; nextIdx: number }) => (pick[p.client] != null && pick[p.client] < p.sched.length ? pick[p.client] : p.nextIdx);
   const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(isoToday)) / 86400000);
-  const nextByGroup = useMemo(() => Object.fromEntries((next?.need ?? []).map(x => [x.key, x.left])), [next]);
-  const dmy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  const Lx = (v: string, e: string) => (vi ? v : e);
+  // hint under each product row: the delivery shown in its client's plan
+  const nextByGroup = useMemo(() => {
+    const m: Record<string, { left: number; seq: number; by: string | null }> = {};
+    for (const p of plans) { const k = shownOf(p); const x = k >= 0 ? p.sched[k] : null; if (x) for (const n of x.need) m[n.key] = { left: n.left, seq: x.b.row.seq, by: x.b.produceBy }; }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans, pick]);
 
   // same rule as the station: workers/viewers are read-only
   const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
@@ -175,22 +185,27 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             ))}
           </div>
         )}
-        {sched.length > 0 && (
-          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-            <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng · Maison Mooncake' : 'Baking plan · Maison Mooncake'}</div>
+        {plans.map(p => {
+          const shownIdx = shownOf(p); const next = shownIdx >= 0 ? p.sched[shownIdx] : null;
+          const u = p.kgUnits ? 'kg' : (vi ? 'gói' : 'bags');
+          return (
+          <div key={p.client} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+            <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng' : 'Baking plan'} · {p.client.replace('CÔNG TY CỔ PHẦN ', '')}</div>
             {next ? (() => {
-              const dl = daysTo(next.b.produceBy); const late = dl < 0 && !next.done;
+              const dl = next.b.produceBy ? daysTo(next.b.produceBy) : null; const late = dl != null && dl < 0 && !next.done;
               return (
                 <div className="px-4 pb-3 space-y-2">
-                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#ECFDF5' : late ? '#FEF2F2' : dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
+                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#ECFDF5' : late ? '#FEF2F2' : dl != null && dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
                     <div className="text-[15px] font-bold" style={{ color: next.done ? '#047857' : late ? '#B91C1C' : '#111827' }}>
                       {next.done
                         ? (vi ? `Đợt ${next.b.row.seq}: đã nướng đủ ✓` : `Delivery ${next.b.row.seq}: fully baked ✓`)
-                        : (vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: bake by ${dmy(next.b.produceBy)}`)}
+                        : next.b.produceBy
+                          ? (vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dOr(next.b.produceBy, Lx)}` : `Delivery ${next.b.row.seq}: bake by ${dOr(next.b.produceBy, Lx)}`)
+                          : (vi ? `Đợt ${next.b.row.seq}: chưa có ngày giao` : `Delivery ${next.b.row.seq}: date not given yet`)}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
-                      {vi ? `Giao ${dmy(next.b.row.delivery_date)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Shipped ${dmy(next.b.row.delivery_date)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
-                      {!next.done && <>{' · '}<b>{fmt1(next.left)} kg</b> {vi ? 'còn thiếu' : 'left'}{' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}</>}
+                      {vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
+                      {!next.done && <>{' · '}<b>{fmt1(next.left)} kg</b> {vi ? 'còn thiếu' : 'left'}{dl != null && <>{' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}</>}</>}
                     </div>
                   </div>
                   {next.need.map(x => (
@@ -210,24 +225,25 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             <div className="px-4 pb-2 space-y-1">
               <div className="flex items-baseline justify-between text-xs" style={{ color: '#6B7280' }}>
                 <span className="font-bold uppercase tracking-wide text-[11px]" style={{ color: '#9CA3AF' }}>{vi ? 'Đã giao cho khách' : 'Delivered to the client'}</span>
-                <span><b style={{ color: '#111827' }}>{fmt(bagsDone)}</b> / {fmt(bagsTotal)} {vi ? 'gói' : 'bags'} · {bagsTotal ? Math.round((bagsDone / bagsTotal) * 100) : 0}%</span>
+                <span><b style={{ color: '#111827' }}>{fmt(p.done)}</b> / {fmt(p.total)} {u} · {p.total ? Math.round((p.done / p.total) * 100) : 0}%</span>
               </div>
               <span className="block h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#EFE9DC' }}>
-                <span className="block h-full rounded-full" style={{ width: `${bagsTotal ? Math.min(100, (bagsDone / bagsTotal) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
+                <span className="block h-full rounded-full" style={{ width: `${p.total ? Math.min(100, (p.done / p.total) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
               </span>
             </div>
             <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
-              {sched.map((x, k) => (
-                <button key={x.b.row.id} onClick={() => setPickIdx(k)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
-                  style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
-                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{vi ? 'Đợt' : 'Delivery'} {x.b.row.seq}</div>
-                  <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : `${vi ? 'Nướng trước' : 'Bake by'} ${dmy(x.b.produceBy)}`}</div>
-                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dmy(x.b.row.delivery_date)}`}</div>
+              {p.sched.map((x, k) => (
+                <button key={x.b.row.id} onClick={() => setPick(s => ({ ...s, [p.client]: k }))} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
+                  style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === p.nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === p.nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
+                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{vi ? 'Đợt' : 'Delivery'} {x.b.row.seq} · {fmt(x.b.kg)} kg</div>
+                  <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : x.b.produceBy ? `${vi ? 'Nướng trước' : 'Bake by'} ${dOr(x.b.produceBy, Lx)}` : (vi ? 'Chưa có ngày' : 'Date TBC')}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
                 </button>
               ))}
             </div>
           </div>
-        )}
+          );
+        })}
         <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
           {loading && !rows.length ? (
             <div className="flex justify-center py-10"><Loader2 className="animate-spin" style={{ color: GREEN }} /></div>
@@ -257,7 +273,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
                   {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
                   {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'trong đó chờ trợ lý nhận' : 'of which waiting for reception'} {fmt1(r.pending)} kg</span>}
-                  {next && (nextByGroup[r.key] ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `Đợt ${next.b.row.seq}: cần ${fmt1(nextByGroup[r.key])} kg trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: ${fmt1(nextByGroup[r.key])} kg needed by ${dmy(next.b.produceBy)}`}</span>}
+                  {(nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `Đợt ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `Delivery ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
                 </div>
               </div>
             );

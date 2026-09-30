@@ -5,14 +5,16 @@
 //   kg per product group, and the date by which Hung's kg must be baked.
 import { itemKg, type Item } from './model';
 
-export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string; pct: number; label: string | null };
+// qty (optional, {sku: qty}) = explicit quantities per product for this delivery (Tianhe: 150 kg each, then 340/160/210);
+// otherwise the delivery is `pct` % of every product. delivery_date may be null (date not given yet).
+export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string | null; pct: number; label: string | null; qty?: Record<string, number> | null };
 export type Batch = {
   row: PlanRow; cumPct: number;
   qty: Record<string, number>;      // per sku, this delivery (bags, or kg for kg items)
   cumQty: Record<string, number>;   // per sku, cumulative up to this delivery
   kg: number;                       // total kg of this delivery
   cumKgByGroup: Record<string, number>; // per product group, cumulative kg to have baked
-  produceBy: string;                // ISO date: bake before this day (delivery − lead days)
+  produceBy: string | null;         // ISO date: bake before this day (delivery − lead days); null = date not given
 };
 
 // Hung must have baked a delivery's kg a few days before it leaves (reception + packing + count).
@@ -23,21 +25,29 @@ const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:0
 export function buildBatches(items: Item[], plan: PlanRow[]): Batch[] {
   const rows = [...plan].sort((a, b) => a.seq - b.seq);
   let cum = 0; const prev: Record<string, number> = {};
+  const totalKg = items.reduce((s, i) => s + itemKg(i, i.qty_ordered), 0);
+  let cumKgAll = 0;
   return rows.map(row => {
     cum += Number(row.pct);
     const qty: Record<string, number> = {}, cumQty: Record<string, number> = {}, cumKgByGroup: Record<string, number> = {};
     let kg = 0;
     for (const i of items) {
-      const raw = (i.qty_ordered * Math.min(cum, 100)) / 100;
+      const raw = row.qty ? (prev[i.sku] ?? 0) + Number(row.qty[i.sku] ?? 0) : (i.qty_ordered * Math.min(cum, 100)) / 100;
       const c = i.unit === 'kg' ? Math.round(raw * 10) / 10 : Math.round(raw);
       cumQty[i.sku] = c; qty[i.sku] = c - (prev[i.sku] ?? 0); prev[i.sku] = c;
       kg += itemKg(i, qty[i.sku]);
       cumKgByGroup[i.group_key] = (cumKgByGroup[i.group_key] ?? 0) + itemKg(i, c);
     }
-    return { row, cumPct: cum, qty, cumQty, kg, cumKgByGroup, produceBy: addDays(row.delivery_date, -PRODUCE_LEAD_DAYS) };
+    cumKgAll += kg;
+    const cumPct = row.qty ? (totalKg ? (cumKgAll / totalKg) * 100 : 0) : cum;
+    return { row, cumPct, qty, cumQty, kg, cumKgByGroup, produceBy: row.delivery_date ? addDays(row.delivery_date, -PRODUCE_LEAD_DAYS) : null };
   });
 }
 
 // plan rows of a client (null client_name = Maison Mooncake)
 export const planOf = (plan: PlanRow[], clientName: string | null | undefined, mmClient: string) =>
   plan.filter(p => (p.client_name || mmClient) === (clientName || mmClient));
+
+// dd/mm or a "date to confirm" label
+export const dOr = (iso: string | null | undefined, L: (vi: string, en: string) => string, full = false) =>
+  iso ? (full ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}` : `${iso.slice(8, 10)}/${iso.slice(5, 7)}`) : L('chưa có ngày', 'date TBC');

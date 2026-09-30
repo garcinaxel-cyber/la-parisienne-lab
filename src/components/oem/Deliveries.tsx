@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { Card, Chip, Banner, Empty, Title } from './ui';
 import { fmt, dmy, itemKg, localToday, unitLabel, MUTED, FAINT, GOLD, MM_CLIENT, type Delivery, type Derived, type Item, type LFn } from './model';
-import type { Batch } from './plan';
+import { dOr, type Batch } from './plan';
 
 // Daily operations → Deliveries. Nothing is entered here: one Odoo sales order per delivery goes
 // through the usual Delivery check; this tab reads the result (lab_mm_deliveries()).
@@ -71,17 +71,17 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
             {batches.map((b, k) => {
               const st = planStatus[k]; const isOpen = openPlan === k;
               const bags = items.reduce((s, i) => s + (i.unit === 'kg' ? 0 : b.qty[i.sku] ?? 0), 0);
-              const late = !st.done && b.row.delivery_date < today;
+              const late = !st.done && !!b.row.delivery_date && b.row.delivery_date < today;
               const chip = st.done ? <Chip tone="green">{L('Đã giao', 'Delivered')}</Chip>
                 : st.isNext ? (st.missing <= 0.0005 ? <Chip tone="green">{L('Đủ hàng', 'Stock ready')}</Chip> : <Chip tone={late ? 'red' : 'amber'}>{L('Thiếu', 'Missing')} {fmt(st.missing, 0)} {anyKg ? '' : L('gói', 'bags')}</Chip>)
-                : <Chip>{L('Nướng trước', 'Bake by')} {dmy(b.produceBy)}</Chip>;
+                : <Chip>{L('Nướng trước', 'Bake by')} {dOr(b.produceBy, L, true)}</Chip>;
               return (
                 <div key={b.row.id} style={{ borderTop: k ? '1px solid #EFE9DC' : undefined, backgroundColor: st.isNext ? '#FFFBF2' : undefined }}>
                   <button onClick={() => setOpenPlan(isOpen ? null : k)} className="w-full text-left px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                     {isOpen ? <ChevronDown size={14} style={{ color: FAINT }} /> : <ChevronRight size={14} style={{ color: FAINT }} />}
                     <span className="w-14 font-bold" style={{ color: st.isNext ? GOLD : '#111827' }}>{L('Đợt', 'Del.')} {b.row.seq}</span>
-                    <span className="w-[74px]"><b>{dmy(b.row.delivery_date)}</b>{b.row.label && <span className="block text-[10px]" style={{ color: FAINT }}>{b.row.label}</span>}</span>
-                    <span className="w-12 text-xs font-semibold tabular-nums" style={{ color: MUTED }}>{fmt(Number(b.row.pct), 1)} %</span>
+                    <span className="w-[74px]"><b>{dOr(b.row.delivery_date, L, true)}</b>{b.row.label && <span className="block text-[10px]" style={{ color: FAINT }}>{b.row.label}</span>}</span>
+                    <span className="w-12 text-xs font-semibold tabular-nums" style={{ color: MUTED }}>{b.row.qty ? fmt(b.cumPct - (k ? batches[k - 1].cumPct : 0), 0) : fmt(Number(b.row.pct), 1)} %</span>
                     <span className="flex-1 min-w-[110px] text-xs tabular-nums" style={{ color: MUTED }}>{anyKg ? '' : <><b style={{ color: '#111827' }}>{fmt(bags, 0)}</b> {L('gói', 'bags')} · </>}{fmt(b.kg, 0)} kg <span style={{ color: FAINT }}>· {L('cộng dồn', 'cum.')} {fmt(b.cumPct, 0)} %</span></span>
                     {chip}
                   </button>
@@ -102,7 +102,7 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
                         ))}
                       </div>
                       <div className="text-[11px] mt-1.5" style={{ color: FAINT }}>
-                        {L(`Bếp Hưng cần nướng xong trước ${dmy(b.produceBy)} (3 ngày trước khi giao: nhận, gói, kiểm).`, `Team Hưng must have baked it by ${dmy(b.produceBy)} (3 days before delivery: reception, packing, count).`)}
+                        {L(b.produceBy ? `Bếp Hưng cần nướng xong trước ${dOr(b.produceBy, L, true)} (3 ngày trước khi giao: nhận, gói, kiểm).` : 'Chưa có ngày giao — hạn nướng sẽ hiện khi có ngày.', b.produceBy ? `Team Hưng must have baked it by ${dOr(b.produceBy, L, true)} (3 days before delivery: reception, packing, count).` : 'Delivery date not given yet — the bake-by date will show once it is.')}
                       </div>
                     </div>
                   )}
