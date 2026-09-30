@@ -9,6 +9,8 @@ import EventCaisseTab from './EventCaisseTab';
 import OfficialInventoryTab from './OfficialInventoryTab';
 import type { CheckLine } from '@/lib/delivery-check';
 import { thumb } from '@/lib/img-thumb';
+import QtyExprInput from '@/components/QtyExprInput';
+import { evalQty } from '@/lib/qty-expr';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-report-pdf';
 import { groupByCategory } from '@/lib/group-by-category';
@@ -884,9 +886,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const trimmedName = stockName.trim();
     if (!trimmedName || !stockLines?.length) return;
     const validSkus = new Set(stockLines.map(l => l.sku));
+    // Mini calculator (2026-09-30, same as OEM): a field may hold "12+3+50" / "12×24+7". An
+    // invalid expression blocks the save instead of being silently dropped.
+    const bad = Object.entries(stockDraft)
+      .filter(([sku, v]) => validSkus.has(sku) && v.trim() !== '' && Number.isNaN(evalQty(v) as number))
+      .map(([sku]) => sku);
+    if (bad.length) { setStockMsg(`Số lượng không hợp lệ: ${bad.join(', ')}`); return; }
     const entries = Object.entries(stockDraft)
       .filter(([sku, v]) => validSkus.has(sku) && v.trim() !== '')
-      .map(([sku, v]) => ({ sku, qty: Number(v) }))
+      .map(([sku, v]) => ({ sku, qty: evalQty(v) as number }))
       .filter(e => Number.isFinite(e.qty) && e.qty >= 0);
     if (!entries.length) { setStockMsg('Chưa nhập số lượng nào'); return; }
     try { localStorage.setItem(STOCK_NAME_STORAGE_KEY, trimmedName); } catch {}
@@ -898,6 +906,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setStockSaving(false);
     if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
     setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    // show the saved result instead of the typed expression ("12+3" -> "15")
+    setStockDraft(p => { const n = { ...p }; for (const e of entries) n[e.sku] = String(e.qty); return n; });
     setStockDirty(false);
     setFinishArmed(false);
     if (res.sessionSeq) setStockSessionSeq(res.sessionSeq);
@@ -1107,7 +1117,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // pendant la saisie exactement comme le vert des categories completes juste au-dessus.
   const stockValuationLive = (stockLines ?? []).reduce((sum, l) => {
     const v = stockDraft[l.sku];
-    const qty = v !== undefined && v.trim() !== '' ? Number(v) : NaN;
+    const q = evalQty(v);
+    const qty = q === null ? NaN : q;
     return sum + (Number.isFinite(qty) ? qty : 0) * (l.priceB2c ?? 0);
   }, 0);
 
@@ -1791,9 +1802,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
                           </div>
-                          <input type="number" min={0} step="1" inputMode="decimal" disabled={stockSessionSeq < stockLatestSessionSeq}
-                            value={stockDraft[l.sku] ?? ''} onChange={e => { setStockDraft(p => ({ ...p, [l.sku]: e.target.value })); setStockDirty(true); }}
-                            placeholder="—" className="w-20 rounded-lg px-2.5 py-1.5 text-sm font-bold text-right shrink-0 disabled:opacity-50" style={{ border: `1px solid ${BORDER}` }} />
+                          <QtyExprInput disabled={stockSessionSeq < stockLatestSessionSeq} placeholder="—" borderColor={BORDER} width={72}
+                            value={stockDraft[l.sku] ?? ''} onChange={v => { setStockDraft(p => ({ ...p, [l.sku]: v })); setStockDirty(true); }} />
                         </div>
                       ))}
                     </div>

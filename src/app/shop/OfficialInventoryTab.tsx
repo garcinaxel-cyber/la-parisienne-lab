@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, Minus, Plus, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, ShieldCheck } from 'lucide-react';
 import type { ShopStaffName } from './actions';
 import type { OfficialInventoryLine, OfficialInventorySession } from './official-inventory-actions';
 import { thumb } from '@/lib/img-thumb';
+import QtyExprInput from '@/components/QtyExprInput';
+import { evalQty } from '@/lib/qty-expr';
 import { NamePicker, NAVY, GOLD, GOLD_LIGHT, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 
 // "Kiểm kê chính thức" — the monthly official inventory (Axel, 2026-09-22): last day of the month
@@ -27,6 +29,8 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   const [starting, setStarting] = useState(false);
   const [screen, setScreen] = useState<'count' | 'recap' | 'confirm1' | 'confirm2'>('count');
   const [savingSku, setSavingSku] = useState<string | null>(null);
+  // typed-but-not-yet-committed field values (mini calculator, 2026-09-30: "12+3", "4×12+5")
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [certified, setCertified] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -66,6 +70,18 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     setLines(prev => prev.map(l => l.sku === sku ? { ...l, qtyCounted: qty } : l));
   }
 
+  // Commit a field on blur/Enter: empty = 0 (uncounted counts as 0 here, see the server side);
+  // an invalid expression stays in the field in red and is NOT saved.
+  function commitDraft(sku: string, raw: string) {
+    const v = raw.trim() === '' ? 0 : evalQty(raw);
+    if (v === null || !Number.isFinite(v)) return;
+    setDrafts(p => { const n = { ...p }; delete n[sku]; return n; });
+    const current = lines.find(l => l.sku === sku)?.qtyCounted;
+    if (current === v) return;
+    updateLocalQty(sku, v);
+    commitQty(sku, v);
+  }
+
   async function commitQty(sku: string, qty: number) {
     if (!session) return;
     setSavingSku(sku);
@@ -98,6 +114,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   }
 
   const countedCount = lines.filter(l => l.qtyCounted > 0).length;
+  const badDraftSkus = Object.entries(drafts).filter(([, v]) => v.trim() !== '' && Number.isNaN(evalQty(v) as number)).map(([sku]) => sku);
   const isSubmitted = session?.status === 'submitted';
 
   // ── Not started yet today ──
@@ -237,24 +254,22 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
               <div className="text-[13px] font-semibold truncate" style={{ color: INK }}>{l.productName}</div>
               <div className="text-[11px] truncate" style={{ color: '#8A9A8F' }}>{l.sku}</div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => { const q = Math.max(0, l.qtyCounted - 1); updateLocalQty(l.sku, q); commitQty(l.sku, q); }}
-                className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}>
-                <Minus size={14} style={{ color: NAVY }} />
-              </button>
-              <div className="min-w-[22px] text-center text-sm font-bold tabular-nums" style={{ color: NAVY }}>
-                {savingSku === l.sku ? <Loader2 size={12} className="animate-spin inline" /> : l.qtyCounted}
-              </div>
-              <button onClick={() => { const q = l.qtyCounted + 1; updateLocalQty(l.sku, q); commitQty(l.sku, q); }}
-                className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ border: `1px solid ${BORDER}` }}>
-                <Plus size={14} style={{ color: NAVY }} />
-              </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
+              <QtyExprInput width={64} borderColor={BORDER} filledBorderColor={GREEN}
+                value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
+                onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
+                onBlur={v => commitDraft(l.sku, v)} />
             </div>
             {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
           </div>
         ))}
       </div>
-      <button onClick={() => setScreen('recap')} className="w-full rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>
+      {badDraftSkus.length > 0 && (
+        <div className="text-sm font-semibold text-center" style={{ color: RED }}>Số lượng không hợp lệ: {badDraftSkus.join(', ')}</div>
+      )}
+      <button onClick={() => setScreen('recap')} disabled={badDraftSkus.length > 0}
+        className="w-full rounded-lg py-3 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>
         Xem tổng kết
       </button>
     </div>

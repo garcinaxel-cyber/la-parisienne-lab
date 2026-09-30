@@ -112,16 +112,9 @@ export function byClient(items: Item[]): Client[] {
 // "12+3+50" kg of sugar; cartons: "12×24+7" = 12 cartons of 24 bags + 7 loose bags).
 // Only digits, one decimal separator per number ("," or "."), "+" and "×" / "x" / "*".
 // Returns null when empty, NaN when invalid, else the value (multiplication before addition).
-export function evalQty(raw: string | undefined | null): number | null {
-  const s = (raw ?? '').replace(/\s+/g, '').replace(/[xX×*]/g, '*').replace(/,/g, '.');
-  if (!s) return null;
-  if (!/^\d+(\.\d+)?([+*]\d+(\.\d+)?)*$/.test(s)) return NaN;
-  const v = s.split('+').reduce((sum, term) => sum + term.split('*').reduce((p, f) => p * Number(f), 1), 0);
-  return Number.isFinite(v) ? Math.round(v * 1000) / 1000 : NaN;
-}
-export const hasOp = (raw: string | undefined | null) => /[+xX×*]/.test(raw ?? '');
-// what the user may type in a quantity field
-export const cleanExpr = (raw: string) => raw.replace(/[^0-9.,+xX×*\s]/g, '');
+// moved to src/lib/qty-expr.ts (2026-09-30) so shops + LAB inventories share the same calculator
+import { evalQty } from '@/lib/qty-expr';
+export { evalQty, hasOp, cleanExpr } from '@/lib/qty-expr';
 
 // value valid for a field? (empty = not filled; bags must be whole numbers)
 export function qtyOk(raw: string | undefined | null, integer: boolean): boolean {

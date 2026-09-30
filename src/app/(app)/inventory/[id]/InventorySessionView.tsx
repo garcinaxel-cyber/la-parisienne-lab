@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, Search, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import type { InventoryLineResult } from '@/lib/odoo-inventory';
+import QtyExprInput from '@/components/QtyExprInput';
+import { evalQty } from '@/lib/qty-expr';
 
 type Product = {
   sku: string; product_name_vi: string; product_name_en: string | null;
@@ -68,9 +70,11 @@ export default function InventorySessionView({
     const trimmed = raw.trim();
     setLines(p => ({ ...p, [sku]: { ...p[sku], qty: trimmed } }));
     if (trimmed === '') return; // don't save empty — leaves it as "not counted"
-    const qty = Number(trimmed);
-    if (!Number.isFinite(qty)) return;
-    setLines(p => ({ ...p, [sku]: { ...p[sku], saving: true } }));
+    // Mini calculator (2026-09-30, same as OEM): "12+3+50", "12×24+7". An invalid expression
+    // stays red in the field and is NOT saved; a valid one is replaced by its result.
+    const qty = evalQty(trimmed);
+    if (qty === null || !Number.isFinite(qty)) return;
+    setLines(p => ({ ...p, [sku]: { ...p[sku], qty: String(qty), saving: true } }));
     const { saveLineAction } = await import('../actions');
     await saveLineAction(session.id, {
       fiche_id: state.fiche_id, variant_id: state.variant_id, sku,
@@ -110,8 +114,11 @@ export default function InventorySessionView({
 
   const countedSkus = useMemo(() => Object.keys(lines).filter(sku => lines[sku].qty.trim() !== ''), [lines]);
 
+  const badSkus = useMemo(() => Object.keys(lines).filter(sku => Number.isNaN(evalQty(lines[sku].qty) as number)), [lines]);
+
   async function goToRecap() {
     if (!countedSkus.length) return;
+    if (badSkus.length) return; // shown in red above the button — fix before the recap
     setStep('recap'); setRecapLoading(true); setSubmitError(null);
     const { previewSubmitAction } = await import('../actions');
     const res = await previewSubmitAction(session.id);
@@ -213,12 +220,10 @@ export default function InventorySessionView({
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {st?.saving && <Loader2 size={14} className="animate-spin text-ink-light" />}
-                      <input type="number" inputMode="decimal" value={st?.qty ?? ''}
-                        onChange={e => setLines(prev => ({ ...prev, [p.sku]: { ...prev[p.sku], qty: e.target.value } }))}
-                        onBlur={e => saveQty(p.sku, e.target.value)}
-                        placeholder="0"
-                        className="w-20 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
-                        style={{ border: '1px solid', borderColor: counted ? '#86EFAC' : '#D1D5DB' }} />
+                      <QtyExprInput value={st?.qty ?? ''}
+                        onChange={v => setLines(prev => ({ ...prev, [p.sku]: { ...prev[p.sku], qty: v } }))}
+                        onBlur={v => saveQty(p.sku, v)}
+                        filledBorderColor="#86EFAC" />
                     </div>
                   </div>
                 );
@@ -230,8 +235,13 @@ export default function InventorySessionView({
             </div>
           )}
 
+          {badSkus.length > 0 && (
+            <div className="text-sm font-semibold text-right" style={{ color: '#DC2626' }}>
+              {vi ? `Số lượng không hợp lệ: ${badSkus.join(', ')}` : `Quantité invalide : ${badSkus.join(', ')}`}
+            </div>
+          )}
           <div className="flex justify-end pt-2">
-            <button onClick={goToRecap} disabled={!countedSkus.length}
+            <button onClick={goToRecap} disabled={!countedSkus.length || badSkus.length > 0}
               className="text-sm font-bold px-5 py-2.5 rounded-xl text-white disabled:opacity-40"
               style={{ backgroundColor: '#1f2937' }}>
               {vi ? `Xem lại (${countedSkus.length})` : `Voir le récapitulatif (${countedSkus.length})`}
