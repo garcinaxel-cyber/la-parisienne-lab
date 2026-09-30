@@ -92,7 +92,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   if (!hasWarehouse) {
     return (
       <div className="rounded-xl px-3.5 py-3 text-sm" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}`, color: INK }}>
-        Boutique sans entrepôt Odoo — l'inventaire officiel n'est pas disponible ici.
+        Shop chưa có kho trên Odoo — chưa thể kiểm kê chính thức ở đây.
       </div>
     );
   }
@@ -118,14 +118,14 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
         )}
         {isLastDay && (
           <div className="rounded-xl p-4 space-y-3" style={{ background: `linear-gradient(135deg, ${NAVY}, #0F2E1F)` }}>
-            <div className="text-sm font-bold" style={{ color: GOLD_LIGHT }}>Inventaire officiel du mois</div>
+            <div className="text-sm font-bold" style={{ color: GOLD_LIGHT }}>Kiểm kê chính thức trong tháng</div>
             <NamePicker value={name} onChange={setName} names={staffNames} onManage={onManageStaff} />
             {error && <div className="text-xs font-semibold" style={{ color: '#FFD9D2' }}>{error}</div>}
             <button onClick={handleStart} disabled={starting}
               className="w-full rounded-lg py-3 text-sm font-bold flex items-center justify-center gap-2"
               style={{ backgroundColor: GOLD, color: NAVY }}>
               {starting ? <Loader2 size={16} className="animate-spin" /> : <ClipboardCheck size={16} />}
-              Commencer l'inventaire officiel
+              Bắt đầu kiểm kê chính thức
             </button>
           </div>
         )}
@@ -138,10 +138,10 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     return (
       <div className="rounded-xl p-5 text-center space-y-2" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}` }}>
         <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
-        <div className="font-bold text-sm" style={{ color: INK }}>Inventaire officiel {period} envoyé</div>
+        <div className="font-bold text-sm" style={{ color: INK }}>Đã gửi kiểm kê chính thức {period}</div>
         <div className="text-xs" style={{ color: '#6B7280' }}>
           {lines.length} sản phẩm · gửi bởi {session.submittedByName ?? '—'}
-          {session.odooPushStatus === 'partial' && <span style={{ color: RED }}> · une partie a échoué, à vérifier avec l'équipe</span>}
+          {session.odooPushStatus === 'partial' && <span style={{ color: RED }}> · một phần bị lỗi, cần kiểm tra lại với lab</span>}
         </div>
       </div>
     );
@@ -153,19 +153,19 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
       <div className="rounded-xl p-4 space-y-3" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
         {screen === 'confirm1' ? (
           <>
-            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Étape 1 sur 2</div>
-            <div className="font-bold text-base" style={{ color: INK }}>Valider l'inventaire ?</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Bước 1/2</div>
+            <div className="font-bold text-base" style={{ color: INK }}>Xác nhận kiểm kê?</div>
             <div className="text-sm" style={{ color: '#5C6B60' }}>{countedCount}/{lines.length} sản phẩm đã nhập. Sau khi xác nhận, số liệu không thể sửa nữa.</div>
             <div className="flex gap-2">
               <button onClick={() => setScreen('recap')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
-              <button onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>Valider l'inventaire</button>
+              <button onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>Xác nhận kiểm kê</button>
             </div>
           </>
         ) : (
           <>
-            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Étape 2 sur 2</div>
-            <div className="font-bold text-base" style={{ color: INK }}>Envoyer à la comptabilité ?</div>
-            <div className="text-sm" style={{ color: '#5C6B60' }}>Cette action pousse les quantités sur le stock actuel dans Odoo. Elle est définitive.</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Bước 2/2</div>
+            <div className="font-bold text-base" style={{ color: INK }}>Gửi lên Odoo?</div>
+            <div className="text-sm" style={{ color: '#5C6B60' }}>Thao tác này sẽ ghi số lượng vào tồn kho hiện tại trên Odoo. Không thể hoàn tác.</div>
             <button onClick={() => setCertified(c => !c)} type="button"
               className="w-full flex items-start gap-2.5 rounded-lg p-3 text-left"
               style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}` }}>
@@ -176,7 +176,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
             </button>
             {submitError && <div className="text-xs font-semibold" style={{ color: RED }}>{submitError}</div>}
             <div className="flex gap-2">
-              <button onClick={() => setScreen('confirm1')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Retour</button>
+              <button onClick={() => setScreen('confirm1')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
               <button onClick={handleSubmit} disabled={!certified || submitting}
                 className="flex-1 rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2"
                 style={{ backgroundColor: certified ? RED : '#C9C2AE' }}>
@@ -207,7 +207,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           ))}
         </div>
         <button onClick={() => setScreen('confirm1')} className="w-full rounded-lg py-3 text-sm font-bold" style={{ backgroundColor: GOLD, color: NAVY }}>
-          Valider l'inventaire officiel
+          Xác nhận kiểm kê chính thức
         </button>
       </div>
     );
