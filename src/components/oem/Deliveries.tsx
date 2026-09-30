@@ -3,14 +3,31 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { Card, Chip, Banner, Empty, Title } from './ui';
-import { fmt, dmy, unitLabel, MUTED, FAINT, MM_CLIENT, type Delivery, type Derived, type Item, type LFn } from './model';
+import { fmt, dmy, itemKg, localToday, unitLabel, MUTED, FAINT, GOLD, MM_CLIENT, type Delivery, type Derived, type Item, type LFn } from './model';
+import type { Batch } from './plan';
 
 // Daily operations → Deliveries. Nothing is entered here: one Odoo sales order per delivery goes
 // through the usual Delivery check; this tab reads the result (lab_mm_deliveries()).
 // "Ready" allocates the current finished-goods stock to the upcoming deliveries by date.
-export default function Deliveries({ deliveries, items, d, showCheckLink, L }: { deliveries: Delivery[]; items: Item[]; d: Derived; showCheckLink: boolean; L: LFn }) {
+export default function Deliveries({ deliveries, items, d, batches, showCheckLink, L }: { deliveries: Delivery[]; items: Item[]; d: Derived; batches: Batch[]; showCheckLink: boolean; L: LFn }) {
   const bySku = useMemo(() => Object.fromEntries(items.map(i => [i.sku, i])) as Record<string, Item>, [items]);
   const [open, setOpen] = useState<string | null>(null);
+  const [openPlan, setOpenPlan] = useState<number | null>(null);
+
+  // schedule status: a delivery is "done" when the validated deliveries cover its cumulative bags;
+  // the first one not done is compared with the ready stock (finished goods not delivered yet).
+  const planStatus = useMemo(() => {
+    let firstOpen = true;
+    return batches.map(b => {
+      const done = items.every(i => (d.deliveredQty[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
+      const missing = items.reduce((s, i) => s + Math.max(0, (b.cumQty[i.sku] ?? 0) - (d.deliveredQty[i.sku] ?? 0) - Math.max(0, d.fgTheo[i.sku] ?? 0)), 0);
+      const isNext = !done && firstOpen; if (isNext) firstOpen = false;
+      return { done, missing, isNext };
+    });
+  }, [batches, items, d]);
+  const totalPct = batches.length ? batches[batches.length - 1].cumPct : 0;
+  const anyKg = items.some(i => i.unit === 'kg');
+  const today = localToday();
 
   const orders = useMemo(() => {
     const m = new Map<string, { key: string; ref: string; date: string; customer: string; lines: Delivery[] }>();
@@ -47,6 +64,54 @@ export default function Deliveries({ deliveries, items, d, showCheckLink, L }: {
            'One Odoo sales order per delivery → checked in the usual Delivery check. This tab only reads the result — nobody enters deliveries twice.')}
         {showCheckLink && <> <Link href="/delivery-check" className="inline-flex items-center gap-0.5 font-bold underline">{L('Mở kiểm tra giao hàng', 'Open delivery check')}<ExternalLink size={11} /></Link></>}
       </Banner>
+      {batches.length > 0 && (
+        <div className="space-y-1.5">
+          <Title right={<span className="text-[11px] font-semibold" style={{ color: Math.abs(totalPct - 100) > 0.01 ? '#B91C1C' : FAINT }}>{fmt(totalPct, 1)} %</span>}>{L('Lịch giao hàng (kế hoạch)', 'Delivery schedule (plan)')}</Title>
+          <Card className="overflow-hidden">
+            {batches.map((b, k) => {
+              const st = planStatus[k]; const isOpen = openPlan === k;
+              const bags = items.reduce((s, i) => s + (i.unit === 'kg' ? 0 : b.qty[i.sku] ?? 0), 0);
+              const late = !st.done && b.row.delivery_date < today;
+              const chip = st.done ? <Chip tone="green">{L('Đã giao', 'Delivered')}</Chip>
+                : st.isNext ? (st.missing <= 0.0005 ? <Chip tone="green">{L('Đủ hàng', 'Stock ready')}</Chip> : <Chip tone={late ? 'red' : 'amber'}>{L('Thiếu', 'Missing')} {fmt(st.missing, 0)} {anyKg ? '' : L('gói', 'bags')}</Chip>)
+                : <Chip>{L('Nướng trước', 'Bake by')} {dmy(b.produceBy)}</Chip>;
+              return (
+                <div key={b.row.id} style={{ borderTop: k ? '1px solid #EFE9DC' : undefined, backgroundColor: st.isNext ? '#FFFBF2' : undefined }}>
+                  <button onClick={() => setOpenPlan(isOpen ? null : k)} className="w-full text-left px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    {isOpen ? <ChevronDown size={14} style={{ color: FAINT }} /> : <ChevronRight size={14} style={{ color: FAINT }} />}
+                    <span className="w-14 font-bold" style={{ color: st.isNext ? GOLD : '#111827' }}>{L('Đợt', 'Del.')} {b.row.seq}</span>
+                    <span className="w-[74px]"><b>{dmy(b.row.delivery_date)}</b>{b.row.label && <span className="block text-[10px]" style={{ color: FAINT }}>{b.row.label}</span>}</span>
+                    <span className="w-12 text-xs font-semibold tabular-nums" style={{ color: MUTED }}>{fmt(Number(b.row.pct), 1)} %</span>
+                    <span className="flex-1 min-w-[110px] text-xs tabular-nums" style={{ color: MUTED }}>{anyKg ? '' : <><b style={{ color: '#111827' }}>{fmt(bags, 0)}</b> {L('gói', 'bags')} · </>}{fmt(b.kg, 0)} kg <span style={{ color: FAINT }}>· {L('cộng dồn', 'cum.')} {fmt(b.cumPct, 0)} %</span></span>
+                    {chip}
+                  </button>
+                  {isOpen && (
+                    <div className="px-3 pb-3 pl-9">
+                      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #F3F4F6' }}>
+                        <div className="grid grid-cols-12 text-[10px] font-bold uppercase px-2 py-1" style={{ backgroundColor: '#F9FAFB', color: FAINT }}>
+                          <span className="col-span-6">{L('Sản phẩm', 'Product')}</span><span className="col-span-2 text-right">{L('Đợt này', 'This one')}</span>
+                          <span className="col-span-2 text-right">kg</span><span className="col-span-2 text-right">{L('Cộng dồn', 'Cumul.')}</span>
+                        </div>
+                        {items.map(i => (
+                          <div key={i.sku} className="grid grid-cols-12 text-[11px] px-2 py-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+                            <span className="col-span-6 truncate">{i.product_name}</span>
+                            <span className="col-span-2 text-right font-semibold">{fmt(b.qty[i.sku] ?? 0, i.unit === 'kg' ? 1 : 0)} {unitLabel(i, L)}</span>
+                            <span className="col-span-2 text-right">{fmt(itemKg(i, b.qty[i.sku] ?? 0), 1)}</span>
+                            <span className="col-span-2 text-right" style={{ color: MUTED }}>{fmt(b.cumQty[i.sku] ?? 0, i.unit === 'kg' ? 1 : 0)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="text-[11px] mt-1.5" style={{ color: FAINT }}>
+                        {L(`Bếp Hưng cần nướng xong trước ${dmy(b.produceBy)} (3 ngày trước khi giao: nhận, gói, kiểm).`, `Team Hưng must have baked it by ${dmy(b.produceBy)} (3 days before delivery: reception, packing, count).`)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      )}
       <div className="space-y-1.5">
         <Title>{L('Hàng sẵn sàng giao', 'Ready to deliver')}</Title>
         <Card className="overflow-hidden">
@@ -62,7 +127,7 @@ export default function Deliveries({ deliveries, items, d, showCheckLink, L }: {
         </Card>
       </div>
       <Title>{L('Các lần giao', 'Deliveries')}</Title>
-      {!orders.length ? <Empty text={L('Chưa có đơn giao OEM nào. Đang chờ lịch giao hàng.', 'No OEM delivery order yet — waiting for the delivery schedule.')} /> : (
+      {!orders.length ? <Empty text={L('Chưa có đơn giao OEM nào trong kiểm tra giao hàng.', 'No OEM delivery order in the delivery check yet.')} /> : (
         <Card className="overflow-hidden">
           {orders.map((o, oi) => {
             const isOpen = open === o.key;
@@ -117,9 +182,6 @@ export default function Deliveries({ deliveries, items, d, showCheckLink, L }: {
           })}
         </Card>
       )}
-      <div className="text-[11px]" style={{ color: FAINT }}>
-        {L('Mục tiêu theo từng lần giao sẽ được thêm khi có lịch giao hàng.', 'Per-delivery targets will be added once the delivery schedule is received.')}
-      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { Loader2, Trash2, Pencil, Check, X, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { Empty } from './ui';
 import { fmt, localToday, itemKg, GREEN, MM_CLIENT, type Item, type ProdLog, type Hist, type LFn } from './model';
+import type { PlanRow } from './plan';
 
 // Production log (Hung's kg entries, admin corrections) + order quantities / settings.
 const kgOf = (it: Item) => itemKg(it, it.qty_ordered);
@@ -138,8 +139,8 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
   );
 }
 
-export function OrderSettings({ items, hist, odooOn, userId, userName, reload, L }: {
-  items: Item[]; hist: Hist[]; odooOn: boolean; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
+export function OrderSettings({ items, hist, odooOn, plan, userId, userName, reload, L }: {
+  items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -210,6 +211,8 @@ export function OrderSettings({ items, hist, odooOn, userId, userName, reload, L
         </div>
       </div>
 
+      <PlanEditor plan={plan} userName={userName} reload={reload} L={L} />
+
       <div className="space-y-1.5">
         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Lịch sử thay đổi', 'Change history')}</div>
         {!hist.length ? <Empty text={L('Chưa có thay đổi.', 'No change yet.')} /> : (
@@ -224,6 +227,65 @@ export function OrderSettings({ items, hist, odooOn, userId, userName, reload, L
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Delivery schedule (lab_mm_delivery_plan): date + % of the order per delivery, admin only.
+function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: string | null; reload: () => Promise<void>; L: LFn }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [draft, setDraft] = useState<Record<string, { delivery_date?: string; pct?: string; label?: string }>>({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const val = (r: PlanRow) => ({ delivery_date: draft[r.id]?.delivery_date ?? r.delivery_date, pct: draft[r.id]?.pct ?? String(r.pct), label: draft[r.id]?.label ?? (r.label ?? '') });
+  const changed = plan.filter(r => { const v = val(r); return v.delivery_date !== r.delivery_date || Number(v.pct) !== Number(r.pct) || v.label !== (r.label ?? ''); });
+  const byClient = new Map<string, PlanRow[]>();
+  for (const r of plan) { const c = r.client_name || MM_CLIENT; if (!byClient.has(c)) byClient.set(c, []); byClient.get(c)!.push(r); }
+  const set = (id: string, k: 'delivery_date' | 'pct' | 'label', v: string) => setDraft(d => ({ ...d, [id]: { ...d[id], [k]: v } }));
+
+  async function save() {
+    setBusy(true); setMsg(null);
+    for (const r of changed) {
+      const v = val(r);
+      const pct = Number(v.pct);
+      if (!v.delivery_date || !(pct >= 0 && pct <= 100)) { setMsg(L('Ngày hoặc % không hợp lệ.', 'Invalid date or %.')); setBusy(false); return; }
+      const u = await supabase.from('lab_mm_delivery_plan').update({ delivery_date: v.delivery_date, pct, label: v.label || null, updated_at: new Date().toISOString(), updated_by_name: userName }).eq('id', r.id);
+      if (u.error) { setMsg(u.error.message); setBusy(false); return; }
+    }
+    setBusy(false); setDraft({}); setMsg(L('Đã lưu.', 'Saved.')); await reload();
+  }
+
+  if (!plan.length) return null;
+  return (
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+      <div className="px-3 py-2 text-[11px]" style={{ color: '#6B7280', backgroundColor: '#F9FAFB' }}>
+        {L('Lịch giao hàng: ngày + % đơn hàng mỗi đợt. Số gói mỗi đợt và hạn nướng của bếp Hưng được tính tự động.', 'Delivery schedule: date + % of the order per delivery. Bags per delivery and Team Hưng\'s bake-by dates are computed from it.')}
+      </div>
+      {Array.from(byClient.entries()).map(([c, rows]) => {
+        const tot = rows.reduce((s, r) => s + Number(val(r).pct || 0), 0);
+        return (
+          <div key={c}>
+            <div className="flex items-center justify-between px-3 py-1.5 text-xs font-bold" style={{ borderTop: '1px solid #F3F4F6' }}>
+              <span>{c}</span><span style={{ color: Math.abs(tot - 100) > 0.01 ? '#DC2626' : '#059669' }}>{L('Tổng', 'Total')} {fmt(tot, 1)} %</span>
+            </div>
+            {rows.sort((a, b) => a.seq - b.seq).map(r => { const v = val(r); return (
+              <div key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
+                <span className="w-14 font-semibold">{L('Đợt', 'Del.')} {r.seq}</span>
+                <input type="date" value={v.delivery_date} onChange={e => set(r.id, 'delivery_date', e.target.value)} className="rounded-lg px-2 py-1 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+                <span className="inline-flex items-center gap-1"><input inputMode="decimal" value={v.pct} onChange={e => set(r.id, 'pct', e.target.value.replace(/[^0-9.]/g, ''))} className="w-16 rounded-lg px-2 py-1 text-sm font-bold text-right" style={{ border: '1px solid #D1D5DB' }} /><span className="text-xs" style={{ color: '#6B7280' }}>%</span></span>
+                <input value={v.label} onChange={e => set(r.id, 'label', e.target.value)} placeholder={L('Ghi chú (âm lịch…)', 'Note (lunar date…)')} className="flex-1 min-w-[110px] rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
+              </div>
+            ); })}
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
+        <button onClick={save} disabled={busy || !changed.length} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {changed.length ? `(${changed.length})` : ''}
+        </button>
+        {changed.length > 0 && <button onClick={() => setDraft({})} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
+        {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}
       </div>
     </div>
   );

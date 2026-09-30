@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
+import { buildBatches, planOf, type PlanRow } from '@/components/oem/plan';
+import { MM_CLIENT, type Item } from '@/components/oem/model';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
 // Team Hung only needs one thing: per product, kg baked vs kg to bake. Packaging, deliveries and
@@ -22,6 +24,8 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const vi = lang === 'vi';
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Row[]>([]);
+  const [mmItems, setMmItems] = useState<Item[]>([]);
+  const [plan, setPlan] = useState<PlanRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [today, setToday] = useState<Entry[]>([]);
@@ -36,11 +40,14 @@ export default function StationOemView({ role, userId, userName }: { role: strin
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl, pk] = await Promise.all([
-      supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order').eq('is_active', true),
+    const [it, pl, pk, dp] = await Promise.all([
+      supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
+      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label').order('seq'),
     ]);
+    setMmItems(((it.data ?? []) as any[]).filter(i => !i.client_name).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
+    setPlan(((dp.data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
     for (const i of it.data ?? []) {
@@ -69,6 +76,27 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     setLoading(false);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
+
+  // Delivery schedule (Maison Mooncake, Axel 2026-09-30): what Hưng must have baked, and by when.
+  // Per product group: cumulative kg of the delivery + re-make for losses − kg already received.
+  const isoToday = useMemo(() => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }, []);
+  const sched = useMemo(() => {
+    const batches = buildBatches(mmItems, planOf(plan, null, MM_CLIENT));
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
+    return batches.map(b => {
+      const need = Object.entries(b.cumKgByGroup).map(([g, kg]) => {
+        const r = byKey[g]; const left = r ? Math.max(0, kg + r.remake - r.baked) : kg;
+        return { key: g, name: r?.name ?? g, cum: kg, left };
+      });
+      const left = need.reduce((s, x) => s + x.left, 0);
+      return { b, need, left, done: left < 0.05 };
+    });
+  }, [mmItems, plan, rows]);
+  const nextIdx = sched.findIndex(x => !x.done);
+  const next = nextIdx >= 0 ? sched[nextIdx] : null;
+  const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(isoToday)) / 86400000);
+  const nextByGroup = useMemo(() => Object.fromEntries((next?.need ?? []).map(x => [x.key, x.left])), [next]);
+  const dmy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
   // same rule as the station: workers/viewers are read-only
   const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
@@ -134,6 +162,44 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             ))}
           </div>
         )}
+        {sched.length > 0 && (
+          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+            <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng · Maison Mooncake' : 'Baking plan · Maison Mooncake'}</div>
+            {next ? (() => {
+              const dl = daysTo(next.b.produceBy); const late = dl < 0;
+              return (
+                <div className="px-4 pb-3 space-y-2">
+                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: late ? '#FEF2F2' : dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
+                    <div className="text-[15px] font-bold" style={{ color: late ? '#B91C1C' : '#111827' }}>
+                      {vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: bake by ${dmy(next.b.produceBy)}`}
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
+                      {vi ? `Giao ${dmy(next.b.row.delivery_date)} · còn ` : `Delivered ${dmy(next.b.row.delivery_date)} · `}<b>{fmt1(next.left)} kg</b>{vi ? '' : ' left'}
+                      {' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}
+                    </div>
+                  </div>
+                  {next.need.filter(x => x.left > 0.05).map(x => (
+                    <div key={x.key} className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="font-semibold min-w-0 truncate">{x.name}</span>
+                      <b className="whitespace-nowrap">{fmt1(x.left)} kg</b>
+                    </div>
+                  ))}
+                </div>
+              );
+            })() : (
+              <div className="px-4 pb-3 text-sm font-bold" style={{ color: '#059669' }}>{vi ? 'Đã nướng đủ cho tất cả các đợt ✓' : 'Baked enough for every delivery ✓'}</div>
+            )}
+            <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
+              {sched.map((x, k) => (
+                <div key={x.b.row.id} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center" style={{ minWidth: 64, backgroundColor: x.done ? '#ECFDF5' : k === nextIdx ? '#FFF7E6' : '#F9FAFB', border: `1px solid ${x.done ? '#A7F3D0' : k === nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
+                  <div className="text-[10px] font-bold" style={{ color: '#9CA3AF' }}>{vi ? 'Đợt' : 'Del.'} {x.b.row.seq}</div>
+                  <div className="text-xs font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? '✓' : dmy(x.b.produceBy)}</div>
+                  <div className="text-[10px]" style={{ color: '#9CA3AF' }}>{fmt(x.b.cumPct)}%</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
           {loading && !rows.length ? (
             <div className="flex justify-center py-10"><Loader2 className="animate-spin" style={{ color: GREEN }} /></div>
@@ -163,6 +229,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
                   {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
                   {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'Chờ nhận' : 'To receive'} {fmt1(r.pending)} kg</span>}
+                  {next && (nextByGroup[r.key] ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `Đợt ${next.b.row.seq}: cần ${fmt1(nextByGroup[r.key])} kg trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: ${fmt1(nextByGroup[r.key])} kg needed by ${dmy(next.b.produceBy)}`}</span>}
                 </div>
               </div>
             );

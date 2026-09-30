@@ -10,6 +10,8 @@ import Deliveries from './Deliveries';
 import FinishedGoods from './FinishedGoods';
 import RawMaterials from './RawMaterials';
 import { ProductionLog, OrderSettings } from './Admin';
+import { buildBatches, planOf, type PlanRow } from './plan';
+import { MM_CLIENT } from './model';
 
 // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake biscuits (MM- SKUs) + Tianhe Food
 // cashews (OEM- SKUs). Purely additive: reads/writes the lab_mm_* tables only (+ the read-only
@@ -48,12 +50,13 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const [usage, setUsage] = useState<Usage[]>([]);
   const [rm, setRm] = useState<RmCount[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<PlanRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl, pk, hs, dl, fc, ing, us, rc, st] = await Promise.all([
+    const [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, is_active, client_name, updated_at, updated_by_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, prod_date, group_key, sku, weight_kg, note, created_at, created_by_name, status, received_kg, received_at, received_by_name, receive_note').order('prod_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
       supabase.from('lab_mm_packaging_log').select('*').order('pack_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
@@ -64,8 +67,9 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       supabase.from('lab_mm_ingredient_usage').select('group_key, ingredient_code, qty_per_kg'),
       supabase.from('lab_mm_rm_inventory').select('id, week_start, ingredient_code, qty, created_at, created_by_name').order('week_start', { ascending: false }).limit(2000),
       supabase.from('lab_mm_settings').select('key, value'),
+      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label').order('seq'),
     ]);
-    const e = [it, pl, pk, hs, dl, fc, ing, us, rc, st].find(r => r.error)?.error;
+    const e = [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp].find(r => r.error)?.error;
     if (e) setErr(e.message);
     setItems((it.data ?? []).map((r: any) => ({ ...r, unit_weight_g: Number(r.unit_weight_g), qty_ordered: Number(r.qty_ordered) })));
     setProd((pl.data ?? []).map((r: any) => ({ ...r, weight_kg: Number(r.weight_kg), received_kg: r.received_kg == null ? null : Number(r.received_kg) })));
@@ -77,6 +81,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     setUsage((us.data ?? []).map((r: any) => ({ ...r, qty_per_kg: Number(r.qty_per_kg) })));
     setRm((rc.data ?? []).map((r: any) => ({ ...r, qty: Number(r.qty) })));
     setSettings(Object.fromEntries((st.data ?? []).map((r: any) => [r.key, r.value])));
+    setPlan((dp.data ?? []).map((r: any) => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
     setLoading(false);
   }, [supabase]);
 
@@ -90,6 +95,8 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const d = useMemo(() => derive(items, prod, pack, deliveries), [items, prod, pack, deliveries]);
   const groupName = useCallback((k: string) => items.find(i => i.group_key === k)?.group_name ?? k, [items]);
   const odooOn = settings.odoo_mo_enabled === 'true';
+  // delivery schedule of the selected client (lab_mm_delivery_plan)
+  const batches = useMemo(() => (client ? buildBatches(cItems, planOf(plan, client.name, MM_CLIENT)) : []), [client, cItems, plan]);
 
   // ── "to do" strip (max 4) ──
   const todos = useMemo(() => {
@@ -112,6 +119,15 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       const missing = lines.reduce((s, x) => s + Math.max(0, Number(x.qty_planned ?? x.qty_expected ?? 0) - Math.max(0, d.fgTheo[x.sku] ?? 0)), 0);
       if (missing > 0.0005) out.push({ tone: 'red', tab: 'deliveries', text: L(`Giao ${dmy(first.delivery_date)} (${first.order_ref}): thiếu ${fmt(missing, 0)}`, `Delivery ${dmy(first.delivery_date)} (${first.order_ref}): ${fmt(missing, 0)} missing`) });
     }
+    else {
+      // no Odoo delivery order yet → use the delivery schedule
+      const nb = batches.find(b => !cItems.every(i => (d.deliveredQty[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005));
+      if (nb) {
+        const miss = cItems.reduce((s, i) => s + Math.max(0, (nb.cumQty[i.sku] ?? 0) - (d.deliveredQty[i.sku] ?? 0) - Math.max(0, d.fgTheo[i.sku] ?? 0)), 0);
+        const days = Math.round((Date.parse(nb.row.delivery_date) - Date.parse(today)) / 86400000);
+        if (miss > 0.0005 && days <= 21) out.push({ tone: days <= 7 ? 'red' : 'gold', tab: 'deliveries', text: L(`Đợt ${nb.row.seq} giao ${dmy(nb.row.delivery_date)}: còn thiếu ${fmt(miss, 0)}`, `Delivery ${nb.row.seq} on ${dmy(nb.row.delivery_date)}: ${fmt(miss, 0)} still missing`) });
+      }
+    }
     const monday = mondayOf(today);
     const packedAny = cItems.some(i => (d.packedQty[i.sku] ?? 0) > 0);
     if (packedAny && !fg.some(c => cSkus.has(c.sku) && c.count_date >= monday)) out.push({ tone: 'grey', tab: 'inventory', text: L('Chưa kiểm kê thành phẩm tuần này', 'Finished-goods count not done this week') });
@@ -119,7 +135,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     const errs = pack.filter(p => p.odoo_status === 'error' && cSkus.has(p.sku)).length;
     if (errs) out.push({ tone: 'red', tab: 'today', text: L(`${errs} dòng lỗi Odoo`, `${errs} Odoo error(s)`) });
     return out.slice(0, 4);
-  }, [client, d, deliveries, cSkus, cGroups, cItems, fg, rm, pack, prod, L]);
+  }, [client, d, deliveries, cSkus, cGroups, cItems, fg, rm, pack, prod, batches, L]);
 
   const TABS: { key: Tab; icon: any; label: string; manage?: boolean }[] = [
     { key: 'today', icon: Package, label: L('Hôm nay', 'Today') },
@@ -193,7 +209,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       ) : tab === 'progress' ? (
         <Overview client={client} d={d} prod={cProd} pack={cPack} L={L} />
       ) : tab === 'deliveries' ? (
-        <Deliveries deliveries={cDeliv} items={cItems} d={d} showCheckLink={canPack} L={L} />
+        <Deliveries deliveries={cDeliv} items={cItems} d={d} batches={batches} showCheckLink={canPack} L={L} />
       ) : tab === 'inventory' ? (
         <div className="space-y-3">
           <div className="inline-flex rounded-xl p-1 gap-1" style={{ backgroundColor: '#EFE9DC' }}>
@@ -208,7 +224,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       ) : tab === 'production' && isAdmin ? (
         <ProductionLog logs={cProd} items={cItems} groupName={groupName} canManage={canManage} userId={userId} userName={userName} reload={load} L={L} />
       ) : tab === 'settings' && isAdmin ? (
-        <OrderSettings items={items} hist={hist} odooOn={odooOn} userId={userId} userName={userName} reload={load} L={L} />
+        <OrderSettings items={items} hist={hist} odooOn={odooOn} plan={plan} userId={userId} userName={userName} reload={load} L={L} />
       ) : null}
     </div>
   );
