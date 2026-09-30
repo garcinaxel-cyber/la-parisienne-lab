@@ -227,7 +227,15 @@ export interface ApplyPushResult {
  * are singletons in this module, hence one call per inventory. After applying, every line with a
  * non-zero diff is checked for `applied_qty`, so a silent no-op can never be reported as success.
  */
-export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<ApplyPushResult> {
+export async function applyInventoryLines(
+  entries: ApplyLineInput[],
+  // applyToStock=false (shops' official inventory, 2026-09-30): write the counted quantities on the
+  // Odoo count sheet ONLY and leave the inventory in_progress — management applies it the next
+  // morning ("Apply Count Sheet" then "Set to Done") once the day's sales are entered in Odoo,
+  // otherwise the day's sales, already gone from the shelves at count time, get deducted twice.
+  opts: { applyToStock?: boolean } = {},
+): Promise<ApplyPushResult> {
+  const applyToStock = opts.applyToStock !== false;
   if (!entries.length) return { ok: false, lines: [], error: 'Aucune ligne comptée' };
   if (!odooWriteConfigured()) return { ok: false, lines: [], error: 'Compte Odoo en écriture non configuré' };
 
@@ -256,7 +264,7 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
     const skuByLineId: Record<number, string> = {};
     for (const r of preRows) skuByLineId[r.id] = r.product_id?.[1] ?? '';
 
-    if (invIds.length) {
+    if (invIds.length && applyToStock) {
       try {
         for (const invId of invIds) {
           await odooExecuteWrite('stock.inventory', 'action_apply_count_lines', [[invId]], { context: NO_MAIL_CONTEXT });
@@ -277,7 +285,7 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
       const diff = Number(r.diff_qty ?? 0);
       const applied = Number(r.applied_qty ?? 0);
       // a line with a real difference that Odoo did not apply = NOT a success
-      const notApplied = Math.abs(diff) > 1e-9 && Math.abs(applied) < 1e-9;
+      const notApplied = applyToStock && Math.abs(diff) > 1e-9 && Math.abs(applied) < 1e-9;
       results.push({
         odooCountLineId: r.id,
         sku: r.product_id?.[1] ?? '',

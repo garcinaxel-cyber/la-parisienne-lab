@@ -121,7 +121,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     const actions = await import('./official-inventory-actions');
     const res = await actions.submitOfficialInventoryAction(session.id, name.trim(), shopArg);
     setSubmitting(false);
-    if (res.error) { setSubmitError(res.error); return; }
+    if (res.error) { setSubmitError(res.error === 'Nom requis' ? 'Chọn tên người gửi trước' : res.error); return; }
     setSubmitResult({ pushStatus: res.pushStatus ?? 'success', errorCount: res.errorCount ?? 0 });
     await load();
   }
@@ -206,7 +206,14 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           <>
             <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Bước 2/2</div>
             <div className="font-bold text-base" style={{ color: INK }}>Gửi lên Odoo?</div>
-            <div className="text-sm" style={{ color: '#5C6B60' }}>Thao tác này sẽ ghi số lượng vào tồn kho hiện tại trên Odoo. Không thể hoàn tác.</div>
+            <div className="text-sm" style={{ color: '#5C6B60' }}>Số lượng sẽ được gửi lên Odoo để quản lý kiểm tra và xác nhận vào sáng hôm sau. Sau khi gửi, không thể sửa nữa.</div>
+            {/* The sender's name is required by the server, but was only picked on the start screen and
+                kept in this device's localStorage — sending from another phone (or after the browser
+                cleared it) left it empty with no way to fill it ("Nom requis", Timecity 2026-09-30). */}
+            <div className="space-y-1">
+              <div className="text-xs font-semibold" style={{ color: INK }}>Người gửi</div>
+              <NamePicker value={name} onChange={setName} names={staffNames} onManage={onManageStaff} />
+            </div>
             <button onClick={() => setCertified(c => !c)} type="button"
               className="w-full flex items-start gap-2.5 rounded-lg p-3 text-left"
               style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}` }}>
@@ -218,9 +225,9 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
             {submitError && <div className="text-xs font-semibold" style={{ color: RED }}>{submitError}</div>}
             <div className="flex gap-2">
               <button onClick={() => setScreen('confirm1')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
-              <button onClick={handleSubmit} disabled={!certified || submitting}
+              <button onClick={handleSubmit} disabled={!certified || submitting || !name.trim()}
                 className="flex-1 rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2"
-                style={{ backgroundColor: certified ? RED : '#C9C2AE' }}>
+                style={{ backgroundColor: certified && name.trim() ? RED : '#C9C2AE' }}>
                 {submitting ? <Loader2 size={16} className="animate-spin" /> : null} Gửi lên Odoo
               </button>
             </div>

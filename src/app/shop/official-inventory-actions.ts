@@ -229,7 +229,7 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
   const products = skus.map(sku => productBySku[sku] ? { sku, id: productBySku[sku].id } : null).filter((p): p is { sku: string; id: number } => !!p);
   if (!products.length) return { error: 'Aucun produit Odoo résolu pour cet entrepôt' };
 
-  const cutoff = await startGroupedInventoryCutoff(loc.locationId, products, `Inventaire officiel — ${auth.shopName} — ${period}`);
+  const cutoff = await startGroupedInventoryCutoff(loc.locationId, products, `Kiểm kê chính thức / Official Inventory — ${auth.shopName} — ${period}`);
   if (!cutoff.ok || !cutoff.lines) return { error: cutoff.error ?? 'Échec de l\'ouverture du comptage sur Odoo' };
 
   const { data: created, error: sessErr } = await supabase.from('lab_shop_official_inventory_sessions').insert({
@@ -291,9 +291,11 @@ export interface SubmitOfficialInventoryResult {
   lines?: InventoryLineResult[]; error?: string;
 }
 
-/** Final "Envoyer à Odoo" — applies the whole session's counted quantities as the real diff on
- *  top of current Odoo stock (never an overwrite), via `action_apply_count_lines` ("Apply Count Sheet") then `action_state_to_done`
- *  under the hood since every line shares the same `odoo_inventory_id`. */
+/** Final "Gửi lên Odoo" — writes the whole session's counted quantities on the Odoo count sheet
+ *  and marks the session submitted, but does NOT touch the stock (Axel, 2026-09-30): the Odoo
+ *  inventory stays in_progress and management applies it the next morning ("Apply Count Sheet"
+ *  then "Set to Done"), after the day's sales — entered in Odoo the following morning — are in,
+ *  so they are not deducted a second time on top of an evening count. */
 export async function submitOfficialInventoryAction(
   sessionId: string, submittedByName: string, shopName?: string,
 ): Promise<SubmitOfficialInventoryResult> {
@@ -315,7 +317,7 @@ export async function submitOfficialInventoryAction(
   const missing = (lineRows ?? []).filter((l: any) => !l.odoo_count_line_id);
   if (!withLine.length) return { error: 'Aucune ligne à envoyer' };
 
-  const res = await applyInventoryLines(withLine.map((l: any) => ({ odooCountLineId: l.odoo_count_line_id, qtyCounted: Number(l.qty_counted ?? 0) })));
+  const res = await applyInventoryLines(withLine.map((l: any) => ({ odooCountLineId: l.odoo_count_line_id, qtyCounted: Number(l.qty_counted ?? 0) })), { applyToStock: false });
   if (!res.ok) {
     await supabase.from('lab_shop_official_inventory_sessions').update({
       odoo_push_status: 'error', odoo_push_error: res.error ?? 'Erreur inconnue', updated_at: new Date().toISOString(),
