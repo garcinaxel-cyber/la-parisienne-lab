@@ -93,6 +93,9 @@ export interface StartLineResult {
  */
 export async function ensureInventoryLineStarted(sku: string): Promise<StartLineResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
+  // stock.inventory / lpr.stock.inventory.line are read through the WRITE account (2026-09-30):
+  // the read-only account was never exercised on these custom-module models in production, and
+  // the first real LAB count of 30/09 saved nothing (every line failed here, silently).
   try {
     const locationId = await getLabStockLocationId();
     const productBySku = await resolveProductsBySku([sku]);
@@ -104,7 +107,7 @@ export async function ensureInventoryLineStarted(sku: string): Promise<StartLine
     // SKU the same day would collide (the second one would silently reuse the first location's
     // still-open cut-off and its diff would land on the WRONG location's stock). Never triggered
     // for LAB until now since LAB is the only caller of this per-SKU path.
-    const openInv = await odooExecute<any[]>('stock.inventory', 'search_read',
+    const openInv = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
       [[['state', '=', 'in_progress'], ['product_ids', 'in', [prod.id]], ['location_ids', 'in', [locationId]]]],
       { fields: ['id'], limit: 1 });
 
@@ -128,18 +131,19 @@ export async function ensureInventoryLineStarted(sku: string): Promise<StartLine
       }
     }
 
-    const [inv] = await odooExecute<any[]>('stock.inventory', 'search_read',
+    const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
       [[['id', '=', invId]]], { fields: ['count_line_ids'] });
     const lineIds: number[] = inv?.count_line_ids ?? [];
     if (!lineIds.length) return { ok: false, error: 'Aucune ligne de comptage générée sur Odoo (cut-off)' };
 
-    const lines = await odooExecute<any[]>('lpr.stock.inventory.line', 'search_read',
+    const lines = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
       [[['id', 'in', lineIds], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 });
     const line = lines[0];
     if (!line) return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
 
     return { ok: true, odooInventoryId: invId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0) };
   } catch (e: any) {
+    console.error('[inventory] ensureInventoryLineStarted failed', { sku, error: String(e?.message ?? e) });
     return { ok: false, error: String(e?.message ?? e) };
   }
 }

@@ -1,9 +1,9 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, Search, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, CheckCircle2, AlertTriangle, Loader2, Check, RotateCcw } from 'lucide-react';
 import type { InventoryLineResult } from '@/lib/odoo-inventory';
 import QtyExprInput from '@/components/QtyExprInput';
 import { evalQty } from '@/lib/qty-expr';
@@ -19,7 +19,11 @@ type SavedLine = {
 };
 type Session = { id: string; inventory_date: string; status: string; odoo_push_status: string | null; odoo_push_error: string | null };
 
-type LineState = { qty: string; product_name_vi: string; product_name_en: string | null; category: string | null; fiche_id: string | null; variant_id: string | null; saving: boolean };
+// saved: the qty in the field is what the server has; error: last save failed (2026-09-30 — the
+// first real LAB count lost everything because failed saves were silent).
+type LineState = { qty: string; product_name_vi: string; product_name_en: string | null; category: string | null; fiche_id: string | null; variant_id: string | null; saving: boolean; saved?: boolean; error?: string | null };
+
+const draftKey = (sessionId: string) => `lab_inventory_draft_${sessionId}`;
 
 function todayISO() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
@@ -43,6 +47,7 @@ export default function InventorySessionView({
       m[l.sku] = {
         qty: String(l.qty_counted), product_name_vi: l.product_name_vi, product_name_en: l.product_name_en,
         category: l.category, fiche_id: m[l.sku]?.fiche_id ?? null, variant_id: m[l.sku]?.variant_id ?? null, saving: false,
+        saved: true,
       };
     }
     return m;
@@ -64,6 +69,34 @@ export default function InventorySessionView({
 
   const allCats = [...categories, 'Autre'];
 
+  // Backup of typed-but-not-yet-saved quantities in this browser, so leaving the page (another tab
+  // of the app) never loses a count: restored on return, cleared line by line once saved.
+  const [draftsRestored, setDraftsRestored] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(draftKey(session.id));
+      const saved = raw ? JSON.parse(raw) as Record<string, string> : {};
+      const skus = Object.keys(saved);
+      if (skus.length) {
+        setLines(prev => {
+          const n = { ...prev };
+          for (const sku of skus) if (n[sku] && typeof saved[sku] === 'string') n[sku] = { ...n[sku], qty: saved[sku], saved: false };
+          return n;
+        });
+      }
+    } catch { /* storage unavailable — nothing to restore */ }
+    setDraftsRestored(true);
+  }, [session.id]);
+  useEffect(() => {
+    if (!draftsRestored) return;
+    try {
+      const pending: Record<string, string> = {};
+      for (const [sku, st] of Object.entries(lines)) if (!st.saved && st.qty.trim() !== '') pending[sku] = st.qty;
+      if (Object.keys(pending).length) localStorage.setItem(draftKey(session.id), JSON.stringify(pending));
+      else localStorage.removeItem(draftKey(session.id));
+    } catch { /* ignore */ }
+  }, [lines, draftsRestored, session.id]);
+
   async function saveQty(sku: string, raw: string) {
     const state = lines[sku];
     if (!state) return;
@@ -74,14 +107,21 @@ export default function InventorySessionView({
     // stays red in the field and is NOT saved; a valid one is replaced by its result.
     const qty = evalQty(trimmed);
     if (qty === null || !Number.isFinite(qty)) return;
-    setLines(p => ({ ...p, [sku]: { ...p[sku], qty: String(qty), saving: true } }));
-    const { saveLineAction } = await import('../actions');
-    await saveLineAction(session.id, {
-      fiche_id: state.fiche_id, variant_id: state.variant_id, sku,
-      product_name_vi: state.product_name_vi, product_name_en: state.product_name_en,
-      category: state.category, qty_counted: qty,
-    });
-    setLines(p => ({ ...p, [sku]: { ...p[sku], saving: false } }));
+    setLines(p => ({ ...p, [sku]: { ...p[sku], qty: String(qty), saving: true, error: null } }));
+    let err: string | null = null;
+    try {
+      const { saveLineAction } = await import('../actions');
+      const res = await saveLineAction(session.id, {
+        fiche_id: state.fiche_id, variant_id: state.variant_id, sku,
+        product_name_vi: state.product_name_vi, product_name_en: state.product_name_en,
+        category: state.category, qty_counted: qty,
+      });
+      if (res?.error) err = res.error;
+    } catch (e: any) {
+      err = String(e?.message ?? e) || 'Network error';
+    }
+    // only mark saved if the field still holds the value we just sent (the user may have retyped)
+    setLines(p => ({ ...p, [sku]: { ...p[sku], saving: false, error: err, saved: !err && p[sku].qty === String(qty) } }));
   }
 
   async function runSearch(q: string) {
@@ -114,6 +154,7 @@ export default function InventorySessionView({
 
   const countedSkus = useMemo(() => Object.keys(lines).filter(sku => lines[sku].qty.trim() !== ''), [lines]);
 
+  const unsavedSkus = useMemo(() => Object.keys(lines).filter(sku => lines[sku].qty.trim() !== '' && !lines[sku].saved && !lines[sku].saving), [lines]);
   const badSkus = useMemo(() => Object.keys(lines).filter(sku => Number.isNaN(evalQty(lines[sku].qty) as number)), [lines]);
 
   async function goToRecap() {
@@ -212,19 +253,35 @@ export default function InventorySessionView({
               ).map(p => {
                 const st = lines[p.sku];
                 const counted = st?.qty.trim() !== '';
+                const pendingSave = counted && !st?.saved && !st?.saving;
                 return (
                   <div key={p.sku} className="px-4 py-2.5 flex items-center justify-between gap-3" style={{ backgroundColor: counted ? '#F0FDF4' : undefined }}>
                     <div className="min-w-0 flex-1">
                       {/* full name on 2+ lines rather than truncated — the calculator field is wider (2026-09-30) */}
                       <div className="text-sm font-semibold text-navy leading-snug break-words">{vi ? p.product_name_vi : (p.product_name_en || p.product_name_vi)}</div>
                       <div className="text-xs text-ink-light break-all">{p.sku}{p.variant_label ? ` · ${p.variant_label}` : ''}</div>
+                      {st?.error && <div className="text-[11px] font-semibold break-words" style={{ color: '#DC2626' }}>{vi ? 'Chưa lưu: ' : 'Non enregistré : '}{st.error}</div>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {st?.saving && <Loader2 size={14} className="animate-spin text-ink-light" />}
                       <QtyExprInput value={st?.qty ?? ''}
-                        onChange={v => setLines(prev => ({ ...prev, [p.sku]: { ...prev[p.sku], qty: v } }))}
-                        onBlur={v => saveQty(p.sku, v)}
-                        filledBorderColor="#86EFAC" width={60} />
+                        onChange={v => setLines(prev => ({ ...prev, [p.sku]: { ...prev[p.sku], qty: v, saved: false } }))}
+                        onBlur={v => { if (!lines[p.sku]?.saved) saveQty(p.sku, v); }}
+                        filledBorderColor={st?.error ? '#DC2626' : st?.saved ? '#86EFAC' : '#F59E0B'} width={60} />
+                      {/* per-line status: saving / saved ✓ / explicit save or retry button */}
+                      <span className="w-7 h-7 shrink-0 flex items-center justify-center">
+                        {st?.saving ? <Loader2 size={15} className="animate-spin text-ink-light" />
+                          : st?.error ? (
+                            <button type="button" onClick={() => saveQty(p.sku, st.qty)} aria-label="retry"
+                              className="w-7 h-7 rounded-md flex items-center justify-center" style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
+                              <RotateCcw size={14} />
+                            </button>
+                          ) : pendingSave ? (
+                            <button type="button" onClick={() => saveQty(p.sku, st!.qty)} aria-label="save"
+                              className="w-7 h-7 rounded-md flex items-center justify-center text-white" style={{ backgroundColor: '#16A34A' }}>
+                              <Check size={15} />
+                            </button>
+                          ) : counted && st?.saved ? <CheckCircle2 size={16} style={{ color: '#16A34A' }} /> : null}
+                      </span>
                     </div>
                   </div>
                 );
@@ -236,13 +293,18 @@ export default function InventorySessionView({
             </div>
           )}
 
+          {unsavedSkus.length > 0 && (
+            <div className="rounded-lg px-3 py-2 text-sm font-semibold" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+              {vi ? `${unsavedSkus.length} dòng chưa lưu — bấm ✓ hoặc ↻ ở từng dòng` : `${unsavedSkus.length} ligne(s) non enregistrée(s) — appuyez sur ✓ ou ↻ sur chaque ligne`}
+            </div>
+          )}
           {badSkus.length > 0 && (
             <div className="text-sm font-semibold text-right" style={{ color: '#DC2626' }}>
               {vi ? `Số lượng không hợp lệ: ${badSkus.join(', ')}` : `Quantité invalide : ${badSkus.join(', ')}`}
             </div>
           )}
           <div className="flex justify-end pt-2">
-            <button onClick={goToRecap} disabled={!countedSkus.length || badSkus.length > 0}
+            <button onClick={goToRecap} disabled={!countedSkus.length || badSkus.length > 0 || unsavedSkus.length > 0}
               className="text-sm font-bold px-5 py-2.5 rounded-xl text-white disabled:opacity-40"
               style={{ backgroundColor: '#1f2937' }}>
               {vi ? `Xem lại (${countedSkus.length})` : `Voir le récapitulatif (${countedSkus.length})`}
