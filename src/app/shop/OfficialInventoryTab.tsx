@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Loader2, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Loader2, ShieldCheck } from 'lucide-react';
 import type { ShopStaffName } from './actions';
 import type { OfficialInventoryLine, OfficialInventorySession } from './official-inventory-actions';
 import { thumb } from '@/lib/img-thumb';
@@ -13,6 +13,27 @@ import { NamePicker, NAVY, GOLD, GOLD_LIGHT, GOLD_PALE, INK, BORDER, GREEN, RED 
 // mechanism as the lab. See src/app/shop/official-inventory-actions.ts for the full server side.
 
 const NAME_KEY = 'lab_shop_official_inventory_name';
+
+// Non-product groups (no recipe card) always come after the finished products, in this order.
+const NON_PRODUCT_ORDER = ['Bán thành phẩm', 'Nguyên liệu', 'Bao bì', 'Vật tư tiêu hao', 'Đồ uống', 'Khác'];
+
+type CatGroup = { category: string; lines: OfficialInventoryLine[] };
+
+// Display-only grouping by category (Axel, 2026-09-30): finished products first (recipe-card
+// category, A→Z), then raw materials / packaging / … Products A→Z inside each group.
+function groupByCategory(lines: OfficialInventoryLine[]): CatGroup[] {
+  const map = new Map<string, { isProduct: boolean; lines: OfficialInventoryLine[] }>();
+  for (const l of lines) {
+    const cat = l.category || 'Khác';
+    const g = map.get(cat) ?? { isProduct: !!l.categoryIsProduct, lines: [] };
+    g.lines.push(l);
+    map.set(cat, g);
+  }
+  const rank = (cat: string, isProduct: boolean) => isProduct ? -1 : (NON_PRODUCT_ORDER.indexOf(cat) === -1 ? NON_PRODUCT_ORDER.length - 1 : NON_PRODUCT_ORDER.indexOf(cat));
+  return Array.from(map.entries())
+    .sort(([a, ga], [b, gb]) => rank(a, ga.isProduct) - rank(b, gb.isProduct) || a.localeCompare(b, 'vi'))
+    .map(([category, g]) => ({ category, lines: g.lines.slice().sort((x, y) => x.productName.localeCompare(y.productName, 'vi')) }));
+}
 
 export default function OfficialInventoryTab({ shopName, readOnly, staffNames, onManageStaff }: {
   shopName: string; readOnly: boolean; staffNames: ShopStaffName[] | null; onManageStaff: () => void;
@@ -35,6 +56,9 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<{ pushStatus: string; errorCount: number } | null>(null);
+  // which category sections are open (all closed by default — 300 lines is too long to scroll)
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({});
+  const groups = useMemo(() => groupByCategory(lines), [lines]);
 
   useEffect(() => { try { setName(localStorage.getItem(NAME_KEY) ?? ''); } catch { /* ignore */ } }, []);
   useEffect(() => { try { if (name) localStorage.setItem(NAME_KEY, name); } catch { /* ignore */ } }, [name]);
@@ -216,10 +240,15 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           <div className="text-[11px]" style={{ color: '#8A9A8F' }}>sản phẩm sẽ gửi lên Odoo</div>
         </div>
         <div className="space-y-1.5 max-h-[50vh] overflow-auto">
-          {lines.map(l => (
-            <div key={l.sku} className="flex items-center gap-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
-              <div className="flex-1 min-w-0 text-sm font-semibold truncate" style={{ color: INK }}>{l.productName}</div>
-              <div className="text-sm font-bold tabular-nums" style={{ color: NAVY }}>{l.qtyCounted}</div>
+          {groups.map(g => (
+            <div key={g.category} className="space-y-1.5">
+              <div className="text-[11px] font-bold uppercase tracking-wide pt-1.5 px-0.5" style={{ color: '#8A9A8F' }}>{g.category}</div>
+              {g.lines.map(l => (
+                <div key={l.sku} className="flex items-center gap-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+                  <div className="flex-1 min-w-0 text-sm font-semibold break-words" style={{ color: INK }}>{l.productName}</div>
+                  <div className="text-sm font-bold tabular-nums" style={{ color: NAVY }}>{l.qtyCounted}</div>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -239,31 +268,53 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
         </div>
         <div className="text-xs font-bold whitespace-nowrap" style={{ color: GOLD_LIGHT }}>{countedCount}/{lines.length}</div>
       </div>
-      <div className="space-y-1.5">
-        {lines.map(l => (
-          <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
-            {l.imageUrl ? (
-              <img src={thumb(l.imageUrl, 96)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
-            ) : (
-              <div className="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
-                style={{ background: `linear-gradient(135deg, ${GOLD}, #8A6B22)` }}>
-                {l.productName.slice(0, 2).toUpperCase()}
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: INK }}>{l.productName}</div>
-              <div className="text-[11px] break-all" style={{ color: '#8A9A8F' }}>{l.sku}</div>
+      <div className="flex justify-end gap-3 text-[11px] font-semibold" style={{ color: NAVY }}>
+        <button type="button" onClick={() => setOpenCats(Object.fromEntries(groups.map(g => [g.category, true])))}>Mở tất cả</button>
+        <button type="button" onClick={() => setOpenCats({})}>Thu gọn</button>
+      </div>
+      <div className="space-y-2">
+        {groups.map(g => {
+          const open = !!openCats[g.category];
+          const done = g.lines.filter(l => l.qtyCounted > 0).length;
+          return (
+            <div key={g.category} className="rounded-xl overflow-hidden" style={{ border: `1px solid ${BORDER}`, backgroundColor: open ? GOLD_PALE : '#fff' }}>
+              <button type="button" onClick={() => setOpenCats(p => ({ ...p, [g.category]: !open }))}
+                className="w-full flex items-center gap-2 px-3 py-3 text-left">
+                {open ? <ChevronDown size={16} style={{ color: NAVY }} /> : <ChevronRight size={16} style={{ color: NAVY }} />}
+                <div className="flex-1 text-sm font-bold" style={{ color: INK }}>{g.category}</div>
+                <div className="text-xs font-bold tabular-nums" style={{ color: done === g.lines.length ? GREEN : '#8A9A8F' }}>{done}/{g.lines.length}</div>
+              </button>
+              {open && (
+                <div className="space-y-1.5 px-2 pb-2">
+                  {g.lines.map(l => (
+                  <div key={l.sku} className="flex items-center gap-2.5 rounded-xl p-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
+                    {l.imageUrl ? (
+                      <img src={thumb(l.imageUrl, 96)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center text-white text-[11px] font-bold"
+                        style={{ background: `linear-gradient(135deg, ${GOLD}, #8A6B22)` }}>
+                        {l.productName.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: INK }}>{l.productName}</div>
+                      <div className="text-[11px] break-all" style={{ color: '#8A9A8F' }}>{l.sku}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
+                      <QtyExprInput width={56} borderColor={BORDER} filledBorderColor={GREEN}
+                        value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
+                        onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
+                        onBlur={v => commitDraft(l.sku, v)} />
+                    </div>
+                    {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
+                  </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
-              <QtyExprInput width={56} borderColor={BORDER} filledBorderColor={GREEN}
-                value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
-                onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
-                onBlur={v => commitDraft(l.sku, v)} />
-            </div>
-            {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
-          </div>
-        ))}
+          );
+        })}
       </div>
       {badDraftSkus.length > 0 && (
         <div className="text-sm font-semibold text-center" style={{ color: RED }}>Số lượng không hợp lệ: {badDraftSkus.join(', ')}</div>

@@ -10,7 +10,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireShopOrStaffSession } from './actions';
 import { resolveShopWarehouseLocation } from '@/lib/odoo-scrap';
-import { isLastDayOfMonthVN, vnPeriodStr } from '@/lib/odoo';
+import { isLastDayOfMonthVN, vnPeriodStr, odooExecute } from '@/lib/odoo';
 import {
   getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff,
   applyInventoryLines, tryCancelInventoryLine, type InventoryLineResult,
@@ -39,6 +39,10 @@ export interface OfficialInventoryLine {
   imageUrl: string | null;
   odooPushStatus: string | null;
   odooPushError: string | null;
+  /** Display-only grouping (Axel, 2026-09-30: "trier leur inventaire par catégorie"). */
+  category: string;
+  /** true = finished product (category from the recipe card), false = raw material/packaging/… */
+  categoryIsProduct: boolean;
 }
 
 export interface OfficialInventorySession {
@@ -73,13 +77,70 @@ async function imageUrlsBySku(skus: string[]): Promise<Record<string, string | n
   return out;
 }
 
-async function mapLine(row: any, imgBySku: Record<string, string | null>): Promise<OfficialInventoryLine> {
+// Category per SKU, display-only (Axel, 2026-09-30: "trier leur inventaire par category of
+// product que ce soit plus simple"). Finished products take the recipe card's category
+// (lab_fiche_meta.category — same labels as the LAB inventory: Macaron, Biscuit Voyage, …).
+// Everything without a card (raw materials, packaging, drinks, semi-finished…) falls back to the
+// Odoo product category, mapped to a short Vietnamese label. Any failure here just degrades to
+// "Khác" — it must never block loading the count screen.
+const ODOO_CATEG_LABELS: [RegExp, string][] = [
+  [/raw material|nguyên liệu/i, 'Nguyên liệu'],
+  [/packaging|bao bì/i, 'Bao bì'],
+  [/tiêu hao|expense/i, 'Vật tư tiêu hao'],
+  [/semi-finished|bán thành phẩm/i, 'Bán thành phẩm'],
+  [/drink|đồ uống/i, 'Đồ uống'],
+];
+async function categoriesBySku(skus: string[]): Promise<Record<string, { category: string; isProduct: boolean }>> {
+  const out: Record<string, { category: string; isProduct: boolean }> = {};
+  if (!skus.length) return out;
+  const supabase = service();
+  try {
+    if (supabase) {
+      const { data: vars } = await supabase.from('lab_fiche_variants').select('sku, fiche_id').in('sku', skus);
+      const ficheIds = Array.from(new Set((vars ?? []).map((v: any) => v.fiche_id).filter(Boolean)));
+      const { data: fiches } = ficheIds.length
+        ? await supabase.from('lab_fiche_meta').select('id, category').in('id', ficheIds)
+        : { data: [] as any[] };
+      const catByFiche: Record<string, string> = {};
+      const canon: Record<string, string> = {}; // "CheeseCake" / "Cheesecake" → one group
+      for (const f of fiches ?? []) {
+        const raw = String(f.category ?? '').trim();
+        if (!raw || /^non production$/i.test(raw)) continue;
+        const key = raw.toLowerCase();
+        if (!canon[key]) canon[key] = raw.charAt(0).toUpperCase() + raw.slice(1);
+        catByFiche[f.id] = canon[key];
+      }
+      for (const v of vars ?? []) {
+        if (v.sku && catByFiche[v.fiche_id] && !out[v.sku]) out[v.sku] = { category: catByFiche[v.fiche_id], isProduct: true };
+      }
+    }
+  } catch { /* display-only */ }
+  const missing = skus.filter(sku => !out[sku]);
+  if (missing.length) {
+    try {
+      const prods = await odooExecute<any[]>('product.product', 'search_read',
+        [[['default_code', 'in', missing]]], { fields: ['default_code', 'categ_id'], limit: 2000, context: { active_test: false } });
+      for (const p of prods) {
+        if (!p.default_code || out[p.default_code]) continue;
+        const name = Array.isArray(p.categ_id) ? String(p.categ_id[1]) : '';
+        const hit = ODOO_CATEG_LABELS.find(([re]) => re.test(name));
+        out[p.default_code] = { category: hit ? hit[1] : 'Khác', isProduct: false };
+      }
+    } catch { /* display-only */ }
+  }
+  for (const sku of missing) if (!out[sku]) out[sku] = { category: 'Khác', isProduct: false };
+  return out;
+}
+
+async function mapLine(row: any, imgBySku: Record<string, string | null>, catBySku: Record<string, { category: string; isProduct: boolean }> = {}): Promise<OfficialInventoryLine> {
   return {
     id: row.id, sku: row.sku, productName: row.product_name ?? row.sku,
     qtyTheoretical: row.qty_theoretical === null ? null : Number(row.qty_theoretical),
     qtyCounted: Number(row.qty_counted ?? 0),
     imageUrl: imgBySku[row.sku] ?? null,
     odooPushStatus: row.odoo_push_status ?? null, odooPushError: row.odoo_push_error ?? null,
+    category: catBySku[row.sku]?.category ?? 'Khác',
+    categoryIsProduct: catBySku[row.sku]?.isProduct ?? false,
   };
 }
 
@@ -125,8 +186,8 @@ export async function getOfficialInventoryStateAction(shopName?: string): Promis
   const { data: lineRows } = await supabase.from('lab_shop_official_inventory_lines')
     .select('*').eq('session_id', row.id).order('sku', { ascending: true });
   const skus = (lineRows ?? []).map((l: any) => l.sku as string);
-  const imgBySku = await imageUrlsBySku(skus);
-  const lines = await Promise.all((lineRows ?? []).map((l: any) => mapLine(l, imgBySku)));
+  const [imgBySku, catBySku] = await Promise.all([imageUrlsBySku(skus), categoriesBySku(skus)]);
+  const lines = await Promise.all((lineRows ?? []).map((l: any) => mapLine(l, imgBySku, catBySku)));
 
   return {
     shopName: auth.shopName, isLastDay: isLastDayOfMonthVN(), hasWarehouse: !!loc,
