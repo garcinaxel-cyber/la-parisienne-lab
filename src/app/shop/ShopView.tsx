@@ -1890,7 +1890,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="min-w-0">
                         <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{i === 0 ? ' · Hôm nay' : ''}</div>
                         <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? '#6B7280' : '#9CA3AF' }}>
-                          {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} đã kiểm` : 'Chưa kiểm kho'}
+                          {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} đã kiểm${r.stockSource === 'official' ? ' · Kiểm kê chính thức' : ''}` : 'Chưa kiểm kho'}
                           {r.lossesReportCount ? ` · ${r.lossesReportCount} báo cáo hao hụt` : ''}
                         </div>
                       </div>
@@ -1925,7 +1925,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 ) : (
                   <>
                     <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: `1px solid ${BORDER}` }}>
-                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Kiểm kho</span>
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{dailyReport.stockSource === 'official' ? 'Kiểm kê chính thức' : 'Kiểm kho'}</span>
                       <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
                     </div>
 

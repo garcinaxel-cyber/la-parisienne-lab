@@ -1365,6 +1365,9 @@ export type ShopDailyReport = {
   stockCountedCount: number;
   stockTotalCount: number;
   stockCounted: boolean;
+  /** 'official' = the counts come from the monthly official inventory (Kiểm kê chính thức) the
+   *  shop sent that day, instead of the daily Kiểm kho (Axel, 2026-09-30). */
+  stockSource?: 'daily' | 'official';
   stockValuationTotal: number;
   losses: ShopLossDailyRecapProduct[];
   lossesTotalQty: number;
@@ -1414,6 +1417,29 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
   const priceBySku = new Map<string, number>();
   for (const r of pricesRes.data ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
 
+  // Official monthly inventory (Axel, 2026-09-30: "ceux qui ont compté leur inventaire et validé,
+  // je veux que ça mette l'inventaire et qu'ils aient leur báo cáo habituelle du jour"): on the day
+  // a shop SENT its official inventory, that full count is the day's reference — the report uses
+  // it (VN day of sending) instead of the daily Kiểm kho, which that evening is usually skipped or
+  // partial. Other days are unchanged. Read-only, no Odoo involved.
+  const officialQtyByDate = new Map<string, Map<string, number>>();
+  if (supabase) {
+    const { data: offSessions } = await supabase.from('lab_shop_official_inventory_sessions')
+      .select('id, submitted_at').eq('shop_name', shopName).eq('status', 'submitted')
+      .gte('submitted_at', new Date(Date.now() - 8 * 86400000).toISOString());
+    for (const s of offSessions ?? []) {
+      if (!s.submitted_at) continue;
+      const d = vnDateStr(new Date(s.submitted_at));
+      if (!dates.includes(d) || officialQtyByDate.has(d)) continue;
+      const offLines = await fetchAllPages<{ sku: string; qty_counted: number }>((f, t) =>
+        supabase.from('lab_shop_official_inventory_lines').select('sku, qty_counted')
+          .eq('session_id', s.id).order('id').range(f, t));
+      const m = new Map<string, number>();
+      for (const l of offLines) m.set(l.sku, Number(l.qty_counted ?? 0));
+      officialQtyByDate.set(d, m);
+    }
+  }
+
   const rowsByDate = new Map<string, { sku: string; qty: number; session_seq: number }[]>();
   for (const r of countRows) {
     const d = r.count_date as string;
@@ -1426,8 +1452,10 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
     const rows = rowsByDate.get(date) ?? [];
     // Same "highest session_seq with any saved data = current" rule as fetchStockSessions.
     const latestSeq = rows.length ? Math.max(...rows.map(r => r.session_seq)) : null;
-    const qtyBySku = new Map<string, number>();
+    let qtyBySku = new Map<string, number>();
     if (latestSeq != null) for (const r of rows) if (r.session_seq === latestSeq) qtyBySku.set(r.sku, r.qty);
+    const stockSource: 'daily' | 'official' = officialQtyByDate.has(date) ? 'official' : 'daily';
+    if (stockSource === 'official') qtyBySku = officialQtyByDate.get(date)!;
 
     const stockLines: ShopStockCountLine[] = Array.from(entries.entries())
       .map(([sku, v]) => ({
@@ -1445,6 +1473,7 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
       stockCountedCount,
       stockTotalCount: stockLines.length,
       stockCounted: stockCountedCount > 0,
+      stockSource,
       stockValuationTotal,
       losses: dayLoss?.products ?? [],
       lossesTotalQty: dayLoss?.totalQty ?? 0,

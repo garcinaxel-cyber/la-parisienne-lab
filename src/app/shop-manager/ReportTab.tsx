@@ -100,7 +100,7 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
                 <div className="min-w-0">
                   <div className="text-sm font-bold" style={{ color: NAVY }}>{fmtReportDate(r.date)}{i === 0 ? ` · ${tr('today')}` : ''}</div>
                   <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? INK_LIGHT : '#9CA3AF' }}>
-                    {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${tr('countedSuffix')}` : tr('notCounted')}
+                    {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${tr('countedSuffix')}${r.stockSource === 'official' ? ' · Kiểm kê chính thức / Official inventory' : ''}` : tr('notCounted')}
                     {r.lossesReportCount ? ` · ${r.lossesReportCount} ${tr('lossReports')}` : ''}
                   </div>
                 </div>
