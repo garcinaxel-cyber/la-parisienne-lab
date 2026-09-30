@@ -13,7 +13,7 @@ import { resolveShopWarehouseLocation } from '@/lib/odoo-scrap';
 import { isLastDayOfMonthVN, vnPeriodStr } from '@/lib/odoo';
 import {
   getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff,
-  applyInventoryLines, type InventoryLineResult,
+  applyInventoryLines, tryCancelInventoryLine, type InventoryLineResult,
 } from '@/lib/odoo-inventory';
 
 // Same local service-role-client pattern as every other 'use server' action file in this app
@@ -176,7 +176,12 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
     odoo_location_id: loc.locationId, odoo_inventory_id: cutoff.odooInventoryId,
     created_by_name: name, updated_at: new Date().toISOString(),
   }).select('id').single();
-  if (sessErr || !created) return { error: sessErr?.message ?? 'Échec de la création de la session' };
+  if (sessErr || !created) {
+    // Never leave the Odoo cut-off orphaned without an app session (2026-09-30, Timecity).
+    console.error('[official-inventory] session insert failed', { shop: auth.shopName, period, error: sessErr?.message });
+    if (cutoff.odooInventoryId) await tryCancelInventoryLine(cutoff.odooInventoryId);
+    return { error: sessErr?.message ?? 'Échec de la création de la session' };
+  }
 
   const nameBySku: Record<string, string> = {};
   for (const q of quants) nameBySku[q.sku] = q.name;
@@ -186,7 +191,12 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
     updated_at: new Date().toISOString(),
   }));
   const { error: linesErr } = await supabase.from('lab_shop_official_inventory_lines').insert(lineRows);
-  if (linesErr) return { error: linesErr.message };
+  if (linesErr) {
+    console.error('[official-inventory] lines insert failed', { shop: auth.shopName, period, error: linesErr.message });
+    await supabase.from('lab_shop_official_inventory_sessions').delete().eq('id', created.id);
+    if (cutoff.odooInventoryId) await tryCancelInventoryLine(cutoff.odooInventoryId);
+    return { error: linesErr.message };
+  }
 
   return { ok: true, sessionId: created.id, lineCount: lineRows.length };
 }

@@ -197,7 +197,7 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
     const writtenIds = lineIds.filter(id => !results.some(r => r.odooCountLineId === id && !r.ok));
     if (!writtenIds.length) return { ok: true, lines: results };
 
-    const preRows = await odooExecute<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
+    const preRows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
       { fields: ['id', 'inventory_id', 'product_id'] });
     const invIds = Array.from(new Set(preRows.map(r => Array.isArray(r.inventory_id) ? r.inventory_id[0] : r.inventory_id)));
     const skuByLineId: Record<number, string> = {};
@@ -215,7 +215,7 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
       }
     }
 
-    const finalRows = await odooExecute<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
+    const finalRows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
       { fields: ['id', 'theoretical_qty', 'counted_qty', 'diff_qty', 'target_qty', 'applied_qty', 'state', 'product_id'] });
     for (const r of finalRows) {
       results.push({
@@ -295,26 +295,48 @@ export async function startGroupedInventoryCutoff(
 ): Promise<GroupedCutoffResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   if (!products.length) return { ok: false, error: 'Aucun produit à geler' };
+
+  // 2026-09-30 fix (first real run, Timecity): a failure AFTER the Odoo freeze left an orphaned
+  // in_progress stock.inventory with no app session, and every retry was then refused by Odoo
+  // ("There are active adjustments for the requested products"). Two guards now:
+  //  1. ADOPT: if an in_progress adjustment with this exact label already exists on this location
+  //     (an earlier attempt that died before the app saved its session), reuse it instead of
+  //     creating a second one — same frozen T0, no duplicate cut-off.
+  //  2. ROLLBACK: if anything fails after THIS call created the adjustment, cancel it so the next
+  //     attempt starts clean.
+  // All reads go through the write account (the one that created the record) — the read-only
+  // account was never exercised against stock.inventory / lpr.stock.inventory.line in production.
+  let invId: number | null = null;
+  let createdHere = false;
   try {
-    const invId = await odooExecuteWrite<number>('stock.inventory', 'create', [{
-      name: label,
-      product_selection: 'manual',
-      product_ids: [[6, 0, products.map(p => p.id)]],
-      location_ids: [[6, 0, [locationId]]],
-    }], { context: NO_MAIL_CONTEXT });
-    try {
-      await odooExecuteWrite('stock.inventory', 'action_state_to_in_progress', [[invId]], { context: NO_MAIL_CONTEXT });
-    } catch (e: any) {
-      try { await odooExecuteWrite('stock.inventory', 'unlink', [[invId]], {}); } catch { /* best-effort */ }
-      throw e;
+    const existing = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
+      [[['state', '=', 'in_progress'], ['name', '=', label], ['location_ids', 'in', [locationId]]]],
+      { fields: ['id'], limit: 1, order: 'id desc' });
+    if (existing.length) {
+      invId = existing[0].id as number;
+    } else {
+      invId = await odooExecuteWrite<number>('stock.inventory', 'create', [{
+        name: label,
+        product_selection: 'manual',
+        product_ids: [[6, 0, products.map(p => p.id)]],
+        location_ids: [[6, 0, [locationId]]],
+      }], { context: NO_MAIL_CONTEXT });
+      createdHere = true;
+      try {
+        await odooExecuteWrite('stock.inventory', 'action_state_to_in_progress', [[invId]], { context: NO_MAIL_CONTEXT });
+      } catch (e: any) {
+        try { await odooExecuteWrite('stock.inventory', 'unlink', [[invId]], {}); } catch { /* best-effort */ }
+        invId = null;
+        throw e;
+      }
     }
 
-    const [inv] = await odooExecute<any[]>('stock.inventory', 'search_read',
+    const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
       [[['id', '=', invId]]], { fields: ['count_line_ids'] });
     const lineIds: number[] = inv?.count_line_ids ?? [];
-    if (!lineIds.length) return { ok: false, error: 'Aucune ligne de comptage générée sur Odoo (cut-off)' };
+    if (!lineIds.length) throw new Error('Aucune ligne de comptage générée sur Odoo (cut-off)');
 
-    const rows = await odooExecute<any[]>('lpr.stock.inventory.line', 'search_read',
+    const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
       [[['id', 'in', lineIds]]], { fields: ['id', 'product_id', 'theoretical_qty'], limit: lineIds.length });
     const skuByProductId: Record<number, string> = {};
     for (const p of products) skuByProductId[p.id] = p.sku;
@@ -322,8 +344,11 @@ export async function startGroupedInventoryCutoff(
       const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
       return { sku: skuByProductId[pid] ?? '', odooCountLineId: r.id, qtyTheoretical: Number(r.theoretical_qty ?? 0) };
     }).filter(l => l.sku);
-    return { ok: true, odooInventoryId: invId, lines };
+    if (!lines.length) throw new Error('Aucune ligne de comptage reconnue (SKU) sur Odoo (cut-off)');
+    return { ok: true, odooInventoryId: invId as number, lines };
   } catch (e: any) {
+    console.error('[official-inventory] startGroupedInventoryCutoff failed', { locationId, label, invId, createdHere, error: String(e?.message ?? e) });
+    if (createdHere && invId) await tryCancelInventoryLine(invId);
     return { ok: false, error: String(e?.message ?? e) };
   }
 }
