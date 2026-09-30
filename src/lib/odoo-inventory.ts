@@ -216,11 +216,16 @@ export interface ApplyPushResult {
 }
 
 /**
- * Writes `counted_qty` on each already-frozen count line, then applies every distinct
- * `stock.inventory` involved in one batched `action_state_to_done()` call — this is the step that
- * makes Odoo compute `diff_qty = counted − theoretical` and write
- * `target_qty = current_on_hand_now + diff_qty` back onto the real stock.quant, replaying the
- * counted delta on top of whatever happened since the cut-off instead of overwriting it.
+ * Writes `counted_qty` on each already-frozen count line, then, per `stock.inventory` involved:
+ *   1. `action_apply_count_lines()` ("Apply Count Sheet") — THE step that writes
+ *      `target_qty = current_on_hand_now + (counted − theoretical)` onto the real stock.quant,
+ *      replaying the counted delta on top of whatever happened since the cut-off;
+ *   2. `action_state_to_done()` ("Set to Done") — only closes the inventory.
+ * FIX 2026-09-30: step 1 was missing — `action_state_to_done` alone closes the inventory WITHOUT
+ * applying anything (Thăng Long's official inventory ended "done" with 0 stock moves). Step 1 is
+ * only available while the inventory is in_progress, so it must run before step 2. Both methods
+ * are singletons in this module, hence one call per inventory. After applying, every line with a
+ * non-zero diff is checked for `applied_qty`, so a silent no-op can never be reported as success.
  */
 export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<ApplyPushResult> {
   if (!entries.length) return { ok: false, lines: [], error: 'Aucune ligne comptée' };
@@ -253,7 +258,10 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
 
     if (invIds.length) {
       try {
-        await odooExecuteWrite('stock.inventory', 'action_state_to_done', [invIds], { context: NO_MAIL_CONTEXT });
+        for (const invId of invIds) {
+          await odooExecuteWrite('stock.inventory', 'action_apply_count_lines', [[invId]], { context: NO_MAIL_CONTEXT });
+          await odooExecuteWrite('stock.inventory', 'action_state_to_done', [[invId]], { context: NO_MAIL_CONTEXT });
+        }
       } catch (e: any) {
         const msg = `Écrit mais non appliqué sur Odoo : ${String(e?.message ?? e)}`;
         for (const id of writtenIds) {
@@ -266,14 +274,19 @@ export async function applyInventoryLines(entries: ApplyLineInput[]): Promise<Ap
     const finalRows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'read', [writtenIds],
       { fields: ['id', 'theoretical_qty', 'counted_qty', 'diff_qty', 'target_qty', 'applied_qty', 'state', 'product_id'] });
     for (const r of finalRows) {
+      const diff = Number(r.diff_qty ?? 0);
+      const applied = Number(r.applied_qty ?? 0);
+      // a line with a real difference that Odoo did not apply = NOT a success
+      const notApplied = Math.abs(diff) > 1e-9 && Math.abs(applied) < 1e-9;
       results.push({
         odooCountLineId: r.id,
         sku: r.product_id?.[1] ?? '',
         found: true,
         qtySystem: Number(r.theoretical_qty ?? 0),
         qtyCounted: Number(r.counted_qty ?? 0),
-        diff: Number(r.diff_qty ?? 0),
-        ok: true,
+        diff,
+        ok: !notApplied,
+        ...(notApplied ? { error: `Écart ${diff} non appliqué sur Odoo (appliqué : ${applied})` } : {}),
       });
     }
     return { ok: true, lines: results };

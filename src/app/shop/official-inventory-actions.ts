@@ -292,7 +292,7 @@ export interface SubmitOfficialInventoryResult {
 }
 
 /** Final "Envoyer à Odoo" — applies the whole session's counted quantities as the real diff on
- *  top of current Odoo stock (never an overwrite), in one grouped `action_state_to_done` call
+ *  top of current Odoo stock (never an overwrite), via `action_apply_count_lines` ("Apply Count Sheet") then `action_state_to_done`
  *  under the hood since every line shares the same `odoo_inventory_id`. */
 export async function submitOfficialInventoryAction(
   sessionId: string, submittedByName: string, shopName?: string,
