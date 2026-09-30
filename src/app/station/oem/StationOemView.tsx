@@ -26,6 +26,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const [rows, setRows] = useState<Row[]>([]);
   const [mmItems, setMmItems] = useState<Item[]>([]);
   const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [delivered, setDelivered] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [today, setToday] = useState<Entry[]>([]);
@@ -40,12 +41,16 @@ export default function StationOemView({ role, userId, userName }: { role: strin
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl, pk, dp] = await Promise.all([
+    const [it, pl, pk, dp, dl] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
       supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label').order('seq'),
+      supabase.rpc('lab_mm_deliveries'),
     ]);
+    const dq: Record<string, number> = {};
+    for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
+    setDelivered(dq);
     setMmItems(((it.data ?? []) as any[]).filter(i => !i.client_name).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
     setPlan(((dp.data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
@@ -57,11 +62,13 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       r.sort = Math.min(r.sort, i.sort_order);
       m.set(i.group_key, r);
     }
-    // v2: progress counts RECEIVED kg; declared batches not yet received are shown apart;
+    // progress = declared kg (received kg once received); batches not yet received are flagged apart;
     // losses after reception (broken bulk, faulty/missing bags) are added back to the target.
     for (const l of pl.data ?? []) {
       const r = m.get(l.group_key); if (!r) continue;
-      if (l.status === 'received') r.baked += Number(l.received_kg ?? 0); else r.pending += Number(l.weight_kg);
+      // Axel 2026-09-30: Hưng sees his progress as soon as he declares; it only changes if the
+      // assistants receive a different quantity (received_kg replaces the declared kg).
+      if (l.status === 'received') r.baked += Number(l.received_kg ?? 0); else { r.baked += Number(l.weight_kg); r.pending += Number(l.weight_kg); }
     }
     const w: Record<string, { unit: string; g: number }> = {};
     for (const i of it.data ?? []) w[i.sku] = { unit: i.unit, g: Number(i.unit_weight_g) };
@@ -89,9 +96,12 @@ export default function StationOemView({ role, userId, userName }: { role: strin
         return { key: g, name: r?.name ?? g, cum: kg, left };
       });
       const left = need.reduce((s, x) => s + x.left, 0);
-      return { b, need, left, done: left < 0.05 };
+      const shipped = mmItems.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
+      return { b, need, left, done: left < 0.05, shipped };
     });
-  }, [mmItems, plan, rows]);
+  }, [mmItems, plan, rows, delivered]);
+  const bagsTotal = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : i.qty_ordered), 0);
+  const bagsDone = mmItems.reduce((s, i) => s + (i.unit === 'kg' ? 0 : Math.min(i.qty_ordered, delivered[i.sku] ?? 0)), 0);
   const nextIdx = sched.findIndex(x => !x.done);
   const next = nextIdx >= 0 ? sched[nextIdx] : null;
   const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(isoToday)) / 86400000);
@@ -189,12 +199,21 @@ export default function StationOemView({ role, userId, userName }: { role: strin
             })() : (
               <div className="px-4 pb-3 text-sm font-bold" style={{ color: '#059669' }}>{vi ? 'Đã nướng đủ cho tất cả các đợt ✓' : 'Baked enough for every delivery ✓'}</div>
             )}
+            <div className="px-4 pb-2 space-y-1">
+              <div className="flex items-baseline justify-between text-xs" style={{ color: '#6B7280' }}>
+                <span className="font-bold uppercase tracking-wide text-[11px]" style={{ color: '#9CA3AF' }}>{vi ? 'Đã giao cho khách' : 'Delivered to the client'}</span>
+                <span><b style={{ color: '#111827' }}>{fmt(bagsDone)}</b> / {fmt(bagsTotal)} {vi ? 'gói' : 'bags'} · {bagsTotal ? Math.round((bagsDone / bagsTotal) * 100) : 0}%</span>
+              </div>
+              <span className="block h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#EFE9DC' }}>
+                <span className="block h-full rounded-full" style={{ width: `${bagsTotal ? Math.min(100, (bagsDone / bagsTotal) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
+              </span>
+            </div>
             <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
               {sched.map((x, k) => (
                 <div key={x.b.row.id} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center" style={{ minWidth: 64, backgroundColor: x.done ? '#ECFDF5' : k === nextIdx ? '#FFF7E6' : '#F9FAFB', border: `1px solid ${x.done ? '#A7F3D0' : k === nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
                   <div className="text-[10px] font-bold" style={{ color: '#9CA3AF' }}>{vi ? 'Đợt' : 'Del.'} {x.b.row.seq}</div>
                   <div className="text-xs font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? '✓' : dmy(x.b.produceBy)}</div>
-                  <div className="text-[10px]" style={{ color: '#9CA3AF' }}>{fmt(x.b.cumPct)}%</div>
+                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'giao' : 'del.'} ${dmy(x.b.row.delivery_date)}`}</div>
                 </div>
               ))}
             </div>
@@ -228,7 +247,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                 <div className="text-xs" style={{ color: '#9CA3AF' }}>
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
                   {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
-                  {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'Chờ nhận' : 'To receive'} {fmt1(r.pending)} kg</span>}
+                  {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'trong đó chờ trợ lý nhận' : 'of which waiting for reception'} {fmt1(r.pending)} kg</span>}
                   {next && (nextByGroup[r.key] ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `Đợt ${next.b.row.seq}: cần ${fmt1(nextByGroup[r.key])} kg trước ${dmy(next.b.produceBy)}` : `Delivery ${next.b.row.seq}: ${fmt1(nextByGroup[r.key])} kg needed by ${dmy(next.b.produceBy)}`}</span>}
                 </div>
               </div>
