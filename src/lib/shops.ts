@@ -35,9 +35,12 @@ export const SHOP_CONFIG: Record<string, ShopConfig> = {
   // 'quotation' -- Lab is not a replenishment-ordering shop, this warehouseCode is read only by
   // the inter-shop transfer module (odoo-shop-transfer.ts), which doesn't care about docType.
   'Lab':                 { docType: 'quotation',     partnerName: 'LAB', warehouseCode: 'LAB', portalAccount: false },
-  'La Paris Tây Hồ':     { docType: 'replenishment', warehouseCode: 'LP',        portalAccount: true },
-  'La Paris Long Biên':  { docType: 'replenishment', warehouseCode: 'PARIS',     portalAccount: true },
-  'La Paris Bà Triệu':   { docType: 'replenishment', warehouseCode: 'LPBT',      portalAccount: true },
+  // 2026-09-30 (Axel): Odoo warehouse Short Names standardized to the 'LPR<initials>' pattern —
+  // Tây Hồ LP->LPRTH, Long Biên PARIS->LPRLB, Bà Triệu LPBT->LPRBT (Timecity's LPTC unchanged).
+  // Updated to match; this is the only place these codes are hard-coded (verified via grep).
+  'La Paris Tây Hồ':     { docType: 'replenishment', warehouseCode: 'LPRTH',     portalAccount: true },
+  'La Paris Long Biên':  { docType: 'replenishment', warehouseCode: 'LPRLB',     portalAccount: true },
+  'La Paris Bà Triệu':   { docType: 'replenishment', warehouseCode: 'LPRBT',     portalAccount: true },
   'La Paris Timecity':   { docType: 'replenishment', warehouseCode: 'LPTC',      portalAccount: true },
   // New shop, added 2026-09-16 (Axel). Odoo warehouse "La Paris Thăng Long - warehouse" (id 20),
   // code confirmed live via the Odoo connector — matches the Short Name field in its Odoo form.
