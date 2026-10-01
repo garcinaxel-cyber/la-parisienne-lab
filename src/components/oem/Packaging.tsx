@@ -47,7 +47,15 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
   // bags are whole numbers (Axel, 2026-09-26): 5.5 bags is refused; kg (cashews, broken bulk) keep decimals
   const anyBad = Object.entries(qty).some(([s, v]) => qtyBad(v, isBag(s))) || Object.values(lossBulk).some(v => qtyBad(v, false))
     || Object.entries(lossBag).some(([s, v]) => qtyBad(v, isBag(s)));
-  const canSave = !saving && !over.length && !anyBad && (packed.length > 0 || scraps.length > 0);
+  // cashews (kg) are packed in 5 kg sacks (Axel, 2026-10-01): the number of sacks is mandatory, so a
+  // reception weight typed by mistake in packaging (57.5 kg on 29/09) cannot go through without sacks.
+  const SACK_KG = 5;
+  const noSacks = packed.filter(([s]) => bySku[s].unit === 'kg' && !(num(sacks[s]) > 0)).map(([s]) => s);
+  const sackMismatch = packed.filter(([s, v]) => bySku[s].unit === 'kg' && num(sacks[s]) > 0 && Math.abs(num(v) - num(sacks[s]) * SACK_KG) > SACK_KG - 0.001).map(([s]) => s);
+  // packing ALL the bulk at once = the classic reception/packaging mix-up → explicit confirmation
+  const allBulk = client.groups.filter(g => avail(g.key) > 0.0005 && usedKg(g) >= avail(g.key) * 0.99);
+  const [ackAll, setAckAll] = useState(false);
+  const canSave = !saving && !over.length && !anyBad && !noSacks.length && (packed.length > 0 || scraps.length > 0);
 
   const setQ = (sku: string, v: number) => setQty(q => ({ ...q, [sku]: v > 0 ? String(Math.round(v * 1000) / 1000) : '' }));
   const maxFor = (g: Group, i: Item) => {
@@ -177,8 +185,9 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
                   <div className="font-bold tabular-nums">{packed.length} {L('SP', 'products')} · {fmt(bags, 0)} {L('gói', 'bags')}{kgTotal ? ` · ${fmt(kgTotal, 1)} kg` : ''}</div>
                   {scraps.length > 0 && <div className="text-[11px] opacity-80">{scraps.length} {L('hao hụt', 'loss line(s)')}</div>}
                   {anyBad && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Có ô nhập không hợp lệ', 'A quantity is not valid')}</div>}
+                  {noSacks.length > 0 && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Nhập số bao (5 kg/bao) cho hạt điều', 'Enter the number of sacks (5 kg each) for cashews')}</div>}
                 </div>
-                <button onClick={() => setConfirm(true)} disabled={!canSave} className="rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40" style={{ backgroundColor: '#C9A84C', color: GREEN }}>
+                <button onClick={() => { setAckAll(false); setConfirm(true); }} disabled={!canSave} className="rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40" style={{ backgroundColor: '#C9A84C', color: GREEN }}>
                   {L('Lưu', 'Save')}
                 </button>
               </div>
@@ -209,8 +218,21 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
                 </div>
               ))}
             </div>
+            {packed.filter(([s]) => bySku[s].unit === 'kg').map(([s, v]) => (
+              <div key={'sk' + s} className="text-xs" style={{ color: sackMismatch.includes(s) ? '#B45309' : MUTED }}>
+                {bySku[s].product_name}: {num(sacks[s])} {L('bao', 'sacks')} × {SACK_KG} kg = {fmt(num(sacks[s]) * SACK_KG, 1)} kg
+                {sackMismatch.includes(s) && <b> · {L(`khác ${fmt(num(v), 1)} kg đã nhập — kiểm tra lại!`, `differs from the ${fmt(num(v), 1)} kg entered — check!`)}</b>}
+              </div>
+            ))}
+            {allBulk.length > 0 && (
+              <label className="flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm" style={{ backgroundColor: '#FFF7E6', color: '#8A6A2F', border: '1px solid #F3E3C0' }}>
+                <input type="checkbox" checked={ackAll} onChange={e => setAckAll(e.target.checked)} className="mt-1" />
+                <span>{L(`Bạn đang gói TOÀN BỘ bán TP (${allBulk.map(g => `${g.title} ${fmt(avail(g.key), 1)} kg`).join(', ')}). Xác nhận đã thật sự cho vào bao/gói — đây không phải là bước nhận hàng.`,
+                  `You are packing ALL the bulk (${allBulk.map(g => `${g.title} ${fmt(avail(g.key), 1)} kg`).join(', ')}). Confirm it is really in bags/sacks — this is not the reception step.`)}</span>
+              </label>
+            )}
             <div className="text-[11px]" style={{ color: FAINT }}>{odooOn ? L('Sẽ tạo lệnh sản xuất thành phẩm trên Odoo.', 'This creates the finished-product MO in Odoo.') : L('Odoo đang tắt — lưu trong app, gửi sau.', 'Odoo is off — saved in the app, sent later.')}</div>
-            <button onClick={save} disabled={saving} className="w-full flex items-center justify-center gap-2 rounded-2xl py-3.5 text-base font-bold text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+            <button onClick={save} disabled={saving || (allBulk.length > 0 && !ackAll)} className="w-full flex items-center justify-center gap-2 rounded-2xl py-3.5 text-base font-bold text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
               {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}{L('Xác nhận & lưu', 'Confirm & save')}
             </button>
           </div>
