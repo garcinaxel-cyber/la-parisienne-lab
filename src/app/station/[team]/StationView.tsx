@@ -411,6 +411,7 @@ export default function StationView({
         if (extraSearch.trim()) params.set('q', extraSearch.trim());
         params.set('team', team);
         if (selectedCategory) params.set('category', selectedCategory);
+        params.set('activeOnly', '1'); // hide products switched off in /admin/fiches
         const res = await fetch(`/api/lab/products-search?${params.toString()}`);
         const data = await res.json();
         // OEM products (MM-/OEM-, lib/oem.ts) listed first so they're easy to spot — order of

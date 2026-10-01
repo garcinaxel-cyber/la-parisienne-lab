@@ -12,6 +12,12 @@ export async function GET(req: NextRequest) {
   const q        = req.nextUrl.searchParams.get('q')?.trim() ?? '';
   const team     = req.nextUrl.searchParams.get('team')?.trim() ?? '';
   const category = req.nextUrl.searchParams.get('category')?.trim() ?? '';
+  // Opt-in (station "extra production" modal only, Axel 2026-10-01: "enlève les produits qui sont
+  // déclarés comme inactif dans l'app"): hide variants switched off in /admin/fiches
+  // (lab_fiche_variants.is_active, lab_v80) and fiches whose variants are ALL inactive. Other
+  // callers (inventory, lab scrap, shop) keep the full list on purpose — they may still need to
+  // count or scrap an old product that's still physically in stock.
+  const activeOnly = req.nextUrl.searchParams.get('activeOnly') === '1';
 
   if (q.length < 1 && !category) return NextResponse.json([]);
 
@@ -53,7 +59,7 @@ export async function GET(req: NextRequest) {
   const { data: variants } = ficheIds.length
     ? await supabase
         .from('lab_fiche_variants')
-        .select('id, fiche_id, sku, label, image_url, is_default, sort_order, weight_g')
+        .select('id, fiche_id, sku, label, image_url, is_default, sort_order, weight_g, is_active')
         .in('fiche_id', ficheIds)
         .order('is_default', { ascending: false })
         .order('sort_order')
@@ -64,13 +70,22 @@ export async function GET(req: NextRequest) {
   // converting to a floored unit count client-side. Purely additive — every other caller of this
   // route (inventory add-product, etc.) already ignores unknown fields.
   const variantsByFiche: Record<string, { id: string; sku: string | null; label: string; image_url: string | null; weight_g: number | null }[]> = {};
+  const fichesWithVariantRows = new Set<string>();
   for (const v of variants ?? []) {
+    fichesWithVariantRows.add(v.fiche_id);
+    if (activeOnly && v.is_active === false) continue;
     (variantsByFiche[v.fiche_id] ??= []).push({
       id: v.id, sku: v.sku ?? null, label: v.label ?? 'Standard', image_url: v.image_url ?? null, weight_g: v.weight_g ?? null,
     });
   }
 
-  const results = (fiches ?? []).map(f => {
+  // A fiche with variant rows but none active is "inactive" (same rule as /admin/fiches); a fiche
+  // with no variant rows at all is kept, exactly as before.
+  const visibleFiches = activeOnly
+    ? (fiches ?? []).filter(f => !fichesWithVariantRows.has(f.id) || (variantsByFiche[f.id]?.length ?? 0) > 0)
+    : (fiches ?? []);
+
+  const results = visibleFiches.map(f => {
     const vs = variantsByFiche[f.id] ?? [];
     const dv = vs[0] ?? null; // default variant (is_default first)
     return {
