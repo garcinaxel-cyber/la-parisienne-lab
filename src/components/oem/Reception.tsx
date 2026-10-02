@@ -47,7 +47,7 @@ export default function Reception({ client, prod, reload, L }: { client: Client;
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-bold leading-tight" style={{ color: '#111827' }}>{g.title}</div>
                 <div className="text-[11px] mt-0.5" style={{ color: FAINT }}>
-                  {p.created_by_name || '—'} · {dmy(p.prod_date)} {new Date(p.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                  {p.created_by_name || '—'} · {dmy(p.prod_date)} {new Date(p.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{p.plan_seq != null ? ` · ${L('cho đơn/đợt', 'for order/delivery')} ${p.plan_seq}` : ''}
                 </div>
               </div>
               <div className="text-right shrink-0">

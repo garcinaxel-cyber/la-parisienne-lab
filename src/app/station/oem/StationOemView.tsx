@@ -4,14 +4,15 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { buildBatches, dOr, type PlanRow } from '@/components/oem/plan';
+import { allocateBaked, buildBatches, dOr, type PlanRow } from '@/components/oem/plan';
+import { setProductionOrderAction } from '@/lib/oem-actions';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
 // Team Hung only needs one thing: per product, kg baked vs kg to bake. Packaging, deliveries and
 // inventories and tracking stay on the office page (/oem-orders, admin + assistants).
-type Row = { key: string; name: string; group: string; target: number; remake: number; pending: number; baked: number; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
-type Entry = { id: string; group_key: string; weight_kg: number; created_at: string; created_by_name: string | null; status: string; received_kg: number | null };
+type Row = { key: string; name: string; group: string; target: number; remake: number; pending: number; baked: number; bySeq: Record<number, number>; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
+type Entry = { id: string; group_key: string; weight_kg: number; prod_date: string; created_at: string; created_by_name: string | null; status: string; received_kg: number | null; plan_seq: number | null };
 const GREEN = '#1A4731';
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 const fmt1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
@@ -30,6 +31,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [today, setToday] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [ord, setOrd] = useState<number | null>(null); // order chosen in the entry sheet
+  const [tagging, setTagging] = useState<string | null>(null);
   const [sheet, setSheet] = useState(false);
   const [gk, setGk] = useState('');
   const [kg, setKg] = useState('');
@@ -43,7 +47,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     setLoading(true); setErr(null);
     const [it, pl, pk, dp, dl] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
-      supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg').order('created_at', { ascending: false }),
+      supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg, plan_seq').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
       supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
       supabase.rpc('lab_mm_deliveries'),
@@ -56,7 +60,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
     for (const i of it.data ?? []) {
-      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: baseName(i.product_name), group: i.group_name, target: 0, remake: 0, pending: 0, baked: 0, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
+      const r: Row = m.get(i.group_key) ?? { key: i.group_key, name: baseName(i.product_name), group: i.group_name, target: 0, remake: 0, pending: 0, baked: 0, bySeq: {}, sort: i.sort_order, skus: [] as string[], weights: [] as number[], kgUnit: i.unit === 'kg' };
       r.skus.push(i.sku); if (i.unit !== 'kg') r.weights.push(Number(i.unit_weight_g));
       r.target += i.unit === 'kg' ? Number(i.qty_ordered) : (Number(i.qty_ordered) * Number(i.unit_weight_g)) / 1000;
       r.sort = Math.min(r.sort, i.sort_order);
@@ -68,7 +72,10 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       const r = m.get(l.group_key); if (!r) continue;
       // Axel 2026-09-30: Hưng sees his progress as soon as he declares; it only changes if the
       // assistants receive a different quantity (received_kg replaces the declared kg).
-      if (l.status === 'received') r.baked += Number(l.received_kg ?? 0); else { r.baked += Number(l.weight_kg); r.pending += Number(l.weight_kg); }
+      const k = l.status === 'received' ? Number(l.received_kg ?? 0) : Number(l.weight_kg);
+      r.baked += k; if (l.status !== 'received') r.pending += k;
+      // kg per order/delivery chosen by the chef (0 = not chosen → automatic, in delivery order)
+      r.bySeq[l.plan_seq ?? 0] = (r.bySeq[l.plan_seq ?? 0] ?? 0) + k;
     }
     const w: Record<string, { unit: string; g: number }> = {};
     for (const i of it.data ?? []) w[i.sku] = { unit: i.unit, g: Number(i.unit_weight_g) };
@@ -79,7 +86,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     }
     setRows(Array.from(m.values()).sort((a, b) => a.sort - b.sort));
     const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); const iso = d.toISOString().slice(0, 10);
-    setToday(((pl.data ?? []) as any[]).filter(l => l.prod_date === iso).map(l => ({ ...l, weight_kg: Number(l.weight_kg), received_kg: l.received_kg == null ? null : Number(l.received_kg) })));
+    const all = ((pl.data ?? []) as any[]).map(l => ({ ...l, weight_kg: Number(l.weight_kg), received_kg: l.received_kg == null ? null : Number(l.received_kg) })) as Entry[];
+    setEntries(all);
+    setToday(all.filter(l => l.prod_date === iso));
     setLoading(false);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
@@ -92,11 +101,22 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     const clients = Array.from(new Set(plan.map(p => p.client_name || MM_CLIENT)));
     return clients.map(client => {
       const items = allItems.filter(i => (i.client_name || MM_CLIENT) === client);
-      const batches = buildBatches(items, plan.filter(p => (p.client_name || MM_CLIENT) === client));
-      const sched = batches.map(b => {
-        const need = Object.entries(b.cumKgByGroup).map(([g, kg]) => {
-          const r = byKey[g]; const left = r ? Math.max(0, kg + r.remake - r.baked) : kg;
-          return { key: g, name: r?.name ?? g, cum: kg, left };
+      const rowsOfClient = plan.filter(p => (p.client_name || MM_CLIENT) === client);
+      const batches = buildBatches(items, rowsOfClient);
+      // Separate orders (explicit kg per delivery — Tianhe: 710 kg, then 1 t): each one is followed on its
+      // own and the chef says which one he bakes for. A % schedule (Maison Mooncake) stays cumulative.
+      const perOrder = rowsOfClient.some(r => r.qty) && batches.length > 1;
+      const seqs = batches.map(b => b.row.seq);
+      const groups = Object.keys(batches[0]?.cumKgByGroup ?? {});
+      const own = (g: string, k: number) => (batches[k].cumKgByGroup[g] ?? 0) - (k ? batches[k - 1].cumKgByGroup[g] ?? 0 : 0);
+      const alloc = Object.fromEntries(groups.map(g => [g, allocateBaked(batches.map((_, k) => own(g, k)), seqs, byKey[g]?.bySeq ?? {}, byKey[g]?.remake ?? 0)]));
+      const sched = batches.map((b, k) => {
+        const need = groups.map(g => {
+          const a = alloc[g]; const name = byKey[g]?.name ?? g;
+          if (!perOrder) return { key: g, name, cum: b.cumKgByGroup[g], left: a.remakeLeft + a.ownLeft.slice(0, k + 1).reduce((s, x) => s + x, 0) };
+          // re-make for losses goes to the first order still open (the last one if all are baked)
+          const open = a.ownLeft.findIndex(x => x > 0.0005);
+          return { key: g, name, cum: own(g, k), left: a.ownLeft[k] + (k === (open < 0 ? batches.length - 1 : open) ? a.remakeLeft : 0) };
         });
         const left = need.reduce((s, x) => s + x.left, 0);
         const shipped = items.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
@@ -105,7 +125,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       const kgUnits = items.every(i => i.unit === 'kg');
       const total = items.reduce((s, i) => s + i.qty_ordered, 0);
       const done = items.reduce((s, i) => s + Math.min(i.qty_ordered, delivered[i.sku] ?? 0), 0);
-      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done };
+      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder };
     }).filter(p => p.sched.length);
   }, [allItems, plan, rows, delivered]);
   // the chef can open any delivery (tap on the timeline); default = the next one not baked yet
@@ -115,8 +135,8 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const Lx = (v: string, e: string) => (vi ? v : e);
   // hint under each product row: the delivery shown in its client's plan
   const nextByGroup = useMemo(() => {
-    const m: Record<string, { left: number; seq: number; by: string | null }> = {};
-    for (const p of plans) { const k = shownOf(p); const x = k >= 0 ? p.sched[k] : null; if (x) for (const n of x.need) m[n.key] = { left: n.left, seq: x.b.row.seq, by: x.b.produceBy }; }
+    const m: Record<string, { left: number; seq: number; by: string | null; po: boolean }> = {};
+    for (const p of plans) { const k = shownOf(p); const x = k >= 0 ? p.sched[k] : null; if (x) for (const n of x.need) m[n.key] = { left: n.left, seq: x.b.row.seq, by: x.b.produceBy, po: p.perOrder }; }
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans, pick]);
@@ -125,20 +145,31 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
   const sel = rows.find(r => r.key === gk);
   const kgNum = Number(kg.replace(',', '.')) || 0;
+  // the product's client has separate orders → the chef must say which one this batch is for
+  const selPlan = sel ? plans.find(p => p.perOrder && p.items.some(i => i.group_key === sel.key)) ?? null : null;
+  const W = (po: boolean) => (po ? (vi ? 'Đơn' : 'Order') : (vi ? 'Đợt' : 'Delivery'));
 
   async function saveProd() {
-    if (!sel || !(kgNum > 0) || kgNum > 2000) return;
+    if (!sel || !(kgNum > 0) || kgNum > 2000 || (selPlan && ord == null)) return;
     setSaving(true); setErr(null);
     const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     const { error } = await supabase.from('lab_mm_production_log').insert({
       prod_date: d.toISOString().slice(0, 10), group_key: sel.key, sku: sel.skus[0] ?? null,
       weight_kg: Math.round(kgNum * 1000) / 1000, created_by: userId, created_by_name: userName,
+      ...(selPlan ? { plan_seq: ord } : {}),
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
-    setSheet(false); setKg(''); setGk('');
-    setFlash(`+${kgNum} kg · ${sel.name}`); setTimeout(() => setFlash(null), 3500);
+    setSheet(false); setKg(''); setGk(''); setOrd(null);
+    setFlash(`+${kgNum} kg · ${sel.name}${selPlan ? ` · ${W(true)} ${ord}` : ''}`); setTimeout(() => setFlash(null), 3500);
     await load();
+  }
+  // change the order of a batch already declared (also batches entered from the main station screen)
+  async function tag(id: string, seq: number) {
+    setTagging(id); setErr(null);
+    const r = await setProductionOrderAction(id, seq);
+    if (r.error) setErr(r.error);
+    await load(); setTagging(null);
   }
 
   return (
@@ -176,7 +207,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
               <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
                 <span className="font-semibold">{rows.find(r => r.key === t.group_key)?.name ?? t.group_key}</span>
                 <span className="text-right">
-                  <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.plan_seq != null ? ` · ${W(plans.some(p => p.perOrder && p.items.some(i => i.group_key === t.group_key)))} ${t.plan_seq}` : ''}</span>
                   <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#047857' : '#B45309' }}>
                     {t.status === 'received' ? `${vi ? 'Đã nhận' : 'Received'} ${t.received_kg} kg` : (vi ? 'Chờ trợ lý nhận' : 'Waiting for reception')}
                   </span>
@@ -198,13 +229,15 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#ECFDF5' : late ? '#FEF2F2' : dl != null && dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
                     <div className="text-[15px] font-bold" style={{ color: next.done ? '#047857' : late ? '#B91C1C' : '#111827' }}>
                       {next.done
-                        ? (vi ? `Đợt ${next.b.row.seq}: đã nướng đủ ✓` : `Delivery ${next.b.row.seq}: fully baked ✓`)
+                        ? `${W(p.perOrder)} ${next.b.row.seq}: ${vi ? 'đã nướng đủ ✓' : 'fully baked ✓'}`
                         : next.b.produceBy
-                          ? (vi ? `Đợt ${next.b.row.seq}: nướng xong trước ${dOr(next.b.produceBy, Lx)}` : `Delivery ${next.b.row.seq}: bake by ${dOr(next.b.produceBy, Lx)}`)
-                          : (vi ? `Đợt ${next.b.row.seq}: chưa có ngày giao` : `Delivery ${next.b.row.seq}: date not given yet`)}
+                          ? `${W(p.perOrder)} ${next.b.row.seq}: ${vi ? 'nướng xong trước' : 'bake by'} ${dOr(next.b.produceBy, Lx)}`
+                          : `${W(p.perOrder)} ${next.b.row.seq}: ${vi ? 'chưa có ngày giao' : 'date not given yet'}`}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
-                      {vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
+                      {p.perOrder
+                        ? `${vi ? 'Giao' : 'Ship'} ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.kg)} kg`
+                        : vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
                       {!next.done && <>{' · '}<b>{fmt1(next.left)} kg</b> {vi ? 'còn thiếu' : 'left'}{dl != null && <>{' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}</>}</>}
                     </div>
                   </div>
@@ -235,12 +268,45 @@ export default function StationOemView({ role, userId, userName }: { role: strin
               {p.sched.map((x, k) => (
                 <button key={x.b.row.id} onClick={() => setPick(s => ({ ...s, [p.client]: k }))} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
                   style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === p.nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === p.nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
-                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{vi ? 'Đợt' : 'Delivery'} {x.b.row.seq} · {fmt(x.b.kg)} kg</div>
+                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{W(p.perOrder)} {x.b.row.seq} · {fmt(x.b.kg)} kg</div>
                   <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : x.b.produceBy ? `${vi ? 'Nướng trước' : 'Bake by'} ${dOr(x.b.produceBy, Lx)}` : (vi ? 'Chưa có ngày' : 'Date TBC')}</div>
                   <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
                 </button>
               ))}
             </div>
+            {p.perOrder && (() => {
+              // batches baked for this client: those with no order chosen first, then the latest ones
+              const mine = entries.filter(e => p.items.some(i => i.group_key === e.group_key));
+              const list = [...mine.filter(e => e.plan_seq == null), ...mine.filter(e => e.plan_seq != null).slice(0, 6)];
+              if (!list.length) return null;
+              return (
+                <div className="px-4 pb-3 space-y-1.5" style={{ borderTop: '1px solid #F3F4F6' }}>
+                  <div className="pt-2.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Mẻ đã nướng — cho đơn nào?' : 'Baked batches — for which order?'}</div>
+                  {list.map(e => (
+                    <div key={e.id} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0">
+                        <span className="block font-semibold truncate">{rows.find(r => r.key === e.group_key)?.name ?? e.group_key}</span>
+                        <span className="block text-[11px]" style={{ color: e.plan_seq == null ? '#B45309' : '#9CA3AF' }}>
+                          {fmt1(e.status === 'received' ? e.received_kg ?? 0 : e.weight_kg)} kg · {dOr(e.prod_date, Lx)}{e.plan_seq == null ? ` · ${vi ? 'chưa chọn đơn' : 'no order chosen'}` : ''}
+                        </span>
+                      </span>
+                      <span className="flex gap-1 shrink-0">
+                        {p.sched.map(x => {
+                          const on = e.plan_seq === x.b.row.seq;
+                          return (
+                            <button key={x.b.row.id} disabled={!canLog || on || tagging === e.id} onClick={() => tag(e.id, x.b.row.seq)}
+                              className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition"
+                              style={on ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#6B7280', border: '1px solid #EFE9DC', opacity: canLog ? 1 : 0.5 }}>
+                              {tagging === e.id && !on ? '…' : `${W(true)} ${x.b.row.seq}`}
+                            </button>
+                          );
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           );
         })}
@@ -273,7 +339,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
                   {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
                   {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'trong đó chờ trợ lý nhận' : 'of which waiting for reception'} {fmt1(r.pending)} kg</span>}
-                  {(nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `Đợt ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `Delivery ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
+                  {(nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
                 </div>
               </div>
             );
@@ -293,7 +359,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
               <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Sản phẩm' : 'Product'}</div>
               <div className="grid grid-cols-2 gap-2">
                 {rows.map(r => (
-                  <button key={r.key} onClick={() => setGk(r.key)}
+                  <button key={r.key} onClick={() => { setGk(r.key); setOrd(null); }}
                     className="rounded-xl px-3 py-3 text-sm font-semibold text-left leading-tight"
                     style={gk === r.key ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#111827', border: '1px solid #EFE9DC' }}>
                     {r.name}
@@ -302,6 +368,26 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                 ))}
               </div>
             </div>
+            {selPlan && sel && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Nướng cho đơn nào?' : 'Baked for which order?'}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {selPlan.sched.map(x => {
+                    const n = x.need.find(y => y.key === sel.key);
+                    return (
+                      <button key={x.b.row.id} onClick={() => setOrd(x.b.row.seq)}
+                        className="rounded-xl px-3 py-3 text-sm font-bold text-left leading-tight"
+                        style={ord === x.b.row.seq ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#111827', border: '1px solid #EFE9DC' }}>
+                        {W(true)} {x.b.row.seq} · {fmt(x.b.kg)} kg
+                        <span className="block text-[11px] font-normal mt-1" style={{ opacity: 0.75 }}>
+                          {n && n.left > 0.05 ? `${vi ? 'còn' : 'left'} ${fmt1(n.left)} / ${fmt1(n.cum)} kg` : (vi ? 'đã nướng đủ ✓' : 'fully baked ✓')}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Khối lượng đã nướng (kg)' : 'Weight produced (kg)'}</div>
               <div className="flex items-center gap-2">
@@ -316,7 +402,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                 </div>
               )}
             </div>
-            <button onClick={saveProd} disabled={saving || !sel || !(kgNum > 0) || kgNum > 2000}
+            <button onClick={saveProd} disabled={saving || !sel || !(kgNum > 0) || kgNum > 2000 || (!!selPlan && ord == null)}
               className="w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-base font-bold text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
               {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}{vi ? 'Lưu' : 'Save'}
             </button>

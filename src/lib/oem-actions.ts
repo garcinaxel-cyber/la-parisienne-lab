@@ -239,6 +239,28 @@ export async function receiveProductionAction(id: string, receivedKg: number | n
   return error ? { error: error.message } : { ok: true };
 }
 
+// Which order/delivery a baked batch is for (Axel 2026-10-02: Hung chooses it; null = automatic).
+// Service key because the chef has no UPDATE right on the production log; only plan_seq is written.
+export async function setProductionOrderAction(id: string, seq: number | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant', 'chef'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
+  const svc = service();
+  if (!svc) return { error: 'Server not configured' };
+  const { data: row } = await svc.from('lab_mm_production_log').select('id, group_key').eq('id', id).single();
+  if (!row) return { error: 'Batch not found' };
+  if (seq != null) {
+    const { data: item } = await svc.from('lab_mm_order_items').select('client_name').eq('group_key', row.group_key).limit(1).maybeSingle();
+    const { data: rows } = await svc.from('lab_mm_delivery_plan').select('client_name').eq('seq', seq);
+    const MM = 'Maison Mooncake';
+    if (!(rows ?? []).some(p => (p.client_name || MM) === (item?.client_name || MM))) return { error: 'Unknown order' };
+  }
+  const { error } = await svc.from('lab_mm_production_log').update({ plan_seq: seq }).eq('id', id);
+  return error ? { error: error.message } : { ok: true };
+}
+
 // theoretical finished stock per SKU, computed server-side (same rule as model.ts derive)
 async function fgTheoBySku(supabase: any): Promise<Record<string, number>> {
   const [pack, deliv] = await Promise.all([

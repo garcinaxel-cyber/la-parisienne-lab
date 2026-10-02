@@ -51,3 +51,18 @@ export const planOf = (plan: PlanRow[], clientName: string | null | undefined, m
 // dd/mm or a "date to confirm" label
 export const dOr = (iso: string | null | undefined, L: (vi: string, en: string) => string, full = false) =>
   iso ? (full ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}` : `${iso.slice(8, 10)}/${iso.slice(5, 7)}`) : L('chưa có ngày', 'date TBC');
+
+// Production declared for a given order/delivery (lab_mm_production_log.plan_seq — Axel 2026-10-02:
+// Hung bakes cashews for the 1 t order while the 710 kg one is still open). For one product group:
+//   own[k]  = kg of delivery k alone, seqs[k] = its number, bySeq = baked kg per number (0 = not chosen).
+// Kg baked for a delivery fill that delivery first; the rest (not chosen, or more than that delivery
+// needs) fills the re-make for losses, then the deliveries in order — so with nothing chosen the result
+// is exactly the old cumulative rule: left up to delivery k = max(0, cum + remake − baked).
+export function allocateBaked(own: number[], seqs: number[], bySeq: Record<number, number>, remake: number): { ownLeft: number[]; remakeLeft: number } {
+  let pool = 0;
+  for (const [s, kg] of Object.entries(bySeq)) if (!seqs.includes(Number(s))) pool += kg;
+  const ownLeft = own.map((need, k) => { const t = bySeq[seqs[k]] ?? 0; const a = Math.min(need, t); pool += t - a; return need - a; });
+  const useR = Math.min(remake, pool); pool -= useR;
+  for (let k = 0; k < ownLeft.length; k++) { const a = Math.min(ownLeft[k], pool); ownLeft[k] -= a; pool -= a; }
+  return { ownLeft, remakeLeft: remake - useR };
+}

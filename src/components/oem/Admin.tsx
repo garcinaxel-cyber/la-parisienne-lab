@@ -101,7 +101,7 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
               <div className="w-[76px] shrink-0 text-xs" style={{ color: '#6B7280' }}>{l.prod_date.slice(8, 10)}/{l.prod_date.slice(5, 7)}/{l.prod_date.slice(2, 4)}</div>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold truncate">{groupName(l.group_key)} {l.sku && <span className="text-[11px] font-normal" style={{ color: '#9CA3AF' }}>· {l.sku}</span>}</div>
-                <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{l.created_by_name || '—'}{l.note ? ` · ${l.note}` : ''}</div>
+                <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{l.created_by_name || '—'}{l.plan_seq != null ? ` · ${L('cho đơn/đợt', 'for order/delivery')} ${l.plan_seq}` : ''}{l.note ? ` · ${l.note}` : ''}</div>
                 <div className="text-[11px] truncate" style={{ color: l.status === 'received' ? (Number(l.received_kg) < Number(l.weight_kg) ? '#B91C1C' : '#047857') : '#B45309' }}>
                   {l.status === 'received'
                     ? `${L('Đã nhận', 'Received')} ${fmt(Number(l.received_kg ?? 0), 2)} kg · ${l.received_by_name ?? ''}${Number(l.received_kg) < Number(l.weight_kg) ? ` · ${L('thiếu', 'short')} ${fmt(Number(l.weight_kg) - Number(l.received_kg ?? 0), 2)} kg${l.receive_note ? ` (${l.receive_note})` : ''}` : ''}`

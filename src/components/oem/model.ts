@@ -11,6 +11,7 @@ export type ProdLog = {
   // reception (v2): only received kg become packable bulk and count as Hung's progress
   status: 'pending' | 'received'; received_kg: number | null; received_at: string | null;
   received_by_name: string | null; receive_note: string | null;
+  plan_seq?: number | null; // order/delivery this batch was baked for (null = automatic)
 };
 export type PackLog = {
   id: string; pack_date: string; kind: 'packed' | 'scrap_bulk' | 'scrap_finished' | 'found'; source: 'entry' | 'inventory'; sku: string; group_key: string;
