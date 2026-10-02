@@ -138,7 +138,10 @@ export async function searchOnlineProductsAction(query: string): Promise<{ produ
   const filtered = (q
     ? all.filter(p => (p.nameVi + ' ' + (p.sku ?? '')).toLowerCase().includes(q))
     : all
-  ).sort((a, b) => a.nameVi.localeCompare(b.nameVi)).slice(0, 20);
+  // With a keyword, return every match (Axel, 2026-10-02: "rosalie" = 6 sizes x 5 flavours = 30
+  // variants, the 20-row cap hid the last flavours and the seller couldn't find them). 200 is a
+  // safety ceiling only -- the dropdown already scrolls. No keyword keeps the short 20-row list.
+  ).sort((a, b) => a.nameVi.localeCompare(b.nameVi, 'vi', { numeric: true })).slice(0, q ? 200 : 20);
 
   return { products: filtered };
 }
