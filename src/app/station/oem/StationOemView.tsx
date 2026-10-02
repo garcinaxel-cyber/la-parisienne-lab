@@ -113,10 +113,10 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       const sched = batches.map((b, k) => {
         const need = groups.map(g => {
           const a = alloc[g]; const name = byKey[g]?.name ?? g;
-          if (!perOrder) return { key: g, name, cum: b.cumKgByGroup[g], left: a.remakeLeft + a.ownLeft.slice(0, k + 1).reduce((s, x) => s + x, 0) };
+          if (!perOrder) return { key: g, name, cum: b.cumKgByGroup[g], baked: 0, left: a.remakeLeft + a.ownLeft.slice(0, k + 1).reduce((s, x) => s + x, 0) };
           // re-make for losses goes to the first order still open (the last one if all are baked)
           const open = a.ownLeft.findIndex(x => x > 0.0005);
-          return { key: g, name, cum: own(g, k), left: a.ownLeft[k] + (k === (open < 0 ? batches.length - 1 : open) ? a.remakeLeft : 0) };
+          return { key: g, name, cum: own(g, k), baked: Math.max(0, own(g, k) - a.ownLeft[k]), left: a.ownLeft[k] + (k === (open < 0 ? batches.length - 1 : open) ? a.remakeLeft : 0) };
         });
         const left = need.reduce((s, x) => s + x.left, 0);
         const shipped = items.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
@@ -125,7 +125,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
       const kgUnits = items.every(i => i.unit === 'kg');
       const total = items.reduce((s, i) => s + i.qty_ordered, 0);
       const done = items.reduce((s, i) => s + Math.min(i.qty_ordered, delivered[i.sku] ?? 0), 0);
-      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder };
+      // kg declared with no order chosen (entered from the main station screen): counted in order, flagged
+      const untagged = perOrder ? groups.reduce((s, g) => s + (byKey[g]?.bySeq[0] ?? 0), 0) : 0;
+      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder, untagged };
     }).filter(p => p.sched.length);
   }, [allItems, plan, rows, delivered]);
   // the chef can open any delivery (tap on the timeline); default = the next one not baked yet
@@ -140,6 +142,12 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans, pick]);
+
+  const ordersByGroup = useMemo(() => {
+    const m: Record<string, { seq: number; baked: number; cum: number }[]> = {};
+    for (const p of plans) if (p.perOrder) for (const x of p.sched) for (const n of x.need) (m[n.key] ??= []).push({ seq: x.b.row.seq, baked: n.baked, cum: n.cum });
+    return m;
+  }, [plans]);
 
   // same rule as the station: workers/viewers are read-only
   const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
@@ -222,7 +230,51 @@ export default function StationOemView({ role, userId, userName }: { role: strin
           return (
           <div key={p.client} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
             <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng' : 'Baking plan'} · {p.client.replace('CÔNG TY CỔ PHẦN ', '')}</div>
-            {next ? (() => {
+            {p.perOrder ? (
+              <div className="px-4 pb-3 pt-1 space-y-2.5">
+                {p.sched.map(x => {
+                  const tot = x.need.reduce((s, n) => s + n.cum, 0); const bk = x.need.reduce((s, n) => s + n.baked, 0);
+                  const pc = tot ? Math.min(100, (bk / tot) * 100) : 0;
+                  const dl = x.b.produceBy ? daysTo(x.b.produceBy) : null; const late = dl != null && dl < 0 && !x.done;
+                  return (
+                    <div key={x.b.row.id} className="rounded-xl px-3 py-3 space-y-2" style={{ backgroundColor: '#F7F5F0', border: `1px solid ${x.done ? '#A7F3D0' : '#EFE9DC'}` }}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-[15px] font-bold" style={{ color: GREEN }}>{W(true)} {x.b.row.seq} · {fmt(x.b.kg)} kg</span>
+                        <span className="text-[15px] whitespace-nowrap" style={{ color: '#111827' }}><b>{fmt1(bk)}</b><span style={{ color: '#9CA3AF' }}> / {fmt1(tot)} kg</span></span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex-1 h-3 rounded-full overflow-hidden" style={{ backgroundColor: '#E7DFCF' }}>
+                          <span className="block h-full rounded-full" style={{ width: `${pc}%`, backgroundColor: x.done ? '#059669' : GREEN }} />
+                        </span>
+                        <span className="w-11 text-right text-sm font-bold" style={{ color: x.done ? '#059669' : GREEN }}>{Math.round(pc)}%</span>
+                      </div>
+                      <div className="text-xs" style={{ color: late ? '#B91C1C' : '#6B7280' }}>
+                        {x.done ? (vi ? 'Đã nướng đủ ✓' : 'Fully baked ✓') : <><b>{vi ? 'Còn' : 'Left'} {fmt1(x.left)} kg</b>{x.b.produceBy && <>{' · '}{vi ? 'nướng trước' : 'bake by'} {dOr(x.b.produceBy, Lx)}{dl != null && (late ? (vi ? ` (trễ ${-dl} ngày)` : ` (${-dl} days late)`) : (vi ? ` (còn ${dl} ngày)` : ` (${dl} days left)`))}</>}</>}
+                        {' · '}{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}
+                      </div>
+                      <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid #EFE9DC' }}>
+                        {x.need.map(n => (
+                          <div key={n.key} className="pt-1">
+                            <div className="flex items-baseline justify-between gap-3 text-sm">
+                              <span className="font-semibold min-w-0 truncate">{n.name}</span>
+                              <span className="whitespace-nowrap">{n.cum > 0 && n.baked >= n.cum - 0.05 && <b style={{ color: '#047857' }}>✓ </b>}<b>{fmt1(n.baked)}</b><span className="text-xs" style={{ color: '#9CA3AF' }}> / {fmt1(n.cum)} kg</span></span>
+                            </div>
+                            <span className="block h-1.5 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#E7DFCF' }}>
+                              <span className="block h-full rounded-full" style={{ width: `${n.cum ? Math.min(100, (n.baked / n.cum) * 100) : 0}%`, backgroundColor: n.baked >= n.cum - 0.05 ? '#059669' : '#8FB3A0' }} />
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {p.untagged > 0.0005 && (
+                  <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF7E6', color: '#B45309' }}>
+                    {vi ? `${fmt1(p.untagged)} kg chưa chọn đơn — tạm tính theo thứ tự (${W(true)} ${p.sched[0].b.row.seq} trước). Chọn đơn ở danh sách bên dưới.` : `${fmt1(p.untagged)} kg with no order chosen — counted in order for now (${W(true)} ${p.sched[0].b.row.seq} first). Choose the order in the list below.`}
+                  </div>
+                )}
+              </div>
+            ) : next ? (() => {
               const dl = next.b.produceBy ? daysTo(next.b.produceBy) : null; const late = dl != null && dl < 0 && !next.done;
               return (
                 <div className="px-4 pb-3 space-y-2">
@@ -264,7 +316,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                 <span className="block h-full rounded-full" style={{ width: `${p.total ? Math.min(100, (p.done / p.total) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
               </span>
             </div>
-            <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
+            {!p.perOrder && <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
               {p.sched.map((x, k) => (
                 <button key={x.b.row.id} onClick={() => setPick(s => ({ ...s, [p.client]: k }))} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
                   style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === p.nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === p.nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
@@ -273,7 +325,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
                 </button>
               ))}
-            </div>
+            </div>}
             {p.perOrder && (() => {
               // batches baked for this client: those with no order chosen first, then the latest ones
               const mine = entries.filter(e => p.items.some(i => i.group_key === e.group_key));
@@ -339,7 +391,8 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
                   {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
                   {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'trong đó chờ trợ lý nhận' : 'of which waiting for reception'} {fmt1(r.pending)} kg</span>}
-                  {(nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
+                  {ordersByGroup[r.key] && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{ordersByGroup[r.key].map(o => `${W(true)} ${o.seq}: ${fmt1(o.baked)} / ${fmt1(o.cum)} kg`).join(' · ')}</span>}
+                  {!ordersByGroup[r.key] && (nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
                 </div>
               </div>
             );
