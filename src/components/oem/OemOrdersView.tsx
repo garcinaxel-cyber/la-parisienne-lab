@@ -63,7 +63,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       supabase.from('lab_mm_order_item_history').select('id, sku, qty_before, qty_after, changed_at, changed_by_name').order('changed_at', { ascending: false }).limit(50),
       supabase.rpc('lab_mm_deliveries'),
       supabase.from('lab_mm_fg_counts').select('id, count_date, sku, qty_counted, qty_theoretical, gap, status, created_at, created_by_name, decided_by_name').order('count_date', { ascending: false }).limit(2000),
-      supabase.from('lab_mm_ingredients').select('code, name, unit, sort_order').order('sort_order'),
+      supabase.from('lab_mm_ingredients').select('code, name, unit, sort_order').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_ingredient_usage').select('group_key, ingredient_code, qty_per_kg'),
       supabase.from('lab_mm_rm_inventory').select('id, week_start, ingredient_code, qty, created_at, created_by_name').order('week_start', { ascending: false }).limit(2000),
       supabase.from('lab_mm_settings').select('key, value'),
