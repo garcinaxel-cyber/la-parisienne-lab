@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState } from './actions';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopDailyReportSummary, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState } from './actions';
 import { getEventAccessStateAction, enterEventAction, exitEventAction } from './actions';
 import ShopTransfersTab from './ShopTransfersTab';
 import EventCaisseTab from './EventCaisseTab';
@@ -72,6 +72,11 @@ function flattenForPicker(results: ProductSearchResult[]): LossPickOption[] {
 }
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
+
+// '2026-10' -> 'Tháng 10/2026' (Báo cáo month switch).
+function fmtReportMonth(m: string) {
+  return `Tháng ${Number(m.slice(5, 7))}/${m.slice(0, 4)}`;
+}
 
 function fmtDate(d: string) {
   const [y, m, day] = d.split('-');
@@ -330,9 +335,17 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // 7-day window (most-recent first, today included); `selectedReportDate` is which day is
   // drilled into (null = the day list). `dailyReport` stays a derived lookup, same shape as
   // before, so the detail view/PDF export below barely changed.
-  const [reports, setReports] = useState<ShopDailyReport[] | null>(null);
+  // 2026-10-02 (Axel: "l'historique des rapports, du mois précédent + du mois en cours ... tu
+  // enlèves de leur vue le mois M-2"): the list is now one calendar MONTH of per-day summaries
+  // (`reports`), switchable between the two months the server allows (`reportMonths`); a day's
+  // full report (`dailyReport`, product lines + losses) is fetched only when it is opened.
+  const [reports, setReports] = useState<ShopDailyReportSummary[] | null>(null);
+  const [reportMonths, setReportMonths] = useState<string[]>([]);
+  const [reportMonth, setReportMonth] = useState<string | null>(null);
+  const [reportToday, setReportToday] = useState<string | null>(null);
   const [selectedReportDate, setSelectedReportDate] = useState<string | null>(null);
-  const dailyReport = selectedReportDate ? reports?.find(r => r.date === selectedReportDate) ?? null : null;
+  const [dailyReport, setDailyReport] = useState<ShopDailyReport | null>(null);
+  const [reportDayLoading, setReportDayLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
   const [reportMsg, setReportMsg] = useState<string | null>(null);
@@ -503,8 +516,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   useEffect(() => {
     if (tab !== 'report') return;
-    setSelectedReportDate(null); // always land on the 7-day list, not wherever a previous visit drilled into
-    loadReport();
+    setSelectedReportDate(null); // always land on the day list, not wherever a previous visit drilled into
+    setDailyReport(null);
+    loadReport(); // current month
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -936,14 +950,31 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setStockSessions(prev => prev.map(x => x.seq === stockSessionSeq ? { ...x, finishedAt: x.finishedAt ?? now, finishedByName: x.finishedByName ?? trimmedName } : x));
   }
 
-  async function loadReport() {
+  async function loadReport(month?: string) {
     setReportLoading(true);
     setReportMsg(null);
+    setReports(null);
+    if (month) setReportMonth(month);
     const actions = await import('./actions');
-    const res = readOnly ? await actions.getDailyReportRangeForStaffAction(shopName) : await actions.getMyDailyReportRangeAction();
+    const res = readOnly ? await actions.getDailyReportMonthForStaffAction(shopName, month) : await actions.getMyDailyReportMonthAction(month);
     setReportLoading(false);
-    if (res.error) { setReportMsg(`Lỗi: ${res.error}`); return; }
-    setReports(res.reports ?? []);
+    if (res.error || !res.data) { setReportMsg(`Lỗi: ${res.error ?? 'không tải được'}`); setReports([]); return; }
+    setReportMonths(res.data.months);
+    setReportMonth(res.data.month);
+    setReportToday(res.data.today);
+    setReports(res.data.days);
+  }
+
+  async function openReportDay(date: string) {
+    setSelectedReportDate(date);
+    setDailyReport(null);
+    setReportMsg(null);
+    setReportDayLoading(true);
+    const actions = await import('./actions');
+    const res = readOnly ? await actions.getDailyReportDayForStaffAction(shopName, date) : await actions.getMyDailyReportDayAction(date);
+    setReportDayLoading(false);
+    if (res.error || !res.report) { setReportMsg(`Lỗi: ${res.error ?? 'không tải được'}`); return; }
+    setDailyReport(res.report);
   }
 
   // Client-side PDF export (Axel, 2026-09-03: "le rapport doit etre exportable pdf" — "pdf en
@@ -1875,20 +1906,33 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           !selectedReportDate ? (
             <div className="space-y-3">
               <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày · 7 ngày gần nhất</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày{reportMonth ? ` · ${fmtReportMonth(reportMonth)}` : ''}</div>
                 <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
+                {reportMonths.length > 1 && (
+                  <div className="flex gap-2 mt-3">
+                    {reportMonths.map(m => (
+                      <button key={m} onClick={() => { if (m !== reportMonth) loadReport(m); }} disabled={reportLoading}
+                        className="flex-1 rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-60"
+                        style={m === reportMonth
+                          ? { backgroundColor: NAVY, color: '#FFFAEE' }
+                          : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
+                        {fmtReportMonth(m)}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {reportLoading && !reports ? (
                 <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
               ) : !reports?.length ? null : (
                 <div className="space-y-2">
-                  {reports.map((r, i) => (
-                    <button key={r.date} onClick={() => setSelectedReportDate(r.date)}
+                  {reports.map(r => (
+                    <button key={r.date} onClick={() => openReportDay(r.date)}
                       className="w-full text-left bg-white rounded-2xl p-3.5 flex items-center justify-between gap-3"
                       style={{ border: `1px solid ${BORDER}` }}>
                       <div className="min-w-0">
-                        <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{i === 0 ? ' · Hôm nay' : ''}</div>
+                        <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{r.date === reportToday ? ' · Hôm nay' : ''}</div>
                         <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? '#6B7280' : '#9CA3AF' }}>
                           {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} đã kiểm${r.stockSource === 'official' ? ' · Kiểm kê chính thức' : ''}` : 'Chưa kiểm kho'}
                           {r.lossesReportCount ? ` · ${r.lossesReportCount} báo cáo hao hụt` : ''}
@@ -1905,20 +1949,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           ) : (
             <div className="space-y-3">
-              <button onClick={() => setSelectedReportDate(null)}
+              <button onClick={() => { setSelectedReportDate(null); setDailyReport(null); setReportMsg(null); }}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#6B7280' }}>
-                <ArrowLeft size={15} /> 7 ngày gần nhất
+                <ArrowLeft size={15} /> {reportMonth ? fmtReportMonth(reportMonth) : 'Danh sách'}
               </button>
 
               <div className="space-y-3">
                 <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                    Báo cáo cuối ngày{dailyReport ? ` · ${fmtDate(dailyReport.date)}` : ''}
+                    Báo cáo cuối ngày{selectedReportDate ? ` · ${fmtDate(selectedReportDate)}` : ''}
                   </div>
                   <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
                 </div>
 
-                {!dailyReport ? null : !dailyReport.stockCounted ? (
+                {reportDayLoading ? (
+                  <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+                ) : !dailyReport ? null : !dailyReport.stockCounted ? (
                   <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
                     Chưa kiểm kho ngày này.
                   </div>

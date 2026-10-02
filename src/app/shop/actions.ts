@@ -777,14 +777,18 @@ function vnLossDateStr(iso: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
 
-async function fetchDailyLossRecap(shopName: string): Promise<ShopLossDailyRecap[]> {
+// `sinceIso` (2026-10-02, monthly Báo cáo history): optional window start. Default = the rolling
+// 7 days the Hao hụt tab has always shown (that tab's callers pass nothing — unchanged). Paginated
+// because a whole month of loss lines can exceed PostgREST's silent 1 000-row cap.
+async function fetchDailyLossRecap(shopName: string, sinceIso?: string): Promise<ShopLossDailyRecap[]> {
   const supabase = service();
   if (!supabase) return [];
-  const since = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data } = await supabase.from('lab_shop_losses')
-    .select('qty, reported_at, product_name, reason_tag_name, note, follow_up_note')
-    .eq('shop_name', shopName)
-    .gte('reported_at', since);
+  const since = sinceIso ?? new Date(Date.now() - 7 * 86400000).toISOString();
+  const data = await fetchAllPages<{ qty: number; reported_at: string; product_name: string; reason_tag_name: string | null; note: string | null; follow_up_note: string | null }>((f, t) =>
+    supabase.from('lab_shop_losses')
+      .select('qty, reported_at, product_name, reason_tag_name, note, follow_up_note')
+      .eq('shop_name', shopName)
+      .gte('reported_at', since).order('id').range(f, t));
   type ProductAgg = { productName: string; reasonTagName: string; qty: number; notes: Set<string>; followUpNotes: Set<string> };
   const byDate = new Map<string, { totalQty: number; reportCount: number; productsByKey: Map<string, ProductAgg> }>();
   for (const r of data ?? []) {
@@ -1390,9 +1394,14 @@ function last7VnDates(): string[] {
 // already-7-day fetchDailyLossRecap — only the raw stock-count rows are fetched per-window (one
 // query) rather than per-day. Axel: "optimise bien tout pour que l'usage supabase/vercel soit
 // reduit" — a naive 7x loop would re-run ~5 queries/day for no reason.
-async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[]> {
-  const dates = last7VnDates();
+// `dates` (2026-10-02): most-recent first, contiguous. Default = the rolling 7 days (legacy
+// callers); the monthly history passes a whole month, the day drill-down a single date.
+async function fetchDailyReportRange(shopName: string, dates: string[] = last7VnDates()): Promise<ShopDailyReport[]> {
+  if (!dates.length) return [];
   const minDate = dates[dates.length - 1];
+  const maxDate = dates[0];
+  // VN midnight of the oldest day, as a UTC instant (VN = UTC+7, no DST).
+  const windowStartIso = new Date(`${minDate}T00:00:00+07:00`).toISOString();
   const supabase = service();
   const entries = await stockCountEntries(shopName);
   const skus = Array.from(entries.keys());
@@ -1406,12 +1415,12 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
     supabase
       ? fetchAllPages<{ sku: string; qty: number; count_date: string; session_seq: number }>((f, t) =>
           supabase.from('lab_shop_stock_counts').select('sku, qty, count_date, session_seq')
-            .eq('shop_name', shopName).gte('count_date', minDate).order('id').range(f, t))
+            .eq('shop_name', shopName).gte('count_date', minDate).lte('count_date', maxDate).order('id').range(f, t))
       : Promise.resolve([] as { sku: string; qty: number; count_date: string; session_seq: number }[]),
     supabase && skus.length
       ? supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
       : Promise.resolve({ data: [] as any[] }),
-    fetchDailyLossRecap(shopName),
+    fetchDailyLossRecap(shopName, windowStartIso),
   ]);
 
   const priceBySku = new Map<string, number>();
@@ -1426,7 +1435,7 @@ async function fetchDailyReportRange(shopName: string): Promise<ShopDailyReport[
   if (supabase) {
     const { data: offSessions } = await supabase.from('lab_shop_official_inventory_sessions')
       .select('id, submitted_at').eq('shop_name', shopName).eq('status', 'submitted')
-      .gte('submitted_at', new Date(Date.now() - 8 * 86400000).toISOString());
+      .gte('submitted_at', windowStartIso);
     for (const s of offSessions ?? []) {
       if (!s.submitted_at) continue;
       const d = vnDateStr(new Date(s.submitted_at));
@@ -1492,6 +1501,83 @@ export async function getDailyReportRangeForStaffAction(shopName: string): Promi
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   return { reports: await fetchDailyReportRange(auth.shopName) };
+}
+
+// ── Monthly Báo cáo history (Axel, 2026-10-02) ───────────────────────────────────────────────
+// "laisser l'historique des rapports des shops, du mois précédent + du mois en cours ; quand le
+// mois en cours est fini et qu'il devient le mois M-1, alors tu enlèves de leur vue le mois M-2".
+// Display window only: the shop sees the CURRENT VN calendar month and the PREVIOUS one, nothing
+// older — and nothing is deleted (lab_shop_stock_counts / lab_shop_losses are kept, see the
+// retention plan). The window is enforced here, server-side, not just hidden in the UI.
+// Two-step load so a month doesn't ship ~30 days x ~230 product lines to a phone: the month
+// list carries per-day SUMMARIES only (no product lines); one day's full report is fetched when
+// the user opens it. The 7-day actions above are kept as-is for clients still on an older bundle.
+export type ShopDailyReportSummary = Omit<ShopDailyReport, 'stockLines' | 'losses'>;
+export type ShopDailyReportMonth = { months: string[]; month: string; today: string; days: ShopDailyReportSummary[] };
+
+// ['2026-10', '2026-09'] — current VN month first, then the previous one.
+function reportMonthWindow(): string[] {
+  const today = vnDateStr();
+  const y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7));
+  const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  return [today.slice(0, 7), prev];
+}
+
+// Every VN calendar day of `month`, most-recent first, never past today.
+function vnDatesOfMonth(month: string): string[] {
+  const today = vnDateStr();
+  const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const out: string[] = [];
+  for (let d = daysInMonth; d >= 1; d--) {
+    const date = `${month}-${String(d).padStart(2, '0')}`;
+    if (date <= today) out.push(date);
+  }
+  return out;
+}
+
+async function fetchDailyReportMonth(shopName: string, month?: string): Promise<ShopDailyReportMonth | { error: string }> {
+  const months = reportMonthWindow();
+  const chosen = month && /^\d{4}-\d{2}$/.test(month) ? month : months[0];
+  if (!months.includes(chosen)) return { error: 'Ngoài khoảng thời gian cho phép' };
+  const reports = await fetchDailyReportRange(shopName, vnDatesOfMonth(chosen));
+  const days: ShopDailyReportSummary[] = reports.map(({ stockLines: _stockLines, losses: _losses, ...summary }) => summary);
+  return { months, month: chosen, today: vnDateStr(), days };
+}
+
+async function fetchDailyReportDay(shopName: string, date: string): Promise<{ report: ShopDailyReport } | { error: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return { error: 'Ngày không hợp lệ' };
+  if (!reportMonthWindow().includes(date.slice(0, 7)) || date > vnDateStr()) return { error: 'Ngoài khoảng thời gian cho phép' };
+  const [report] = await fetchDailyReportRange(shopName, [date]);
+  return report ? { report } : { error: 'Không có dữ liệu' };
+}
+
+export async function getMyDailyReportMonthAction(month?: string): Promise<{ data?: ShopDailyReportMonth; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const r = await fetchDailyReportMonth(auth.shopName, month);
+  return 'error' in r ? { error: r.error } : { data: r };
+}
+
+export async function getDailyReportMonthForStaffAction(shopName: string, month?: string): Promise<{ data?: ShopDailyReportMonth; error?: string }> {
+  const auth = await requireStaffOrManagerSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const r = await fetchDailyReportMonth(auth.shopName, month);
+  return 'error' in r ? { error: r.error } : { data: r };
+}
+
+export async function getMyDailyReportDayAction(date: string): Promise<{ report?: ShopDailyReport; error?: string }> {
+  const auth = await requireShopSession();
+  if ('error' in auth) return { error: auth.error };
+  const r = await fetchDailyReportDay(auth.shopName, date);
+  return 'error' in r ? { error: r.error } : { report: r.report };
+}
+
+export async function getDailyReportDayForStaffAction(shopName: string, date: string): Promise<{ report?: ShopDailyReport; error?: string }> {
+  const auth = await requireStaffOrManagerSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const r = await fetchDailyReportDay(auth.shopName, date);
+  return 'error' in r ? { error: r.error } : { report: r.report };
 }
 
 // ── Live inventory reference (Order tab) ────────────────────────────────────────────────────
