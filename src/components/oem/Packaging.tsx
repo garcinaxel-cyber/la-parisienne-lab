@@ -47,11 +47,13 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
   // bags are whole numbers (Axel, 2026-09-26): 5.5 bags is refused; kg (cashews, broken bulk) keep decimals
   const anyBad = Object.entries(qty).some(([s, v]) => qtyBad(v, isBag(s))) || Object.values(lossBulk).some(v => qtyBad(v, false))
     || Object.entries(lossBag).some(([s, v]) => qtyBad(v, isBag(s)));
-  // cashews (kg) are packed in 5 kg sacks (Axel, 2026-10-01): the number of sacks is mandatory, so a
-  // reception weight typed by mistake in packaging (57.5 kg on 29/09) cannot go through without sacks.
-  const SACK_KG = 5;
+  // Products sold by the kg go out in bulk sacks (Axel, 2026-10-01): the number of sacks is mandatory,
+  // so a reception weight typed by mistake in packaging (57.5 kg on 29/09) cannot go through without
+  // sacks. The weight per sack is per product (lab_mm_order_items.sack_kg: cashews 5 kg); when it is
+  // not decided yet (Maison Mooncake bulk, 2026-10-03) only the count is asked, with no weight check.
+  const sackKg = (s: string) => { const k = Number(bySku[s]?.sack_kg); return k > 0 ? k : null; };
   const noSacks = packed.filter(([s]) => bySku[s].unit === 'kg' && !(num(sacks[s]) > 0)).map(([s]) => s);
-  const sackMismatch = packed.filter(([s, v]) => bySku[s].unit === 'kg' && num(sacks[s]) > 0 && Math.abs(num(v) - num(sacks[s]) * SACK_KG) > SACK_KG - 0.001).map(([s]) => s);
+  const sackMismatch = packed.filter(([s, v]) => { const k = sackKg(s); return bySku[s].unit === 'kg' && k != null && num(sacks[s]) > 0 && Math.abs(num(v) - num(sacks[s]) * k) > k - 0.001; }).map(([s]) => s);
   // packing ALL the bulk at once = the classic reception/packaging mix-up → explicit confirmation
   const allBulk = client.groups.filter(g => avail(g.key) > 0.0005 && usedKg(g) >= avail(g.key) * 0.99);
   const [ackAll, setAckAll] = useState(false);
@@ -123,7 +125,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
                 {i.unit === 'kg' && (
                   <span className="flex items-center gap-1 text-[11px]" style={{ color: MUTED }}>
                     <input inputMode="numeric" placeholder="0" value={sacks[i.sku] ?? ''} onChange={e => setSacks(s => ({ ...s, [i.sku]: e.target.value.replace(/[^0-9]/g, '') }))}
-                      className="w-12 h-7 rounded-lg px-2 text-sm text-center" style={inputStyle} /> {L('bao', 'sacks')}
+                      className="w-12 h-7 rounded-lg px-2 text-sm text-center" style={inputStyle} /> {L('bao', 'sacks')}{sackKg(i.sku) != null ? ` × ${sackKg(i.sku)} kg` : ''}
                   </span>
                 )}
               </div>
@@ -185,7 +187,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
                   <div className="font-bold tabular-nums">{packed.length} {L('SP', 'products')} · {fmt(bags, 0)} {L('gói', 'bags')}{kgTotal ? ` · ${fmt(kgTotal, 1)} kg` : ''}</div>
                   {scraps.length > 0 && <div className="text-[11px] opacity-80">{scraps.length} {L('hao hụt', 'loss line(s)')}</div>}
                   {anyBad && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Có ô nhập không hợp lệ', 'A quantity is not valid')}</div>}
-                  {noSacks.length > 0 && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Nhập số bao (5 kg/bao) cho hạt điều', 'Enter the number of sacks (5 kg each) for cashews')}</div>}
+                  {noSacks.length > 0 && <div className="text-[11px] font-bold" style={{ color: '#FECACA' }}>{L('Nhập số bao cho sản phẩm bán theo kg', 'Enter the number of sacks for products sold by the kg')}</div>}
                 </div>
                 <button onClick={() => { setAckAll(false); setConfirm(true); }} disabled={!canSave} className="rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40" style={{ backgroundColor: '#C9A84C', color: GREEN }}>
                   {L('Lưu', 'Save')}
@@ -220,7 +222,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
             </div>
             {packed.filter(([s]) => bySku[s].unit === 'kg').map(([s, v]) => (
               <div key={'sk' + s} className="text-xs" style={{ color: sackMismatch.includes(s) ? '#B45309' : MUTED }}>
-                {bySku[s].product_name}: {num(sacks[s])} {L('bao', 'sacks')} × {SACK_KG} kg = {fmt(num(sacks[s]) * SACK_KG, 1)} kg
+                {bySku[s].product_name}: {num(sacks[s])} {L('bao', 'sacks')}{sackKg(s) != null ? ` × ${sackKg(s)} kg = ${fmt(num(sacks[s]) * sackKg(s)!, 1)} kg` : ` · ${fmt(num(v), 1)} kg`}
                 {sackMismatch.includes(s) && <b> · {L(`khác ${fmt(num(v), 1)} kg đã nhập — kiểm tra lại!`, `differs from the ${fmt(num(v), 1)} kg entered — check!`)}</b>}
               </div>
             ))}

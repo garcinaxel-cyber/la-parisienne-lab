@@ -4,6 +4,7 @@ export type Item = {
   sku: string; product_name: string; group_key: string; group_name: string;
   unit: 'bag' | 'kg'; unit_weight_g: number; qty_ordered: number; sort_order: number;
   is_active: boolean; client_name: string | null; updated_at: string | null; updated_by_name: string | null;
+  sack_kg?: number | null; // kg items: weight of one bulk sack/carton (cashews 5 kg); null = not decided yet
 };
 export type ProdLog = {
   id: string; prod_date: string; group_key: string; sku: string | null; weight_kg: number;

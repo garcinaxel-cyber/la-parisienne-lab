@@ -57,7 +57,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     const [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp] = await Promise.all([
-      supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, is_active, client_name, updated_at, updated_by_name').eq('is_active', true).order('sort_order'),
+      supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, is_active, client_name, updated_at, updated_by_name, sack_kg').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, prod_date, group_key, sku, weight_kg, note, created_at, created_by_name, status, received_kg, received_at, received_by_name, receive_note, plan_seq').order('prod_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
       supabase.from('lab_mm_packaging_log').select('*').order('pack_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
       supabase.from('lab_mm_order_item_history').select('id, sku, qty_before, qty_after, changed_at, changed_by_name').order('changed_at', { ascending: false }).limit(50),

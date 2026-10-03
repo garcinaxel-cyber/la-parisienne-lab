@@ -148,6 +148,10 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
   const [msg, setMsg] = useState<string | null>(null);
 
   const changed = items.filter(i => draft[i.sku] !== undefined && draft[i.sku] !== '' && Number(draft[i.sku]) !== i.qty_ordered && Number(draft[i.sku]) >= 0);
+  // kg items: weight of one bulk sack/carton (empty = not decided yet → no weight check at packaging)
+  const [sackDraft, setSackDraft] = useState<Record<string, string>>({});
+  const sackOf = (v: string) => (v.trim() === '' ? null : Number(v));
+  const sackChanged = items.filter(i => i.unit === 'kg' && sackDraft[i.sku] !== undefined && sackOf(sackDraft[i.sku]) !== (i.sack_kg == null ? null : Number(i.sack_kg)) && !(Number(sackDraft[i.sku]) < 0));
 
   async function save() {
     setBusy(true); setMsg(null);
@@ -158,7 +162,11 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
       const u = await supabase.from('lab_mm_order_items').update({ qty_ordered: after, updated_at: new Date().toISOString(), updated_by: userId, updated_by_name: userName }).eq('sku', i.sku);
       if (u.error) { setMsg(u.error.message); setBusy(false); return; }
     }
-    setBusy(false); setDraft({}); setMsg(L('Đã lưu.', 'Saved.')); await reload();
+    for (const i of sackChanged) {
+      const u = await supabase.from('lab_mm_order_items').update({ sack_kg: sackOf(sackDraft[i.sku]), updated_at: new Date().toISOString(), updated_by: userId, updated_by_name: userName }).eq('sku', i.sku);
+      if (u.error) { setMsg(u.error.message); setBusy(false); return; }
+    }
+    setBusy(false); setDraft({}); setSackDraft({}); setMsg(L('Đã lưu.', 'Saved.')); await reload();
   }
 
   const nameOf = (sku: string) => items.find(i => i.sku === sku)?.product_name ?? sku;
@@ -188,13 +196,21 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
       </div>
       <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
         <div className="px-3 py-2 text-[11px]" style={{ color: '#6B7280', backgroundColor: '#F9FAFB' }}>
-          {L('Số lượng đặt (gói hoặc kg). Mỗi thay đổi được lưu vào lịch sử.', 'Ordered quantity (bags, or kg for cashews). Every change is kept in the history.')}
+          {L('Số lượng đặt (gói hoặc kg). Mỗi thay đổi được lưu vào lịch sử. Sản phẩm bán theo kg: ghi số kg mỗi bao (để trống nếu chưa quyết định).', 'Ordered quantity (bags or kg). Every change is kept in the history. Products sold by the kg: enter the kg per sack (leave empty if not decided yet).')}
         </div>
         {items.map(i => (
           <div key={i.sku} className="flex items-center gap-3 px-3 py-2 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
             <div className="min-w-0 flex-1">
               <div className="font-semibold truncate">{i.product_name}</div>
               <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{i.sku} · {i.client_name || MM_CLIENT}</div>
+              {i.unit === 'kg' && (
+                <div className="flex items-center gap-1.5 mt-1 text-[11px]" style={{ color: '#6B7280' }}>
+                  {L('Bao', 'Sack')}
+                  <input inputMode="decimal" placeholder="—" value={sackDraft[i.sku] ?? (i.sack_kg == null ? '' : String(Number(i.sack_kg)))} onChange={e => setSackDraft(d => ({ ...d, [i.sku]: e.target.value.replace(/[^0-9.]/g, '') }))}
+                    className="w-14 rounded-lg px-2 py-0.5 text-xs font-bold text-right" style={{ border: '1px solid #D1D5DB' }} />
+                  {L('kg / bao', 'kg / sack')}
+                </div>
+              )}
             </div>
             <input inputMode="numeric" value={draft[i.sku] ?? String(i.qty_ordered)} onChange={e => setDraft(d => ({ ...d, [i.sku]: e.target.value.replace(/[^0-9.]/g, '') }))}
               className="w-24 rounded-lg px-2 py-1 text-sm font-bold text-right" style={{ border: '1px solid #D1D5DB' }} />
@@ -203,10 +219,10 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
           </div>
         ))}
         <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
-          <button onClick={save} disabled={busy || !changed.length} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
-            {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {changed.length ? `(${changed.length})` : ''}
+          <button onClick={save} disabled={busy || !(changed.length + sackChanged.length)} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {changed.length + sackChanged.length ? `(${changed.length + sackChanged.length})` : ''}
           </button>
-          {changed.length > 0 && <button onClick={() => setDraft({})} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
+          {changed.length + sackChanged.length > 0 && <button onClick={() => { setDraft({}); setSackDraft({}); }} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
           {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}
         </div>
       </div>
