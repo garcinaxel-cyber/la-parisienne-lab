@@ -488,6 +488,7 @@ export async function getShopLossesForStaffAction(shopName: string): Promise<{ l
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .eq('shop_name', auth.shopName)
+    .is('cancelled_at', null) // lab_v95: cancelled reports are kept in the table but hidden everywhere
     .order('reported_at', { ascending: false })
     .limit(50);
   if (error) return { error: error.message };
@@ -569,6 +570,7 @@ export async function getMyShopLossesAction(): Promise<{ losses?: ShopLoss[]; er
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .eq('shop_name', auth.shopName)
+    .is('cancelled_at', null) // lab_v95: cancelled reports are kept in the table but hidden everywhere
     .order('reported_at', { ascending: false })
     .limit(50);
   if (error) return { error: error.message };
@@ -788,6 +790,7 @@ async function fetchDailyLossRecap(shopName: string, sinceIso?: string): Promise
     supabase.from('lab_shop_losses')
       .select('qty, reported_at, product_name, reason_tag_name, note, follow_up_note')
       .eq('shop_name', shopName)
+      .is('cancelled_at', null) // lab_v95
       .gte('reported_at', since).order('id').range(f, t));
   type ProductAgg = { productName: string; reasonTagName: string; qty: number; notes: Set<string>; followUpNotes: Set<string> };
   const byDate = new Map<string, { totalQty: number; reportCount: number; productsByKey: Map<string, ProductAgg> }>();
@@ -871,6 +874,7 @@ export async function getShopLossesForLabReceptionAction(): Promise<{ losses?: S
   const { data, error } = await supabase.from('lab_shop_losses')
     .select('id, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, reported_at, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note, follow_up_note, follow_up_note_by_name, follow_up_note_at')
     .gte('reported_at', vnYesterdayStartIso())
+    .is('cancelled_at', null) // lab_v95: nothing to receive for a cancelled report
     .order('reported_at', { ascending: false })
     .limit(1000);
   if (error) return { error: error.message };

@@ -244,6 +244,7 @@ async function exportLosses(sb: SupabaseClient, month: string): Promise<{ buf: B
   const { from, toExclusive } = monthBounds(month);
   const shop = await fetchAllPages<Row>((f, t) => sb.from('lab_shop_losses')
     .select('reported_at, shop_name, sku, product_name, qty, reason_tag_name, note, reported_by_name, odoo_scrap_id, odoo_sync_error, lab_received_qty, lab_received_by_name, lab_received_at, lab_receive_note, follow_up_note, follow_up_note_by_name')
+    .is('cancelled_at', null) // lab_v95: cancelled reports are not losses
     .gte('reported_at', `${from}T00:00:00+07:00`).lt('reported_at', `${toExclusive}T00:00:00+07:00`).order('id').range(f, t));
   const lab = await fetchAllPages<Row>((f, t) => sb.from('lab_internal_losses')
     .select('reported_at, sku, product_name, qty, reason_tag_name, note, reported_by_name, odoo_scrap_id, odoo_sync_error')

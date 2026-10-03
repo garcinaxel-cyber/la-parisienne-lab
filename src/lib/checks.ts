@@ -471,6 +471,7 @@ export async function checkScrapSync(supabase: SupabaseClient): Promise<ScrapSyn
   const [{ data: shopRows }, { data: internalRows }] = await Promise.all([
     supabase.from('lab_shop_losses')
       .select('id, sku, product_name, qty, reported_at, shop_name, odoo_scrap_id, odoo_sync_error')
+      .is('cancelled_at', null) // lab_v95: a cancelled report has no scrap to expect on Odoo
       .gte('reported_at', since).lte('reported_at', graceCutoff),
     supabase.from('lab_internal_losses')
       .select('id, sku, product_name, qty, reported_at, odoo_scrap_id, odoo_sync_error')

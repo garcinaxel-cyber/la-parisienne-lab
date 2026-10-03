@@ -62,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   ] = await Promise.all([
     supabase.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
-    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).gte('reported_at', yesterdayVNIso),
+    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).is('cancelled_at', null).gte('reported_at', yesterdayVNIso),
     supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
     // OEM Orders (Axel, 2026-09-28): batches Hưng declared that no assistant has received yet
     supabase.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),

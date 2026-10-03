@@ -59,7 +59,7 @@ export async function computeShopRecaps(svc: SupabaseClient, shops: string[], da
     svc.from('lab_shop_stock_sessions_done').select('shop_name, count_date, session_seq, finished_at, finished_by_name, sku_count, valuation').in('shop_name', shops).eq('count_date', date),
     svc.from('lab_order_lines').select('order_ref, shop_name, delivery_date').in('shop_name', shops).in('delivery_date', ordersWindow),
     svc.from('lab_shop_manager_orders').select('shop_name, order_ref, delivery_date, created_at, manager_name').in('shop_name', shops).in('delivery_date', ordersWindow),
-    svc.from('lab_shop_losses').select('shop_name, sku, product_name, qty, reason_tag_name, reported_by_name, reported_at').in('shop_name', shops).gte('reported_at', start).lt('reported_at', end),
+    svc.from('lab_shop_losses').select('shop_name, sku, product_name, qty, reason_tag_name, reported_by_name, reported_at').in('shop_name', shops).is('cancelled_at', null).gte('reported_at', start).lt('reported_at', end),
     svc.from('lab_shop_transfers').select('id, ref, from_shop, to_shop, status, sent_by_name, sent_at, received_by_name, received_at, unit_count, line_count').gte('sent_at', start).lt('sent_at', end),
   ]);
 
