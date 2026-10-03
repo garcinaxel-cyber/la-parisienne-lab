@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { allocateBaked, buildBatches, dOr, type PlanRow } from '@/components/oem/plan';
+import { allocateBaked, buildBatches, dOr, NOTE_KEY, noteText, type PlanRow } from '@/components/oem/plan';
 import { setProductionOrderAction } from '@/lib/oem-actions';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
@@ -32,6 +32,7 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const [err, setErr] = useState<string | null>(null);
   const [today, setToday] = useState<Entry[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [notes, setNotes] = useState<Record<string, string>>({}); // contract requirements per client
   const [ord, setOrd] = useState<number | null>(null); // order chosen in the entry sheet
   const [tagging, setTagging] = useState<string | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -45,13 +46,15 @@ export default function StationOemView({ role, userId, userName }: { role: strin
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl, pk, dp, dl] = await Promise.all([
+    const [it, pl, pk, dp, dl, nt] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg, plan_seq').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
       supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
       supabase.rpc('lab_mm_deliveries'),
+      supabase.from('lab_mm_settings').select('key, value').like('key', `${NOTE_KEY}%`),
     ]);
+    setNotes(Object.fromEntries(((nt.data ?? []) as any[]).map(r => [String(r.key).slice(NOTE_KEY.length), r.value ?? ''])));
     const dq: Record<string, number> = {};
     for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
     setDelivered(dq);
@@ -155,6 +158,8 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const kgNum = Number(kg.replace(',', '.')) || 0;
   // the product's client has separate orders → the chef must say which one this batch is for
   const selPlan = sel ? plans.find(p => p.perOrder && p.items.some(i => i.group_key === sel.key)) ?? null : null;
+  // contract requirements of the selected product's client, repeated in the entry sheet
+  const selNote = sel ? noteText(notes[allItems.find(i => i.group_key === sel.key)?.client_name || MM_CLIENT], vi) : '';
   const W = (po: boolean) => (po ? (vi ? 'Đơn' : 'Order') : (vi ? 'Đợt' : 'Delivery'));
 
   async function saveProd() {
@@ -230,6 +235,12 @@ export default function StationOemView({ role, userId, userName }: { role: strin
           return (
           <div key={p.client} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
             <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng' : 'Baking plan'} · {p.client.replace('CÔNG TY CỔ PHẦN ', '')}</div>
+            {noteText(notes[p.client], vi) && (
+              <div className="mx-4 mt-1 mb-2 rounded-xl px-3 py-2.5" style={{ backgroundColor: '#FFF7E6', border: '1px solid #F3E3C0' }}>
+                <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#8A6A2F' }}>{vi ? 'Yêu cầu của hợp đồng' : 'Contract requirements'}</div>
+                <div className="text-sm font-semibold mt-1 whitespace-pre-line leading-snug" style={{ color: '#5B4520' }}>{noteText(notes[p.client], vi)}</div>
+              </div>
+            )}
             {p.perOrder ? (
               <div className="px-4 pb-3 pt-1 space-y-2.5">
                 {p.sched.map(x => {
@@ -421,6 +432,9 @@ export default function StationOemView({ role, userId, userName }: { role: strin
                 ))}
               </div>
             </div>
+            {selNote && (
+              <div className="rounded-xl px-3 py-2 text-xs font-semibold whitespace-pre-line leading-snug" style={{ backgroundColor: '#FFF7E6', border: '1px solid #F3E3C0', color: '#5B4520' }}>{selNote}</div>
+            )}
             {selPlan && sel && (
               <div className="space-y-1.5">
                 <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Nướng cho đơn nào?' : 'Baked for which order?'}</div>

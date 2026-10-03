@@ -4,7 +4,7 @@ import { Loader2, Trash2, Pencil, Check, X, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { Empty } from './ui';
 import { fmt, localToday, itemKg, GREEN, MM_CLIENT, type Item, type ProdLog, type Hist, type LFn } from './model';
-import type { PlanRow } from './plan';
+import { NOTE_KEY, type PlanRow } from './plan';
 
 // Production log (Hung's kg entries, admin corrections) + order quantities / settings.
 const kgOf = (it: Item) => itemKg(it, it.qty_ordered);
@@ -139,8 +139,8 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
   );
 }
 
-export function OrderSettings({ items, hist, odooOn, plan, userId, userName, reload, L }: {
-  items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
+export function OrderSettings({ items, hist, odooOn, plan, settings, userId, userName, reload, L }: {
+  items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; settings: Record<string, string>; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -213,6 +213,8 @@ export function OrderSettings({ items, hist, odooOn, plan, userId, userName, rel
 
       <PlanEditor plan={plan} userName={userName} reload={reload} L={L} />
 
+      <NoteEditor items={items} settings={settings} userName={userName} reload={reload} L={L} />
+
       <div className="space-y-1.5">
         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Lịch sử thay đổi', 'Change history')}</div>
         {!hist.length ? <Empty text={L('Chưa có thay đổi.', 'No change yet.')} /> : (
@@ -284,6 +286,50 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
       <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
         <button onClick={save} disabled={busy || !changed.length} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
           {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')} {changed.length ? `(${changed.length})` : ''}
+        </button>
+        {changed.length > 0 && <button onClick={() => setDraft({})} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
+        {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Contract requirements per client (lab_mm_settings "client_note:<client>"), shown to Team Hưng on the
+// OEM station screen: at the top of the client's plan and again when a batch is declared. Admin only.
+function NoteEditor({ items, settings, userName, reload, L }: { items: Item[]; settings: Record<string, string>; userName: string | null; reload: () => Promise<void>; L: LFn }) {
+  const supabase = useMemo(() => createClient(), []);
+  const clients = Array.from(new Set(items.map(i => i.client_name || MM_CLIENT)));
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const cur = (c: string) => settings[NOTE_KEY + c] ?? '';
+  const changed = clients.filter(c => draft[c] !== undefined && draft[c] !== cur(c));
+
+  async function save() {
+    setBusy(true); setMsg(null);
+    for (const c of changed) {
+      const u = await supabase.from('lab_mm_settings').upsert({ key: NOTE_KEY + c, value: draft[c].trim(), updated_at: new Date().toISOString(), updated_by_name: userName });
+      if (u.error) { setMsg(u.error.message); setBusy(false); return; }
+    }
+    setBusy(false); setDraft({}); setMsg(L('Đã lưu.', 'Saved.')); await reload();
+  }
+
+  return (
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+      <div className="px-3 py-2 text-[11px]" style={{ color: '#6B7280', backgroundColor: '#F9FAFB' }}>
+        {L('Yêu cầu của hợp đồng — hiển thị cho bếp Hưng trên màn hình Đơn hàng OEM. Để trống = không hiển thị. Bản tiếng Anh (tuỳ chọn): viết sau một dòng chỉ có "---".',
+           'Contract requirements — shown to Team Hưng on the OEM Orders station screen. Empty = nothing shown. Optional English version: write it after a line containing only "---".')}
+      </div>
+      {clients.map(c => (
+        <div key={c} className="px-3 py-2 space-y-1" style={{ borderTop: '1px solid #F3F4F6' }}>
+          <div className="text-xs font-bold">{c}</div>
+          <textarea rows={4} value={draft[c] ?? cur(c)} onChange={e => setDraft(d => ({ ...d, [c]: e.target.value }))}
+            className="w-full rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
+        </div>
+      ))}
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
+        <button onClick={save} disabled={busy || !changed.length} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')}
         </button>
         {changed.length > 0 && <button onClick={() => setDraft({})} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
         {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}

@@ -224,7 +224,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       ) : tab === 'production' && isAdmin ? (
         <ProductionLog logs={cProd} items={cItems} groupName={groupName} canManage={canManage} userId={userId} userName={userName} reload={load} L={L} />
       ) : tab === 'settings' && isAdmin ? (
-        <OrderSettings items={items} hist={hist} odooOn={odooOn} plan={plan} userId={userId} userName={userName} reload={load} L={L} />
+        <OrderSettings items={items} hist={hist} odooOn={odooOn} plan={plan} settings={settings} userId={userId} userName={userName} reload={load} L={L} />
       ) : null}
     </div>
   );

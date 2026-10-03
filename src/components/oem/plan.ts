@@ -66,3 +66,12 @@ export function allocateBaked(own: number[], seqs: number[], bySeq: Record<numbe
   for (let k = 0; k < ownLeft.length; k++) { const a = Math.min(ownLeft[k], pool); ownLeft[k] -= a; pool -= a; }
   return { ownLeft, remakeLeft: remake - useR };
 }
+
+// Contract requirements shown to the kitchen (Axel 2026-10-03, asked by accounting: Maison Mooncake
+// contract art. 3 — 120-day shelf life from delivery, traceable ingredients). One free text per client in
+// lab_mm_settings, key "client_note:<client>"; an optional English version follows a line with only "---".
+export const NOTE_KEY = 'client_note:';
+export const noteText = (raw: string | null | undefined, vi: boolean) => {
+  const [v, e] = (raw ?? '').split(/\n\s*---\s*\n/);
+  return ((vi ? v : e || v) ?? '').trim();
+};
