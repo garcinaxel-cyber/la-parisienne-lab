@@ -41,14 +41,38 @@ async function authenticate(): Promise<number> {
   return cachedUid;
 }
 
+// Fallback (Axel, 2026-10-06): Odoo API keys expire after 90 days. The read-only key expired on
+// 2026-10-06 07:00 VN and every read (order sync, station stock, delivery validation, MO
+// confirm…) failed at once with "Odoo authentication failed". When Odoo REJECTS the read-only
+// credentials (and only then — a network error or a permission error is rethrown untouched),
+// reads go through the WRITE account instead, so an expired read key degrades to "reads done by
+// the production account" rather than a full outage. Remembered per server instance, so the
+// rejected login is not retried on every call; a redeploy with a fresh ODOO_API_KEY goes back
+// to the read-only account on its own.
+let readAuthRejected = false;
+function isOdooAuthRejection(e: unknown): boolean {
+  const m = String((e as any)?.message ?? e ?? '');
+  return /authentication failed/i.test(m) || /access denied/i.test(m);
+}
+
 export async function odooExecute<T = any>(
   model: string,
   method: string,
   args: unknown[],
   kwargs: Record<string, unknown> = {},
 ): Promise<T> {
-  const uid = await authenticate();
-  return rpc('object', 'execute_kw', [ODOO_DB(), uid, ODOO_KEY(), model, method, args, kwargs]);
+  if (!readAuthRejected) {
+    try {
+      const uid = await authenticate();
+      return await rpc('object', 'execute_kw', [ODOO_DB(), uid, ODOO_KEY(), model, method, args, kwargs]);
+    } catch (e) {
+      if (!isOdooAuthRejection(e) || !odooWriteConfigured()) throw e;
+      readAuthRejected = true;
+      cachedUid = null;
+      console.error(`[odoo] read-only account rejected (${String((e as any)?.message ?? e)}) — reads now go through the WRITE account. Renew ODOO_API_KEY.`);
+    }
+  }
+  return odooExecuteWrite<T>(model, method, args, kwargs);
 }
 
 // ── Dedicated WRITE client (separate account/key) ──────────────────────────────
