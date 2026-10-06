@@ -535,10 +535,14 @@ const EXPIRED_REASON_KEYWORDS = ['het han', 'han su dung', 'perime', 'expired', 
 // "test" alone was invisible too since it matches neither the broken nor expired family. "làm
 // hàng thử" (id 3, "made trial product") is the same family as "test" -- included here too.
 const TEST_REASON_KEYWORDS = ['test', 'hang thu'];
+// Axel, 2026-10-06: "ajouter une reason supplementaire de scrap : Fridge issue" — shops only.
+// The Odoo tag is id 24 "Sự cố tủ lạnh" (normalised: "su co tu lanh"); matched by keyword like
+// the other families, so renaming it in Odoo to any "tủ lạnh" / "tủ mát" wording keeps it listed.
+const FRIDGE_REASON_KEYWORDS = ['tu lanh', 'tu mat', 'fridge'];
 function reduceLossReasons(all: ShopLossReason[]): ShopLossReason[] {
   const filtered = all.filter(r => {
     const n = normalizeReasonName(r.name);
-    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k)) || TEST_REASON_KEYWORDS.some(k => n.includes(k));
+    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k)) || TEST_REASON_KEYWORDS.some(k => n.includes(k)) || FRIDGE_REASON_KEYWORDS.some(k => n.includes(k));
   });
   return filtered.length > 0 ? filtered : all;
 }
