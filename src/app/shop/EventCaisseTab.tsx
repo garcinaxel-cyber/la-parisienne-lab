@@ -4,6 +4,7 @@ import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, 
 import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, getEventSalesSummaryAction, type EventCaisseProduct, type EventSaleHistoryLine, type EventSalesSummary } from './actions';
 import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 import { useShopL } from './shop-lang';
+import { thumb } from '@/lib/img-thumb';
 
 // "Thu ngân" — the event's mini cash register (Axel, 2026-09-12): "une sorte de mini caisse
 // enregistreuse qui n'aurait aucun impact odoo". Standalone tab, same self-fetching pattern as
@@ -143,7 +144,9 @@ export default function EventCaisseTab() {
               <div key={p.sku} className="bg-white rounded-2xl p-3" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="w-full aspect-square rounded-xl mb-2 flex items-center justify-center overflow-hidden" style={{ backgroundColor: GOLD_PALE }}>
                   {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                    // Through the image optimizer like every other product photo in the app: several
+                    // of these are ~1.8 MB PNGs in storage, and the till shows the whole range at once.
+                    <img src={thumb(p.imageUrl, 400)} alt={p.name} loading="lazy" className="w-full h-full object-cover" />
                   ) : (
                     <Cake size={26} style={{ color: GOLD }} />
                   )}
