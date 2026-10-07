@@ -4,7 +4,7 @@ import { Loader2, Trash2, Pencil, Check, X, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { Empty } from './ui';
 import { fmt, localToday, itemKg, GREEN, MM_CLIENT, type Item, type ProdLog, type Hist, type LFn } from './model';
-import { NOTE_KEY, PROD_EDITORS_KEY, editorIds, type PlanRow } from './plan';
+import { NOTE_KEY, PROD_EDITORS_KEY, editorIds, planKg, type PlanRow } from './plan';
 
 // Production log (Hung's kg entries, admin corrections) + order quantities / settings.
 const kgOf = (it: Item) => itemKg(it, it.qty_ordered);
@@ -182,8 +182,8 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
 }
 type Audit = { id: string; action: 'edit' | 'cancel'; group_key: string; prod_date: string | null; entry_by_name: string | null; old_kg: number; new_kg: number | null; reason: string | null; done_by_name: string | null; done_at: string };
 
-export function OrderSettings({ items, hist, odooOn, plan, settings, userId, userName, reload, L }: {
-  items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; settings: Record<string, string>; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
+export function OrderSettings({ items, hist, odooOn, plan, cancelledPlan = [], settings, userId, userName, reload, L }: {
+  items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; cancelledPlan?: PlanRow[]; settings: Record<string, string>; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -270,7 +270,7 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
         </div>
       </div>
 
-      <PlanEditor plan={plan} userName={userName} reload={reload} L={L} />
+      <PlanEditor plan={plan} cancelled={cancelledPlan} userName={userName} reload={reload} L={L} />
 
       <NoteEditor items={items} settings={settings} userName={userName} reload={reload} L={L} />
 
@@ -296,7 +296,7 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
 }
 
 // Delivery schedule (lab_mm_delivery_plan): date + % of the order per delivery, admin only.
-function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: string | null; reload: () => Promise<void>; L: LFn }) {
+function PlanEditor({ plan, cancelled = [], userName, reload, L }: { plan: PlanRow[]; cancelled?: PlanRow[]; userName: string | null; reload: () => Promise<void>; L: LFn }) {
   const supabase = useMemo(() => createClient(), []);
   const [draft, setDraft] = useState<Record<string, { delivery_date?: string; pct?: string; label?: string }>>({});
   const [busy, setBusy] = useState(false);
@@ -341,6 +341,14 @@ function PlanEditor({ plan, userName, reload, L }: { plan: PlanRow[]; userName: 
                 <input value={v.label} onChange={e => set(r.id, 'label', e.target.value)} placeholder={L('Ghi chú (âm lịch…)', 'Note (lunar date…)')} className="flex-1 min-w-[110px] rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #D1D5DB' }} />
               </div>
             ); })}
+            {cancelled.filter(r => (r.client_name || MM_CLIENT) === c).map(r => (
+              <div key={r.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm" style={{ borderTop: '1px solid #F3F4F6', color: '#9CA3AF', backgroundColor: '#F9FAFB' }}>
+                <span className="w-14 font-semibold line-through">{L('Đợt', 'Del.')} {r.seq}</span>
+                {r.qty && <span className="text-xs font-semibold line-through">{Object.values(r.qty).map(q => fmt(Number(q), 0)).join(' / ')} kg ({fmt(planKg(r), 0)} kg)</span>}
+                <span className="text-xs font-bold" style={{ color: '#B91C1C' }}>{L('Khách đã huỷ', 'Cancelled by the client')}{r.cancelled_at ? ` · ${r.cancelled_at.slice(8, 10)}/${r.cancelled_at.slice(5, 7)}` : ''}</span>
+                {r.cancelled_note && <span className="text-[11px]">{r.cancelled_note}</span>}
+              </div>
+            ))}
           </div>
         );
       })}

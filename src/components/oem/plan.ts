@@ -7,7 +7,15 @@ import { itemKg, type Item } from './model';
 
 // qty (optional, {sku: qty}) = explicit quantities per product for this delivery (Tianhe: 150 kg each, then 340/160/210);
 // otherwise the delivery is `pct` % of every product. delivery_date may be null (date not given yet).
-export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string | null; pct: number; label: string | null; qty?: Record<string, number> | null };
+// cancelled_at: an order the client cancelled (Tianhe's 710 kg, 2026-10-07). Kept for the record;
+// the views load it apart (splitPlan) so it never enters a calculation.
+export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string | null; pct: number; label: string | null; qty?: Record<string, number> | null; cancelled_at?: string | null; cancelled_note?: string | null };
+export const PLAN_COLS = 'id, client_name, seq, delivery_date, pct, label, qty, cancelled_at, cancelled_note';
+export function splitPlan(data: unknown[] | null | undefined): { active: PlanRow[]; cancelled: PlanRow[] } {
+  const all = ((data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[];
+  return { active: all.filter(r => !r.cancelled_at), cancelled: all.filter(r => !!r.cancelled_at) };
+}
+export const planKg = (r: PlanRow) => Object.values(r.qty ?? {}).reduce((s, q) => s + Number(q || 0), 0);
 export type Batch = {
   row: PlanRow; cumPct: number;
   qty: Record<string, number>;      // per sku, this delivery (bags, or kg for kg items)

@@ -10,7 +10,7 @@ import Deliveries from './Deliveries';
 import FinishedGoods from './FinishedGoods';
 import RawMaterials from './RawMaterials';
 import { ProductionLog, OrderSettings } from './Admin';
-import { buildBatches, planOf, type PlanRow } from './plan';
+import { buildBatches, planOf, PLAN_COLS, splitPlan, type PlanRow } from './plan';
 import { MM_CLIENT } from './model';
 
 // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake biscuits (MM- SKUs) + Tianhe Food
@@ -51,6 +51,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const [rm, setRm] = useState<RmCount[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [cancelledPlan, setCancelledPlan] = useState<PlanRow[]>([]); // orders the client cancelled: listed in Settings only
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -67,7 +68,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       supabase.from('lab_mm_ingredient_usage').select('group_key, ingredient_code, qty_per_kg'),
       supabase.from('lab_mm_rm_inventory').select('id, week_start, ingredient_code, qty, created_at, created_by_name').order('week_start', { ascending: false }).limit(2000),
       supabase.from('lab_mm_settings').select('key, value'),
-      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
+      supabase.from('lab_mm_delivery_plan').select(PLAN_COLS).order('seq'),
     ]);
     const e = [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp].find(r => r.error)?.error;
     if (e) setErr(e.message);
@@ -81,7 +82,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     setUsage((us.data ?? []).map((r: any) => ({ ...r, qty_per_kg: Number(r.qty_per_kg) })));
     setRm((rc.data ?? []).map((r: any) => ({ ...r, qty: Number(r.qty) })));
     setSettings(Object.fromEntries((st.data ?? []).map((r: any) => [r.key, r.value])));
-    setPlan((dp.data ?? []).map((r: any) => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
+    const sp = splitPlan(dp.data); setPlan(sp.active); setCancelledPlan(sp.cancelled);
     setLoading(false);
   }, [supabase]);
 
@@ -224,7 +225,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       ) : tab === 'production' && isAdmin ? (
         <ProductionLog logs={cProd} items={cItems} groupName={groupName} canManage={canManage} userId={userId} userName={userName} reload={load} L={L} />
       ) : tab === 'settings' && isAdmin ? (
-        <OrderSettings items={items} hist={hist} odooOn={odooOn} plan={plan} settings={settings} userId={userId} userName={userName} reload={load} L={L} />
+        <OrderSettings items={items} hist={hist} odooOn={odooOn} plan={plan} cancelledPlan={cancelledPlan} settings={settings} userId={userId} userName={userName} reload={load} L={L} />
       ) : null}
     </div>
   );

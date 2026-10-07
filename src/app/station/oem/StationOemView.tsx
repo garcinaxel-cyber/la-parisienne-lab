@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { allocateBaked, buildBatches, dOr, NOTE_KEY, noteText, type PlanRow } from '@/components/oem/plan';
+import { allocateBaked, buildBatches, dOr, NOTE_KEY, noteText, PLAN_COLS, planKg, splitPlan, type PlanRow } from '@/components/oem/plan';
 import { setProductionOrderAction, fixProductionAction } from '@/lib/oem-actions';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
@@ -27,6 +27,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   const [rows, setRows] = useState<Row[]>([]);
   const [allItems, setAllItems] = useState<Item[]>([]);
   const [plan, setPlan] = useState<PlanRow[]>([]);
+  const [cancelledPlan, setCancelledPlan] = useState<PlanRow[]>([]); // orders the client cancelled: shown, never counted
   const [delivered, setDelivered] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -55,7 +56,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, client_name').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, group_key, weight_kg, prod_date, created_at, created_by_name, status, received_kg, plan_seq').order('created_at', { ascending: false }),
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
-      supabase.from('lab_mm_delivery_plan').select('id, client_name, seq, delivery_date, pct, label, qty').order('seq'),
+      supabase.from('lab_mm_delivery_plan').select(PLAN_COLS).order('seq'),
       supabase.rpc('lab_mm_deliveries'),
       supabase.from('lab_mm_settings').select('key, value').like('key', `${NOTE_KEY}%`),
     ]);
@@ -64,7 +65,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
     for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
     setDelivered(dq);
     setAllItems(((it.data ?? []) as any[]).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
-    setPlan(((dp.data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[]);
+    const sp = splitPlan(dp.data); setPlan(sp.active); setCancelledPlan(sp.cancelled);
     if (it.error || pl.error) setErr((it.error || pl.error)!.message);
     const m = new Map<string, Row>();
     for (const i of it.data ?? []) {
@@ -111,9 +112,9 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       const items = allItems.filter(i => (i.client_name || MM_CLIENT) === client);
       const rowsOfClient = plan.filter(p => (p.client_name || MM_CLIENT) === client);
       const batches = buildBatches(items, rowsOfClient);
-      // Separate orders (explicit kg per delivery — Tianhe: 710 kg, then 1 t): each one is followed on its
-      // own and the chef says which one he bakes for. A % schedule (Maison Mooncake) stays cumulative.
-      const perOrder = rowsOfClient.some(r => r.qty) && batches.length > 1;
+      // Separate orders (explicit kg per order — Tianhe): each one is followed on its own and, when there
+      // are several, the chef says which one he bakes for. A % schedule (Maison Mooncake) stays cumulative.
+      const perOrder = rowsOfClient.some(r => r.qty);
       const seqs = batches.map(b => b.row.seq);
       const groups = Object.keys(batches[0]?.cumKgByGroup ?? {});
       const own = (g: string, k: number) => (batches[k].cumKgByGroup[g] ?? 0) - (k ? batches[k - 1].cumKgByGroup[g] ?? 0 : 0);
@@ -134,7 +135,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       const total = items.reduce((s, i) => s + i.qty_ordered, 0);
       const done = items.reduce((s, i) => s + Math.min(i.qty_ordered, delivered[i.sku] ?? 0), 0);
       // kg declared with no order chosen (entered from the main station screen): counted in order, flagged
-      const untagged = perOrder ? groups.reduce((s, g) => s + (byKey[g]?.bySeq[0] ?? 0), 0) : 0;
+      const untagged = perOrder && batches.length > 1 ? groups.reduce((s, g) => s + (byKey[g]?.bySeq[0] ?? 0), 0) : 0;
       return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder, untagged };
     }).filter(p => p.sched.length);
   }, [allItems, plan, rows, delivered]);
@@ -163,23 +164,25 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   const kgNum = Number(kg.replace(',', '.')) || 0;
   // the product's client has separate orders → the chef must say which one this batch is for
   const selPlan = sel ? plans.find(p => p.perOrder && p.items.some(i => i.group_key === sel.key)) ?? null : null;
+  // one order only → nothing to choose, the batch is for that order
+  const ordEff = selPlan && selPlan.sched.length === 1 ? selPlan.sched[0].b.row.seq : ord;
   // contract requirements of the selected product's client, repeated in the entry sheet
   const selNote = sel ? noteText(notes[allItems.find(i => i.group_key === sel.key)?.client_name || MM_CLIENT], vi) : '';
   const W = (po: boolean) => (po ? (vi ? 'Đơn' : 'Order') : (vi ? 'Đợt' : 'Delivery'));
 
   async function saveProd() {
-    if (!sel || !(kgNum > 0) || kgNum > 2000 || (selPlan && ord == null)) return;
+    if (!sel || !(kgNum > 0) || kgNum > 2000 || (selPlan && ordEff == null)) return;
     setSaving(true); setErr(null);
     const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     const { error } = await supabase.from('lab_mm_production_log').insert({
       prod_date: d.toISOString().slice(0, 10), group_key: sel.key, sku: sel.skus[0] ?? null,
       weight_kg: Math.round(kgNum * 1000) / 1000, created_by: userId, created_by_name: userName,
-      ...(selPlan ? { plan_seq: ord } : {}),
+      ...(selPlan ? { plan_seq: ordEff } : {}),
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
     setSheet(false); setKg(''); setGk(''); setOrd(null);
-    setFlash(`+${kgNum} kg · ${sel.name}${selPlan ? ` · ${W(true)} ${ord}` : ''}`); setTimeout(() => setFlash(null), 3500);
+    setFlash(`+${kgNum} kg · ${sel.name}${selPlan ? ` · ${W(true)} ${ordEff}` : ''}`); setTimeout(() => setFlash(null), 3500);
     await load();
   }
   // change the order of a batch already declared (also batches entered from the main station screen)
@@ -354,6 +357,12 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                     </div>
                   );
                 })}
+                {cancelledPlan.filter(r => (r.client_name || MM_CLIENT) === p.client).map(r => (
+                  <div key={r.id} className="flex items-baseline justify-between gap-3 rounded-xl px-3 py-2 text-sm" style={{ backgroundColor: '#F9FAFB', border: '1px dashed #E5E7EB', color: '#9CA3AF' }}>
+                    <span className="font-bold line-through">{W(true)} {r.seq}{r.qty ? ` · ${fmt(planKg(r))} kg` : ''}</span>
+                    <span className="text-[11px] font-semibold text-right">{vi ? 'Khách đã huỷ — không nướng nữa' : 'Cancelled by the client — do not bake'}</span>
+                  </div>
+                ))}
                 {p.untagged > 0.0005 && (
                   <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FFF7E6', color: '#B45309' }}>
                     {vi ? `${fmt1(p.untagged)} kg chưa chọn đơn — tạm tính theo thứ tự (${W(true)} ${p.sched[0].b.row.seq} trước). Chọn đơn ở danh sách bên dưới.` : `${fmt1(p.untagged)} kg with no order chosen — counted in order for now (${W(true)} ${p.sched[0].b.row.seq} first). Choose the order in the list below.`}
@@ -412,7 +421,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 </button>
               ))}
             </div>}
-            {p.perOrder && (() => {
+            {p.perOrder && p.sched.length > 1 && (() => {
               // batches baked for this client: those with no order chosen first, then the latest ones
               const mine = entries.filter(e => p.items.some(i => i.group_key === e.group_key));
               const list = [...mine.filter(e => e.plan_seq == null), ...mine.filter(e => e.plan_seq != null).slice(0, 6)];
@@ -510,7 +519,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             {selNote && (
               <div className="rounded-xl px-3 py-2 text-xs font-semibold whitespace-pre-line leading-snug" style={{ backgroundColor: '#FFF7E6', border: '1px solid #F3E3C0', color: '#5B4520' }}>{selNote}</div>
             )}
-            {selPlan && sel && (
+            {selPlan && sel && selPlan.sched.length > 1 && (
               <div className="space-y-1.5">
                 <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Nướng cho đơn nào?' : 'Baked for which order?'}</div>
                 <div className="grid grid-cols-2 gap-2">
@@ -544,7 +553,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 </div>
               )}
             </div>
-            <button onClick={saveProd} disabled={saving || !sel || !(kgNum > 0) || kgNum > 2000 || (!!selPlan && ord == null)}
+            <button onClick={saveProd} disabled={saving || !sel || !(kgNum > 0) || kgNum > 2000 || (!!selPlan && ordEff == null)}
               className="w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-base font-bold text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
               {saving ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}{vi ? 'Lưu' : 'Save'}
             </button>

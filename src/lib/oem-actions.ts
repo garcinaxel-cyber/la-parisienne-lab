@@ -304,7 +304,7 @@ export async function setProductionOrderAction(id: string, seq: number | null): 
   if (!row) return { error: 'Batch not found' };
   if (seq != null) {
     const { data: item } = await svc.from('lab_mm_order_items').select('client_name').eq('group_key', row.group_key).limit(1).maybeSingle();
-    const { data: rows } = await svc.from('lab_mm_delivery_plan').select('client_name').eq('seq', seq);
+    const { data: rows } = await svc.from('lab_mm_delivery_plan').select('client_name').eq('seq', seq).is('cancelled_at', null);
     const MM = 'Maison Mooncake';
     if (!(rows ?? []).some(p => (p.client_name || MM) === (item?.client_name || MM))) return { error: 'Unknown order' };
   }
