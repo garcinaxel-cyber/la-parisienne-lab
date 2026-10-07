@@ -129,7 +129,19 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         // "excess" card for demand beyond a manual cake).
         const coverage = await coverageFor(first.delivery_date);
         const breakdown = Array.isArray(asg.breakdown) ? [...asg.breakdown] : [];
-        const bIdx = breakdown.findIndex((b: any) => b.order_ref === ch.order_ref);
+        // Every breakdown row of THIS order, not just the first one. An order that carries the same
+        // product on two Odoo lines is imported as two rows of the same order_ref; changes then
+        // arrive per order_ref+sku as ONE total (see odoo-sync.ts). Reading only the first row as
+        // "the previous quantity" made the card miss the removed line entirely — 2026-10-07,
+        // REP/2026/01854: macaron việt quất phomai typed twice (12 + 12) then one line deleted in
+        // Odoo; previous was read as 12, new total 12, delta 0, and the chef's card stayed at 24
+        // against a real demand of 12. The rows are folded into the first one below — only when
+        // they match this product's own duplicated order lines one for one (a breakdown row
+        // carries no SKU, so anything else keeps the single-row reading).
+        const sameRefIdx: number[] = [];
+        breakdown.forEach((b: any, i: number) => { if (b?.order_ref === ch.order_ref) sameRefIdx.push(i); });
+        const bIdx = sameRefIdx.length ? sameRefIdx[0] : -1;
+        const foldDuplicates = olRows.length > 1 && sameRefIdx.length === olRows.length;
         // Coverage-adjusted value for THIS order_ref, before and after this change. The card
         // must move by the CHANGE IN THIS (excess) VALUE, not by the raw Odoo delta — those two
         // only agree when manual-cake coverage for this order_ref+sku+date hasn't itself changed
@@ -140,7 +152,9 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         // demand (2026-08-07, Mangomind/S03114 on the same order as an unrelated Moon Flower
         // birthday cake: card went 1→2 here while the cake's own card also carried its 1, for a
         // real total of 3 against genuine Odoo demand of 2 — chef physically over-produced by 1).
-        const prevBreakdownQty = bIdx >= 0 ? (breakdown[bIdx].qty ?? 0) : 0;
+        const prevBreakdownQty = foldDuplicates
+          ? sameRefIdx.reduce((sum, i) => sum + (Number(breakdown[i].qty) || 0), 0)
+          : bIdx >= 0 ? (breakdown[bIdx].qty ?? 0) : 0;
         const breakdownQty = Math.max(0, item.new_qty - (coverage.coveredByRefSku.get(`${ch.order_ref}||${item.sku}||${first.delivery_date}`) ?? 0));
         const cardDelta = breakdownQty - prevBreakdownQty;
         // Tag the change directly on the breakdown ROW for this client instead of appending a
@@ -151,6 +165,7 @@ export async function applyOdooChanges(supabase: SupabaseClient, changes: OdooCh
         // about). changed_at uses lab-local (Vietnam) time, not the server's UTC clock — same
         // fix as the old stamp, which showed e.g. "07:00" for what was actually 14h00 in Hanoi.
         if (bIdx >= 0) breakdown[bIdx] = { ...breakdown[bIdx], qty: breakdownQty, changed_at: nowLabStamp(), changed_delta: cardDelta };
+        if (foldDuplicates) for (const i of sameRefIdx.slice(1).reverse()) breakdown.splice(i, 1);
         const newTotal = Math.max(0, (asg.total_qty ?? 0) + cardDelta);
         const update: any = {
           total_qty: newTotal,
