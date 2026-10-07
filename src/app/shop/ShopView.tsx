@@ -267,6 +267,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [lossQuery, setLossQuery] = useState('');
   const [lossResults, setLossResults] = useState<ProductSearchResult[]>([]);
   const [lossSearching, setLossSearching] = useState(false);
+  // Matches the search found but did not send (it sends 80 at most): shown under the list so a
+  // long list never looks complete when it is not.
+  const [lossMore, setLossMore] = useState(0);
   const [lossProduct, setLossProduct] = useState<LossPickOption | null>(null);
   const [lossQty, setLossQty] = useState('1');
   const [lossReasonId, setLossReasonId] = useState<number | null>(null);
@@ -685,7 +688,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   useEffect(() => {
     const q = lossQuery.trim();
-    if (q.length < 2) { setLossResults([]); return; }
+    if (q.length < 2) { setLossResults([]); setLossMore(0); return; }
     const t = setTimeout(async () => {
       setLossSearching(true);
       try {
@@ -693,7 +696,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         const data = await res.json();
         // OEM orders (MM-/OEM-) are never shop products — hidden from the shop loss picker (lib/oem.ts).
         setLossResults(Array.isArray(data) ? data.filter((p: any) => !isOemSku(p?.sku)) : []);
-      } catch { setLossResults([]); }
+        const total = Number(res.headers.get('x-total-count') ?? 0);
+        setLossMore(Array.isArray(data) && total > data.length ? total - data.length : 0);
+      } catch { setLossResults([]); setLossMore(0); }
       setLossSearching(false);
     }, 250);
     return () => clearTimeout(t);
@@ -1581,13 +1586,18 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           ) : flattenForPicker(lossResults).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
-                              {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" className="w-8 h-8 rounded object-cover shrink-0" />}
+                              {p.main_image_url && <img src={thumb(p.main_image_url, 80)} alt="" loading="lazy" className="w-8 h-8 rounded object-cover shrink-0" />}
                               <span className="overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
                                 {p.name_vi}{p.variantLabel ? <span style={{ color: '#6B7280' }}> — {p.variantLabel}</span> : null}
                                 {p.sku ? <span style={{ color: '#9CA3AF' }}> · {p.sku}</span> : null}
                               </span>
                             </button>
                           ))}
+                          {!lossSearching && lossResults.length > 0 && lossMore > 0 && (
+                            <div className="px-3 py-2 text-xs border-t" style={{ color: '#6B7280', borderColor: GOLD_PALE, backgroundColor: GOLD_PALE }}>
+                              {L(`Còn ${lossMore} sản phẩm khác. Gõ thêm chữ để tìm chính xác hơn.`, `${lossMore} more products. Type more letters to narrow the list.`)}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

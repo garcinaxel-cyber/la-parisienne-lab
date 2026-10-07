@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
+import { foldSearch, rankFiches, type SearchFiche } from './match';
+
+// Large enough to show a whole category (the biggest, Birthday cake, has ~75 active cards). The
+// old cap of 30 silently hid the end of the alphabet: typing "macaron" matched 42 cards and
+// dropped the last 12, which were exactly the new flavours (Axel, 2026-10-07: "ils ont pas tous
+// les produits notamment new macaron et new entremet").
+const MAX_RESULTS = 80;
+
+// Every signed-in user reads the same recipe cards (RLS: select true), so the list is kept for a
+// minute per server instance instead of being re-read on every keystroke of every screen.
+let ficheCache: { at: number; rows: SearchFiche[] } | null = null;
+const CACHE_MS = 60_000;
 
 // Search LAB FICHES only — the B2C catalogue is never read.
 // Result shape kept compatible with the station "extra product" modal:
@@ -21,19 +33,23 @@ export async function GET(req: NextRequest) {
 
   if (q.length < 1 && !category) return NextResponse.json([]);
 
-  let query = supabase
-    .from('lab_fiche_meta')
-    .select('id, name_vi, name_en, category, image_url, teams')
-    .eq('is_active', true)
-    .order('name_vi')
-    .limit(30);
+  let all: SearchFiche[];
+  if (ficheCache && Date.now() - ficheCache.at < CACHE_MS) {
+    all = ficheCache.rows;
+  } else {
+    const { data, error } = await supabase
+      .from('lab_fiche_meta')
+      .select('id, name_vi, name_en, category, image_url, teams')
+      .eq('is_active', true)
+      .order('name_vi')
+      .limit(1000);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    all = (data ?? []) as SearchFiche[];
+    if (all.length) ficheCache = { at: Date.now(), rows: all };
+  }
 
-  if (q.length >= 1) {
-    query = query.or(`name_vi.ilike.%${q}%,name_en.ilike.%${q}%`);
-  }
-  if (category) {
-    query = query.eq('category', category);
-  }
+  let candidates = category ? all.filter(f => f.category === category) : all;
+
   if (team) {
     // Fiches tagged with this team OR already produced by this team in the past
     const { data: teamAssignments } = await supabase
@@ -42,16 +58,21 @@ export async function GET(req: NextRequest) {
       .eq('team', team)
       .not('fiche_id', 'is', null)
       .limit(1000);
-    const ficheIdsForTeam = Array.from(new Set((teamAssignments ?? []).map((a: any) => a.fiche_id as string)));
-    if (ficheIdsForTeam.length > 0) {
-      query = query.or(`teams.cs.{${team}},id.in.(${ficheIdsForTeam.join(',')})`);
-    } else {
-      query = query.contains('teams', [team]);
-    }
+    const ficheIdsForTeam = new Set((teamAssignments ?? []).map((a: any) => a.fiche_id as string));
+    candidates = candidates.filter(f => (Array.isArray(f.teams) && f.teams.includes(team)) || ficheIdsForTeam.has(f.id));
   }
 
-  const { data: fiches, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // A SKU typed as is ("BMCRCC") finds its recipe card too.
+  const skuHits = new Set<string>();
+  if (/^[A-Za-z0-9.-]{2,}$/.test(q)) {
+    const { data: skuRows } = await supabase
+      .from('lab_fiche_variants').select('fiche_id').ilike('sku', `%${q}%`).limit(300);
+    for (const r of skuRows ?? []) skuHits.add((r as any).fiche_id as string);
+  }
+
+  const ranked = q.length >= 1 ? rankFiches(candidates, foldSearch(q), skuHits) : candidates;
+  const total = ranked.length;
+  const fiches = ranked.slice(0, MAX_RESULTS);
 
   // All variants per fiche (default first) — so extra production can target a specific
   // variant, not only the default one.
@@ -102,5 +123,5 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json(results);
+  return NextResponse.json(results, { headers: { 'x-total-count': String(total) } });
 }
