@@ -1084,7 +1084,7 @@ type StockCountEntry = { name: string; category: string; imageUrl: string | null
 
 // Which SKUs belong on this shop's checklist, and their display name/category/photo — the full
 // catalog above (same for every shop) plus this shop's own manually-added extras.
-async function stockCountEntries(shopName: string): Promise<Map<string, StockCountEntry>> {
+async function stockCountContext(shopName: string): Promise<{ entries: Map<string, StockCountEntry>; event: EventShop | null }> {
   const out = new Map<string, StockCountEntry>();
   const supabase = service();
   // Event shop (Axel, 2026-10-07: "pour le comptage du stock affiche que les produits livrés,
@@ -1124,7 +1124,7 @@ async function stockCountEntries(shopName: string): Promise<Map<string, StockCou
     catalog.forEach((p, sku) => out.set(sku, { name: p.name, category: p.category, imageUrl: p.imageUrl, isExtra: false }));
   }
 
-  if (!supabase) return out;
+  if (!supabase) return { entries: out, event };
   const { data: extras } = await supabase.from('lab_shop_stock_count_items').select('sku, product_name').eq('shop_name', shopName);
   const newExtraSkus = (extras ?? []).map((e: any) => e.sku).filter((sku: string) => sku && !out.has(sku));
   const extraMeta = newExtraSkus.length ? await resolveFicheMetaBySku(newExtraSkus) : {};
@@ -1138,18 +1138,38 @@ async function stockCountEntries(shopName: string): Promise<Map<string, StockCou
     if (pkg) { out.set(e.sku, { name: e.product_name || pkg.name, category: pkg.category, imageUrl: pkg.imageUrl, isExtra: true }); continue; }
     // stale/no-longer-valid SKU (neither a production fiche nor a live packaging SKU) — defensive backstop
   }
-  return out;
+  return { entries: out, event };
+}
+
+async function stockCountEntries(shopName: string): Promise<Map<string, StockCountEntry>> {
+  return (await stockCountContext(shopName)).entries;
+}
+
+// The theoretical-stock fields of one line, for an event shop (see ShopStockCountLine).
+function eventTheoretical(moves: Map<string, EventStockMove> | null, sku: string, category: string): Partial<ShopStockCountLine> {
+  if (!moves) return {};
+  const m = moves.get(sku) ?? { received: 0, sold: 0, lost: 0 };
+  return {
+    received: m.received, sold: m.sold, lost: m.lost,
+    theoretical: category === STOCK_COUNT_PACKAGING_CATEGORY ? null : m.received - m.sold - m.lost,
+  };
 }
 
 export type ShopStockCountLine = {
   sku: string; name: string; qty: number | null; isExtra: boolean; category: string; imageUrl: string | null;
   priceB2c: number | null;
+  /** Event shops only (Axel, 2026-10-07: "a-t-on le stock théorique ? réception − sales").
+   *  received / sold / lost are cumulative since the start of the event, up to the day the line
+   *  belongs to; theoretical = received − sold − lost. Packaging has no theoretical figure (it
+   *  is used up with the sales, not sold). Absent on a permanent shop's lines. */
+  received?: number | null; sold?: number | null; lost?: number | null; theoretical?: number | null;
 };
 
 async function fetchStockCountList(shopName: string, date: string, sessionSeq: number): Promise<ShopStockCountLine[]> {
   const supabase = service();
   if (!supabase) return [];
-  const entries = await stockCountEntries(shopName);
+  const { entries, event } = await stockCountContext(shopName);
+  const moves = event ? (await eventStockLedgerSafe(supabase, shopName))?.at(date) ?? null : null;
 
   const { data: counts } = await supabase.from('lab_shop_stock_counts')
     .select('sku, qty').eq('shop_name', shopName).eq('count_date', date).eq('session_seq', sessionSeq);
@@ -1172,6 +1192,7 @@ async function fetchStockCountList(shopName: string, date: string, sessionSeq: n
     .map(([sku, v]) => ({
       sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null,
       category: v.category, imageUrl: v.imageUrl, priceB2c: priceBySku.get(sku) ?? null,
+      ...eventTheoretical(moves, sku, v.category),
     }))
     // Grouped by category in the UI — sort server-side the same way so the client can just walk
     // the array in order.
@@ -1415,6 +1436,9 @@ export type ShopDailyReport = {
    *  shop sent that day, instead of the daily Kiểm kho (Axel, 2026-09-30). */
   stockSource?: 'daily' | 'official';
   stockValuationTotal: number;
+  /** Event shops only: counted lines whose quantity differs from the theoretical stock — how
+   *  many, the net units, and that net at selling price. Undefined on a permanent shop. */
+  stockGapCount?: number; stockGapUnits?: number; stockGapValue?: number;
   losses: ShopLossDailyRecapProduct[];
   lossesTotalQty: number;
   lossesReportCount: number;
@@ -1445,7 +1469,8 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
   // VN midnight of the oldest day, as a UTC instant (VN = UTC+7, no DST).
   const windowStartIso = new Date(`${minDate}T00:00:00+07:00`).toISOString();
   const supabase = service();
-  const entries = await stockCountEntries(shopName);
+  const { entries, event } = await stockCountContext(shopName);
+  const ledger = event && supabase ? await eventStockLedgerSafe(supabase, shopName) : null;
   const skus = Array.from(entries.keys());
 
   // 2026-09-19 (Moon Flower: "17/9 hôm nay app mới hiện đủ, 18/9 kiểm sai số lượng, 19/9 kiểm
@@ -1508,18 +1533,26 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
     const stockSource: 'daily' | 'official' = officialQtyByDate.has(date) ? 'official' : 'daily';
     if (stockSource === 'official') qtyBySku = officialQtyByDate.get(date)!;
 
+    const moves = ledger ? ledger.at(date) : null;
     const stockLines: ShopStockCountLine[] = Array.from(entries.entries())
       .map(([sku, v]) => ({
         sku, name: v.name, isExtra: v.isExtra, qty: qtyBySku.has(sku) ? qtyBySku.get(sku)! : null,
         category: v.category, imageUrl: v.imageUrl, priceB2c: priceBySku.get(sku) ?? null,
+        ...eventTheoretical(moves, sku, v.category),
       }))
       .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 
     const stockCountedCount = stockLines.filter(l => l.qty !== null).length;
     const stockValuationTotal = stockLines.reduce((s, l) => s + (l.qty ?? 0) * (l.priceB2c ?? 0), 0);
     const dayLoss = lossRecap.find(r => r.date === date);
+    const gapLines = ledger ? stockLines.filter(l => l.qty !== null && l.theoretical != null && l.qty !== l.theoretical) : [];
     return {
       date,
+      ...(ledger ? {
+        stockGapCount: gapLines.length,
+        stockGapUnits: gapLines.reduce((sum, l) => sum + (l.qty! - l.theoretical!), 0),
+        stockGapValue: gapLines.reduce((sum, l) => sum + (l.qty! - l.theoretical!) * (l.priceB2c ?? 0), 0),
+      } : {}),
       stockLines,
       stockCountedCount,
       stockTotalCount: stockLines.length,
@@ -2454,6 +2487,9 @@ export type EventOrderedLines = {
   orderedBySku: Map<string, { name: string; qty: number }>;
   producedSkus: Set<string>;
   packagingSkus: Set<string>;
+  // The same quantities, one entry per order + SKU with the order's delivery day — what the
+  // theoretical stock adds up day by day. date null = an order with no known day (counts always).
+  receipts: { date: string | null; sku: string; qty: number }[];
 };
 
 // Everything this event's orders brought, per SKU — shared by the caisse (what can be sold) and
@@ -2478,11 +2514,22 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     m.set(r, bySku);
   };
   const [olRes, plRes, hdRes, moRes] = await Promise.all([
-    supabase.from('lab_order_lines').select('order_ref, product_sku, product_name_vi, qty').eq('shop_name', shopName).limit(5000),
-    supabase.from('lab_order_packaging_lines').select('order_ref, sku, product_name_vi, qty').eq('shop_name', shopName).limit(5000),
-    supabase.from('lab_delivery_orders').select('id, order_ref, marked_not_delivered').eq('shop_name', shopName).limit(1000),
-    supabase.from('lab_shop_manager_orders').select('order_ref, lines').eq('shop_name', shopName).limit(1000),
+    supabase.from('lab_order_lines').select('order_ref, product_sku, product_name_vi, qty, delivery_date').eq('shop_name', shopName).limit(5000),
+    supabase.from('lab_order_packaging_lines').select('order_ref, sku, product_name_vi, qty, delivery_date').eq('shop_name', shopName).limit(5000),
+    supabase.from('lab_delivery_orders').select('id, order_ref, marked_not_delivered, delivery_date').eq('shop_name', shopName).limit(1000),
+    supabase.from('lab_shop_manager_orders').select('order_ref, lines, delivery_date').eq('shop_name', shopName).limit(1000),
   ]);
+  // Delivery day of each order: the Lab's delivery order if there is one, else the order itself.
+  const dateByRef = new Map<string, string>();
+  const noteDate = (ref: unknown, d: unknown) => {
+    const r = String(ref ?? '').trim();
+    if (r && typeof d === 'string' && d && !dateByRef.has(r)) dateByRef.set(r, d.slice(0, 10));
+  };
+  for (const h of hdRes.data ?? []) noteDate((h as any).order_ref, (h as any).delivery_date);
+  for (const l of olRes.data ?? []) noteDate((l as any).order_ref, (l as any).delivery_date);
+  for (const l of plRes.data ?? []) noteDate((l as any).order_ref, (l as any).delivery_date);
+  for (const r of moRes.data ?? []) noteDate((r as any).order_ref, (r as any).delivery_date);
+  const receipts: EventOrderedLines['receipts'] = [];
   const syncedByRef = new Map<string, Map<string, SrcLine>>();
   // SKUs the Lab itself produces (lab_order_lines) — the only ones allowed to borrow Odoo's list
   // price below; packaging lines never are (Odoo defaults a new product's price to 1).
@@ -2503,9 +2550,10 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     for (const l of checkLines ?? []) put(checkedByRef, refByHeaderId.get(l.delivery_order_id), l.sku, l.product_name_vi, l.qty_checked ?? l.qty_expected);
   }
   const orderedBySku = new Map<string, { name: string; qty: number }>();
-  const addOrdered = (sku: string, name: string, qty: number) => {
+  const addOrdered = (sku: string, name: string, qty: number, ref?: string) => {
     const cur = orderedBySku.get(sku);
     orderedBySku.set(sku, { name: cur?.name || name || sku, qty: (cur?.qty ?? 0) + qty });
+    if (qty) receipts.push({ date: (ref && dateByRef.get(ref)) || null, sku, qty });
   };
   const knownRefs = new Set<string>([...Array.from(syncedByRef.keys()), ...Array.from(checkedByRef.keys())]);
   for (const ref of Array.from(knownRefs)) {
@@ -2515,7 +2563,7 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     const skusOfRef = new Set<string>([...Array.from(checked?.keys() ?? []), ...Array.from(synced?.keys() ?? [])]);
     for (const sku of Array.from(skusOfRef)) {
       const src = checked?.get(sku) ?? synced!.get(sku)!;
-      addOrdered(sku, src.name, src.qty);
+      addOrdered(sku, src.name, src.qty, ref);
     }
   }
   for (const row of moRes.data ?? []) {
@@ -2524,10 +2572,110 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     const lines: { sku?: string; name?: string; qty?: number }[] = Array.isArray((row as any).lines) ? (row as any).lines : [];
     for (const l of lines) {
       if (!l.sku || !(Number(l.qty) > 0)) continue;
-      addOrdered(l.sku, l.name || l.sku, Number(l.qty));
+      addOrdered(l.sku, l.name || l.sku, Number(l.qty), ref || undefined);
     }
   }
-  return { orderedBySku, producedSkus, packagingSkus };
+  return { orderedBySku, producedSkus, packagingSkus, receipts };
+}
+
+// Never let the theoretical figures take the count or the report down with them: on any read
+// error the screens simply show no theoretical stock.
+async function eventStockLedgerSafe(supabase: NonNullable<ReturnType<typeof service>>, shopName: string) {
+  try { return await eventStockLedger(supabase, shopName); } catch { return null; }
+}
+
+// ── Event sales, aggregated ──────────────────────────────────────────────────────────────────
+// The till used to read every sale order of the event, then its lines with
+// order_batch_id IN (<every order id>): one UUID per sale in the request URL, and PostgREST's
+// 1 000-row page cap on both reads — fine for a test, not for a four-day fair. lab_v98 moves the
+// sums into the database (lab_event_sales_agg / lab_event_sales_totals): a handful of rows
+// whatever the number of sales. If the function cannot be called, the same figures are rebuilt
+// from the tables in small pages, so a sale is never held up by this.
+type EventSoldRow = { saleDate: string | null; sku: string; name: string; qty: number; revenue: number };
+
+async function eventSoldRows(supabase: NonNullable<ReturnType<typeof service>>, shopName: string, byDay: boolean): Promise<EventSoldRow[]> {
+  try {
+    const rows = await fetchAllPages<any>((f, t) =>
+      supabase.rpc('lab_event_sales_agg', { p_shop: shopName, p_by_day: byDay }).range(f, t));
+    return rows.filter(r => r?.sku).map(r => ({
+      saleDate: r.sale_date ? String(r.sale_date).slice(0, 10) : null, sku: String(r.sku),
+      name: String(r.product_name_vi ?? r.sku), qty: Number(r.qty) || 0, revenue: Number(r.revenue) || 0,
+    }));
+  } catch {
+   try {
+    const orders = await fetchAllPages<{ order_batch_id: string; created_at: string }>((f, t) =>
+      supabase.from('lab_online_orders').select('order_batch_id, created_at')
+        .eq('shop_name', shopName).eq('source', 'event_stock').order('created_at').order('order_batch_id').range(f, t));
+    const dayByBatch = new Map(orders.map(o => [o.order_batch_id, vnDateStr(new Date(o.created_at))] as const));
+    const agg = new Map<string, EventSoldRow>();
+    const ids = orders.map(o => o.order_batch_id);
+    for (let i = 0; i < ids.length; i += 50) {
+      const { data: lines } = await supabase.from('lab_online_sale_lines')
+        .select('order_batch_id, sku, product_name_vi, qty, unit_price').in('order_batch_id', ids.slice(i, i + 50)).eq('is_fee', false);
+      for (const l of lines ?? []) {
+        if (!l.sku) continue;
+        const day = byDay ? dayByBatch.get(l.order_batch_id) ?? null : null;
+        const key = `${day ?? ''}|${l.sku}`;
+        const cur = agg.get(key) ?? { saleDate: day, sku: l.sku, name: String(l.product_name_vi ?? l.sku).replace(/ \(miễn phí\)$/, ''), qty: 0, revenue: 0 };
+        cur.qty += Number(l.qty ?? 0);
+        cur.revenue += Number(l.qty ?? 0) * Number(l.unit_price ?? 0);
+        agg.set(key, cur);
+      }
+    }
+    return Array.from(agg.values());
+   } catch { return []; }
+  }
+}
+
+async function eventSalesTotals(supabase: NonNullable<ReturnType<typeof service>>, shopName: string): Promise<{ orderCount: number; totalRevenue: number; cashRevenue: number; transferRevenue: number }> {
+  const { data, error } = await supabase.rpc('lab_event_sales_totals', { p_shop: shopName });
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!error && row) {
+    return {
+      orderCount: Number(row.order_count) || 0, totalRevenue: Number(row.total_revenue) || 0,
+      cashRevenue: Number(row.cash_revenue) || 0, transferRevenue: Number(row.transfer_revenue) || 0,
+    };
+  }
+  const orders = await fetchAllPages<{ amount_paid: number | null; payment_method: string | null }>((f, t) =>
+    supabase.from('lab_online_orders').select('amount_paid, payment_method')
+      .eq('shop_name', shopName).eq('source', 'event_stock').order('created_at').order('order_batch_id').range(f, t));
+  const totalRevenue = orders.reduce((sum, o) => sum + Number(o.amount_paid ?? 0), 0);
+  const transferRevenue = orders.filter(o => o.payment_method === 'transfer').reduce((sum, o) => sum + Number(o.amount_paid ?? 0), 0);
+  return { orderCount: orders.length, totalRevenue, cashRevenue: totalRevenue - transferRevenue, transferRevenue };
+}
+
+// ── Theoretical stock of an event (Axel, 2026-10-07: "a-t-on le stock théorique ? réception −
+// sales") ── received − sold − losses, cumulative since the event began. Three reads for the
+// whole event, then at(day) answers for any day: what had been delivered by that day (orders by
+// delivery date — the Lab's checked quantity when the delivery was checked, the ordered one
+// otherwise, same rule as the till), minus what the till sold and what Hao hụt reported up to
+// the end of that day (Vietnam time). Cancelled loss reports do not count.
+type EventStockMove = { received: number; sold: number; lost: number };
+
+async function eventStockLedger(supabase: NonNullable<ReturnType<typeof service>>, shopName: string): Promise<{ at: (date: string) => Map<string, EventStockMove> }> {
+  const [ordered, sold, losses] = await Promise.all([
+    eventOrderedLines(supabase, shopName),
+    eventSoldRows(supabase, shopName, true),
+    fetchAllPages<{ sku: string | null; qty: number | null; reported_at: string }>((f, t) =>
+      supabase.from('lab_shop_losses').select('sku, qty, reported_at')
+        .eq('shop_name', shopName).is('cancelled_at', null).order('id').range(f, t)),
+  ]);
+  const lossRows = losses.filter(l => l.sku && l.reported_at)
+    .map(l => ({ date: vnDateStr(new Date(l.reported_at)), sku: l.sku as string, qty: Number(l.qty) || 0 }));
+  return {
+    at(date: string) {
+      const out = new Map<string, EventStockMove>();
+      const of = (sku: string) => {
+        let v = out.get(sku);
+        if (!v) { v = { received: 0, sold: 0, lost: 0 }; out.set(sku, v); }
+        return v;
+      };
+      for (const r of ordered.receipts) if (!r.date || r.date <= date) of(r.sku).received += r.qty;
+      for (const r of sold) if (!r.saleDate || r.saleDate <= date) of(r.sku).sold += r.qty;
+      for (const r of lossRows) if (r.date <= date) of(r.sku).lost += r.qty;
+      return out;
+    },
+  };
 }
 
 export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
@@ -2587,13 +2735,8 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
     categoryBySku.set(sku, fiche?.category ?? null);
   }
 
-  const { data: orders } = await supabase.from('lab_online_orders').select('order_batch_id').eq('shop_name', shopName).eq('source', 'event_stock');
-  const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
   const soldBySku = new Map<string, number>();
-  if (batchIds.length) {
-    const { data: lines } = await supabase.from('lab_online_sale_lines').select('sku, qty').in('order_batch_id', batchIds).eq('is_fee', false);
-    for (const l of lines ?? []) if (l.sku) soldBySku.set(l.sku, (soldBySku.get(l.sku) ?? 0) + Number(l.qty));
-  }
+  for (const r of await eventSoldRows(supabase, shopName, false)) soldBySku.set(r.sku, (soldBySku.get(r.sku) ?? 0) + r.qty);
 
   const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
     .map(([sku, o]) => ({
@@ -2722,26 +2865,12 @@ export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSal
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const { data: orders } = await supabase.from('lab_online_orders')
-    .select('order_batch_id, amount_paid, payment_method').eq('shop_name', auth.event.name).eq('source', 'event_stock').limit(10000);
-  const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
-  const totalRevenue = (orders ?? []).reduce((s: number, o: any) => s + Number(o.amount_paid ?? 0), 0);
-  const transferRevenue = (orders ?? []).filter((o: any) => o.payment_method === 'transfer').reduce((s: number, o: any) => s + Number(o.amount_paid ?? 0), 0);
-  const cashRevenue = totalRevenue - transferRevenue;
-  const { data: lines } = batchIds.length
-    ? await supabase.from('lab_online_sale_lines').select('sku, product_name_vi, qty, unit_price').in('order_batch_id', batchIds).eq('is_fee', false)
-    : { data: [] as any[] };
-  const bySku = new Map<string, { name: string; qty: number; revenue: number }>();
-  for (const l of lines ?? []) {
-    if (!l.sku) continue;
-    const name = String(l.product_name_vi ?? l.sku).replace(/ \(miễn phí\)$/, '');
-    const cur = bySku.get(l.sku) ?? { name, qty: 0, revenue: 0 };
-    cur.qty += Number(l.qty ?? 0);
-    cur.revenue += Number(l.qty ?? 0) * Number(l.unit_price ?? 0);
-    bySku.set(l.sku, cur);
-  }
-  const byProduct = Array.from(bySku.entries())
-    .map(([sku, v]) => ({ sku, ...v }))
-    .sort((a, b) => b.revenue - a.revenue);
-  return { summary: { totalRevenue, orderCount: (orders ?? []).length, cashRevenue, transferRevenue, byProduct } };
+  const [totals, rows] = await Promise.all([
+    eventSalesTotals(supabase, auth.event.name),
+    eventSoldRows(supabase, auth.event.name, false),
+  ]);
+  const byProduct = rows
+    .map(r => ({ sku: r.sku, name: r.name, qty: r.qty, revenue: r.revenue }))
+    .sort((x, y) => y.revenue - x.revenue);
+  return { summary: { totalRevenue: totals.totalRevenue, orderCount: totals.orderCount, cashRevenue: totals.cashRevenue, transferRevenue: totals.transferRevenue, byProduct } };
 }

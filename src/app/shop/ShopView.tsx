@@ -1197,6 +1197,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // at 360 px, so the till starts higher on the screen. Chuyển kho and Kiểm kê chính thức are left
   // out there — an event shop cannot transfer and has no month-end inventory, both were dead ends.
   // A shop's everyday screen keeps its layout unchanged.
+  // Theoretical stock on the count screen (event only; Axel, 2026-10-07: "a-t-on le stock
+  // théorique ? réception − sales"). The staff count first and compare afterwards: the figure
+  // appears next to each line once the count is marked finished ("Hoàn tất"), so it cannot simply
+  // be copied into the box. An admin looking at the event sees it at all times. The end-of-day
+  // report shows it to everyone.
+  const showStockTheo = !!eventState?.inEvent && (
+    (readOnly && viewerRole === 'admin') || !!stockSessions.find(x => x.seq === stockSessionSeq)?.finishedAt
+  );
+
   const tabBtn = eventState?.inEvent
     ? 'flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-[12px] sm:text-sm leading-tight text-center font-bold rounded-xl px-1.5 sm:px-3 py-2 sm:py-2.5 min-h-[56px] sm:min-h-0'
     : 'flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5';
@@ -1907,6 +1916,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           <div className={eventState?.inEvent ? 'min-w-0 flex-1 basis-[55%]' : 'min-w-0 flex-1'}>
                             <div className={eventState?.inEvent ? 'text-sm font-semibold leading-snug break-words' : 'text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar'} style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? L(' · đã thêm', ' · added') : ''}</div>
+                            {showStockTheo && l.theoretical != null && (() => {
+                              const typed = evalQty(stockDraft[l.sku]);
+                              const gap = typed === null ? null : typed - l.theoretical;
+                              return (
+                                <div className="text-[11px] font-semibold mt-0.5" style={{ color: gap === null ? '#8A6D14' : gap === 0 ? GREEN : RED }}>
+                                  {L('Tồn lý thuyết', 'Expected')} {l.theoretical}{gap === null ? '' : gap === 0 ? ' · ✓' : ` · ${L('lệch', 'gap')} ${gap > 0 ? '+' : ''}${gap}`}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div className={eventState?.inEvent ? 'ml-auto' : 'contents'}>
                           <QtyExprInput disabled={stockSessionSeq < stockLatestSessionSeq} placeholder="—" borderColor={BORDER} width={72}
@@ -2015,6 +2033,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             : r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${L('đã kiểm', 'counted')}${r.stockSource === 'official' ? L(' · Kiểm kê chính thức', ' · Official inventory') : ''}`
                             : L('Chưa kiểm kho', 'Not counted yet')}
                           {r.lossesReportCount ? ` · ${r.lossesReportCount} ${L('báo cáo hao hụt', r.lossesReportCount === 1 ? 'loss report' : 'loss reports')}` : ''}
+                          {r.stockCounted && r.stockGapCount != null && (
+                            <span className="font-semibold" style={{ color: r.stockGapCount ? RED : GREEN }}>
+                              {r.stockGapCount ? ` · ${r.stockGapCount} ${L('SP lệch', r.stockGapCount === 1 ? 'gap' : 'gaps')}` : ` · ${L('khớp lý thuyết', 'matches expected')}`}
+                            </span>
+                          )}
                         </div>
                       </div>
                       {r.stockCounted && (
@@ -2059,6 +2082,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
                     </div>
 
+                    {dailyReport.stockGapCount != null && (
+                      <div className="bg-white rounded-2xl px-4 py-3" style={{ border: `1px solid ${BORDER}` }}>
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Chênh lệch so với lý thuyết', 'Gap vs expected stock')}</div>
+                          <span className="block text-sm font-bold mt-0.5" style={{ color: dailyReport.stockGapCount ? RED : GREEN }}>
+                            {dailyReport.stockGapCount
+                              ? `${dailyReport.stockGapCount} ${L('SP', dailyReport.stockGapCount === 1 ? 'product' : 'products')} · ${(dailyReport.stockGapUnits ?? 0) > 0 ? '+' : ''}${dailyReport.stockGapUnits ?? 0} · ${fmtVnd(dailyReport.stockGapValue ?? 0)}`
+                              : L('Khớp ✓', 'All match ✓')}
+                          </span>
+                        </div>
+                        <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>
+                          {L('Lý thuyết = đã nhận − đã bán − hao hụt, tính từ đầu event.', 'Expected = received − sold − losses, since the start of the event.')}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-3">
                       {groupStockByCategory(dailyReport.stockLines).map(g => (
                         <div key={g.category} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
@@ -2068,10 +2107,24 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                             {g.lines.map(l => (
                               <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
-                                <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? RED : INK, fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
-                                <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? RED : l.qty === null ? '#9CA3AF' : INK }}>
-                                  {l.qty === null ? L('Chưa kiểm', 'Not counted') : l.qty}
-                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? RED : INK, fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</div>
+                                  {l.received != null && (
+                                    <div className="text-[11px] mt-0.5" style={{ color: '#9CA3AF' }}>
+                                      {L('Nhận', 'Received')} {l.received}{l.sold ? ` · ${L('Bán', 'Sold')} ${l.sold}` : ''}{l.lost ? ` · ${L('Hao hụt', 'Lost')} ${l.lost}` : ''}{l.theoretical != null ? ` · ${L('Lý thuyết', 'Expected')} ${l.theoretical}` : ''}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <div className="text-sm font-bold" style={{ color: l.qty === 0 ? RED : l.qty === null ? '#9CA3AF' : INK }}>
+                                    {l.qty === null ? L('Chưa kiểm', 'Not counted') : l.qty}
+                                  </div>
+                                  {l.qty !== null && l.theoretical != null && (
+                                    <div className="text-[11px] font-bold" style={{ color: l.qty === l.theoretical ? GREEN : RED }}>
+                                      {l.qty === l.theoretical ? '✓' : `${l.qty - l.theoretical > 0 ? '+' : ''}${l.qty - l.theoretical}`}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
