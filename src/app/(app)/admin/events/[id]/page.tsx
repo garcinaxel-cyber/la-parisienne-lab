@@ -26,5 +26,6 @@ export default async function EventStorePage({ params }: { params: { id: string 
   const event = await getActiveEventById(params.id);
   if (!event || readEventIdFromCookie() !== event.id) redirect('/admin/events');
 
-  return <ShopView shopName={event.name} readOnly initialTab="caisse" exitEventHref="/admin/events" />;
+  return <ShopView shopName={event.name} readOnly initialTab="caisse" exitEventHref="/admin/events"
+    initialEvent={{ name: event.name, start: event.startDate ?? null, end: event.endDate ?? null }} />;
 }

@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import ShopView from './ShopView';
+import { readEventIdFromCookie } from '@/lib/event-session';
+import { getActiveEventById } from '@/lib/event-shops';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,5 +31,12 @@ export default async function ShopHomePage() {
     );
   }
 
-  return <ShopView shopName={shopName} />;
+  // Staff who stepped into an event with its PIN keep a signed cookie: when the page is reloaded
+  // there, start directly on the event's screens instead of flashing the shop's own tabs first.
+  // No cookie (every ordinary day): nothing changes.
+  const eventId = readEventIdFromCookie();
+  const event = eventId ? await getActiveEventById(eventId) : null;
+
+  return <ShopView shopName={shopName}
+    initialEvent={event ? { name: event.name, start: event.startDate ?? null, end: event.endDate ?? null } : null} />;
 }

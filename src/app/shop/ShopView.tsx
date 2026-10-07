@@ -134,7 +134,7 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
 // own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
 // than "cannot write".
-export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin', exitEventHref }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager'; exitEventHref?: string }) {
+export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin', exitEventHref, initialEvent = null }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager'; exitEventHref?: string; initialEvent?: { name: string; start?: string | null; end?: string | null } | null }) {
   const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'>(initialTab);
   // `initialTab` is only the useState *seed* — on a fresh mount it's all that's needed. But
@@ -154,7 +154,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // (2026-09-12) since this was originally gated to the shop's own live session only; the
   // backend (requireShopOrStaffSession's event-override check) already covers admin/shop_manager
   // roles identically to a real shop login, so this is a client-side-only relaxation.
-  const [eventState, setEventState] = useState<EventAccessState | null>(null);
+  // initialEvent: the page already knows, server-side, that this browser is inside an event (its
+  // signed cookie). Starting from it means the event's own tab bar is there from the first paint.
+  // Without it the screen opened on a normal shop's tabs — Chuyển kho and Kiểm kê chính thức
+  // included — until getEventAccessStateAction answered, and stayed that way if that call failed
+  // (Axel, 2026-10-07, screenshot of "Official inventory" inside the event: "enlève-moi ça de
+  // l'event, ça sert à rien ... et transfert aussi ... enlève pas dans les shops par contre").
+  const [eventState, setEventState] = useState<EventAccessState | null>(initialEvent
+    ? { hasActiveEvent: true, inEvent: true, eventName: initialEvent.name, eventStart: initialEvent.start ?? null, eventEnd: initialEvent.end ?? null }
+    : null);
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinSubmitting, setPinSubmitting] = useState(false);
@@ -184,6 +192,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (!('error' in res)) setEventState(res);
   }, []);
   useEffect(() => { loadEventState(); }, [loadEventState]);
+  // An event has no birthday-cake, transfer or month-end inventory tab: if one of them was open
+  // when the event took over (tapped before the state arrived, or entered by PIN from that tab),
+  // fall back to the till instead of leaving a screen whose tab no longer exists.
+  useEffect(() => {
+    if (eventState?.inEvent && (tab === 'transfer' || tab === 'official-inventory' || tab === 'cakes')) setTab('caisse');
+  }, [eventState?.inEvent, tab]);
 
   // Official (monthly) inventory — a lightweight signal only, fetched once regardless of which
   // tab is active, so the mandatory banner below can show no matter what the shop is doing (Axel,
@@ -1300,7 +1314,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           </div>
         )}
-        {officialInv?.isLastDay && officialInv.hasWarehouse && !officialInv.submitted && (
+        {officialInv?.isLastDay && officialInv.hasWarehouse && !officialInv.submitted && !eventState?.inEvent && (
           <button onClick={() => setTab('official-inventory')} className="w-full text-left rounded-xl px-3.5 py-2.5 flex items-start gap-2"
             style={{ backgroundColor: '#FBEAE8', border: '1px solid #EFC3BE' }}>
             <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: RED }} />
