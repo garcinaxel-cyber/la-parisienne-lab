@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { CalendarDays, Loader2, AlertCircle, QrCode, X } from 'lucide-react';
-import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, type CreateEventFormResult } from './actions';
+import { useRouter } from 'next/navigation';
+import { CalendarDays, Loader2, AlertCircle, QrCode, X, Store } from 'lucide-react';
+import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, type CreateEventFormResult } from './actions';
 import type { EventShop } from '@/lib/event-shops';
 
 // Same downsize-before-upload as the online-orders payment-proof upload (OnlineOrdersView.tsx) —
@@ -20,10 +21,35 @@ async function compressImage(file: File, maxSide = 1200, quality = 0.8): Promise
   } catch { return file; }
 }
 
-export default function EventsAdminView() {
+export default function EventsAdminView({ canManage = false }: { canManage?: boolean }) {
+  const router = useRouter();
   const [events, setEvents] = useState<EventShop[] | null>(null);
-  const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  // The PIN is stored hashed and only ever shown at creation — if it was not written down there
+  // was no way to get one back short of closing and recreating the event. This issues a new one.
+  const [newPin, setNewPin] = useState<{ name: string; pin: string } | null>(null);
+  const [pinBusyId, setPinBusyId] = useState<string | null>(null);
+  async function regeneratePin(e: EventShop) {
+    if (!window.confirm(`Issue a new PIN for "${e.name}"? The current PIN will stop working.`)) return;
+    setPinBusyId(e.id);
+    setOpenError(null);
+    const res = await regenerateEventPinAction(e.id);
+    setPinBusyId(null);
+    if (res.error || !res.pin) { setOpenError(res.error ?? 'Could not issue a new PIN'); return; }
+    setNewPin({ name: e.name, pin: res.pin });
+  }
+
+  // One click into the event's own screens (caisse, deliveries, losses, stock) — no PIN for an
+  // admin or the lab manager (Axel, 2026-10-07: "je dois pouvoir rentrer dans l'event facilement").
+  async function openEvent(id: string) {
+    setOpeningId(id);
+    setOpenError(null);
+    const res = await enterEventAsStaffAction(id);
+    if (res.error) { setOpenError(res.error); setOpeningId(null); return; }
+    router.push(`/admin/events/${id}`);
+  }
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreateEventFormResult | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -38,11 +64,10 @@ export default function EventsAdminView() {
   async function submit() {
     setCreating(true);
     setCreated(null);
-    const res = await createEventAction({ name, warehouseCode: code });
+    const res = await createEventAction({ warehouseCode: code });
     setCreated(res);
     setCreating(false);
     if (res.event) {
-      setName('');
       setCode('');
       load();
     }
@@ -82,19 +107,16 @@ export default function EventsAdminView() {
         <h1 className="text-xl font-bold">Event shops</h1>
       </div>
 
+      {canManage && (
       <div className="bg-white rounded-2xl p-5 space-y-3" style={{ border: '1px solid #E5E7EB' }}>
         <div className="text-sm font-semibold">Create new event</div>
         <p className="text-xs text-gray-500">
           Create the warehouse in Odoo first (Inventory → Configuration → Warehouses), then enter
-          its code here — the app only links to it, it never creates a warehouse itself.
+          its code here — the app only links to it, it never creates a warehouse itself. The event
+          takes the warehouse&apos;s own name from Odoo, so its replenishment orders land in it.
         </p>
 
         <div className="space-y-2">
-          <div>
-            <label className="text-xs font-semibold text-gray-600 block mb-1">Event name</label>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="E.g.: Vincom Long Biên Tết Fair"
-              className="w-full text-sm rounded-lg px-3 py-2" style={{ border: '1px solid #E5E7EB' }} />
-          </div>
           <div>
             <label className="text-xs font-semibold text-gray-600 block mb-1">Odoo warehouse code (max 5 characters)</label>
             <input value={code} onChange={e => setCode(e.target.value.toUpperCase().slice(0, 5))} placeholder="E.g.: EVTET"
@@ -102,7 +124,7 @@ export default function EventsAdminView() {
           </div>
         </div>
 
-        <button onClick={submit} disabled={creating || !name.trim() || !code.trim()}
+        <button onClick={submit} disabled={creating || !code.trim()}
           className="inline-flex items-center gap-2 text-sm font-bold rounded-lg px-4 py-2.5 text-white disabled:opacity-50"
           style={{ backgroundColor: '#1A4731' }}>
           {creating && <Loader2 size={14} className="animate-spin" />}
@@ -124,6 +146,20 @@ export default function EventsAdminView() {
           </div>
         )}
       </div>
+      )}
+
+      {openError && (
+        <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 text-red-700" style={{ backgroundColor: '#FEF2F2' }}>
+          <AlertCircle size={14} className="shrink-0 mt-0.5" /> {openError}
+        </div>
+      )}
+      {newPin && (
+        <div className="rounded-xl px-4 py-3 text-center" style={{ background: '#FFFAEE', border: '1.5px dashed #C9A84C' }}>
+          <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#92600A' }}>New staff PIN — {newPin.name}</div>
+          <div className="text-3xl font-extrabold tracking-widest" style={{ color: '#1A4731' }}>{newPin.pin.split('').join(' ')}</div>
+          <div className="text-xs text-gray-500 mt-1.5">The previous PIN no longer works. Shown once — note it now.</div>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
         <div className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ borderBottom: '1px solid #E5E7EB' }}>
@@ -137,7 +173,13 @@ export default function EventsAdminView() {
           <div key={e.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm" style={{ borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
             <div className="font-semibold flex-1 min-w-0 truncate">{e.name}</div>
             <div className="text-xs text-gray-500 shrink-0">Warehouse {e.warehouseCode}</div>
-            {e.qrCodeUrl ? (
+            <button onClick={() => openEvent(e.id)} disabled={openingId === e.id}
+              className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 shrink-0 text-white disabled:opacity-60"
+              style={{ backgroundColor: '#1A4731' }}>
+              {openingId === e.id ? <Loader2 size={12} className="animate-spin" /> : <Store size={12} />}
+              Open
+            </button>
+            {!canManage ? null : e.qrCodeUrl ? (
               <div className="relative shrink-0">
                 <img src={e.qrCodeUrl} alt="Bank transfer QR" className="w-9 h-9 rounded-md object-cover" style={{ border: '1px solid #E5E7EB' }} />
                 <button onClick={() => removeQr(e.id)} disabled={uploadingQrFor === e.id}
@@ -155,11 +197,21 @@ export default function EventsAdminView() {
                 <input type="file" accept="image/*" className="hidden" onChange={ev => uploadQr(e.id, ev.target.files?.[0])} />
               </label>
             )}
+            {canManage && (
+            <button onClick={() => regeneratePin(e)} disabled={pinBusyId === e.id}
+              title="Issue a new staff PIN for this event"
+              className="text-xs font-bold rounded-lg px-2.5 py-1.5 shrink-0 disabled:opacity-50"
+              style={{ background: '#FFFAEE', border: '1px solid #E0D49A', color: '#8A6D14' }}>
+              {pinBusyId === e.id ? '…' : 'New PIN'}
+            </button>
+            )}
+            {canManage && (
             <button onClick={() => close(e.id)} disabled={closingId === e.id}
               className="text-xs font-bold rounded-lg px-2.5 py-1.5 shrink-0 disabled:opacity-50"
               style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#DC2626' }}>
               {closingId === e.id ? '…' : 'Close'}
             </button>
+            )}
           </div>
         ))}
       </div>

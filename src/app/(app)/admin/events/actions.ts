@@ -3,7 +3,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { odooExecute } from '@/lib/odoo';
-import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, type EventShop } from '@/lib/event-shops';
+import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, getActiveEventById, resetEventPin, type EventShop } from '@/lib/event-shops';
+import { setEventSessionCookie } from '@/lib/event-session';
 
 function service() {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
@@ -23,16 +24,37 @@ async function requireAdmin(): Promise<{ userId: string } | { error: string }> {
   return { userId: session.user.id };
 }
 
+// Admin or lab manager (Axel, 2026-10-07: "accessible dans l'interface admin lab manager") — may
+// see the list and step into an event. Everything that changes an event stays requireAdmin.
+async function requireAdminOrLabManager(): Promise<{ userId: string; role: string } | { error: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (profile?.role !== 'admin' && profile?.role !== 'lab_manager') return { error: 'Forbidden' };
+  return { userId: session.user.id, role: profile.role };
+}
+
+// One-click entry, no PIN: the PIN exists to let shared shop logins into an event, an admin or
+// the lab manager is already identified by their own account. Sets the very same signed cookie
+// enterEventAction does, so everything downstream behaves exactly as for the staff at the fair.
+export async function enterEventAsStaffAction(id: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireAdminOrLabManager();
+  if ('error' in auth) return { error: auth.error };
+  const event = await getActiveEventById(String(id ?? ''));
+  if (!event) return { error: 'This event is closed' };
+  setEventSessionCookie(event.id);
+  return { ok: true };
+}
+
 export type CreateEventFormResult = { event?: EventShop; pin?: string; error?: string };
 
 // Axel, 2026-09-12: "je configure moi même l'entrepôt sur Odoo" — this NEVER creates a
 // stock.warehouse. It only looks the code up (Odoo is the single source of truth for the
 // warehouse itself) and stores the link + generates the PIN.
-export async function createEventAction(input: { name: string; warehouseCode: string }): Promise<CreateEventFormResult> {
+export async function createEventAction(input: { name?: string; warehouseCode: string }): Promise<CreateEventFormResult> {
   const auth = await requireAdmin();
   if ('error' in auth) return { error: auth.error };
-  const name = (input.name ?? '').trim();
-  if (!name) return { error: 'Tên event bắt buộc' };
   const code = (input.warehouseCode ?? '').trim().toUpperCase();
   if (!code) return { error: 'Mã kho Odoo bắt buộc' };
 
@@ -48,6 +70,14 @@ export async function createEventAction(input: { name: string; warehouseCode: st
   }
   if (!wh) return { error: `Không tìm thấy kho Odoo có mã "${code}" — tạo kho trong Odoo trước (Kho vận → Cấu hình → Kho hàng), rồi thử lại` };
 
+  // The event takes ODOO's warehouse name, never a hand-typed one (2026-10-07). The Odoo sync
+  // files every replenishment under its warehouse name (minus the "- warehouse" suffix, see
+  // odoo-sync.ts), and that name is the key every shop tab reads by — the first real event was
+  // typed "HAI PHUONG" here against "HẢI PHÒNG" in Odoo, so its deliveries could never have
+  // reached it. One source for the name removes that whole class of mismatch.
+  const name = String(wh.name ?? '').replace(/\s*-\s*warehouse\s*$/i, '').trim();
+  if (!name) return { error: `Kho Odoo "${code}" không có tên` };
+
   const result = await createEventShop({ name, warehouseCode: code, odooWarehouseId: wh.id, createdBy: auth.userId });
   if (result.error) return { error: result.error };
   revalidatePath('/admin/events');
@@ -55,9 +85,16 @@ export async function createEventAction(input: { name: string; warehouseCode: st
 }
 
 export async function listEventsAction(): Promise<{ events?: EventShop[]; error?: string }> {
-  const auth = await requireAdmin();
+  const auth = await requireAdminOrLabManager();
   if ('error' in auth) return { error: auth.error };
   return { events: await listEventShops() };
+}
+
+// New staff PIN for an open event (2026-10-07) — the old one stops working at once. Admin only.
+export async function regenerateEventPinAction(id: string): Promise<{ pin?: string; error?: string }> {
+  const auth = await requireAdmin();
+  if ('error' in auth) return { error: auth.error };
+  return resetEventPin(String(id ?? ''));
 }
 
 export async function closeEventAction(id: string): Promise<{ ok?: boolean; error?: string }> {

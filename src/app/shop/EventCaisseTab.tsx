@@ -8,9 +8,9 @@ import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 // enregistreuse qui n'aurait aucun impact odoo". Standalone tab, same self-fetching pattern as
 // ShopTransfersTab — everything it needs comes from its own three actions, gated server-side to
 // whichever event the current PIN session points to (see requireEventSession in shop/actions.ts).
-// Can only ever sell what the event's own latest stock count still has on hand minus what this
-// tab has already sold (Axel's locked-in answer: "uniquement ce qui a été livré/compté sur
-// l'event") — the server re-checks this on submit too, the client-side clamp here is just UX.
+// Sells whatever was sent to the event through its replenishment orders (REP). "Còn" is what
+// the book says is left; it is information only — a sale is never refused on stock, even at zero
+// or below (Axel, 2026-10-07: "ils auraient sûrement mal compté").
 //
 // Promo (Axel, 2026-09-14): "buy one get one free, buy 2 get one free ... buy 5 macaron get one
 // free" — no rule config, staff just decides at the till. freeCart mirrors cart 1:1 (sku -> how
@@ -63,8 +63,8 @@ export default function EventCaisseTab() {
     );
   }, [products, search, categoryFilter]);
 
-  function changeQty(sku: string, delta: number, max: number) {
-    const next = Math.max(0, Math.min(max, (cart[sku] ?? 0) + delta));
+  function changeQty(sku: string, delta: number) {
+    const next = Math.max(0, Math.min(999, (cart[sku] ?? 0) + delta));
     setCart(c => ({ ...c, [sku]: next }));
     // A line dropping (or shrinking below its current free count) clamps freeCart along with it.
     setFreeCart(f => ((f[sku] ?? 0) > next ? { ...f, [sku]: next } : f));
@@ -101,12 +101,12 @@ export default function EventCaisseTab() {
   return (
     <div className="space-y-3 pb-20">
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}`, color: '#8A6D14' }}>
-        📦 Chỉ hiện sản phẩm đã nhập/kiểm kho tại event — không thể bán quá số thực có.
+        📦 Sản phẩm lấy từ các đơn hàng (REP) của event. Vẫn bán được khi số tồn về 0 hoặc âm.
       </div>
 
       {!products.length ? (
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>
-          Chưa có sản phẩm nào để bán — kiểm kho trước ở tab &quot;Kiểm kho&quot;.
+          Chưa có sản phẩm nào để bán — event chưa có đơn hàng (REP) nào, hoặc Lab chưa đồng bộ xong (tối đa 15 phút).
         </div>
       ) : (
         <>
@@ -147,14 +147,14 @@ export default function EventCaisseTab() {
                   )}
                 </div>
                 <div className="text-[13px] font-bold leading-tight" style={{ color: INK }}>{p.name}</div>
-                <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>Còn <b>{remaining}</b></div>
+                <div className="text-[10.5px] mt-0.5" style={{ color: remaining <= 0 ? RED : '#9CA3AF' }}>Còn <b>{remaining}</b></div>
                 <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
                 <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
-                  <button onClick={() => changeQty(p.sku, -1, p.available)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
+                  <button onClick={() => changeQty(p.sku, -1)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
                     <Minus size={14} />
                   </button>
                   <span className="text-sm font-extrabold tabular-nums">{qty}</span>
-                  <button onClick={() => changeQty(p.sku, 1, p.available)} disabled={remaining <= 0} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center disabled:opacity-40" style={{ backgroundColor: NAVY }}>
+                  <button onClick={() => changeQty(p.sku, 1)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
                     <Plus size={14} />
                   </button>
                 </div>
@@ -198,6 +198,9 @@ export default function EventCaisseTab() {
             <div>
               <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Tổng doanh thu event</div>
               <div className="text-lg font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(summary.totalRevenue)}</div>
+              <div className="text-[11px] mt-0.5" style={{ color: '#6B7280' }}>
+                Tiền mặt <b style={{ color: INK }}>{fmt(summary.cashRevenue)}</b> · Chuyển khoản <b style={{ color: INK }}>{fmt(summary.transferRevenue)}</b> · {summary.orderCount} đơn
+              </div>
             </div>
             <button onClick={() => setShowBreakdown(v => !v)}
               className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5"

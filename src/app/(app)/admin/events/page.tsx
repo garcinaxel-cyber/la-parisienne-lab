@@ -12,7 +12,9 @@ export default async function EventsAdminPage() {
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (profile?.role !== 'admin') redirect('/dashboard');
+  // Lab manager allowed in since 2026-10-07 (list + one-click entry); only an admin creates,
+  // closes or sets the QR of an event — enforced again server-side in every action.
+  if (profile?.role !== 'admin' && profile?.role !== 'lab_manager') redirect('/dashboard');
 
-  return <EventsAdminView />;
+  return <EventsAdminView canManage={profile.role === 'admin'} />;
 }

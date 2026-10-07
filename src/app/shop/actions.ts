@@ -14,7 +14,7 @@ import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/
 import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
-import { getActiveEventById, getActiveEventByPin, hasAnyActiveEvent, type EventShop } from '@/lib/event-shops';
+import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, type EventShop } from '@/lib/event-shops';
 import { isOemSku } from '@/lib/oem';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
@@ -1671,7 +1671,12 @@ async function resolveManager(shopName: string, pin: string): Promise<ShopManage
     .select('id, name, color, shops')
     .eq('active', true)
     .eq('pin_hash', hashManagerPin(cleanPin));
-  const match = (data ?? []).find((m: any) => Array.isArray(m.shops) && m.shops.includes(shopName));
+  let match = (data ?? []).find((m: any) => Array.isArray(m.shops) && m.shops.includes(shopName));
+  // Event shops (Axel, 2026-10-07: the fair is staffed by people from the real shops, two of them
+  // managers): an event's name is never in anyone's `shops` list, so inside an ACTIVE event any
+  // active manager's own PIN is accepted. Reaching this with an event shopName already required
+  // the event PIN (or a staff session), so this never widens access to a real shop.
+  if (!match && (data ?? []).length && await getActiveEventByName(shopName)) match = (data ?? [])[0];
   return match ? { id: match.id, name: match.name, color: match.color } : null;
 }
 
@@ -2376,6 +2381,8 @@ export type EventCaisseProduct = {
 // toutes les commandes et pas seulement la premiere" — no delivery_date filter at all, unlike
 // getRecentManagerOrdersAction's today/tomorrow window: every order ever logged for this event's
 // shop_name is summed, so a SKU that only showed up on day 2's order still appears here.
+const odooEventPriceCache = new Map<string, number>();
+
 export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
@@ -2383,14 +2390,69 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const { data: orderRows } = await supabase.from('lab_shop_manager_orders').select('lines').eq('shop_name', shopName);
+  // Reworked, Axel 2026-10-07: "la commande se fera via les REP" — the event's stock comes from
+  // replenishment requests entered directly in Odoo (REP/2026/01854 was typed there, never through
+  // this app's Đặt hàng tab), so the audit log lab_shop_manager_orders alone left the caisse
+  // empty. Per order ref, in this order of trust:
+  //   1. the Lab's delivery check (lab_delivery_check_lines: what was actually sent),
+  //   2. the lines the Odoo sync imported (lab_order_lines + lab_order_packaging_lines),
+  //   3. an order placed from this app that the 15-min sync has not imported yet.
+  // One ref only ever counts once, whichever source knows it best. An order the Lab marked
+  // "not delivered" counts for nothing.
+  type SrcLine = { name: string; qty: number };
+  const put = (m: Map<string, Map<string, SrcLine>>, ref: unknown, sku: unknown, name: unknown, qty: unknown) => {
+    const r = String(ref ?? '').trim(); const s = String(sku ?? '').trim(); const q = Number(qty);
+    if (!r || !s || !(q >= 0)) return;
+    const bySku = m.get(r) ?? new Map<string, SrcLine>();
+    const cur = bySku.get(s);
+    bySku.set(s, { name: cur?.name || String(name ?? '') || s, qty: (cur?.qty ?? 0) + q });
+    m.set(r, bySku);
+  };
+  const [olRes, plRes, hdRes, moRes] = await Promise.all([
+    supabase.from('lab_order_lines').select('order_ref, product_sku, product_name_vi, qty').eq('shop_name', shopName).limit(5000),
+    supabase.from('lab_order_packaging_lines').select('order_ref, sku, product_name_vi, qty').eq('shop_name', shopName).limit(5000),
+    supabase.from('lab_delivery_orders').select('id, order_ref, marked_not_delivered').eq('shop_name', shopName).limit(1000),
+    supabase.from('lab_shop_manager_orders').select('order_ref, lines').eq('shop_name', shopName).limit(1000),
+  ]);
+  const syncedByRef = new Map<string, Map<string, SrcLine>>();
+  // SKUs the Lab itself produces (lab_order_lines) — the only ones allowed to borrow Odoo's list
+  // price below; packaging lines never are (Odoo defaults a new product's price to 1).
+  const producedSkus = new Set<string>();
+  for (const l of olRes.data ?? []) { put(syncedByRef, l.order_ref, l.product_sku, l.product_name_vi, l.qty); if (l.product_sku) producedSkus.add(l.product_sku); }
+  for (const l of plRes.data ?? []) put(syncedByRef, l.order_ref, l.sku, l.product_name_vi, l.qty);
+  const headers = (hdRes.data ?? []) as { id: string; order_ref: string; marked_not_delivered: boolean | null }[];
+  const notDelivered = new Set(headers.filter(h => h.marked_not_delivered).map(h => h.order_ref));
+  const refByHeaderId = new Map(headers.filter(h => !h.marked_not_delivered).map(h => [h.id, h.order_ref]));
+  const checkedByRef = new Map<string, Map<string, SrcLine>>();
+  if (refByHeaderId.size) {
+    const { data: checkLines } = await supabase.from('lab_delivery_check_lines')
+      .select('delivery_order_id, sku, product_name_vi, qty_expected, qty_checked')
+      .in('delivery_order_id', Array.from(refByHeaderId.keys())).limit(10000);
+    for (const l of checkLines ?? []) put(checkedByRef, refByHeaderId.get(l.delivery_order_id), l.sku, l.product_name_vi, l.qty_checked ?? l.qty_expected);
+  }
   const orderedBySku = new Map<string, { name: string; qty: number }>();
-  for (const row of orderRows ?? []) {
+  const addOrdered = (sku: string, name: string, qty: number) => {
+    const cur = orderedBySku.get(sku);
+    orderedBySku.set(sku, { name: cur?.name || name || sku, qty: (cur?.qty ?? 0) + qty });
+  };
+  const knownRefs = new Set<string>([...Array.from(syncedByRef.keys()), ...Array.from(checkedByRef.keys())]);
+  for (const ref of Array.from(knownRefs)) {
+    if (notDelivered.has(ref)) continue;
+    const checked = checkedByRef.get(ref);
+    const synced = syncedByRef.get(ref);
+    const skusOfRef = new Set<string>([...Array.from(checked?.keys() ?? []), ...Array.from(synced?.keys() ?? [])]);
+    for (const sku of Array.from(skusOfRef)) {
+      const src = checked?.get(sku) ?? synced!.get(sku)!;
+      addOrdered(sku, src.name, src.qty);
+    }
+  }
+  for (const row of moRes.data ?? []) {
+    const ref = String((row as any).order_ref ?? '').trim();
+    if (ref && (knownRefs.has(ref) || notDelivered.has(ref))) continue;
     const lines: { sku?: string; name?: string; qty?: number }[] = Array.isArray((row as any).lines) ? (row as any).lines : [];
     for (const l of lines) {
       if (!l.sku || !(Number(l.qty) > 0)) continue;
-      const cur = orderedBySku.get(l.sku);
-      orderedBySku.set(l.sku, { name: l.name || cur?.name || l.sku, qty: (cur?.qty ?? 0) + Number(l.qty) });
+      addOrdered(l.sku, l.name || l.sku, Number(l.qty));
     }
   }
   if (!orderedBySku.size) return { products: [], qrCodeUrl: auth.event.qrCodeUrl };
@@ -2399,6 +2461,26 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus);
   const priceBySku = new Map<string, number>();
   for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+  // A Lab-made product with no website price used to vanish from the caisse without a word.
+  // Borrow Odoo's own sales price for those (tax included, same figure the shops sell at) —
+  // best-effort, cached per SKU for the life of this server instance so a slow Odoo can never
+  // hold up a sale twice. Anything under 1,000 ₫ is treated as "no price" (Odoo's default is 1).
+  const needOdooPrice = skus.filter(s => !priceBySku.has(s) && producedSkus.has(s) && !odooEventPriceCache.has(s));
+  if (needOdooPrice.length && odooConfigured()) {
+    try {
+      const rows = await Promise.race([
+        odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', needOdooPrice]]],
+          { fields: ['default_code', 'list_price'], limit: 500, context: { active_test: false } }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('odoo price timeout')), 5000)),
+      ]);
+      for (const s of needOdooPrice) odooEventPriceCache.set(s, 0);
+      for (const r of rows ?? []) if (r.default_code && Number(r.list_price) >= 1000) odooEventPriceCache.set(r.default_code, Number(r.list_price));
+    } catch { /* best-effort — the product simply stays without a price this time */ }
+  }
+  for (const s of skus) {
+    const p = odooEventPriceCache.get(s);
+    if (!priceBySku.has(s) && p && p > 0) priceBySku.set(s, p);
+  }
 
   // Images + category (Axel, 2026-09-14) — best-effort only, a missing match just renders without
   // a thumbnail/category, same as every other sku->image lookup in this file.
@@ -2432,10 +2514,12 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
 
   const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
     .map(([sku, o]) => ({
-      sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: Math.max(0, o.qty - (soldBySku.get(sku) ?? 0)),
+      // May be zero or negative (Axel, 2026-10-07: "laisser la possibilité de vendre même si le
+      // stock est négatif, ils auraient sûrement mal compté") — shown as-is, never blocks a sale.
+      sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: o.qty - (soldBySku.get(sku) ?? 0),
       imageUrl: imageBySku.get(sku) ?? null, category: categoryBySku.get(sku) ?? null,
     }))
-    .filter(p => p.available > 0 && p.unitPrice > 0)
+    .filter(p => p.unitPrice > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
   return { products, qrCodeUrl: auth.event.qrCodeUrl };
 }
@@ -2465,15 +2549,15 @@ export async function recordEventSaleAction(
     .filter(i => i.sku && i.qty > 0);
   if (!clean.length) return { error: 'Giỏ hàng trống' };
 
-  // Re-check against CURRENT availability server-side — never trust the client's cart qty, the
-  // gating is the whole point of this feature (Axel: never sell past what's physically there).
-  // Availability is checked against the FULL qty (free units still leave the shelf).
+  // The catalogue is re-read server-side for the price and the name — never trusted from the
+  // client. Stock is NOT a gate any more (Axel, 2026-10-07: sell even when the book says zero or
+  // negative, the count is more likely wrong than the shelf): the only refusal left is a SKU that
+  // is not part of this event at all.
   const { products, error } = await getEventCaisseCatalogAction();
   if (error) return { error };
   const bySku = new Map((products ?? []).map(p => [p.sku, p]));
   for (const i of clean) {
-    const p = bySku.get(i.sku);
-    if (!p || i.qty > p.available) return { error: `Không đủ hàng: ${p?.name ?? i.sku}` };
+    if (!bySku.get(i.sku)) return { error: `Sản phẩm không thuộc event: ${i.sku}` };
   }
 
   const today = vnDateStr();
@@ -2541,6 +2625,8 @@ export async function getEventSalesHistoryAction(): Promise<{ sales?: EventSaleH
 // "(miễn phí)" row folds into the same sku's totals contributing qty but 0 revenue.
 export type EventSalesSummary = {
   totalRevenue: number; orderCount: number;
+  // Cash vs bank transfer (2026-10-07) — what the team needs to reconcile the till at closing.
+  cashRevenue: number; transferRevenue: number;
   byProduct: { sku: string; name: string; qty: number; revenue: number }[];
 };
 
@@ -2550,9 +2636,11 @@ export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSal
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { data: orders } = await supabase.from('lab_online_orders')
-    .select('order_batch_id, amount_paid').eq('shop_name', auth.event.name).eq('source', 'event_stock');
+    .select('order_batch_id, amount_paid, payment_method').eq('shop_name', auth.event.name).eq('source', 'event_stock').limit(10000);
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id as string);
   const totalRevenue = (orders ?? []).reduce((s: number, o: any) => s + Number(o.amount_paid ?? 0), 0);
+  const transferRevenue = (orders ?? []).filter((o: any) => o.payment_method === 'transfer').reduce((s: number, o: any) => s + Number(o.amount_paid ?? 0), 0);
+  const cashRevenue = totalRevenue - transferRevenue;
   const { data: lines } = batchIds.length
     ? await supabase.from('lab_online_sale_lines').select('sku, product_name_vi, qty, unit_price').in('order_batch_id', batchIds).eq('is_fee', false)
     : { data: [] as any[] };
@@ -2568,5 +2656,5 @@ export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSal
   const byProduct = Array.from(bySku.entries())
     .map(([sku, v]) => ({ sku, ...v }))
     .sort((a, b) => b.revenue - a.revenue);
-  return { summary: { totalRevenue, orderCount: (orders ?? []).length, byProduct } };
+  return { summary: { totalRevenue, orderCount: (orders ?? []).length, cashRevenue, transferRevenue, byProduct } };
 }

@@ -129,7 +129,7 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
 // own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
 // than "cannot write".
-export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin' }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager' }) {
+export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin', exitEventHref }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager'; exitEventHref?: string }) {
   const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'>(initialTab);
   // `initialTab` is only the useState *seed* — on a fresh mount it's all that's needed. But
@@ -211,6 +211,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   async function doExitEvent() {
     await exitEventAction();
+    // Opened straight from the admin "Event shops" page (2026-10-07): leaving the event goes back
+    // there instead of falling through to a shop screen that has no real shop behind it.
+    if (exitEventHref) { router.push(exitEventHref); return; }
     setTab('deliveries');
     resetShopScopedState();
     await loadEventState();
@@ -1169,6 +1172,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <h1 className="text-white font-serif text-xl font-bold">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
           </div>
+          <div className="flex items-center gap-1.5">
+          {/* Entry into an active event (Axel, 2026-10-07: "vérifie que le bouton s'affiche sur les
+              shops"). Lives in the header for every session — a shop's own login, a manager, the
+              admin preview — instead of the old floating button, which was limited to the admin
+              preview and sat on top of the sticky "save" bars of Kiểm kho. Only rendered while an
+              event is open, so on a normal day no shop ever sees it. */}
+          {eventState?.hasActiveEvent && !eventState?.inEvent && (
+            <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold"
+              style={{ backgroundColor: 'rgba(255,255,255,0.12)', color: GOLD_LIGHT, border: '1px solid rgba(255,255,255,0.28)' }} aria-label="Vào event">
+              <Store size={14} /> Event
+            </button>
+          )}
           {eventState?.inEvent ? (
             <button onClick={doExitEvent}
               className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Thoát event">
@@ -1201,6 +1217,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </button>
             </div>
           )}
+          </div>
         </div>
       </div>
 
@@ -2631,21 +2648,6 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </button>
           </div>
         </div>
-      )}
-
-      {/* Discreet FAB into an active event (Axel, 2026-09-12). Restricted to the admin/manager
-          PREVIEW only for now (readOnly) — Axel, 2026-09-12: "on peut mettre tout ce qu'on a
-          fait pour l'event en preview ? pour pas que le shop se demande ce qu'est ce bouton"
-          (still testing the event feature; real shop staff shouldn't see an unfamiliar button
-          yet). Purely additive/UI-only — nothing else changes for a real shop session, since it
-          simply can never reach this button or the PIN modal it opens. Drop the `readOnly &&`
-          once the event feature is ready to launch to real shops too. */}
-      {readOnly && eventState?.hasActiveEvent && !eventState?.inEvent && (
-        <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
-          className="fixed right-4 bottom-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg z-20"
-          style={{ backgroundColor: '#FFFAEE', border: '1.5px solid #E0D49A' }} aria-label="Vào event">
-          <Store size={20} style={{ color: '#1A4731' }} />
-        </button>
       )}
 
       {showPinModal && (

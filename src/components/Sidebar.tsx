@@ -71,7 +71,9 @@ const ADMIN_NAV = [
   { href: '/shop-manager', icon: Eye, labelVi: 'Xem giao diện quản lý', labelEn: 'Interface managers', adminOnly: true, newTab: true, family: 'shops' },
   // Temporary "event" shops (2026-09-12) — create/close, linked to an Odoo warehouse Axel
   // configures himself; the app only looks it up by code, never creates it.
-  { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', adminOnly: true, family: 'shops' },
+  // 2026-10-07 (Axel): visible to the lab manager too — she can open an event in one click.
+  // Creating/closing an event and its QR stay admin-only inside the page itself.
+  { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', family: 'shops' },
   // Archives (2026-09-19) — exports Excel mensuels + sauvegardes hebdo (bucket lab-archives) et
   // état de la rétention. Lecture seule, admin-only.
   { href: '/admin/archives', icon: FolderArchive, labelVi: 'Lưu trữ', labelEn: 'Archives', adminOnly: true, family: 'piloting' },

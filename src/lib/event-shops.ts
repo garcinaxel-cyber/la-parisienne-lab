@@ -120,6 +120,22 @@ export async function createEventShop(input: {
   return { error: 'Không tạo được mã PIN duy nhất — thử lại' };
 }
 
+// Replaces an ACTIVE event's PIN with a fresh unique one. Staff already inside the event keep
+// working (their cookie carries the event id, not the PIN); only new entries need the new PIN.
+export async function resetEventPin(id: string): Promise<{ pin?: string; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const pin = randomPin();
+    const { data, error } = await supabase.from('lab_event_shops')
+      .update({ pin_hash: hashEventPin(pin) }).eq('id', id).eq('active', true).select('id');
+    if (!error) return (data ?? []).length ? { pin } : { error: 'This event is closed' };
+    if (/duplicate|unique/i.test(error.message)) continue;
+    return { error: error.message };
+  }
+  return { error: 'Could not generate a unique PIN — try again' };
+}
+
 export async function closeEventShop(id: string): Promise<{ ok?: boolean; error?: string }> {
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
