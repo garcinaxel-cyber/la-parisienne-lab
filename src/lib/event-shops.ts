@@ -25,12 +25,18 @@ export type EventShop = {
   // uploadEventQrAction in admin/events/actions.ts), shown at the mini-caisse whenever staff picks
   // "chuyển khoản" (bank transfer) as the payment method. Null until uploaded.
   qrCodeUrl: string | null;
+  // Event days (Axel, 2026-10-07: "pour les rapports ça peut être que du 8 au 11 pour cet
+  // event") — VN calendar dates, both inclusive. Null on an event created before lab_v97 or
+  // whose dates were never set: nothing is restricted then (reports keep the shops' usual
+  // current month + previous month window).
+  startDate: string | null; endDate: string | null;
 };
 
 function fromRow(r: any): EventShop {
   return {
     id: r.id, name: r.name, warehouseCode: r.warehouse_code, odooWarehouseId: r.odoo_warehouse_id,
     active: r.active, createdAt: r.created_at, closedAt: r.closed_at, qrCodeUrl: r.qr_code_url ?? null,
+    startDate: r.start_date ?? null, endDate: r.end_date ?? null,
   };
 }
 
@@ -148,6 +154,19 @@ export async function setEventQrCodeUrl(id: string, url: string | null): Promise
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { error } = await supabase.from('lab_event_shops').update({ qr_code_url: url }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// Event days (lab_v97). Both dates or neither; end never before start.
+export async function setEventDates(id: string, startDate: string | null, endDate: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const isDate = (d: string | null) => d === null || /^\d{4}-\d{2}-\d{2}$/.test(d);
+  if (!isDate(startDate) || !isDate(endDate)) return { error: 'Invalid date' };
+  if ((startDate === null) !== (endDate === null)) return { error: 'Set both dates, or neither' };
+  if (startDate && endDate && endDate < startDate) return { error: 'The end date is before the start date' };
+  const { error } = await supabase.from('lab_event_shops').update({ start_date: startDate, end_date: endDate }).eq('id', id);
   if (error) return { error: error.message };
   return { ok: true };
 }

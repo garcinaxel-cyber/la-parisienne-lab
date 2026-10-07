@@ -3,7 +3,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { odooExecute } from '@/lib/odoo';
-import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, getActiveEventById, resetEventPin, type EventShop } from '@/lib/event-shops';
+import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, getActiveEventById, resetEventPin, setEventDates, type EventShop } from '@/lib/event-shops';
 import { setEventSessionCookie } from '@/lib/event-session';
 
 function service() {
@@ -137,6 +137,17 @@ export async function removeEventQrAction(id: string): Promise<{ ok?: boolean; e
   const auth = await requireAdmin();
   if ('error' in auth) return { error: auth.error };
   const res = await setEventQrCodeUrl(id, null);
+  if (res.error) return { error: res.error };
+  revalidatePath('/admin/events');
+  return { ok: true };
+}
+
+// Event days (Axel, 2026-10-07: "pour les rapports ça peut être que du 8 au 11 pour cet event")
+// — the event's Báo cáo tab then lists those days only. Both dates, or none to lift the limit.
+export async function setEventDatesAction(id: string, startDate: string | null, endDate: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireAdmin();
+  if ('error' in auth) return { error: auth.error };
+  const res = await setEventDates(String(id ?? ''), startDate || null, endDate || null);
   if (res.error) return { error: res.error };
   revalidatePath('/admin/events');
   return { ok: true };

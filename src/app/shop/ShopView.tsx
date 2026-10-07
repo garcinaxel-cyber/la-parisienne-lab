@@ -15,6 +15,7 @@ import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsu
 import { groupStockByCategory, exportShopDailyReportPdf } from '@/lib/shop-report-pdf';
 import { groupByCategory } from '@/lib/group-by-category';
 import { isOemSku } from '@/lib/oem';
+import { ShopLangContext, pickLang, useShopL, type ShopLang } from './shop-lang';
 
 const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
 const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
@@ -72,9 +73,12 @@ function flattenForPicker(results: ProductSearchResult[]): LossPickOption[] {
 }
 
 const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
+const LANG_STORAGE_KEY = 'lab_shop_lang';
+const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // '2026-10' -> 'Tháng 10/2026' (Báo cáo month switch).
-function fmtReportMonth(m: string) {
+function fmtReportMonth(m: string, lang: ShopLang = 'vi') {
+  if (lang === 'en') return `${MONTHS_EN[Number(m.slice(5, 7)) - 1] ?? m.slice(5, 7)} ${m.slice(0, 4)}`;
   return `Tháng ${Number(m.slice(5, 7))}/${m.slice(0, 4)}`;
 }
 
@@ -103,17 +107,18 @@ export function fmtVnd(v: number) {
 export function NamePicker({ value, onChange, names, onManage }: {
   value: string; onChange: (v: string) => void; names: ShopStaffName[] | null; onManage: () => void;
 }) {
+  const L = useShopL();
   return (
     <div className="flex items-center gap-1.5 flex-1 min-w-0">
       <select value={value} onChange={e => onChange(e.target.value)}
         className="flex-1 min-w-0 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }}>
-        <option value="">Chọn tên…</option>
+        <option value="">{L('Chọn tên…', 'Choose a name…')}</option>
         {(names ?? []).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
         {value.trim() && !(names ?? []).some(s => s.name === value) && <option value={value}>{value}</option>}
       </select>
       <button type="button" onClick={onManage}
         className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
-        aria-label="Quản lý danh sách tên" title="Quản lý danh sách tên">
+        aria-label={L('Quản lý danh sách tên', 'Manage the name list')} title={L('Quản lý danh sách tên', 'Manage the name list')}>
         <Settings size={14} style={{ color: '#6B7280' }} />
       </button>
     </div>
@@ -154,6 +159,25 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [pinInput, setPinInput] = useState('');
   const [pinSubmitting, setPinSubmitting] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+
+  // English version (Axel, 2026-10-07: "peux tu mettre une version anglais aussi") — a VI/EN
+  // switch in the header, offered inside an event and on the admin / manager view of a shop.
+  // A shop's own everyday login never sees it and always stays in Vietnamese, so nothing changes
+  // for the teams. Every label goes through L(vi, en); product names, categories and loss
+  // reasons are data (Odoo / fiches) and stay as they are stored. The choice is remembered per
+  // device; the server never knows about it (its own error messages stay in Vietnamese).
+  const [langPref, setLangPref] = useState<ShopLang>('vi');
+  useEffect(() => {
+    try { if (window.localStorage.getItem(LANG_STORAGE_KEY) === 'en') setLangPref('en'); } catch { /* private mode */ }
+  }, []);
+  const canSwitchLang = readOnly || !!eventState?.inEvent;
+  const lang: ShopLang = canSwitchLang ? langPref : 'vi';
+  const L = pickLang(lang);
+  function chooseLang(next: ShopLang) {
+    setLangPref(next);
+    try { window.localStorage.setItem(LANG_STORAGE_KEY, next); } catch { /* private mode */ }
+  }
+  const isErrMsg = (m: string) => m.startsWith('Lỗi') || m.startsWith('Error');
 
   const loadEventState = useCallback(async () => {
     const res = await getEventAccessStateAction();
@@ -346,6 +370,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [reportMonths, setReportMonths] = useState<string[]>([]);
   const [reportMonth, setReportMonth] = useState<string | null>(null);
   const [reportToday, setReportToday] = useState<string | null>(null);
+  // Set when the server answered with an event's own days instead of a calendar month.
+  const [reportEvent, setReportEvent] = useState<{ start: string; end: string } | null>(null);
   const [selectedReportDate, setSelectedReportDate] = useState<string | null>(null);
   const [dailyReport, setDailyReport] = useState<ShopDailyReport | null>(null);
   const [reportDayLoading, setReportDayLoading] = useState(false);
@@ -714,9 +740,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       else { okCount++; if (!res.odooSynced) syncErrCount++; }
     }
     setLossSubmitting(false);
-    if (errCount > 0) setLossMsg(`Đã lưu ${okCount}/${lossItems.length} sản phẩm, ${errCount} lỗi`);
-    else if (syncErrCount > 0) setLossMsg(`Đã lưu ${okCount} sản phẩm (${syncErrCount} chưa đồng bộ Odoo)`);
-    else setLossMsg(`Đã lưu và đồng bộ Odoo (${okCount} sản phẩm)`);
+    if (errCount > 0) setLossMsg(L(`Đã lưu ${okCount}/${lossItems.length} sản phẩm, ${errCount} lỗi`, `Saved ${okCount}/${lossItems.length} products, ${errCount} errors`));
+    else if (syncErrCount > 0) setLossMsg(L(`Đã lưu ${okCount} sản phẩm (${syncErrCount} chưa đồng bộ Odoo)`, `Saved ${okCount} products (${syncErrCount} not synced to Odoo yet)`));
+    else setLossMsg(L(`Đã lưu và đồng bộ Odoo (${okCount} sản phẩm)`, `Saved and synced to Odoo (${okCount} products)`));
     setLossItems([]);
     setLosses(null);
     loadLosses();
@@ -857,7 +883,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const actions = await import('./actions');
     const res = readOnly ? await actions.getStockCountListForStaffAction(shopName, viewSessionSeq) : await actions.getMyStockCountListAction(viewSessionSeq);
     setStockLoading(false);
-    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
+    if (res.error) { setStockMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`)); return; }
     setStockLines(res.lines ?? []);
     setStockDate(res.date ?? null);
     setStockSessionSeq(res.sessionSeq ?? 1);
@@ -880,7 +906,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   async function addStockItem(p: ShopStockSearchProduct) {
     const trimmedName = stockName.trim();
-    if (!trimmedName) { setStockMsg('Chọn tên trước khi thêm sản phẩm'); return; }
+    if (!trimmedName) { setStockMsg(L('Chọn tên trước khi thêm sản phẩm', 'Choose your name before adding a product')); return; }
     const actions = await import('./actions');
     const res = await actions.addStockCountItemAction({
       sku: p.sku, name: p.name, addedByName: trimmedName, ...(readOnly ? { shopName } : {}),
@@ -892,7 +918,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         return [...cur, res.item!].sort((a, b) => a.name.localeCompare(b.name));
       });
       setStockSearchQuery(''); setStockSearchResults([]); setStockMsg(null);
-    } else if (res.error) setStockMsg(`Lỗi: ${res.error}`);
+    } else if (res.error) setStockMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`));
   }
 
   // Sends only the rows the shop actually typed a quantity for — a blank input is simply not
@@ -908,12 +934,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const bad = Object.entries(stockDraft)
       .filter(([sku, v]) => validSkus.has(sku) && v.trim() !== '' && Number.isNaN(evalQty(v) as number))
       .map(([sku]) => sku);
-    if (bad.length) { setStockMsg(`Số lượng không hợp lệ: ${bad.join(', ')}`); return; }
+    if (bad.length) { setStockMsg(L(`Số lượng không hợp lệ: ${bad.join(', ')}`, `Invalid quantity: ${bad.join(', ')}`)); return; }
     const entries = Object.entries(stockDraft)
       .filter(([sku, v]) => validSkus.has(sku) && v.trim() !== '')
       .map(([sku, v]) => ({ sku, qty: evalQty(v) as number }))
       .filter(e => Number.isFinite(e.qty) && e.qty >= 0);
-    if (!entries.length) { setStockMsg('Chưa nhập số lượng nào'); return; }
+    if (!entries.length) { setStockMsg(L('Chưa nhập số lượng nào', 'No quantity entered yet')); return; }
     try { localStorage.setItem(STOCK_NAME_STORAGE_KEY, trimmedName); } catch {}
     setStockSaving(true); setStockMsg(null);
     const actions = await import('./actions');
@@ -921,8 +947,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       entries, updatedByName: trimmedName, sessionSeq: stockSessionSeq, ...(readOnly ? { shopName } : {}),
     });
     setStockSaving(false);
-    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
-    setStockMsg(`Đã lưu ${res.saved} sản phẩm`);
+    if (res.error) { setStockMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`)); return; }
+    setStockMsg(L(`Đã lưu ${res.saved} sản phẩm`, `Saved ${res.saved} products`));
     // show the saved result instead of the typed expression ("12+3" -> "15")
     setStockDraft(p => { const n = { ...p }; for (const e of entries) n[e.sku] = String(e.qty); return n; });
     setStockDirty(false);
@@ -940,15 +966,17 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
   async function finishStockCount() {
     const trimmedName = stockName.trim();
-    if (!trimmedName) { setStockMsg('Nhập tên người kiểm kho trước'); return; }
+    if (!trimmedName) { setStockMsg(L('Nhập tên người kiểm kho trước', 'Choose the name of the person counting first')); return; }
     if (!finishArmed) { setFinishArmed(true); return; }
     setFinishArmed(false); setFinishing(true); setStockMsg(null);
     const actions = await import('./actions');
     const res = await actions.finishStockCountAction({ sessionSeq: stockSessionSeq, finishedByName: trimmedName, ...(readOnly ? { shopName } : {}) });
     setFinishing(false);
-    if (res.error) { setStockMsg(`Lỗi: ${res.error}`); return; }
+    if (res.error) { setStockMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`)); return; }
     const money = new Intl.NumberFormat('vi-VN').format(Math.round(res.valuation ?? 0)) + ' ₫';
-    setStockMsg(res.alreadyDone ? `Đợt ${stockSessionSeq} đã được hoàn tất trước đó · cập nhật ${res.skuCount} SP · ${money}` : `✅ Đã hoàn tất đợt ${stockSessionSeq} — ${res.skuCount} SP · ${money}`);
+    setStockMsg(res.alreadyDone
+      ? L(`Đợt ${stockSessionSeq} đã được hoàn tất trước đó · cập nhật ${res.skuCount} SP · ${money}`, `Count ${stockSessionSeq} was already completed · ${res.skuCount} products updated · ${money}`)
+      : L(`✅ Đã hoàn tất đợt ${stockSessionSeq} — ${res.skuCount} SP · ${money}`, `✅ Count ${stockSessionSeq} completed — ${res.skuCount} products · ${money}`));
     const now = new Date().toISOString();
     setStockSessions(prev => prev.map(x => x.seq === stockSessionSeq ? { ...x, finishedAt: x.finishedAt ?? now, finishedByName: x.finishedByName ?? trimmedName } : x));
   }
@@ -961,10 +989,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const actions = await import('./actions');
     const res = readOnly ? await actions.getDailyReportMonthForStaffAction(shopName, month) : await actions.getMyDailyReportMonthAction(month);
     setReportLoading(false);
-    if (res.error || !res.data) { setReportMsg(`Lỗi: ${res.error ?? 'không tải được'}`); setReports([]); return; }
+    if (res.error || !res.data) { setReportMsg(L(`Lỗi: ${res.error ?? 'không tải được'}`, `Error: ${res.error ?? 'could not load'}`)); setReports([]); return; }
     setReportMonths(res.data.months);
     setReportMonth(res.data.month);
     setReportToday(res.data.today);
+    setReportEvent(res.data.eventStart && res.data.eventEnd ? { start: res.data.eventStart, end: res.data.eventEnd } : null);
     setReports(res.data.days);
   }
 
@@ -976,7 +1005,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const actions = await import('./actions');
     const res = readOnly ? await actions.getDailyReportDayForStaffAction(shopName, date) : await actions.getMyDailyReportDayAction(date);
     setReportDayLoading(false);
-    if (res.error || !res.report) { setReportMsg(`Lỗi: ${res.error ?? 'không tải được'}`); return; }
+    if (res.error || !res.report) { setReportMsg(L(`Lỗi: ${res.error ?? 'không tải được'}`, `Error: ${res.error ?? 'could not load'}`)); return; }
     setDailyReport(res.report);
   }
 
@@ -988,9 +1017,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     setReportExporting(true);
     setReportMsg(null);
     try {
-      await exportShopDailyReportPdf(shopName, dailyReport);
+      await exportShopDailyReportPdf(eventState?.inEvent && eventState.eventName ? eventState.eventName : shopName, dailyReport);
     } catch {
-      setReportMsg('Lỗi khi xuất PDF, vui lòng thử lại.');
+      setReportMsg(L('Lỗi khi xuất PDF, vui lòng thử lại.', 'The PDF export failed, please try again.'));
     } finally {
       setReportExporting(false);
     }
@@ -1001,7 +1030,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // modal opens, so nothing typed is ever lost even if the PIN step gets cancelled.
   async function saveOrderDraft(): Promise<boolean> {
     const name = orderCreatedByName.trim();
-    if (!name) { setOrderMsg('Chọn tên trước khi lưu nháp'); return false; }
+    if (!name) { setOrderMsg(L('Chọn tên trước khi lưu nháp', 'Choose your name before saving the draft')); return false; }
     if (!orderDeliveryDate || !orderCart.some(l => l.qty > 0)) return false;
     setOrderDraftSaving(true);
     const actions = await import('./actions');
@@ -1013,7 +1042,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
     });
     setOrderDraftSaving(false);
-    if (res.error) { setOrderMsg(`Lỗi: ${res.error}`); return false; }
+    if (res.error) { setOrderMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`)); return false; }
     setOrderDraftLoaded(res.draft ?? null);
     orderCartDirtyRef.current = false;
     return true;
@@ -1063,7 +1092,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // avec son code pin"). A wrong PIN keeps the modal open with an inline error instead of
   // closing it, so the manager can just retype it.
   async function confirmOrder() {
-    if (!orderConfirmPin.trim()) { setOrderConfirmMsg('Nhập mã PIN quản lý'); return; }
+    if (!orderConfirmPin.trim()) { setOrderConfirmMsg(L('Nhập mã PIN quản lý', 'Enter the manager PIN')); return; }
     setOrderSubmitting(true);
     setOrderConfirmMsg(null);
     const actions = await import('./actions');
@@ -1075,7 +1104,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
     });
     setOrderSubmitting(false);
-    if (res.error || !res.orderRef || !res.deliveryDate) { setOrderConfirmMsg(res.error ?? 'Lỗi không rõ'); return; }
+    if (res.error || !res.orderRef || !res.deliveryDate) { setOrderConfirmMsg(res.error ?? L('Lỗi không rõ', 'Unknown error')); return; }
     setOrderPendingConfirm(false);
     setOrderConfirmPin('');
     setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: res.managerName });
@@ -1163,16 +1192,33 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const orderCartTotal = orderCart.reduce((sum, l) => sum + l.qty * (l.priceB2c ?? 0), 0);
 
   return (
+    <ShopLangContext.Provider value={lang}>
     <div className="min-h-screen" style={{ backgroundColor: CREAM }}>
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: NAVY }}>
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: GOLD_LIGHT }}>
-              {eventState?.inEvent ? '🎪 Event shop' : `La Parisienne Lab${readOnly ? (viewerRole === 'manager' ? '' : ' · Chế độ Admin') : ''}`}
+              {eventState?.inEvent ? '🎪 Event shop' : `La Parisienne Lab${readOnly ? (viewerRole === 'manager' ? '' : L(' · Chế độ Admin', ' · Admin mode')) : ''}`}
             </div>
             <h1 className="text-white font-serif text-xl font-bold">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
+            {eventState?.inEvent && eventState.eventStart && eventState.eventEnd && (
+              <div className="text-[11px] font-semibold mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                {fmtDate(eventState.eventStart)} → {fmtDate(eventState.eventEnd)}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
+          {canSwitchLang && (
+            <div className="inline-flex rounded-lg overflow-hidden text-[11px] font-bold" role="group" aria-label="Language / Ngôn ngữ"
+              style={{ border: '1px solid rgba(255,255,255,0.28)' }}>
+              {(['vi', 'en'] as const).map(code => (
+                <button key={code} type="button" onClick={() => chooseLang(code)} aria-pressed={lang === code} className="px-2 py-1.5"
+                  style={{ backgroundColor: lang === code ? GOLD_LIGHT : 'transparent', color: lang === code ? NAVY : GOLD_LIGHT }}>
+                  {code.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Entry into an active event (Axel, 2026-10-07: "vérifie que le bouton s'affiche sur les
               shops"). Lives in the header for every session — a shop's own login, a manager, the
               admin preview — instead of the old floating button, which was limited to the admin
@@ -1181,24 +1227,24 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           {eventState?.hasActiveEvent && !eventState?.inEvent && (
             <button onClick={() => { setShowPinModal(true); setPinError(null); setPinInput(''); }}
               className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold"
-              style={{ backgroundColor: 'rgba(255,255,255,0.12)', color: GOLD_LIGHT, border: '1px solid rgba(255,255,255,0.28)' }} aria-label="Vào event">
+              style={{ backgroundColor: 'rgba(255,255,255,0.12)', color: GOLD_LIGHT, border: '1px solid rgba(255,255,255,0.28)' }} aria-label={L('Vào event', 'Enter the event')}>
               <Store size={14} /> Event
             </button>
           )}
           {eventState?.inEvent ? (
             <button onClick={doExitEvent}
-              className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Thoát event">
-              <LogOut size={16} /> Thoát
+              className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label={L('Thoát event', 'Leave the event')}>
+              <LogOut size={16} /> {L('Thoát', 'Exit')}
             </button>
           ) : readOnly ? (
             viewerRole === 'manager' ? (
               <button onClick={() => router.push('/shop-manager')}
-                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại">
-                <ArrowLeft size={16} /> Quay lại
+                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label={L('Quay lại', 'Back')}>
+                <ArrowLeft size={16} /> {L('Quay lại', 'Back')}
               </button>
             ) : (
               <button onClick={() => router.push('/admin/shop-access')}
-                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label="Quay lại admin">
+                className="inline-flex items-center gap-1.5 p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 text-xs font-semibold" aria-label={L('Quay lại admin', 'Back to admin')}>
                 <ArrowLeft size={16} /> Admin
               </button>
             )
@@ -1206,13 +1252,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="flex items-center gap-1">
               {(pushState === 'on' || pushState === 'off') && (
                 <button onClick={handleToggleShopPush}
-                  title={pushState === 'on' ? 'Tắt thông báo đẩy' : 'Bật thông báo đẩy (nhắc giờ đặt hàng, kiểm kho, giao hàng...)'}
+                  title={pushState === 'on' ? L('Tắt thông báo đẩy', 'Turn off push notifications') : L('Bật thông báo đẩy (nhắc giờ đặt hàng, kiểm kho, giao hàng...)', 'Turn on push notifications (reminders for ordering, stock count, deliveries...)')}
                   className="p-2 rounded-lg hover:bg-white/10"
                   style={{ color: pushState === 'on' ? GREEN : 'rgba(255,255,255,0.6)' }}>
                   <Bell size={18} />
                 </button>
               )}
-              <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label="Đăng xuất">
+              <button onClick={logout} className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10" aria-label={L('Đăng xuất', 'Log out')}>
                 <LogOut size={18} />
               </button>
             </div>
@@ -1226,7 +1272,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           <div className="rounded-xl px-3.5 py-2.5 flex items-start gap-2" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}` }}>
             <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: '#8A6D14' }} />
             <div className="text-xs" style={{ color: '#8A6D14' }}>
-              <span className="font-bold">Chế độ Admin — thao tác thay cho {shopName}.</span> Mọi xác nhận/báo cáo hao hụt ở đây được ghi thật (kể cả gửi lên Odoo), giống hệt như boutique tự làm.
+              <span className="font-bold">{L(`Chế độ Admin — thao tác thay cho ${shopName}.`, `Admin mode — acting on behalf of ${shopName}.`)}</span> {L('Mọi xác nhận/báo cáo hao hụt ở đây được ghi thật (kể cả gửi lên Odoo), giống hệt như boutique tự làm.', 'Every confirmation and loss report made here is real (including what goes to Odoo), exactly as if the shop had done it.')}
             </div>
           </div>
         )}
@@ -1235,7 +1281,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             style={{ backgroundColor: '#FBEAE8', border: '1px solid #EFC3BE' }}>
             <AlertTriangle size={15} className="mt-0.5 shrink-0" style={{ color: RED }} />
             <div className="text-xs" style={{ color: RED }}>
-              <span className="font-bold">Hôm nay là ngày kiểm kê chính thức.</span> Bắt buộc, sẽ gửi lên Odoo — nhấn để bắt đầu.
+              <span className="font-bold">{L('Hôm nay là ngày kiểm kê chính thức.', 'Today is official inventory day.')}</span> {L('Bắt buộc, sẽ gửi lên Odoo — nhấn để bắt đầu.', 'Mandatory, it is sent to Odoo — tap to start.')}
             </div>
           </button>
         )}
@@ -1243,45 +1289,45 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           <button onClick={() => setTab('deliveries')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'deliveries' ? NAVY : 'white', color: tab === 'deliveries' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <Truck size={16} /> Giao hàng
+            <Truck size={16} /> {L('Giao hàng', 'Deliveries')}
           </button>
           {eventState?.inEvent ? (
             <button onClick={() => setTab('caisse')}
               className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
               style={{ backgroundColor: tab === 'caisse' ? NAVY : 'white', color: tab === 'caisse' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-              <ShoppingBag size={16} /> Thu ngân
+              <ShoppingBag size={16} /> {L('Thu ngân', 'Cashier')}
             </button>
           ) : (
             <button onClick={() => setTab('cakes')}
               className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
               style={{ backgroundColor: tab === 'cakes' ? NAVY : 'white', color: tab === 'cakes' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-              <Cake size={16} /> Bánh sinh nhật
+              <Cake size={16} /> {L('Bánh sinh nhật', 'Birthday cakes')}
             </button>
           )}
           <button onClick={() => setTab('losses')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'losses' ? NAVY : 'white', color: tab === 'losses' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <Trash2 size={16} /> Hao hụt
+            <Trash2 size={16} /> {L('Hao hụt', 'Losses')}
           </button>
           <button onClick={() => setTab('stock')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'stock' ? NAVY : 'white', color: tab === 'stock' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <ClipboardList size={16} /> Kiểm kho
+            <ClipboardList size={16} /> {L('Kiểm kho', 'Stock count')}
           </button>
           <button onClick={() => setTab('report')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'report' ? NAVY : 'white', color: tab === 'report' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <FileText size={16} /> Báo cáo
+            <FileText size={16} /> {L('Báo cáo', 'Reports')}
           </button>
           <button onClick={() => setTab('order')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
             style={{ backgroundColor: tab === 'order' ? NAVY : 'white', color: tab === 'order' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <Package2 size={16} /> Đặt hàng
+            <Package2 size={16} /> {L('Đặt hàng', 'Order')}
           </button>
           <button onClick={() => setTab('transfer')}
             className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
             style={{ backgroundColor: tab === 'transfer' ? NAVY : 'white', color: tab === 'transfer' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-            <ArrowRightLeft size={16} /> Chuyển kho
+            <ArrowRightLeft size={16} /> {L('Chuyển kho', 'Transfers')}
             {pendingIncomingTransfers > 0 && (
               <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold text-white flex items-center justify-center" style={{ backgroundColor: RED }}>
                 {pendingIncomingTransfers}
@@ -1292,7 +1338,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <button onClick={() => setTab('official-inventory')}
               className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
               style={{ backgroundColor: tab === 'official-inventory' ? NAVY : 'white', color: tab === 'official-inventory' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-              <ClipboardCheck size={16} /> Kiểm kê chính thức
+              <ClipboardCheck size={16} /> {L('Kiểm kê chính thức', 'Official inventory')}
               {officialInv.isLastDay && !officialInv.submitted && (
                 <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full" style={{ backgroundColor: RED }} />
               )}
@@ -1301,7 +1347,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         </div>
 
         {loading ? (
-          <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+          <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
         ) : error ? (
           <div className="text-center py-10 text-sm font-semibold" style={{ color: RED }}>{error}</div>
         ) : tab === 'deliveries' ? (
@@ -1324,19 +1370,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-bold" style={{ color: todaysPendingLines.length ? '#8A6D14' : GREEN }}>
-                    {todaysPendingLines.length ? 'Chưa xác nhận hết' : 'Đã xác nhận hết'}
+                    {todaysPendingLines.length ? L('Chưa xác nhận hết', 'Not all confirmed') : L('Đã xác nhận hết', 'All confirmed')}
                   </div>
                   <div className="text-[11px]" style={{ color: todaysPendingLines.length ? '#8A6D14' : GREEN, opacity: 0.9 }}>
                     {todaysPendingLines.length
-                      ? `Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng hôm nay`
-                      : 'Tất cả sản phẩm giao hôm nay đã được xác nhận nhận hàng'}
+                      ? L(`Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng hôm nay`, `${todaysPendingLines.length} products delivered today are still to be confirmed`)
+                      : L('Tất cả sản phẩm giao hôm nay đã được xác nhận nhận hàng', 'Every product delivered today has been confirmed as received')}
                   </div>
                 </div>
                 {todaysPendingLines.length > 0 && (
                   <button onClick={() => setConfirmAllOpen(true)} disabled={!name.trim()}
                     className="shrink-0 text-xs font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                     style={{ backgroundColor: NAVY }}>
-                    Xác nhận tất cả
+                    {L('Xác nhận tất cả', 'Confirm all')}
                   </button>
                 )}
               </div>
@@ -1346,23 +1392,23 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               <button onClick={() => setDay('today')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
                 style={{ backgroundColor: day === 'today' ? GOLD_PALE : 'white', color: INK, border: `1px solid ${BORDER}` }}>
-                Hôm nay{todayDate ? ` · ${fmtDate(todayDate)}` : ''}
+                {L('Hôm nay', 'Today')}{todayDate ? ` · ${fmtDate(todayDate)}` : ''}
               </button>
               <button onClick={() => setDay('tomorrow')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
                 style={{ backgroundColor: day === 'tomorrow' ? GOLD_PALE : 'white', color: INK, border: `1px solid ${BORDER}` }}>
-                Ngày mai{tomorrowDate ? ` · ${fmtDate(tomorrowDate)}` : ''}
+                {L('Ngày mai', 'Tomorrow')}{tomorrowDate ? ` · ${fmtDate(tomorrowDate)}` : ''}
               </button>
             </div>
             {!filteredOrders?.length ? (
               <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-                {day === 'today' ? 'Không có đơn giao hôm nay' : 'Không có đơn giao ngày mai'}
+                {day === 'today' ? L('Không có đơn giao hôm nay', 'No delivery today') : L('Không có đơn giao ngày mai', 'No delivery tomorrow')}
               </div>
             ) : (
               <>
               {day === 'today' && (
                 <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: `1px solid ${BORDER}` }}>
-                  <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Xác nhận bởi</span>
+                  <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>{L('Xác nhận bởi', 'Confirmed by')}</span>
                   <NamePicker value={name} onChange={setName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
               )}
@@ -1390,7 +1436,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             {l.image_url && (
                               <button type="button" onClick={() => setZoomImage(l.image_url)}
                                 className="shrink-0 w-11 h-11 rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}
-                                aria-label="Xem ảnh sản phẩm">
+                                aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
                                 <img src={thumb(l.image_url, 112)} alt="" className="w-full h-full object-cover" />
                               </button>
                             )}
@@ -1406,24 +1452,24 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               none of the 3 numbers get mistaken for another. */}
                           <div className="flex items-center gap-2.5 shrink-0">
                             <div className="text-center">
-                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Đặt</div>
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>{L('Đặt', 'Ordered')}</div>
                               <div className="text-sm font-bold" style={{ color: '#9CA3AF' }}>×{l.qty_expected}</div>
                             </div>
                             <div className="text-center">
-                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Bếp</div>
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>{L('Bếp', 'Sent')}</div>
                               <div className="text-sm font-bold" style={{ color: l.qty_checked != null ? INK : BORDER }}>
                                 {l.qty_checked != null ? `×${l.qty_checked}` : '—'}
                               </div>
                             </div>
                             <div className="text-center">
-                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>Nhận</div>
+                              <div className="text-[9px] uppercase font-bold tracking-wide" style={{ color: '#9CA3AF' }}>{L('Nhận', 'Received')}</div>
                               {!canConfirm ? (
                                 l.receipt ? (
                                   <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: l.receipt.status === 'ok' ? GREEN : RED }}>
                                     {l.receipt.status === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} ×{l.receipt.qty_received ?? '?'}
                                   </span>
                                 ) : (
-                                  <span className="text-xs" style={{ color: '#9CA3AF' }}>Chưa xác nhận</span>
+                                  <span className="text-xs" style={{ color: '#9CA3AF' }}>{L('Chưa xác nhận', 'Not confirmed')}</span>
                                 )
                               ) : isEditing ? (
                                 <div className="flex items-center gap-1.5">
@@ -1445,7 +1491,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                                   </span>
                                   <button onClick={() => startEdit(l)}
                                     className="w-6 h-6 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
-                                    title="Sửa" aria-label="Sửa">
+                                    title={L('Sửa', 'Edit')} aria-label={L('Sửa', 'Edit')}>
                                     <Pencil size={12} />
                                   </button>
                                 </div>
@@ -1456,7 +1502,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         {isEditing && canConfirm && isDiff && (
                           <div className="mt-2">
                             <input type="text" value={d.note} onChange={e => updDraft(l, { note: e.target.value })}
-                              placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                              placeholder={L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                           </div>
                         )}
                         {l.receipt && (
@@ -1477,19 +1523,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           <div className="space-y-3">
             {(
               <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo hao hụt</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Báo cáo hao hụt', 'Report a loss')}</div>
                 <div>
-                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Tên của bạn', 'Your name')}</div>
                   <NamePicker value={lossName} onChange={setLossName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
                 <div className="relative">
-                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Sản phẩm</div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Sản phẩm', 'Product')}</div>
                   {lossProduct ? (
                     <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: GOLD_PALE }}>
                       <span className="flex items-center gap-2 min-w-0">
                         {lossProduct.main_image_url && (
                           <button type="button" onClick={() => setZoomImage(lossProduct.main_image_url!)}
-                            className="shrink-0 w-8 h-8 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                            className="shrink-0 w-8 h-8 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
                             <img src={thumb(lossProduct.main_image_url, 80)} alt="" className="w-full h-full object-cover" />
                           </button>
                         )}
@@ -1497,20 +1543,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           {lossProduct.name_vi}{lossProduct.variantLabel ? ` — ${lossProduct.variantLabel}` : ''}{lossProduct.sku ? ` (${lossProduct.sku})` : ''}
                         </span>
                       </span>
-                      <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: RED }}>Đổi</button>
+                      <button onClick={() => { setLossProduct(null); setLossQuery(''); }} className="text-xs font-bold shrink-0" style={{ color: RED }}>{L('Đổi', 'Change')}</button>
                     </div>
                   ) : (
                     <div className="relative">
                       <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                       <input type="text" value={lossQuery} onChange={e => setLossQuery(e.target.value)}
-                        placeholder="Tìm sản phẩm…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                        placeholder={L('Tìm sản phẩm…', 'Search a product…')} className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                       {lossQuery.trim().length >= 2 && (
                         <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
                           style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                           {lossSearching ? (
-                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Đang tìm…', 'Searching…')}</div>
                           ) : !lossResults.length ? (
-                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                            <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không tìm thấy', 'Nothing found')}</div>
                           ) : flattenForPicker(lossResults).map(p => (
                             <button key={p.id} onClick={() => { setLossProduct(p); setLossResults([]); }}
                               className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
@@ -1528,32 +1574,32 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 </div>
                 <div className="flex gap-2.5">
                   <div className="flex-1">
-                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Số lượng</div>
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Số lượng', 'Quantity')}</div>
                     <input type="number" min={0} step="1" value={lossQty} onChange={e => setLossQty(e.target.value)}
                       className="w-full rounded-lg px-2.5 py-1.5 text-sm font-bold" style={{ border: `1px solid ${BORDER}` }} />
                   </div>
                   <div className="flex-[2]">
-                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Lý do</div>
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Lý do', 'Reason')}</div>
                     <select value={lossReasonId ?? ''} onChange={e => setLossReasonId(e.target.value ? Number(e.target.value) : null)}
                       className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }}>
-                      <option value="">Chọn lý do…</option>
+                      <option value="">{L('Chọn lý do…', 'Choose a reason…')}</option>
                       {(lossReasons ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
                 </div>
                 <input type="text" value={lossNote} onChange={e => setLossNote(e.target.value)}
-                  placeholder="Ghi chú (tuỳ chọn)" className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                  placeholder={L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="w-full rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 <button onClick={addLossItem}
                   disabled={!lossProduct || !lossReasonId || !(Number(lossQty) > 0)}
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
                   style={{ backgroundColor: GOLD_PALE, color: INK, border: `1px solid ${BORDER}` }}>
-                  + Thêm vào danh sách
+                  {L('+ Thêm vào danh sách', '+ Add to the list')}
                 </button>
 
                 {lossItems.length > 0 && (
                   <div className="space-y-1.5 pt-1" style={{ borderTop: `1px solid ${GOLD_PALE}` }}>
                     <div className="text-xs font-bold uppercase tracking-wide pt-1.5" style={{ color: '#6B7280' }}>
-                      Danh sách ({lossItems.length})
+                      {L('Danh sách', 'List')} ({lossItems.length})
                     </div>
                     {lossItems.map(item => (
                       <div key={item.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD_PALE}` }}>
@@ -1566,7 +1612,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           </div>
                           <div className="text-[11px] truncate" style={{ color: '#9CA3AF' }}>{item.reasonName}{item.note ? ` · ${item.note}` : ''}</div>
                         </div>
-                        <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: RED }} aria-label="Xoá">✕</button>
+                        <button onClick={() => removeLossItem(item.id)} className="text-xs font-bold shrink-0 px-1" style={{ color: RED }} aria-label={L('Xoá', 'Remove')}>✕</button>
                       </div>
                     ))}
                   </div>
@@ -1586,20 +1632,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                   style={{ backgroundColor: RED }}>
                   {lossSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  {lossItems.length > 1 ? `Báo cáo hao hụt (${lossItems.length} sản phẩm)` : 'Báo cáo hao hụt'}
+                  {lossItems.length > 1 ? L(`Báo cáo hao hụt (${lossItems.length} sản phẩm)`, `Report losses (${lossItems.length} products)`) : L('Báo cáo hao hụt', 'Report the loss')}
                 </button>
                 {lossName.trim() && lossProduct && lossReasonId && Number(lossQty) > 0 && lossItems.length === 0 && (
                   <div className="text-[11px]" style={{ color: '#9CA3AF' }}>
-                    Sẵn sàng báo cáo — hoặc nhấn "+ Thêm vào danh sách" để thêm sản phẩm khác trước.
+                    {L('Sẵn sàng báo cáo — hoặc nhấn "+ Thêm vào danh sách" để thêm sản phẩm khác trước.', 'Ready to report — or tap "+ Add to the list" to add another product first.')}
                   </div>
                 )}
-                {lossMsg && <div className="text-xs font-semibold" style={{ color: lossMsg.startsWith('Lỗi') || lossMsg.includes('lỗi') ? RED : GREEN }}>{lossMsg}</div>}
+                {lossMsg && <div className="text-xs font-semibold" style={{ color: isErrMsg(lossMsg) || lossMsg.includes('lỗi') || lossMsg.includes('error') ? RED : GREEN }}>{lossMsg}</div>}
               </div>
             )}
 {dailyRecap && dailyRecap.length > 0 && (
             <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
               <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng hao hụt 7 ngày qua</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Tổng hao hụt 7 ngày qua', 'Total losses over the last 7 days')}</div>
               </div>
               <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {dailyRecap.map(r => (
@@ -1608,7 +1654,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <span className="text-sm font-semibold text-navy">{fmtDate(r.date)}</span>
                       <span className="text-sm">
                         <span className="font-bold">{r.totalQty}</span>
-                        <span className="ml-1.5" style={{ color: '#9CA3AF' }}>· {r.reportCount} báo cáo</span>
+                        <span className="ml-1.5" style={{ color: '#9CA3AF' }}>· {r.reportCount} {L('báo cáo', 'reports')}</span>
                       </span>
                     </div>
                     {r.products.length > 0 && (
@@ -1636,10 +1682,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           )}
             {lossesLoading && losses === null ? (
-              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
             ) : !losses?.length ? (
               <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-                Chưa có báo cáo hao hụt nào
+                {L('Chưa có báo cáo hao hụt nào', 'No loss report yet')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -1650,7 +1696,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       {l.odooScrapId ? (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: GREEN }}><CheckCircle2 size={12} /> Odoo</span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#8A6D14' }}><AlertTriangle size={12} /> Chưa đồng bộ</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#8A6D14' }}><AlertTriangle size={12} /> {L('Chưa đồng bộ', 'Not synced')}</span>
                       )}
                     </div>
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{l.reasonTagName}{l.note ? ` · ${l.note}` : ''}</div>
@@ -1660,16 +1706,16 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         <textarea
                           value={lossNoteDraft}
                           onChange={e => setLossNoteDraft(e.target.value)}
-                          placeholder="Ghi chú thêm…"
+                          placeholder={L('Ghi chú thêm…', 'Add a note…')}
                           rows={2}
                           className="w-full text-xs rounded-lg px-2 py-1.5 bg-white resize-none"
                           style={{ border: `1px solid ${BORDER}`, color: INK }}
                           autoFocus
                         />
                         <div className="flex items-center justify-end gap-2">
-                          <button onClick={cancelEditLossNote} disabled={lossNoteSaving} className="text-[11px] font-semibold px-2.5 py-1" style={{ color: '#6B7280' }}>Hủy</button>
+                          <button onClick={cancelEditLossNote} disabled={lossNoteSaving} className="text-[11px] font-semibold px-2.5 py-1" style={{ color: '#6B7280' }}>{L('Hủy', 'Cancel')}</button>
                           <button onClick={() => saveLossNote(l.id)} disabled={lossNoteSaving} className="text-[11px] font-bold px-3 py-1 rounded-lg text-white flex items-center gap-1" style={{ background: NAVY }}>
-                            {lossNoteSaving ? <Loader2 size={11} className="animate-spin" /> : null} Lưu
+                            {lossNoteSaving ? <Loader2 size={11} className="animate-spin" /> : null} {L('Lưu', 'Save')}
                           </button>
                         </div>
                       </div>
@@ -1681,7 +1727,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       </button>
                     ) : (
                       <button onClick={() => startEditLossNote(l)} className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
-                        <StickyNote size={11} /> + Thêm ghi chú
+                        <StickyNote size={11} /> {L('+ Thêm ghi chú', '+ Add a note')}
                       </button>
                     )}
                   </div>
@@ -1694,12 +1740,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                  Kiểm kho hôm nay{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
+                  {L('Kiểm kho hôm nay', 'Stock count today')}{stockDate ? ` · ${fmtDate(stockDate)}` : ''}
                 </div>
                 {stockSessionSeq >= stockLatestSessionSeq && stockSessions.some(s => s.seq === stockLatestSessionSeq) && (
                   <button type="button" onClick={() => setStockNewSessionConfirm(true)}
                     className="shrink-0 text-[11px] font-bold rounded-full px-2.5 py-1" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-                    🆕 Đợt mới
+                    {L('🆕 Đợt mới', '🆕 New count')}
                   </button>
                 )}
               </div>
@@ -1720,7 +1766,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           backgroundColor: active ? NAVY : 'white', color: active ? 'white' : INK,
                           border: `1px solid ${active ? NAVY : BORDER}`,
                         }}>
-                        Đợt {seq}{isLocked ? ' 🔒' : ''}
+                        {L('Đợt', 'Count')} {seq}{isLocked ? ' 🔒' : ''}
                       </button>
                     );
                   })}
@@ -1734,7 +1780,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 return (
                   <div className="rounded-lg p-2.5" style={{ backgroundColor: GOLD_PALE }}>
                     <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
-                      ⚠ Đợt {stockSessionSeq} đã có {info.savedCount} mục được nhập{who ? ` bởi ${who}` : ''} lúc {time}. Đây là tiếp tục đợt cũ — ô nào bạn không nhập lại sẽ giữ nguyên số cũ. Muốn đếm lại toàn bộ từ đầu? Bấm "Đợt mới" ở trên.
+                      {L(`⚠ Đợt ${stockSessionSeq} đã có ${info.savedCount} mục được nhập${who ? ` bởi ${who}` : ''} lúc ${time}. Đây là tiếp tục đợt cũ — ô nào bạn không nhập lại sẽ giữ nguyên số cũ. Muốn đếm lại toàn bộ từ đầu? Bấm "Đợt mới" ở trên.`, `⚠ Count ${stockSessionSeq} already has ${info.savedCount} lines entered${who ? ` by ${who}` : ''} at ${time}. You are continuing that count — any line you do not re-enter keeps its previous figure. To recount everything from scratch, tap "New count" above.`)}
                     </div>
                   </div>
                 );
@@ -1742,36 +1788,36 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               {stockNewSessionConfirm && (
                 <div className="rounded-lg p-2.5 space-y-1.5" style={{ backgroundColor: GOLD_PALE }}>
                   <div className="text-[11px] font-semibold" style={{ color: '#8A6D14' }}>
-                    Bắt đầu đợt kiểm kho mới sẽ khoá đợt {stockLatestSessionSeq} lại (không sửa được nữa) — tiếp tục?
+                    {L(`Bắt đầu đợt kiểm kho mới sẽ khoá đợt ${stockLatestSessionSeq} lại (không sửa được nữa) — tiếp tục?`, `Starting a new count locks count ${stockLatestSessionSeq} (it can no longer be edited) — continue?`)}
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setStockNewSessionConfirm(false)} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>Huỷ</button>
-                    <button onClick={startNewStockSession} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5 text-white" style={{ backgroundColor: NAVY }}>Bắt đầu</button>
+                    <button onClick={() => setStockNewSessionConfirm(false)} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>{L('Huỷ', 'Cancel')}</button>
+                    <button onClick={startNewStockSession} className="flex-1 text-xs font-bold rounded-lg px-2 py-1.5 text-white" style={{ backgroundColor: NAVY }}>{L('Bắt đầu', 'Start')}</button>
                   </div>
                 </div>
               )}
               {stockSessionSeq < stockLatestSessionSeq && (
-                <div className="text-[11px] font-semibold" style={{ color: '#9CA3AF' }}>Đang xem lại đợt {stockSessionSeq} (đã khoá) — chọn đợt {stockLatestSessionSeq} ở trên để tiếp tục kiểm kho.</div>
+                <div className="text-[11px] font-semibold" style={{ color: '#9CA3AF' }}>{L(`Đang xem lại đợt ${stockSessionSeq} (đã khoá) — chọn đợt ${stockLatestSessionSeq} ở trên để tiếp tục kiểm kho.`, `Viewing count ${stockSessionSeq} (locked) — select count ${stockLatestSessionSeq} above to keep counting.`)}</div>
               )}
               <div>
-                <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Tên của bạn', 'Your name')}</div>
                 <NamePicker value={stockName} onChange={setStockName} names={staffNames} onManage={() => setShowStaffModal(true)} />
               </div>
             </div>
 
             <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
-              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm không có trong danh sách</div>
+              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Thêm sản phẩm không có trong danh sách', 'Add a product that is not on the list')}</div>
               <div className="relative">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                 <input type="text" value={stockSearchQuery} onChange={e => setStockSearchQuery(e.target.value)}
-                  placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                  placeholder={L('Tìm sản phẩm hoặc packaging…', 'Search a product or packaging…')} className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                 {stockSearchQuery.trim().length >= 2 && (
                   <div className="mt-1 rounded-lg overflow-y-auto overscroll-contain max-h-64"
                     style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                     {stockSearching ? (
-                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Đang tìm…', 'Searching…')}</div>
                     ) : !stockSearchResults.length ? (
-                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                      <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không tìm thấy', 'Nothing found')}</div>
                     ) : stockSearchResults.map(p => (
                       <button key={p.sku} onClick={() => addStockItem(p)}
                         className="w-full text-left px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2" style={{ borderColor: GOLD_PALE }}>
@@ -1785,15 +1831,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
 
             {stockLoading && stockLines === null ? (
-              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+              <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
             ) : !stockLines?.length ? (
               <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-                Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng
+                {L('Chưa có sản phẩm nào — thêm sản phẩm ở trên hoặc quay lại sau khi có đơn hàng', 'No product yet — add one above, or come back once an order has arrived')}
               </div>
             ) : (
               <>
                 <div className="rounded-lg px-3 py-2 flex items-center justify-between" style={{ backgroundColor: GOLD_PALE }}>
-                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#8A6D14' }}>💰 Valorisation kiểm kho</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#8A6D14' }}>{L('💰 Valorisation kiểm kho', '💰 Stock count value')}</span>
                   <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(stockValuationLive)}</span>
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -1804,7 +1850,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       color: stockCategoryFilter === null ? 'white' : INK,
                       border: `1px solid ${stockCategoryFilter === null ? NAVY : BORDER}`,
                     }}>
-                    Tất cả
+                    {L('Tất cả', 'All')}
                   </button>
                   {stockGroupsWithProgress.map(g => {
                     const isComplete = g.filled === g.lines.length;
@@ -1840,7 +1886,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         <div key={l.sku} className="px-4 py-2.5 flex items-center gap-3">
                           {l.imageUrl ? (
                             <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
-                              className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                              className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
                               <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                             </button>
                           ) : (
@@ -1848,7 +1894,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
-                            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? ' · đã thêm' : ''}</div>
+                            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? L(' · đã thêm', ' · added') : ''}</div>
                           </div>
                           <QtyExprInput disabled={stockSessionSeq < stockLatestSessionSeq} placeholder="—" borderColor={BORDER} width={72}
                             value={stockDraft[l.sku] ?? ''} onChange={v => { setStockDraft(p => ({ ...p, [l.sku]: v })); setStockDirty(true); }} />
@@ -1867,7 +1913,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
               style={{ backgroundColor: NAVY }}>
               {stockSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              Lưu kiểm kho
+              {L('Lưu kiểm kho', 'Save the count')}
             </button>
             {(() => {
               // Axel, 2026-09-13: an unsaved qty edit takes priority over the "Hoàn tất" sticky
@@ -1882,7 +1928,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       className="w-full inline-flex items-center justify-center gap-2 text-base font-bold rounded-xl px-4 py-3.5 disabled:opacity-40 shadow-lg text-white"
                       style={{ backgroundColor: NAVY }}>
                       {stockSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                      Lưu kiểm kho
+                      {L('Lưu kiểm kho', 'Save the count')}
                     </button>
                   </div>
                 );
@@ -1901,7 +1947,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 return (
                   <div className="sticky bottom-3 z-20 -mx-4 px-4">
                     <div className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 shadow-lg" style={{ backgroundColor: '#EAF6EC', color: GREEN, border: '1.5px solid #B7E3CC' }}>
-                      <CheckCircle2 size={14} /> Đợt {stockSessionSeq} đã hoàn tất lúc {t}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
+                      <CheckCircle2 size={14} /> {L(`Đợt ${stockSessionSeq} đã hoàn tất lúc ${t}`, `Count ${stockSessionSeq} completed at ${t}`)}{cur.finishedByName ? ` · ${cur.finishedByName}` : ''}
                     </div>
                   </div>
                 );
@@ -1912,18 +1958,18 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     className="w-full inline-flex items-center justify-center gap-2 text-base font-bold rounded-xl px-4 py-3.5 disabled:opacity-40 shadow-lg"
                     style={finishArmed ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: GREEN, color: '#fff', border: `1.5px solid ${GREEN}` }}>
                     {finishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                    {finishArmed ? `Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)` : `✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`}
+                    {finishArmed ? L(`Xác nhận hoàn tất đợt ${stockSessionSeq}? (bấm lần nữa)`, `Confirm completing count ${stockSessionSeq}? (tap again)`) : L(`✅ Hoàn tất kiểm kho đợt ${stockSessionSeq}`, `✅ Complete stock count ${stockSessionSeq}`)}
                   </button>
                 </div>
               );
             })()}
-            {stockMsg && <div className="text-xs font-semibold" style={{ color: stockMsg.startsWith('Lỗi') ? RED : GREEN }}>{stockMsg}</div>}
+            {stockMsg && <div className="text-xs font-semibold" style={{ color: isErrMsg(stockMsg) ? RED : GREEN }}>{stockMsg}</div>}
           </div>
         ) : tab === 'report' ? (
           !selectedReportDate ? (
             <div className="space-y-3">
               <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Báo cáo cuối ngày{reportMonth ? ` · ${fmtReportMonth(reportMonth)}` : ''}</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Báo cáo cuối ngày', 'End-of-day reports')}{reportEvent ? ` · ${fmtDate(reportEvent.start)} → ${fmtDate(reportEvent.end)}` : reportMonth ? ` · ${fmtReportMonth(reportMonth, lang)}` : ''}</div>
                 <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
                 {reportMonths.length > 1 && (
                   <div className="flex gap-2 mt-3">
@@ -1933,7 +1979,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         style={m === reportMonth
                           ? { backgroundColor: NAVY, color: '#FFFAEE' }
                           : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
-                        {fmtReportMonth(m)}
+                        {fmtReportMonth(m, lang)}
                       </button>
                     ))}
                   </div>
@@ -1941,18 +1987,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </div>
 
               {reportLoading && !reports ? (
-                <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+                <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
               ) : !reports?.length ? null : (
                 <div className="space-y-2">
                   {reports.map(r => (
-                    <button key={r.date} onClick={() => openReportDay(r.date)}
-                      className="w-full text-left bg-white rounded-2xl p-3.5 flex items-center justify-between gap-3"
+                    <button key={r.date} onClick={() => openReportDay(r.date)} disabled={!!reportToday && r.date > reportToday}
+                      className="w-full text-left bg-white rounded-2xl p-3.5 flex items-center justify-between gap-3 disabled:opacity-60"
                       style={{ border: `1px solid ${BORDER}` }}>
                       <div className="min-w-0">
-                        <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{r.date === reportToday ? ' · Hôm nay' : ''}</div>
+                        <div className="text-sm font-bold text-navy">{fmtDate(r.date)}{r.date === reportToday ? L(' · Hôm nay', ' · Today') : ''}</div>
                         <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? '#6B7280' : '#9CA3AF' }}>
-                          {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} đã kiểm${r.stockSource === 'official' ? ' · Kiểm kê chính thức' : ''}` : 'Chưa kiểm kho'}
-                          {r.lossesReportCount ? ` · ${r.lossesReportCount} báo cáo hao hụt` : ''}
+                          {reportToday && r.date > reportToday ? L('Chưa đến ngày', 'Not started yet')
+                            : r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${L('đã kiểm', 'counted')}${r.stockSource === 'official' ? L(' · Kiểm kê chính thức', ' · Official inventory') : ''}`
+                            : L('Chưa kiểm kho', 'Not counted yet')}
+                          {r.lossesReportCount ? ` · ${r.lossesReportCount} ${L('báo cáo hao hụt', 'loss reports')}` : ''}
                         </div>
                       </div>
                       {r.stockCounted && (
@@ -1968,32 +2016,32 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="space-y-3">
               <button onClick={() => { setSelectedReportDate(null); setDailyReport(null); setReportMsg(null); }}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#6B7280' }}>
-                <ArrowLeft size={15} /> {reportMonth ? fmtReportMonth(reportMonth) : 'Danh sách'}
+                <ArrowLeft size={15} /> {reportEvent ? L('Danh sách', 'All days') : reportMonth ? fmtReportMonth(reportMonth, lang) : L('Danh sách', 'All days')}
               </button>
 
               <div className="space-y-3">
                 <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                    Báo cáo cuối ngày{selectedReportDate ? ` · ${fmtDate(selectedReportDate)}` : ''}
+                    {L('Báo cáo cuối ngày', 'End-of-day report')}{selectedReportDate ? ` · ${fmtDate(selectedReportDate)}` : ''}
                   </div>
                   <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
                 </div>
 
                 {reportDayLoading ? (
-                  <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>
+                  <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
                 ) : !dailyReport ? null : !dailyReport.stockCounted ? (
                   <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-                    Chưa kiểm kho ngày này.
+                    {L('Chưa kiểm kho ngày này.', 'No stock count on this day.')}
                   </div>
                 ) : (
                   <>
                     <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: `1px solid ${BORDER}` }}>
-                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{dailyReport.stockSource === 'official' ? 'Kiểm kê chính thức' : 'Kiểm kho'}</span>
-                      <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} đã kiểm</span>
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{dailyReport.stockSource === 'official' ? L('Kiểm kê chính thức', 'Official inventory') : L('Kiểm kho', 'Stock count')}</span>
+                      <span className="text-sm font-bold text-navy">{dailyReport.stockCountedCount}/{dailyReport.stockTotalCount} {L('đã kiểm', 'counted')}</span>
                     </div>
 
                     <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-between" style={{ border: `1px solid ${BORDER}` }}>
-                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>💰 Valorisation kho</span>
+                      <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('💰 Valorisation kho', '💰 Stock value')}</span>
                       <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(dailyReport.stockValuationTotal)}</span>
                     </div>
 
@@ -2008,7 +2056,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               <div key={l.sku} className="px-4 py-2 flex items-center justify-between gap-3">
                                 <span className="text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: l.qty === 0 ? RED : INK, fontWeight: l.qty === 0 ? 700 : 400 }}>{l.name}</span>
                                 <span className="text-sm font-bold shrink-0" style={{ color: l.qty === 0 ? RED : l.qty === null ? '#9CA3AF' : INK }}>
-                                  {l.qty === null ? 'Chưa kiểm' : l.qty}
+                                  {l.qty === null ? L('Chưa kiểm', 'Not counted') : l.qty}
                                 </span>
                               </div>
                             ))}
@@ -2020,11 +2068,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
                       <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
                         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-                          Hao hụt ngày này{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} báo cáo` : ''}
+                          {L('Hao hụt ngày này', 'Losses on this day')}{dailyReport.lossesReportCount ? ` · ${dailyReport.lossesReportCount} ${L('báo cáo', 'reports')}` : ''}
                         </div>
                       </div>
                       {!dailyReport.losses.length ? (
-                        <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>Không có hao hụt ngày này</div>
+                        <div className="px-4 py-3 text-sm" style={{ color: '#9CA3AF' }}>{L('Không có hao hụt ngày này', 'No losses on this day')}</div>
                       ) : (
                         <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                           {dailyReport.losses.map(p => (
@@ -2049,7 +2097,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 text-white disabled:opacity-40"
                   style={{ backgroundColor: NAVY }}>
                   {reportExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                  Xuất PDF
+                  {L('Xuất PDF', 'Export PDF')}
                 </button>
               )}
               {reportMsg && <div className="text-xs font-semibold" style={{ color: RED }}>{reportMsg}</div>}
@@ -2067,26 +2115,26 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {orderResult ? (
               <div className="bg-white rounded-2xl p-6 space-y-3 text-center" style={{ border: `1px solid ${BORDER}` }}>
                 <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
-                <div className="text-sm font-bold text-navy">Đã xác nhận đơn hàng</div>
-                <div className="text-xs" style={{ color: '#6B7280' }}>Giao hàng dự kiến: {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` lúc ${orderResult.deliveryTime}` : ''}{orderResult.managerName ? ` · Quản lý: ${orderResult.managerName}` : ''}</div>
+                <div className="text-sm font-bold text-navy">{L('Đã xác nhận đơn hàng', 'Order confirmed')}</div>
+                <div className="text-xs" style={{ color: '#6B7280' }}>{L('Giao hàng dự kiến:', 'Expected delivery:')} {fmtDate(orderResult.deliveryDate)}{orderResult.deliveryTime ? ` ${L('lúc', 'at')} ${orderResult.deliveryTime}` : ''}{orderResult.managerName ? ` · ${L('Quản lý', 'Manager')}: ${orderResult.managerName}` : ''}</div>
                 <div className="rounded-xl px-4 py-3" style={{ backgroundColor: GOLD_PALE }}>
-                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Mã đơn Odoo</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{L('Mã đơn Odoo', 'Odoo order number')}</div>
                   <div className="text-lg font-bold" style={{ color: INK }}>{orderResult.orderRef}</div>
                 </div>
                 <button onClick={newOrder} className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: NAVY }}>
-                  Đặt đơn khác
+                  {L('Đặt đơn khác', 'Place another order')}
                 </button>
               </div>
             ) : (
               <>
                 <div className="bg-white rounded-2xl p-4 space-y-2.5" style={{ border: `1px solid ${BORDER}` }}>
                   <div>
-                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Tên của bạn</div>
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Tên của bạn', 'Your name')}</div>
                     <NamePicker value={orderCreatedByName} onChange={setOrderCreatedByName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                   </div>
                   <div className="flex items-center gap-2">
                     <Truck size={14} className="shrink-0" style={{ color: '#9CA3AF' }} />
-                    <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>Giao hàng:</span>
+                    <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>{L('Giao hàng:', 'Delivery:')}</span>
                     <input type="date" value={orderDeliveryDate ?? ''} min={orderMinDate ?? undefined}
                       onChange={e => setOrderDeliveryDate(e.target.value)}
                       className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm font-bold" style={{ border: `1px solid ${BORDER}` }} />
@@ -2099,38 +2147,38 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     // against process, so this has to be impossible to miss rather than a quiet
                     // grey hint.
                     <div className="rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#FBEAE8', color: RED, border: '1px solid #EFC3BE' }}>
-                      ⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH và có thể ảnh hưởng đến sản xuất/giao hàng. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.
+                      {L('⚠️ Đã quá 14h00 — đặt cho ngày mai lúc này KHÔNG ĐÚNG QUY TRÌNH và có thể ảnh hưởng đến sản xuất/giao hàng. Đơn vẫn được gửi nếu quản lý xác nhận, nhưng vui lòng tránh đặt sau 14h00 vào các lần sau.', '⚠️ It is past 2:00 pm — ordering for tomorrow now is OUTSIDE THE PROCESS and may affect production and delivery. The order is still sent if a manager confirms it, but please avoid ordering after 2:00 pm in future.')}
                     </div>
                   ) : (
                     <div className="text-[11px] font-semibold" style={{ color: RED }}>
                       {orderDeliveryDate && orderMinDate && orderDeliveryDate === orderMinDate
-                        ? 'Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — sau 14h00 vẫn gửi được nhưng phải có quản lý xác nhận thủ công.'
-                        : 'Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).'}
+                        ? L('Đặt cho ngày mai: ai cũng thêm được sản phẩm, nhưng cần quản lý xác nhận bằng mã PIN trước 14h00 — sau 14h00 vẫn gửi được nhưng phải có quản lý xác nhận thủ công.', 'Ordering for tomorrow: anyone can add products, but a manager must confirm with their PIN before 2:00 pm — after 2:00 pm it can still be sent, with a manager confirming it by hand.')
+                        : L('Đặt cho ngày này: ai cũng thêm được sản phẩm, quản lý xác nhận bằng mã PIN khi sẵn sàng (không giới hạn giờ).', 'Ordering for this day: anyone can add products, and a manager confirms with their PIN when ready (no time limit).')}
                     </div>
                   )}
                   {orderDraftLoaded && (
                     <div className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE }}>
                       <span className="text-[11px] font-semibold truncate" style={{ color: '#8A6D14' }}>
-                        📝 Nháp {orderDraftLoaded.createdByName ? `của ${orderDraftLoaded.createdByName} · ` : ''}cập nhật {new Date(orderDraftLoaded.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                        📝 {L('Nháp', 'Draft')} {orderDraftLoaded.createdByName ? `${L('của', 'by')} ${orderDraftLoaded.createdByName} · ` : ''}{L('cập nhật', 'updated')} {new Date(orderDraftLoaded.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: RED }}>Xoá nháp</button>
+                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: RED }}>{L('Xoá nháp', 'Delete the draft')}</button>
                     </div>
                   )}
                 </div>
 
                 {!!recentOrders?.length && (
                   <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
-                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Đơn đã gửi (hôm nay + ngày mai)</div>
+                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>{L('Đơn đã gửi (hôm nay + ngày mai)', 'Orders sent (today + tomorrow)')}</div>
                     <div className="space-y-1.5">
                       {recentOrders.map(o => (
                         <div key={o.orderRef} className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#EAF6EC' }}>
                           <div className="min-w-0">
                             <div className="text-xs font-bold truncate" style={{ color: GREEN }}>
                               {o.orderRef} · Giao {fmtDate(o.deliveryDate)}
-                              {recentOrdersDates?.tomorrow === o.deliveryDate ? ' (ngày mai)' : recentOrdersDates?.today === o.deliveryDate ? ' (hôm nay)' : ''}
+                              {recentOrdersDates?.tomorrow === o.deliveryDate ? L(' (ngày mai)', ' (tomorrow)') : recentOrdersDates?.today === o.deliveryDate ? L(' (hôm nay)', ' (today)') : ''}
                             </div>
                             <div className="text-[11px]" style={{ color: '#6B7280' }}>
-                              {o.itemCount} SP · {o.totalQty} cái{o.managerName ? ` · ${o.managerName}` : ''} · {new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                              {o.itemCount} {L('SP', 'products')} · {o.totalQty} {L('cái', 'pcs')}{o.managerName ? ` · ${o.managerName}` : ''} · {new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                             </div>
                           </div>
                         </div>
@@ -2140,13 +2188,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 )}
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
-                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Thêm sản phẩm</div>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Thêm sản phẩm', 'Add a product')}</div>
                   {orderCategories.length > 0 && (
                     <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-0.5 px-0.5" style={{ WebkitOverflowScrolling: 'touch' }}>
                       <button onClick={() => setOrderCategoryFilter(null)}
                         className="shrink-0 text-xs font-semibold rounded-full px-3 py-1.5"
                         style={{ backgroundColor: !orderCategoryFilter ? NAVY : 'white', color: !orderCategoryFilter ? 'white' : INK, border: `1px solid ${BORDER}` }}>
-                        Tất cả
+                        {L('Tất cả', 'All')}
                       </button>
                       {orderCategories.map(cat => (
                         <button key={cat} onClick={() => setOrderCategoryFilter(prev => prev === cat ? null : cat)}
@@ -2160,22 +2208,22 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <div className="relative">
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                     <input type="text" value={orderSearchQuery} onChange={e => setOrderSearchQuery(e.target.value)}
-                      placeholder="Tìm sản phẩm hoặc packaging…" className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                      placeholder={L('Tìm sản phẩm hoặc packaging…', 'Search a product or packaging…')} className="w-full rounded-lg pl-8 pr-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                   </div>
                   {(orderSearchQuery.trim().length >= 2 || orderCategoryFilter) && (
                     <div className="rounded-lg overflow-y-auto overscroll-contain max-h-72"
                       style={{ border: `1px solid ${BORDER}`, WebkitOverflowScrolling: 'touch' }}>
                       {orderSearching ? (
-                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Đang tìm…</div>
+                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Đang tìm…', 'Searching…')}</div>
                       ) : !orderSearchResults.length ? (
-                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy</div>
+                        <div className="px-3 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không tìm thấy', 'Nothing found')}</div>
                       ) : orderSearchResults.map(p => {
                         const qtyInCart = orderCart.find(l => l.sku === p.sku)?.qty ?? 0;
                         return (
                           <div key={p.sku} className="px-3 py-2 text-sm border-t first:border-t-0 flex items-center gap-2.5" style={{ borderColor: GOLD_PALE }}>
                             {p.imageUrl ? (
                               <button type="button" onClick={() => setZoomImage(p.imageUrl!)}
-                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
                                 <img src={thumb(p.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                               </button>
                             ) : (
@@ -2202,26 +2250,26 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
                 <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tồn kho gần nhất</div>
+                    <div className="text-xs font-semibold" style={{ color: '#6B7280' }}>{L('Tồn kho gần nhất', 'Latest stock count')}</div>
                     {invAsOfDate && (
                       // Axel, 2026-09-17: date + người kiểm, gọn trên 1 dòng ("concis ... pour pas
                       // que ca mange trop la place") — "gần nhất" giờ có thể là hôm qua hoặc trước
                       // đó, không chỉ hôm nay, nên luôn ghi rõ ngày thay vì chỉ giờ.
                       <div className="text-[10.5px] text-right" style={{ color: '#9CA3AF' }}>
-                        {invAsOfDate === todayDate ? 'Hôm nay' : fmtDate(invAsOfDate)}
+                        {invAsOfDate === todayDate ? L('Hôm nay', 'Today') : fmtDate(invAsOfDate)}
                         {invAsOf ? ` ${new Date(invAsOf).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                         {invAsOfBy ? ` · ${invAsOfBy}` : ''}
                       </div>
                     )}
                   </div>
                   {invLevels === null ? (
-                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Đang tải…</div>
+                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>{L('Đang tải…', 'Loading…')}</div>
                   ) : !invLevels.length ? (
-                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>Chưa từng kiểm kho</div>
+                    <div className="text-xs py-2" style={{ color: '#9CA3AF' }}>{L('Chưa từng kiểm kho', 'Never counted')}</div>
                   ) : (
                     <>
                       <div className="flex rounded-lg p-0.5" style={{ border: `1px solid ${BORDER}` }}>
-                        {([['all', 'Tất cả'], ['in', 'Còn hàng'], ['out', 'Hết hàng']] as const).map(([k, label]) => (
+                        {([['all', L('Tất cả', 'All')], ['in', L('Còn hàng', 'In stock')], ['out', L('Hết hàng', 'Out of stock')]] as const).map(([k, label]) => (
                           <button key={k} onClick={() => setInvFilter(k)}
                             className="flex-1 text-center text-[11px] font-semibold rounded-md py-1.5"
                             style={{ backgroundColor: invFilter === k ? NAVY : 'transparent', color: invFilter === k ? 'white' : '#6B7280' }}>
@@ -2232,7 +2280,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="relative">
                         <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: '#9CA3AF' }} />
                         <input type="text" value={invQuery} onChange={e => setInvQuery(e.target.value)}
-                          placeholder="Lọc theo tên…" className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
+                          placeholder={L('Lọc theo tên…', 'Filter by name…')} className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                       </div>
                       <div className="rounded-lg overflow-y-auto overscroll-contain max-h-56" style={{ border: `1px solid ${GOLD_PALE}` }}>
                         {/* Axel, 2026-09-21: "range la liste par catégorie" + the old .slice(0, 80)
@@ -2252,7 +2300,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                                 <span className="overflow-x-auto whitespace-nowrap no-scrollbar flex-1 min-w-0" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</span>
                                 <span className="shrink-0 font-bold rounded-full px-2 py-0.5 text-[10.5px]"
                                   style={{ color: l.qty > 0 ? GREEN : RED, backgroundColor: l.qty > 0 ? '#EAF6EC' : '#FBEAE8' }}>
-                                  {l.qty > 0 ? `${l.qty} còn` : 'Hết hàng'}
+                                  {l.qty > 0 ? L(`${l.qty} còn`, `${l.qty} left`) : L('Hết hàng', 'Out of stock')}
                                 </span>
                               </div>
                             ))}
@@ -2265,7 +2313,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
                 {!orderCart.length ? (
                   <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ color: '#9CA3AF', border: `1px solid ${BORDER}` }}>
-                    Giỏ hàng trống — tìm và thêm sản phẩm ở trên
+                    {L('Giỏ hàng trống — tìm và thêm sản phẩm ở trên', 'The basket is empty — search and add products above')}
                   </div>
                 ) : (
                   <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
@@ -2275,7 +2323,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           <div className="flex items-center gap-2.5">
                             {l.imageUrl ? (
                               <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
-                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label="Xem ảnh sản phẩm">
+                                className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
                                 <img src={thumb(l.imageUrl, 80)} alt="" className="w-full h-full object-cover" />
                               </button>
                             ) : (
@@ -2296,7 +2344,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               <Plus size={12} />
                             </button>
                             <input type="text" value={l.note} onChange={e => updateOrderNote(l.sku, e.target.value)}
-                              placeholder="Ghi chú (tuỳ chọn)" className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
+                              placeholder={L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                           </div>
                         </div>
                       ))}
@@ -2306,7 +2354,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
                 {orderCart.some(l => l.qty > 0) && (
                   <div className="flex items-center justify-between px-1">
-                    <span className="text-xs font-semibold" style={{ color: '#6B7280' }}>Tổng giá trị đơn hàng</span>
+                    <span className="text-xs font-semibold" style={{ color: '#6B7280' }}>{L('Tổng giá trị đơn hàng', 'Total order value')}</span>
                     <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(orderCartTotal)}</span>
                   </div>
                 )}
@@ -2318,7 +2366,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 disabled:opacity-40"
                     style={{ border: `1px solid ${BORDER}`, color: INK }}>
                     {orderDraftSaving ? <Loader2 size={14} className="animate-spin" /> : null}
-                    Lưu nháp
+                    {L('Lưu nháp', 'Save the draft')}
                   </button>
                   {/* Late (post-14h00) tomorrow orders are no longer blocked here -- the red
                       banner above is the deterrent now, not a disabled button (Axel, 2026-09-08). */}
@@ -2326,7 +2374,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     className="flex-[2] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40"
                     style={{ backgroundColor: NAVY }}>
                     {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                    Xác nhận đơn hàng
+                    {L('Xác nhận đơn hàng', 'Confirm the order')}
                   </button>
                 </div>
               </>
@@ -2335,7 +2383,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         ) : (
           !cakes?.length ? (
             <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-              Chưa có bánh sinh nhật nào
+              {L('Chưa có bánh sinh nhật nào', 'No birthday cake yet')}
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -2346,7 +2394,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <span className="inline-flex items-center gap-1 text-xs font-bold shrink-0"
                       style={{ color: c.status === 'confirmed' ? GREEN : c.status === 'cancelled' ? RED : '#8A6D14' }}>
                       {c.status === 'confirmed' ? <CheckCircle2 size={14} /> : c.status === 'cancelled' ? <AlertTriangle size={14} /> : <Clock size={14} />}
-                      {c.status === 'confirmed' ? 'Đã xác nhận' : c.status === 'cancelled' ? 'Đã huỷ' : 'Đang chờ'}
+                      {c.status === 'confirmed' ? L('Đã xác nhận', 'Confirmed') : c.status === 'cancelled' ? L('Đã huỷ', 'Cancelled') : L('Đang chờ', 'Pending')}
                     </span>
                   </div>
                   <div className="text-xs mt-0.5" style={{ color: '#9CA3AF' }}>{fmtDate(c.deliveryDate)}{c.readyTime ? ` · ${c.readyTime}` : ''}</div>
@@ -2365,7 +2413,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <div className="text-xs flex items-start gap-1.5" style={{ color: '#8A6D14' }}><StickyNote size={12} className="mt-0.5 shrink-0" /> {c.note}</div>
                     )}
                     {!c.customerName && !c.customerPhone && !c.deliveryAddress && !c.note && (
-                      <div className="text-xs" style={{ color: '#9CA3AF' }}>Không có thông tin bổ sung</div>
+                      <div className="text-xs" style={{ color: '#9CA3AF' }}>{L('Không có thông tin bổ sung', 'No additional information')}</div>
                     )}
                   </div>
                 </div>
@@ -2387,40 +2435,40 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       {pendingReceipt && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3">
-            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Xác nhận nhận hàng</div>
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Xác nhận nhận hàng', 'Confirm receipt')}</div>
             <div className="flex items-center gap-3">
               {pendingReceipt.line.image_url && (
                 <img src={thumb(pendingReceipt.line.image_url, 128)} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0" style={{ border: `1px solid ${BORDER}` }} />
               )}
               <div className="min-w-0">
                 <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{pendingReceipt.line.product_name_vi}</div>
-                <div className="text-xs" style={{ color: '#9CA3AF' }}>Đơn {pendingReceipt.order.header.order_ref}</div>
+                <div className="text-xs" style={{ color: '#9CA3AF' }}>{L('Đơn', 'Order')} {pendingReceipt.order.header.order_ref}</div>
               </div>
             </div>
             <div className="rounded-xl p-3 space-y-1.5" style={{ backgroundColor: GOLD_PALE }}>
               <div className="flex items-center justify-between text-sm">
-                <span style={{ color: '#6B7280' }}>Bếp giao</span>
+                <span style={{ color: '#6B7280' }}>{L('Bếp giao', 'Sent by the Lab')}</span>
                 <span className="font-bold">×{refQty(pendingReceipt.line)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span style={{ color: '#6B7280' }}>Bạn xác nhận</span>
+                <span style={{ color: '#6B7280' }}>{L('Bạn xác nhận', 'You confirm')}</span>
                 <span className="font-bold" style={{ color: pendingReceipt.qty !== refQty(pendingReceipt.line) ? RED : INK }}>
                   {pendingReceipt.qty === null ? '—' : `×${pendingReceipt.qty}`}
                 </span>
               </div>
               {pendingReceipt.note.trim() && (
-                <div className="text-xs pt-1" style={{ color: '#6B7280' }}>Ghi chú: {pendingReceipt.note.trim()}</div>
+                <div className="text-xs pt-1" style={{ color: '#6B7280' }}>{L('Ghi chú:', 'Note:')} {pendingReceipt.note.trim()}</div>
               )}
             </div>
             <div className="flex gap-2">
               <button onClick={() => setPendingReceipt(null)}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-                Huỷ
+                {L('Huỷ', 'Cancel')}
               </button>
               <button
                 onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
-                Xác nhận
+                {L('Xác nhận', 'Confirm')}
               </button>
             </div>
           </div>
@@ -2437,9 +2485,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-              Xác nhận tất cả ({todaysPendingLines.length} sản phẩm)
+              {L('Xác nhận tất cả', 'Confirm all')} ({todaysPendingLines.length} {L('sản phẩm', 'products')})
             </div>
-            <div className="text-xs" style={{ color: '#6B7280' }}>Xem lại số lượng trước khi gửi — mỗi dòng dưới đây sẽ được xác nhận cùng lúc.</div>
+            <div className="text-xs" style={{ color: '#6B7280' }}>{L('Xem lại số lượng trước khi gửi — mỗi dòng dưới đây sẽ được xác nhận cùng lúc.', 'Review the quantities before sending — every line below is confirmed in one go.')}</div>
             <div className="space-y-1.5">
               {todaysPendingLines.map(p => {
                 const ref = refQty(p.line);
@@ -2458,11 +2506,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold text-navy overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{p.line.product_name_vi}</div>
                       {untouched ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: '#8A6D14' }}>● Chưa kiểm tra — giữ nguyên số lượng Bếp giao</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: '#8A6D14' }}>{L('● Chưa kiểm tra — giữ nguyên số lượng Bếp giao', '● Not checked — keeps the quantity sent by the Lab')}</div>
                       ) : isZero ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>● Không nhận được</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>{L('● Không nhận được', '● Not received')}</div>
                       ) : isDiff ? (
-                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>● Chênh lệch {(p.qtyNum! - ref) > 0 ? '+' : ''}{p.qtyNum! - ref}</div>
+                        <div className="text-[10.5px] font-bold" style={{ color: RED }}>● {L('Chênh lệch', 'Difference')} {(p.qtyNum! - ref) > 0 ? '+' : ''}{p.qtyNum! - ref}</div>
                       ) : null}
                     </div>
                     <span className="text-sm font-bold shrink-0" style={{ color: isZero ? RED : INK }}>
@@ -2475,12 +2523,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <div className="flex gap-2">
               <button onClick={() => setConfirmAllOpen(false)}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-                Quay lại
+                {L('Quay lại', 'Back')}
               </button>
               <button onClick={doSubmitAllPending} disabled={confirmAllSubmitting || !todaysPendingLines.length}
                 className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {confirmAllSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
-                Xác nhận toàn bộ
+                {L('Xác nhận toàn bộ', 'Confirm everything')}
               </button>
             </div>
           </div>
@@ -2495,7 +2543,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-              Xác nhận báo cáo hao hụt ({lossItems.length} sản phẩm)
+              {L('Xác nhận báo cáo hao hụt', 'Confirm the loss report')} ({lossItems.length} {L('sản phẩm', 'products')})
             </div>
             <div className="space-y-1.5">
               {lossItems.map(item => (
@@ -2513,15 +2561,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 </div>
               ))}
             </div>
-            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Thao tác này gửi thẳng lên Odoo và không thể huỷ.</div>
+            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{L('Thao tác này gửi thẳng lên Odoo và không thể huỷ.', 'This goes straight to Odoo and cannot be undone.')}</div>
             <div className="flex gap-2">
               <button onClick={() => setPendingLoss(false)}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-                Huỷ
+                {L('Huỷ', 'Cancel')}
               </button>
               <button onClick={() => { setPendingLoss(false); submitLoss(); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: RED }}>
-                Xác nhận
+                {L('Xác nhận', 'Confirm')}
               </button>
             </div>
           </div>
@@ -2535,10 +2583,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
             <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>
-              Xác nhận đơn hàng ({orderCart.filter(l => l.qty > 0).length} sản phẩm)
+              {L('Xác nhận đơn hàng', 'Confirm the order')} ({orderCart.filter(l => l.qty > 0).length} {L('sản phẩm', 'products')})
             </div>
             <div className="text-xs" style={{ color: '#6B7280' }}>
-              Giao hàng: {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}{orderDeliveryTime ? ` lúc ${orderDeliveryTime}` : ''}
+              {L('Giao hàng:', 'Delivery:')} {orderDeliveryDate ? fmtDate(orderDeliveryDate) : '…'}{orderDeliveryTime ? ` ${L('lúc', 'at')} ${orderDeliveryTime}` : ''}
             </div>
             <div className="space-y-1.5">
               {orderCart.filter(l => l.qty > 0).map(l => (
@@ -2557,29 +2605,29 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               ))}
             </div>
             <div className="flex items-center justify-between px-1">
-              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Tổng giá trị</span>
+              <span className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Tổng giá trị', 'Total value')}</span>
               <span className="text-sm font-bold" style={{ color: '#8A6D14' }}>{fmtVnd(orderCartTotal)}</span>
             </div>
             <div>
-              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>Mã PIN quản lý</div>
+              <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{L('Mã PIN quản lý', 'Manager PIN')}</div>
               <input type="password" inputMode="numeric" value={orderConfirmPin}
                 onChange={e => setOrderConfirmPin(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') confirmOrder(); }}
-                placeholder="Mã PIN" autoFocus
+                placeholder={L('Mã PIN', 'PIN')} autoFocus
                 className="w-full text-center tracking-[0.3em] rounded-lg px-3 py-2.5 text-lg font-bold"
                 style={{ border: `1px solid ${BORDER}` }} />
               {orderConfirmMsg && <div className="text-xs font-semibold mt-1.5" style={{ color: RED }}>{orderConfirmMsg}</div>}
             </div>
-            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.</div>
+            <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{L('Đơn hàng này sẽ được tạo và xác nhận ngay trên Odoo — không thể huỷ trong app.', 'This order is created and confirmed in Odoo right away — it cannot be cancelled from the app.')}</div>
             <div className="flex gap-2">
               <button onClick={() => { setOrderPendingConfirm(false); setOrderConfirmPin(''); setOrderConfirmMsg(null); }}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-                Huỷ
+                {L('Huỷ', 'Cancel')}
               </button>
               <button onClick={confirmOrder} disabled={orderSubmitting || !orderConfirmPin.trim()}
                 className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {orderSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
-                Xác nhận
+                {L('Xác nhận', 'Confirm')}
               </button>
             </div>
           </div>
@@ -2593,20 +2641,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={() => setShowStaffModal(false)}>
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>Danh sách nhân viên</div>
+            <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Danh sách nhân viên', 'Staff list')}</div>
             <div className="flex items-center gap-1.5">
               <input type="text" value={newStaffInput} onChange={e => setNewStaffInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') addStaffName(); }}
-                placeholder="Tên nhân viên mới…" className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                placeholder={L('Tên nhân viên mới…', 'New staff name…')} className="flex-1 rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${BORDER}` }} />
               <button onClick={addStaffName} disabled={staffBusy === 'add' || !newStaffInput.trim()}
                 className="w-9 h-9 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
-                style={{ backgroundColor: GREEN }} aria-label="Thêm">
+                style={{ backgroundColor: GREEN }} aria-label={L('Thêm', 'Add')}>
                 {staffBusy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={16} />}
               </button>
             </div>
             <div className="space-y-1.5">
               {!staffNames?.length ? (
-                <div className="text-xs text-center py-3" style={{ color: '#9CA3AF' }}>Chưa có nhân viên nào</div>
+                <div className="text-xs text-center py-3" style={{ color: '#9CA3AF' }}>{L('Chưa có nhân viên nào', 'No staff yet')}</div>
               ) : staffNames.map(s => (
                 <div key={s.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD_PALE}` }}>
                   {editingStaffId === s.id ? (
@@ -2616,11 +2664,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                         className="flex-1 min-w-0 rounded-lg px-2 py-1 text-sm" style={{ border: `1px solid ${BORDER}` }} />
                       <button onClick={() => saveStaffRename(s.id)} disabled={staffBusy === s.id || !editStaffDraft.trim()}
                         className="w-7 h-7 flex items-center justify-center rounded-lg text-white shrink-0 disabled:opacity-40"
-                        style={{ backgroundColor: GREEN }} aria-label="Lưu">
+                        style={{ backgroundColor: GREEN }} aria-label={L('Lưu', 'Save')}>
                         {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />}
                       </button>
                       <button onClick={() => setEditingStaffId(null)}
-                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }} aria-label="Huỷ">
+                        className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }} aria-label={L('Huỷ', 'Cancel')}>
                         <X size={13} />
                       </button>
                     </>
@@ -2629,12 +2677,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <span className="flex-1 min-w-0 text-sm font-medium overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{s.name}</span>
                       <button onClick={() => { setEditingStaffId(s.id); setEditStaffDraft(s.name); }}
                         className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0" style={{ border: `1px solid ${BORDER}` }}
-                        aria-label="Sửa" title="Sửa">
+                        aria-label={L('Sửa', 'Edit')} title={L('Sửa', 'Edit')}>
                         <Pencil size={12} />
                       </button>
                       <button onClick={() => deleteStaffName(s.id)} disabled={staffBusy === s.id}
                         className="w-7 h-7 flex items-center justify-center rounded-lg shrink-0 disabled:opacity-40"
-                        style={{ border: '1px solid #EFC3BE', color: RED }} aria-label="Xoá" title="Xoá">
+                        style={{ border: '1px solid #EFC3BE', color: RED }} aria-label={L('Xoá', 'Remove')} title={L('Xoá', 'Remove')}>
                         {staffBusy === s.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                       </button>
                     </>
@@ -2644,7 +2692,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             <button onClick={() => setShowStaffModal(false)}
               className="w-full text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
-              Đóng
+              {L('Đóng', 'Close')}
             </button>
           </div>
         </div>
@@ -2653,11 +2701,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       {showPinModal && (
         <div className="fixed inset-0 flex items-center justify-center px-5 z-30" style={{ backgroundColor: 'rgba(20,17,10,0.5)' }}>
           <div className="relative w-full max-w-[280px] rounded-2xl p-5 text-center" style={{ backgroundColor: '#FFF4CC' }}>
-            <button onClick={() => setShowPinModal(false)} className="absolute top-2.5 right-3" aria-label="Đóng">
+            <button onClick={() => setShowPinModal(false)} className="absolute top-2.5 right-3" aria-label={L('Đóng', 'Close')}>
               <X size={16} style={{ color: '#6B7280' }} />
             </button>
-            <div className="text-sm font-bold" style={{ color: '#1A4731' }}>Vào event</div>
-            <p className="text-xs mt-1" style={{ color: '#6B7280' }}>Nhập mã PIN của event</p>
+            <div className="text-sm font-bold" style={{ color: '#1A4731' }}>{L('Vào event', 'Enter the event')}</div>
+            <p className="text-xs mt-1" style={{ color: '#6B7280' }}>{L('Nhập mã PIN của event', 'Enter the event PIN')}</p>
             <input
               value={pinInput}
               onChange={e => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -2669,11 +2717,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             <button onClick={submitPin} disabled={pinSubmitting || !pinInput}
               className="w-full text-sm font-bold rounded-xl px-3 py-2.5 mt-3 text-white disabled:opacity-50"
               style={{ backgroundColor: '#1A4731' }}>
-              {pinSubmitting ? <Loader2 size={14} className="animate-spin inline" /> : 'Xác nhận'}
+              {pinSubmitting ? <Loader2 size={14} className="animate-spin inline" /> : L('Xác nhận', 'Confirm')}
             </button>
           </div>
         </div>
       )}
     </div>
+    </ShopLangContext.Provider>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, Search, Cake, ChevronDown, ChevronUp } from 'lucide-react';
 import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, getEventSalesSummaryAction, type EventCaisseProduct, type EventSaleHistoryLine, type EventSalesSummary } from './actions';
 import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
+import { useShopL } from './shop-lang';
 
 // "Thu ngân" — the event's mini cash register (Axel, 2026-09-12): "une sorte de mini caisse
 // enregistreuse qui n'aurait aucun impact odoo". Standalone tab, same self-fetching pattern as
@@ -27,6 +28,7 @@ function fmt(v: number): string {
 }
 
 export default function EventCaisseTab() {
+  const L = useShopL();
   const [products, setProducts] = useState<EventCaisseProduct[] | null>(null);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -92,27 +94,27 @@ export default function EventCaisseTab() {
     setPaymentStep('idle');
     if (res.error) { setMsg(res.error); return; }
     setCart({}); setFreeCart({});
-    setMsg('✓ Đã ghi nhận bán hàng (không ảnh hưởng Odoo)');
+    setMsg(L('✓ Đã ghi nhận bán hàng (không ảnh hưởng Odoo)', '✓ Sale recorded (no impact on Odoo)'));
     load();
   }
 
-  if (!products) return <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>;
+  if (!products) return <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>;
 
   return (
     <div className="space-y-3 pb-20">
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}`, color: '#8A6D14' }}>
-        📦 Sản phẩm lấy từ các đơn hàng (REP) của event. Vẫn bán được khi số tồn về 0 hoặc âm.
+        {L('📦 Sản phẩm lấy từ các đơn hàng (REP) của event, kể cả khi chưa xác nhận nhận hàng. Vẫn bán được khi số tồn về 0 hoặc âm.', '📦 Products come from the event\'s orders (REP), even before they are confirmed as received. Selling stays possible at zero or below.')}
       </div>
 
       {!products.length ? (
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>
-          Chưa có sản phẩm nào để bán — event chưa có đơn hàng (REP) nào, hoặc Lab chưa đồng bộ xong (tối đa 15 phút).
+          {L('Chưa có sản phẩm nào để bán — event chưa có đơn hàng (REP) nào, hoặc Lab chưa đồng bộ xong (tối đa 15 phút).', 'Nothing to sell yet — the event has no order (REP) so far, or the Lab has not finished syncing (up to 15 minutes).')}
         </div>
       ) : (
         <>
           <div className="flex items-center gap-1.5 rounded-xl px-3 py-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
             <Search size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm sản phẩm…"
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder={L('Tìm sản phẩm…', 'Search a product…')}
               className="flex-1 text-[13px]" style={{ border: 'none', outline: 'none', color: INK, background: 'transparent' }} />
           </div>
           {categories.length > 1 && (
@@ -120,7 +122,7 @@ export default function EventCaisseTab() {
               <button onClick={() => setCategoryFilter(null)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
                 backgroundColor: categoryFilter === null ? NAVY : '#fff', color: categoryFilter === null ? '#FFFAEE' : INK,
                 border: categoryFilter === null ? 'none' : `1px solid ${BORDER}`,
-              }}>Tất cả</button>
+              }}>{L('Tất cả', 'All')}</button>
               {categories.map(c => (
                 <button key={c} onClick={() => setCategoryFilter(c === categoryFilter ? null : c)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
                   backgroundColor: categoryFilter === c ? NAVY : '#fff', color: categoryFilter === c ? '#FFFAEE' : INK,
@@ -130,7 +132,7 @@ export default function EventCaisseTab() {
             </div>
           )}
           {!filteredProducts.length && (
-            <div className="text-center py-6 text-xs" style={{ color: '#9CA3AF' }}>Không tìm thấy sản phẩm.</div>
+            <div className="text-center py-6 text-xs" style={{ color: '#9CA3AF' }}>{L('Không tìm thấy sản phẩm.', 'No product found.')}</div>
           )}
         <div className="grid grid-cols-2 gap-2.5">
           {filteredProducts.map(p => {
@@ -147,7 +149,7 @@ export default function EventCaisseTab() {
                   )}
                 </div>
                 <div className="text-[13px] font-bold leading-tight" style={{ color: INK }}>{p.name}</div>
-                <div className="text-[10.5px] mt-0.5" style={{ color: remaining <= 0 ? RED : '#9CA3AF' }}>Còn <b>{remaining}</b></div>
+                <div className="text-[10.5px] mt-0.5" style={{ color: remaining <= 0 ? RED : '#9CA3AF' }}>{L('Còn', 'Left')} <b>{remaining}</b></div>
                 <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
                 <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
                   <button onClick={() => changeQty(p.sku, -1)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
@@ -163,7 +165,7 @@ export default function EventCaisseTab() {
                 {qty > 0 && (
                   <div className="flex items-center justify-between mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
                     <span className="inline-flex items-center gap-1 text-[10.5px] font-bold" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
-                      <Gift size={11} /> Miễn phí
+                      <Gift size={11} /> {L('Miễn phí', 'Free')}
                     </span>
                     <div className="flex items-center gap-1.5">
                       <button onClick={() => changeFree(p.sku, -1)} disabled={free <= 0} className="w-5 h-5 rounded flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #E5C77A' }}>
@@ -196,16 +198,16 @@ export default function EventCaisseTab() {
         <div className="bg-white rounded-2xl p-3.5" style={{ border: `1px solid ${BORDER}` }}>
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Tổng doanh thu event</div>
+              <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{L('Tổng doanh thu event', 'Total event sales')}</div>
               <div className="text-lg font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(summary.totalRevenue)}</div>
               <div className="text-[11px] mt-0.5" style={{ color: '#6B7280' }}>
-                Tiền mặt <b style={{ color: INK }}>{fmt(summary.cashRevenue)}</b> · Chuyển khoản <b style={{ color: INK }}>{fmt(summary.transferRevenue)}</b> · {summary.orderCount} đơn
+                {L('Tiền mặt', 'Cash')} <b style={{ color: INK }}>{fmt(summary.cashRevenue)}</b> · {L('Chuyển khoản', 'Bank transfer')} <b style={{ color: INK }}>{fmt(summary.transferRevenue)}</b> · {summary.orderCount} {L('đơn', 'sales')}
               </div>
             </div>
             <button onClick={() => setShowBreakdown(v => !v)}
               className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5"
               style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
-              Theo sản phẩm {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {L('Theo sản phẩm', 'By product')} {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           </div>
           {showBreakdown && (
@@ -223,7 +225,7 @@ export default function EventCaisseTab() {
 
       {history && history.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>Đã bán · {history.length}</div>
+          <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{L('Đã bán', 'Sold')} · {history.length}</div>
           {history.map((s, i) => (
             <div key={i} className="flex items-center justify-between bg-white rounded-xl px-3 py-2" style={{ border: '1px solid #F0EAC6' }}>
               <div>
@@ -241,7 +243,7 @@ export default function EventCaisseTab() {
           <div className="max-w-xl mx-auto w-full flex items-center justify-between gap-3">
             <div>
               <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#F0D98A' }}>
-                Tổng đơn{freeCount > 0 ? ` · ${freeCount} miễn phí` : ''}
+                {L('Tổng đơn', 'Sale total')}{freeCount > 0 ? ` · ${freeCount} ${L('miễn phí', 'free')}` : ''}
               </div>
               <div className="text-base font-extrabold tabular-nums" style={{ color: '#FFFAEE' }}>{fmt(total)}</div>
             </div>
@@ -249,7 +251,7 @@ export default function EventCaisseTab() {
               className="inline-flex items-center gap-1.5 text-sm font-extrabold rounded-xl px-4 py-2.5"
               style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
               <CheckCircle2 size={14} />
-              Xác nhận bán
+              {L('Xác nhận bán', 'Confirm the sale')}
             </button>
           </div>
         </div>
@@ -262,23 +264,23 @@ export default function EventCaisseTab() {
         <div className="fixed inset-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(26,71,49,0.55)' }} onClick={() => setPaymentStep('idle')}>
           <div className="bg-white rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-center">
-              <div className="text-[10.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>Tổng thanh toán</div>
+              <div className="text-[10.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>{L('Tổng thanh toán', 'Total to pay')}</div>
               <div className="text-xl font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(total)}</div>
             </div>
             <button onClick={() => confirmSale('cash')} disabled={submitting}
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3 disabled:opacity-60"
               style={{ backgroundColor: '#1A4731', color: '#FFFAEE' }}>
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Banknote size={16} />}
-              Tiền mặt
+              {L('Tiền mặt', 'Cash')}
             </button>
             <button onClick={() => setPaymentStep('transferQr')} disabled={submitting}
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3"
               style={{ backgroundColor: GOLD_PALE, color: '#8A6D14', border: `1px solid ${GOLD}` }}>
               <QrCode size={16} />
-              Chuyển khoản
+              {L('Chuyển khoản', 'Bank transfer')}
             </button>
             <button onClick={() => setPaymentStep('idle')} className="w-full text-center text-xs font-semibold py-1.5" style={{ color: '#9CA3AF' }}>
-              Huỷ
+              {L('Huỷ', 'Cancel')}
             </button>
           </div>
         </div>
@@ -292,19 +294,19 @@ export default function EventCaisseTab() {
         <div className="fixed inset-0 z-20 flex flex-col" style={{ backgroundColor: '#fff' }}>
           <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
             <button onClick={() => setPaymentStep('choosing')} className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: '#9CA3AF' }}>
-              <ArrowLeft size={12} /> Quay lại
+              <ArrowLeft size={12} /> {L('Quay lại', 'Back')}
             </button>
             <div className="text-right">
-              <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>Chuyển khoản</div>
+              <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>{L('Chuyển khoản', 'Bank transfer')}</div>
               <div className="text-sm font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(total)}</div>
             </div>
           </div>
           <div className="flex-1 flex items-center justify-center p-4 min-h-0">
             {qrCodeUrl ? (
-              <img src={qrCodeUrl} alt="QR chuyển khoản" className="max-w-full max-h-full rounded-xl object-contain" style={{ border: `1px solid ${BORDER}` }} />
+              <img src={qrCodeUrl} alt={L('QR chuyển khoản', 'Bank transfer QR')} className="max-w-full max-h-full rounded-xl object-contain" style={{ border: `1px solid ${BORDER}` }} />
             ) : (
               <div className="text-xs text-center rounded-lg px-3 py-4" style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
-                Chưa có QR cho event này — nhờ admin tải lên ở trang quản lý Event.
+                {L('Chưa có QR cho event này — nhờ admin tải lên ở trang quản lý Event.', 'No QR for this event yet — ask an admin to upload one on the Event shops page.')}
               </div>
             )}
           </div>
@@ -313,7 +315,7 @@ export default function EventCaisseTab() {
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3 disabled:opacity-60"
               style={{ backgroundColor: '#1A4731', color: '#FFFAEE' }}>
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              Đã chuyển khoản — Xác nhận
+              {L('Đã chuyển khoản — Xác nhận', 'Transfer received — Confirm')}
             </button>
           </div>
         </div>

@@ -7,6 +7,7 @@ import { thumb } from '@/lib/img-thumb';
 import QtyExprInput from '@/components/QtyExprInput';
 import { evalQty } from '@/lib/qty-expr';
 import { NamePicker, NAVY, GOLD, GOLD_LIGHT, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
+import { useShopL } from './shop-lang';
 
 // "Kiểm kê chính thức" — the monthly official inventory (Axel, 2026-09-22): last day of the month
 // only, pushes to Odoo (unlike the daily Kiểm kho, which never does), reuses the same cut-off/diff
@@ -38,6 +39,7 @@ function groupByCategory(lines: OfficialInventoryLine[]): CatGroup[] {
 export default function OfficialInventoryTab({ shopName, readOnly, staffNames, onManageStaff }: {
   shopName: string; readOnly: boolean; staffNames: ShopStaffName[] | null; onManageStaff: () => void;
 }) {
+  const L = useShopL();
   const shopArg = readOnly ? shopName : undefined;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   async function handleStart() {
-    if (!name.trim()) { setError('Chọn tên trước khi bắt đầu'); return; }
+    if (!name.trim()) { setError(L('Chọn tên trước khi bắt đầu', 'Choose your name before starting')); return; }
     setStarting(true);
     setError(null);
     const actions = await import('./official-inventory-actions');
@@ -121,18 +123,18 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     const actions = await import('./official-inventory-actions');
     const res = await actions.submitOfficialInventoryAction(session.id, name.trim(), shopArg);
     setSubmitting(false);
-    if (res.error) { setSubmitError(res.error === 'Nom requis' ? 'Chọn tên người gửi trước' : res.error); return; }
+    if (res.error) { setSubmitError(res.error === 'Nom requis' ? L('Chọn tên người gửi trước', 'Choose the name of the sender first') : res.error); return; }
     setSubmitResult({ pushStatus: res.pushStatus ?? 'success', errorCount: res.errorCount ?? 0 });
     await load();
   }
 
-  if (loading) return <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>Đang tải…</div>;
+  if (loading) return <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>;
   if (error && !session) return <div className="text-center py-10 text-sm font-semibold" style={{ color: RED }}>{error}</div>;
 
   if (!hasWarehouse) {
     return (
       <div className="rounded-xl px-3.5 py-3 text-sm" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}`, color: INK }}>
-        Shop chưa có kho trên Odoo — chưa thể kiểm kê chính thức ở đây.
+        {L('Shop chưa có kho trên Odoo — chưa thể kiểm kê chính thức ở đây.', 'This shop has no warehouse in Odoo yet — the official inventory cannot be done here.')}
       </div>
     );
   }
@@ -149,24 +151,24 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           <div className="rounded-xl px-3.5 py-3 flex items-start gap-2" style={{ backgroundColor: '#FBEAE8', border: `1px solid #EFC3BE` }}>
             <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: RED }} />
             <div className="text-sm" style={{ color: RED }}>
-              <span className="font-bold">Hôm nay là ngày kiểm kê chính thức.</span> Bắt buộc — kết quả sẽ được gửi lên Odoo.
+              <span className="font-bold">{L('Hôm nay là ngày kiểm kê chính thức.', 'Today is official inventory day.')}</span> {L('Bắt buộc — kết quả sẽ được gửi lên Odoo.', 'Mandatory — the result is sent to Odoo.')}
             </div>
           </div>
         ) : (
           <div className="rounded-xl px-3.5 py-3 text-sm" style={{ backgroundColor: '#F5F5F0', border: `1px solid ${BORDER}`, color: '#6B7280' }}>
-            Kiểm kê chính thức chỉ mở vào ngày cuối cùng của tháng. Kiểm kho hằng ngày (tab "Kiểm kho") không bị ảnh hưởng.
+            {L('Kiểm kê chính thức chỉ mở vào ngày cuối cùng của tháng. Kiểm kho hằng ngày (tab "Kiểm kho") không bị ảnh hưởng.', 'The official inventory only opens on the last day of the month. The daily stock count ("Stock count" tab) is not affected.')}
           </div>
         )}
         {isLastDay && (
           <div className="rounded-xl p-4 space-y-3" style={{ background: `linear-gradient(135deg, ${NAVY}, #0F2E1F)` }}>
-            <div className="text-sm font-bold" style={{ color: GOLD_LIGHT }}>Kiểm kê chính thức trong tháng</div>
+            <div className="text-sm font-bold" style={{ color: GOLD_LIGHT }}>{L('Kiểm kê chính thức trong tháng', 'Official inventory of the month')}</div>
             <NamePicker value={name} onChange={setName} names={staffNames} onManage={onManageStaff} />
             {error && <div className="text-xs font-semibold" style={{ color: '#FFD9D2' }}>{error}</div>}
             <button onClick={handleStart} disabled={starting}
               className="w-full rounded-lg py-3 text-sm font-bold flex items-center justify-center gap-2"
               style={{ backgroundColor: GOLD, color: NAVY }}>
               {starting ? <Loader2 size={16} className="animate-spin" /> : <ClipboardCheck size={16} />}
-              Bắt đầu kiểm kê chính thức
+              {L('Bắt đầu kiểm kê chính thức', 'Start the official inventory')}
             </button>
           </div>
         )}
@@ -179,10 +181,10 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     return (
       <div className="rounded-xl p-5 text-center space-y-2" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${BORDER}` }}>
         <CheckCircle2 size={32} className="mx-auto" style={{ color: GREEN }} />
-        <div className="font-bold text-sm" style={{ color: INK }}>Đã gửi kiểm kê chính thức {period}</div>
+        <div className="font-bold text-sm" style={{ color: INK }}>{L('Đã gửi kiểm kê chính thức', 'Official inventory sent')} {period}</div>
         <div className="text-xs" style={{ color: '#6B7280' }}>
-          {lines.length} sản phẩm · gửi bởi {session.submittedByName ?? '—'}
-          {session.odooPushStatus === 'partial' && <span style={{ color: RED }}> · một phần bị lỗi, cần kiểm tra lại với lab</span>}
+          {lines.length} {L('sản phẩm · gửi bởi', 'products · sent by')} {session.submittedByName ?? '—'}
+          {session.odooPushStatus === 'partial' && <span style={{ color: RED }}>{L(' · một phần bị lỗi, cần kiểm tra lại với lab', ' · partly failed, to be checked with the Lab')}</span>}
         </div>
       </div>
     );
@@ -194,24 +196,24 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
       <div className="rounded-xl p-4 space-y-3" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
         {screen === 'confirm1' ? (
           <>
-            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Bước 1/2</div>
-            <div className="font-bold text-base" style={{ color: INK }}>Xác nhận kiểm kê?</div>
-            <div className="text-sm" style={{ color: '#5C6B60' }}>{countedCount}/{lines.length} sản phẩm đã nhập. Sau khi xác nhận, số liệu không thể sửa nữa.</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>{L('Bước 1/2', 'Step 1/2')}</div>
+            <div className="font-bold text-base" style={{ color: INK }}>{L('Xác nhận kiểm kê?', 'Confirm the inventory?')}</div>
+            <div className="text-sm" style={{ color: '#5C6B60' }}>{countedCount}/{lines.length} {L('sản phẩm đã nhập. Sau khi xác nhận, số liệu không thể sửa nữa.', 'products entered. Once confirmed, the figures can no longer be changed.')}</div>
             <div className="flex gap-2">
-              <button onClick={() => setScreen('recap')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
-              <button onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>Xác nhận kiểm kê</button>
+              <button onClick={() => setScreen('recap')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>{L('Quay lại', 'Back')}</button>
+              <button onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>{L('Xác nhận kiểm kê', 'Confirm the inventory')}</button>
             </div>
           </>
         ) : (
           <>
-            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>Bước 2/2</div>
-            <div className="font-bold text-base" style={{ color: INK }}>Gửi lên Odoo?</div>
-            <div className="text-sm" style={{ color: '#5C6B60' }}>Số lượng sẽ được gửi lên Odoo để quản lý kiểm tra và xác nhận vào sáng hôm sau. Sau khi gửi, không thể sửa nữa.</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>{L('Bước 2/2', 'Step 2/2')}</div>
+            <div className="font-bold text-base" style={{ color: INK }}>{L('Gửi lên Odoo?', 'Send to Odoo?')}</div>
+            <div className="text-sm" style={{ color: '#5C6B60' }}>{L('Số lượng sẽ được gửi lên Odoo để quản lý kiểm tra và xác nhận vào sáng hôm sau. Sau khi gửi, không thể sửa nữa.', 'The quantities are sent to Odoo for management to check and validate the next morning. Once sent, they can no longer be changed.')}</div>
             {/* The sender's name is required by the server, but was only picked on the start screen and
                 kept in this device's localStorage — sending from another phone (or after the browser
                 cleared it) left it empty with no way to fill it ("Nom requis", Timecity 2026-09-30). */}
             <div className="space-y-1">
-              <div className="text-xs font-semibold" style={{ color: INK }}>Người gửi</div>
+              <div className="text-xs font-semibold" style={{ color: INK }}>{L('Người gửi', 'Sender')}</div>
               <NamePicker value={name} onChange={setName} names={staffNames} onManage={onManageStaff} />
             </div>
             <button onClick={() => setCertified(c => !c)} type="button"
@@ -220,15 +222,15 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
               <div className="w-5 h-5 rounded shrink-0 flex items-center justify-center mt-0.5" style={{ border: `2px solid ${NAVY}`, background: certified ? NAVY : 'transparent' }}>
                 {certified && <ShieldCheck size={12} color="#fff" />}
               </div>
-              <div className="text-sm" style={{ color: INK }}>Tôi xác nhận đã đếm thực tế từng sản phẩm trong danh sách này.</div>
+              <div className="text-sm" style={{ color: INK }}>{L('Tôi xác nhận đã đếm thực tế từng sản phẩm trong danh sách này.', 'I confirm that I physically counted every product on this list.')}</div>
             </button>
             {submitError && <div className="text-xs font-semibold" style={{ color: RED }}>{submitError}</div>}
             <div className="flex gap-2">
-              <button onClick={() => setScreen('confirm1')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>Quay lại</button>
+              <button onClick={() => setScreen('confirm1')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>{L('Quay lại', 'Back')}</button>
               <button onClick={handleSubmit} disabled={!certified || submitting || !name.trim()}
                 className="flex-1 rounded-lg py-3 text-sm font-bold text-white flex items-center justify-center gap-2"
                 style={{ backgroundColor: certified && name.trim() ? RED : '#C9C2AE' }}>
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : null} Gửi lên Odoo
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : null} {L('Gửi lên Odoo', 'Send to Odoo')}
               </button>
             </div>
           </>
@@ -241,10 +243,10 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   if (screen === 'recap') {
     return (
       <div className="space-y-3">
-        <button onClick={() => setScreen('count')} className="text-xs font-semibold" style={{ color: NAVY }}>‹ Quay lại đếm</button>
+        <button onClick={() => setScreen('count')} className="text-xs font-semibold" style={{ color: NAVY }}>{L('‹ Quay lại đếm', '‹ Back to counting')}</button>
         <div className="rounded-xl p-3 text-center" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
           <div className="text-xl font-bold" style={{ color: NAVY }}>{lines.length}</div>
-          <div className="text-[11px]" style={{ color: '#8A9A8F' }}>sản phẩm sẽ gửi lên Odoo</div>
+          <div className="text-[11px]" style={{ color: '#8A9A8F' }}>{L('sản phẩm sẽ gửi lên Odoo', 'products will be sent to Odoo')}</div>
         </div>
         <div className="space-y-1.5 max-h-[50vh] overflow-auto">
           {groups.map(g => (
@@ -260,7 +262,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           ))}
         </div>
         <button onClick={() => setScreen('confirm1')} className="w-full rounded-lg py-3 text-sm font-bold" style={{ backgroundColor: GOLD, color: NAVY }}>
-          Xác nhận kiểm kê chính thức
+          {L('Xác nhận kiểm kê chính thức', 'Confirm the official inventory')}
         </button>
       </div>
     );
@@ -276,8 +278,8 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
         <div className="text-xs font-bold whitespace-nowrap" style={{ color: GOLD_LIGHT }}>{countedCount}/{lines.length}</div>
       </div>
       <div className="flex justify-end gap-3 text-[11px] font-semibold" style={{ color: NAVY }}>
-        <button type="button" onClick={() => setOpenCats(Object.fromEntries(groups.map(g => [g.category, true])))}>Mở tất cả</button>
-        <button type="button" onClick={() => setOpenCats({})}>Thu gọn</button>
+        <button type="button" onClick={() => setOpenCats(Object.fromEntries(groups.map(g => [g.category, true])))}>{L('Mở tất cả', 'Expand all')}</button>
+        <button type="button" onClick={() => setOpenCats({})}>{L('Thu gọn', 'Collapse')}</button>
       </div>
       <div className="space-y-2">
         {groups.map(g => {
@@ -324,11 +326,11 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
         })}
       </div>
       {badDraftSkus.length > 0 && (
-        <div className="text-sm font-semibold text-center" style={{ color: RED }}>Số lượng không hợp lệ: {badDraftSkus.join(', ')}</div>
+        <div className="text-sm font-semibold text-center" style={{ color: RED }}>{L('Số lượng không hợp lệ:', 'Invalid quantity:')} {badDraftSkus.join(', ')}</div>
       )}
       <button onClick={() => setScreen('recap')} disabled={badDraftSkus.length > 0}
         className="w-full rounded-lg py-3 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>
-        Xem tổng kết
+        {L('Xem tổng kết', 'View the summary')}
       </button>
     </div>
   );

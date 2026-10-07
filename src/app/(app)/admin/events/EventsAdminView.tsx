@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarDays, Loader2, AlertCircle, QrCode, X, Store } from 'lucide-react';
-import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, type CreateEventFormResult } from './actions';
+import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, setEventDatesAction, type CreateEventFormResult } from './actions';
 import type { EventShop } from '@/lib/event-shops';
 
 // Same downsize-before-upload as the online-orders payment-proof upload (OnlineOrdersView.tsx) —
@@ -49,6 +49,21 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
     const res = await enterEventAsStaffAction(id);
     if (res.error) { setOpenError(res.error); setOpeningId(null); return; }
     router.push(`/admin/events/${id}`);
+  }
+  // Event days — typed per event, saved explicitly. The event's Báo cáo tab lists these days only.
+  const [dateDraft, setDateDraft] = useState<Record<string, { start: string; end: string }>>({});
+  const [dateBusyId, setDateBusyId] = useState<string | null>(null);
+  const datesOf = (e: EventShop) => dateDraft[e.id] ?? { start: e.startDate ?? '', end: e.endDate ?? '' };
+  const fmtDay = (d: string | null) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '');
+  async function saveDates(e: EventShop) {
+    const d = datesOf(e);
+    setDateBusyId(e.id);
+    setOpenError(null);
+    const res = await setEventDatesAction(e.id, d.start || null, d.end || null);
+    setDateBusyId(null);
+    if (res.error) { setOpenError(res.error); return; }
+    setDateDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
+    load();
   }
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreateEventFormResult | null>(null);
@@ -170,7 +185,8 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
         ) : !active.length ? (
           <div className="px-4 py-4 text-xs text-gray-400">No events currently open</div>
         ) : active.map((e, i) => (
-          <div key={e.id} className="flex items-center gap-2.5 px-4 py-2.5 text-sm" style={{ borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
+          <div key={e.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
+          <div className="flex items-center gap-2.5 px-4 py-2.5 text-sm">
             <div className="font-semibold flex-1 min-w-0 truncate">{e.name}</div>
             <div className="text-xs text-gray-500 shrink-0">Warehouse {e.warehouseCode}</div>
             <button onClick={() => openEvent(e.id)} disabled={openingId === e.id}
@@ -212,6 +228,30 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
               {closingId === e.id ? '…' : 'Close'}
             </button>
             )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-xs text-gray-500">
+            <span className="font-semibold">Event days</span>
+            {canManage ? (
+              <>
+                <input type="date" value={datesOf(e).start} aria-label="First day of the event"
+                  onChange={ev => setDateDraft(prev => ({ ...prev, [e.id]: { ...datesOf(e), start: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                <span>to</span>
+                <input type="date" value={datesOf(e).end} aria-label="Last day of the event"
+                  onChange={ev => setDateDraft(prev => ({ ...prev, [e.id]: { ...datesOf(e), end: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                {dateDraft[e.id] && (
+                  <button onClick={() => saveDates(e)} disabled={dateBusyId === e.id}
+                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                    {dateBusyId === e.id ? '…' : 'Save'}
+                  </button>
+                )}
+              </>
+            ) : (
+              <span>{e.startDate && e.endDate ? `${fmtDay(e.startDate)} to ${fmtDay(e.endDate)}` : 'not set'}</span>
+            )}
+            <span className="text-gray-400">Reports in the event show these days only.</span>
+          </div>
           </div>
         ))}
       </div>

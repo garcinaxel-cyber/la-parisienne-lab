@@ -1086,10 +1086,44 @@ type StockCountEntry = { name: string; category: string; imageUrl: string | null
 // catalog above (same for every shop) plus this shop's own manually-added extras.
 async function stockCountEntries(shopName: string): Promise<Map<string, StockCountEntry>> {
   const out = new Map<string, StockCountEntry>();
-  const catalog = await stockCountCatalog();
-  catalog.forEach((p, sku) => out.set(sku, { name: p.name, category: p.category, imageUrl: p.imageUrl, isExtra: false }));
-
   const supabase = service();
+  // Event shop (Axel, 2026-10-07: "pour le comptage du stock affiche que les produits livrés,
+  // même les packaging"): an event only ever holds what its own orders brought, so its checklist
+  // is exactly that — every SKU of the event's orders, packaging included, whatever its category
+  // (a birthday cake sent to a fair is counted there, unlike on a shop's daily list) — instead of
+  // the ~230-line catalog of a permanent shop. Same source as the caisse (eventOrderedLines), so
+  // the two screens can never disagree on what the event received. A SKU the Lab explicitly
+  // checked out at 0 was not delivered and stays off the list. Manual extras still apply below.
+  const event = supabase ? await getActiveEventByName(shopName) : null;
+  if (event && supabase) {
+    const [{ orderedBySku, packagingSkus }, all] = await Promise.all([eventOrderedLines(supabase, shopName), fetchProductionCatalog()]);
+    const catalogBySku = new Map(all.map(p => [p.sku, p] as const));
+    const unknown: string[] = [];
+    orderedBySku.forEach((o, sku) => {
+      if (!(o.qty > 0)) return;
+      const p = catalogBySku.get(sku);
+      if (packagingSkus.has(sku)) out.set(sku, { name: o.name || sku, category: STOCK_COUNT_PACKAGING_CATEGORY, imageUrl: null, isExtra: false });
+      else if (p) out.set(sku, { name: p.name, category: p.category, imageUrl: p.imageUrl, isExtra: false });
+      else unknown.push(sku);
+    });
+    if (unknown.length) {
+      const ficheMeta = await resolveFicheMetaBySku(unknown);
+      const rest = unknown.filter(sku => !ficheMeta[sku]);
+      const pkgMeta = rest.length ? await resolvePackagingMetaBySku(rest) : {};
+      for (const sku of unknown) {
+        const o = orderedBySku.get(sku)!;
+        const f = ficheMeta[sku];
+        const k = pkgMeta[sku];
+        out.set(sku, f
+          ? { name: o.name || sku, category: f.category, imageUrl: f.imageUrl, isExtra: false }
+          : { name: o.name || k?.name || sku, category: k ? k.category : STOCK_COUNT_FALLBACK_CATEGORY, imageUrl: null, isExtra: false });
+      }
+    }
+  } else {
+    const catalog = await stockCountCatalog();
+    catalog.forEach((p, sku) => out.set(sku, { name: p.name, category: p.category, imageUrl: p.imageUrl, isExtra: false }));
+  }
+
   if (!supabase) return out;
   const { data: extras } = await supabase.from('lab_shop_stock_count_items').select('sku, product_name').eq('shop_name', shopName);
   const newExtraSkus = (extras ?? []).map((e: any) => e.sku).filter((sku: string) => sku && !out.has(sku));
@@ -1521,7 +1555,25 @@ export async function getDailyReportRangeForStaffAction(shopName: string): Promi
 // list carries per-day SUMMARIES only (no product lines); one day's full report is fetched when
 // the user opens it. The 7-day actions above are kept as-is for clients still on an older bundle.
 export type ShopDailyReportSummary = Omit<ShopDailyReport, 'stockLines' | 'losses'>;
-export type ShopDailyReportMonth = { months: string[]; month: string; today: string; days: ShopDailyReportSummary[] };
+export type ShopDailyReportMonth = {
+  months: string[]; month: string; today: string; days: ShopDailyReportSummary[];
+  /** Set only for an event shop that has its days defined: the list is then those days, not a month. */
+  eventStart?: string | null; eventEnd?: string | null;
+};
+
+// Event days, most-recent first (Axel, 2026-10-07: "pour les rapports ça peut être que du 8 au
+// 11 pour cet event"). Null when the event has no dates: the usual two-month window applies.
+// Unlike a shop's month, days still to come are listed too — an event is a few known days, and a
+// list that stays empty until the first morning reads as broken. Capped at 62 days.
+function eventReportDates(ev: EventShop | null): string[] | null {
+  if (!ev?.startDate || !ev.endDate || ev.endDate < ev.startDate) return null;
+  const out: string[] = [];
+  const start = new Date(`${ev.startDate}T00:00:00Z`).getTime();
+  for (let t = new Date(`${ev.endDate}T00:00:00Z`).getTime(); t >= start && out.length < 62; t -= 86400000) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
 
 // ['2026-10', '2026-09'] — current VN month first, then the previous one.
 function reportMonthWindow(): string[] {
@@ -1545,6 +1597,19 @@ function vnDatesOfMonth(month: string): string[] {
 }
 
 async function fetchDailyReportMonth(shopName: string, month?: string): Promise<ShopDailyReportMonth | { error: string }> {
+  const ev = await getActiveEventByName(shopName);
+  const evDates = eventReportDates(ev);
+  if (ev && evDates) {
+    const today = vnDateStr();
+    const evMonths = Array.from(new Set(evDates.map(d => d.slice(0, 7))));
+    const cur = today.slice(0, 7);
+    const pick = month && evMonths.includes(month) ? month
+      : evMonths.includes(cur) ? cur
+      : today < ev.startDate! ? evMonths[evMonths.length - 1] : evMonths[0];
+    const evReports = await fetchDailyReportRange(shopName, evDates.filter(d => d.slice(0, 7) === pick));
+    const evDays: ShopDailyReportSummary[] = evReports.map(({ stockLines: _stockLines, losses: _losses, ...summary }) => summary);
+    return { months: evMonths, month: pick, today, days: evDays, eventStart: ev.startDate, eventEnd: ev.endDate };
+  }
   const months = reportMonthWindow();
   const chosen = month && /^\d{4}-\d{2}$/.test(month) ? month : months[0];
   if (!months.includes(chosen)) return { error: 'Ngoài khoảng thời gian cho phép' };
@@ -1555,7 +1620,9 @@ async function fetchDailyReportMonth(shopName: string, month?: string): Promise<
 
 async function fetchDailyReportDay(shopName: string, date: string): Promise<{ report: ShopDailyReport } | { error: string }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return { error: 'Ngày không hợp lệ' };
-  if (!reportMonthWindow().includes(date.slice(0, 7)) || date > vnDateStr()) return { error: 'Ngoài khoảng thời gian cho phép' };
+  const evDates = eventReportDates(await getActiveEventByName(shopName));
+  if (evDates ? !evDates.includes(date) : !reportMonthWindow().includes(date.slice(0, 7))) return { error: 'Ngoài khoảng thời gian cho phép' };
+  if (date > vnDateStr()) return { error: 'Ngoài khoảng thời gian cho phép' };
   const [report] = await fetchDailyReportRange(shopName, [date]);
   return report ? { report } : { error: 'Không có dữ liệu' };
 }
@@ -2314,13 +2381,13 @@ export async function cancelShopTransferAction(input: { shopName?: string; trans
 // getEventAccessStateAction drives that button: hasActiveEvent decides whether to show it at
 // all, inEvent/eventName reflect whether THIS browser is currently inside one (so ShopView can
 // render the event tabs instead of the normal ones).
-export type EventAccessState = { hasActiveEvent: boolean; inEvent: boolean; eventName?: string };
+export type EventAccessState = { hasActiveEvent: boolean; inEvent: boolean; eventName?: string; eventStart?: string | null; eventEnd?: string | null };
 
 export async function getEventAccessStateAction(): Promise<EventAccessState | { error: string }> {
   const auth = await requireShopOrStaff();
   if ('error' in auth) return { error: auth.error };
   const [hasActive, event] = await Promise.all([hasAnyActiveEvent(), currentEventOverride()]);
-  return { hasActiveEvent: hasActive, inEvent: !!event, eventName: event?.name };
+  return { hasActiveEvent: hasActive, inEvent: !!event, eventName: event?.name, eventStart: event?.startDate ?? null, eventEnd: event?.endDate ?? null };
 }
 
 export async function enterEventAction(pin: string): Promise<{ ok?: boolean; eventName?: string; error?: string }> {
@@ -2383,13 +2450,15 @@ export type EventCaisseProduct = {
 // shop_name is summed, so a SKU that only showed up on day 2's order still appears here.
 const odooEventPriceCache = new Map<string, number>();
 
-export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
-  const auth = await requireEventSession();
-  if ('error' in auth) return { error: auth.error };
-  const shopName = auth.event.name;
-  const supabase = service();
-  if (!supabase) return { error: 'Server not configured' };
+export type EventOrderedLines = {
+  orderedBySku: Map<string, { name: string; qty: number }>;
+  producedSkus: Set<string>;
+  packagingSkus: Set<string>;
+};
 
+// Everything this event's orders brought, per SKU — shared by the caisse (what can be sold) and
+// the event's Kiểm kho (what there is to count), so both always read the same deliveries.
+async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service>>, shopName: string): Promise<EventOrderedLines> {
   // Reworked, Axel 2026-10-07: "la commande se fera via les REP" — the event's stock comes from
   // replenishment requests entered directly in Odoo (REP/2026/01854 was typed there, never through
   // this app's Đặt hàng tab), so the audit log lab_shop_manager_orders alone left the caisse
@@ -2419,7 +2488,10 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   // price below; packaging lines never are (Odoo defaults a new product's price to 1).
   const producedSkus = new Set<string>();
   for (const l of olRes.data ?? []) { put(syncedByRef, l.order_ref, l.product_sku, l.product_name_vi, l.qty); if (l.product_sku) producedSkus.add(l.product_sku); }
-  for (const l of plRes.data ?? []) put(syncedByRef, l.order_ref, l.sku, l.product_name_vi, l.qty);
+  // Packaging / supplies (lab_order_packaging_lines) — never sold at the caisse (no price), but
+  // counted in the event's Kiểm kho.
+  const packagingSkus = new Set<string>();
+  for (const l of plRes.data ?? []) { put(syncedByRef, l.order_ref, l.sku, l.product_name_vi, l.qty); if (l.sku) packagingSkus.add(l.sku); }
   const headers = (hdRes.data ?? []) as { id: string; order_ref: string; marked_not_delivered: boolean | null }[];
   const notDelivered = new Set(headers.filter(h => h.marked_not_delivered).map(h => h.order_ref));
   const refByHeaderId = new Map(headers.filter(h => !h.marked_not_delivered).map(h => [h.id, h.order_ref]));
@@ -2455,6 +2527,17 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
       addOrdered(l.sku, l.name || l.sku, Number(l.qty));
     }
   }
+  return { orderedBySku, producedSkus, packagingSkus };
+}
+
+export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const shopName = auth.event.name;
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+
+  const { orderedBySku, producedSkus } = await eventOrderedLines(supabase, shopName);
   if (!orderedBySku.size) return { products: [], qrCodeUrl: auth.event.qrCodeUrl };
 
   const skus = Array.from(orderedBySku.keys());
