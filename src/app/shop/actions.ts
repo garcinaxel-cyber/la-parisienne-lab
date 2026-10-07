@@ -2644,6 +2644,83 @@ async function eventSalesTotals(supabase: NonNullable<ReturnType<typeof service>
   return { orderCount: orders.length, totalRevenue, cashRevenue: totalRevenue - transferRevenue, transferRevenue };
 }
 
+// ── Every sale of the event, one by one (Axel, 2026-10-07: "par jour, en consolidé ... par
+// virement, par cash aussi + traçabilité des transactions") ── the Sales screen of the till adds
+// these up itself (per day, per hour, per payment method, per category/product), so every figure
+// it shows comes from the same rows and can be traced back to a sale. A fair is a few hundred
+// sales: small enough to send whole, read in pages so nothing is cut at 1 000 rows.
+export type EventSaleLine = { sku: string; name: string; category: string | null; qty: number; unitPrice: number; free: boolean };
+export type EventSale = {
+  no: string;                 // running number in the order the sales were recorded: 0001, 0002…
+  day: string;                // Vietnam date, YYYY-MM-DD
+  time: string;               // Vietnam time, HH:mm:ss
+  hour: number;               // 0-23, Vietnam time
+  payment: 'cash' | 'transfer';
+  amount: number;
+  seller: string | null;
+  lines: EventSaleLine[];
+};
+export type EventSalesLedger = { sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string };
+
+export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSalesLedger; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const shopName = auth.event.name;
+  try {
+    const orders = await fetchAllPages<{ order_batch_id: string; created_at: string; amount_paid: number | null; payment_method: string | null; seller_name: string | null }>((f, t) =>
+      supabase.from('lab_online_orders').select('order_batch_id, created_at, amount_paid, payment_method, seller_name')
+        .eq('shop_name', shopName).eq('source', 'event_stock').order('created_at').order('order_batch_id').range(f, t));
+    const ids = orders.map(o => o.order_batch_id);
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+    const linesByBatch = new Map<string, { sku: string | null; product_name_vi: string | null; qty: number | null; unit_price: number | null }[]>();
+    // 50 sale ids per request (they travel in the URL), a few requests at a time.
+    for (let i = 0; i < chunks.length; i += 4) {
+      const parts = await Promise.all(chunks.slice(i, i + 4).map(c =>
+        supabase.from('lab_online_sale_lines').select('order_batch_id, sku, product_name_vi, qty, unit_price')
+          .in('order_batch_id', c).eq('is_fee', false).order('id').limit(1000)));
+      for (const { data, error } of parts) {
+        if (error) throw error;
+        for (const l of data ?? []) {
+          const arr = linesByBatch.get((l as any).order_batch_id) ?? [];
+          arr.push(l as any);
+          linesByBatch.set((l as any).order_batch_id, arr);
+        }
+      }
+    }
+    const skus = Array.from(new Set(Array.from(linesByBatch.values()).flat().map(l => l.sku).filter((x): x is string => !!x)));
+    const meta: Record<string, { category: string; imageUrl: string | null }> = {};
+    for (let i = 0; i < skus.length; i += 200) Object.assign(meta, await resolveFicheMetaBySku(skus.slice(i, i + 200)));
+
+    const timeFmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const sales: EventSale[] = orders.map((o, i) => {
+      const at = new Date(o.created_at);
+      const time = timeFmt.format(at);
+      const lines: EventSaleLine[] = [];
+      for (const l of linesByBatch.get(o.order_batch_id) ?? []) {
+        const qty = Number(l.qty ?? 0);
+        if (!l.sku || qty <= 0) continue;
+        const unitPrice = Number(l.unit_price ?? 0);
+        const rawName = String(l.product_name_vi ?? l.sku);
+        lines.push({
+          sku: l.sku, name: rawName.replace(/ \(miễn phí\)$/, ''), category: meta[l.sku]?.category ?? null,
+          qty, unitPrice, free: unitPrice === 0 && / \(miễn phí\)$/.test(rawName),
+        });
+      }
+      return {
+        no: String(i + 1).padStart(4, '0'), day: vnDateStr(at), time, hour: Number(time.slice(0, 2)) % 24,
+        payment: o.payment_method === 'transfer' ? 'transfer' : 'cash',
+        amount: Number(o.amount_paid ?? 0), seller: (o.seller_name ?? '').trim() || null, lines,
+      };
+    });
+    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr() } };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Could not read the sales' };
+  }
+}
+
 // ── Theoretical stock of an event (Axel, 2026-10-07: "a-t-on le stock théorique ? réception −
 // sales") ── received − sold − losses, cumulative since the event began. Three reads for the
 // whole event, then at(day) answers for any day: what had been delivered by that day (orders by
@@ -2763,6 +2840,10 @@ export type EventSaleItem = { sku: string; qty: number; freeQty?: number };
 export async function recordEventSaleAction(
   items: EventSaleItem[],
   paymentMethod: 'cash' | 'transfer',
+  // The name already picked on this phone (Axel, 2026-10-07: "j'ai peur que ça leur prenne du
+  // temps à chaque vendeur à chaque vente de mettre son nom" — so it is never asked at a sale, the
+  // till just passes along the remembered one). Optional and indicative: no name, no problem.
+  sellerName?: string,
 ): Promise<{ ok?: boolean; total?: number; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
@@ -2792,12 +2873,15 @@ export async function recordEventSaleAction(
 
   const today = vnDateStr();
   const orderBatchId = crypto.randomUUID();
+  const seller = String(sellerName ?? '').trim().slice(0, 80);
   // Free units contribute 0 to `total` (their row's unit_price is 0 — see rows below), so this
   // naturally already nets out every promo without any separate discount calculation.
   const total = clean.reduce((sum, i) => sum + (i.qty - i.freeQty) * (bySku.get(i.sku)!.unitPrice), 0);
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
     order_batch_id: orderBatchId, source: 'event_stock', shop_name: shopName, channel: 'Event',
     delivery_date: today, payment_status: 'paid', amount_paid: total, payment_method: paymentMethod,
+    // Only sent when there is one, so a sale without a name is the exact same insert as before.
+    ...(seller ? { seller_name: seller } : {}),
   });
   if (ooErr) return { error: ooErr.message };
   const rows = clean.flatMap(i => {

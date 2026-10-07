@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, Search, Cake, ChevronDown, ChevronUp } from 'lucide-react';
-import { getEventCaisseCatalogAction, recordEventSaleAction, getEventSalesHistoryAction, getEventSalesSummaryAction, type EventCaisseProduct, type EventSaleHistoryLine, type EventSalesSummary } from './actions';
-import { NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
+import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, Search, Cake, ShoppingBag, TrendingUp } from 'lucide-react';
+import { getEventCaisseCatalogAction, recordEventSaleAction, type EventCaisseProduct, type ShopStaffName } from './actions';
+import { NamePicker, NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED, NAME_STORAGE_KEY, LOSS_NAME_STORAGE_KEY, STOCK_NAME_STORAGE_KEY } from './ShopView';
+import EventSalesView from './EventSalesView';
 import { useShopL } from './shop-lang';
 import { thumb } from '@/lib/img-thumb';
 
@@ -28,17 +29,35 @@ function fmt(v: number): string {
   return v.toLocaleString('vi-VN') + ' ₫';
 }
 
-export default function EventCaisseTab() {
+// Seller (Axel, 2026-10-07): the till never asks for a name at a sale — "j'ai peur que ça leur
+// prenne du temps à chaque vendeur à chaque vente". It reuses the name this phone already
+// remembers from the other event screens (deliveries, losses, stock count) and shows it in one
+// small row; whoever takes over the phone changes it there, once. Its own key so that switching
+// seller at the till does not rename the person who confirms deliveries.
+const SALE_NAME_STORAGE_KEY = 'lab_shop_sale_name';
+
+export default function EventCaisseTab({ staffNames = null, onManageStaff }: { staffNames?: ShopStaffName[] | null; onManageStaff?: () => void }) {
   const L = useShopL();
+  // "Bán hàng" = the till itself; "Doanh thu" = what was sold (per day, cash / transfer, every
+  // transaction) — a screen of its own instead of a list under some forty products.
+  const [view, setView] = useState<'sell' | 'sales'>('sell');
+  const [seller, setSeller] = useState('');
+  useEffect(() => {
+    try {
+      setSeller(localStorage.getItem(SALE_NAME_STORAGE_KEY) ?? localStorage.getItem(NAME_STORAGE_KEY)
+        ?? localStorage.getItem(LOSS_NAME_STORAGE_KEY) ?? localStorage.getItem(STOCK_NAME_STORAGE_KEY) ?? '');
+    } catch {}
+  }, []);
+  function changeSeller(v: string) {
+    setSeller(v);
+    try { localStorage.setItem(SALE_NAME_STORAGE_KEY, v); } catch {}
+  }
   const [products, setProducts] = useState<EventCaisseProduct[] | null>(null);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [freeCart, setFreeCart] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [history, setHistory] = useState<EventSaleHistoryLine[] | null>(null);
-  const [summary, setSummary] = useState<EventSalesSummary | null>(null);
-  const [showBreakdown, setShowBreakdown] = useState(false);
   // Axel, 2026-09-14: "un filtre par nom et aussi par categorie" — name search + category pills
   // over the product grid; category comes from the fiche (see getEventCaisseCatalogAction).
   const [search, setSearch] = useState('');
@@ -47,11 +66,9 @@ export default function EventCaisseTab() {
   const [paymentStep, setPaymentStep] = useState<'idle' | 'choosing' | 'transferQr'>('idle');
 
   async function load() {
-    const [p, h, s] = await Promise.all([getEventCaisseCatalogAction(), getEventSalesHistoryAction(), getEventSalesSummaryAction()]);
+    const p = await getEventCaisseCatalogAction();
     setProducts(p.products ?? []);
     setQrCodeUrl(p.qrCodeUrl ?? null);
-    setHistory(h.sales ?? []);
-    setSummary(s.summary ?? null);
   }
   useEffect(() => { load(); }, []);
 
@@ -90,7 +107,7 @@ export default function EventCaisseTab() {
     setMsg(null);
     const items = Object.entries(cart).filter(([, qty]) => qty > 0)
       .map(([sku, qty]) => ({ sku, qty, freeQty: Math.min(freeCart[sku] ?? 0, qty) }));
-    const res = await recordEventSaleAction(items, paymentMethod);
+    const res = await recordEventSaleAction(items, paymentMethod, seller.trim() || undefined);
     setSubmitting(false);
     setPaymentStep('idle');
     if (res.error) { setMsg(res.error); return; }
@@ -99,10 +116,28 @@ export default function EventCaisseTab() {
     load();
   }
 
-  if (!products) return <div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>;
+  const viewSwitch = (
+    <div className="grid grid-cols-2 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
+      {([['sell', L('Bán hàng', 'Sell'), ShoppingBag], ['sales', L('Doanh thu', 'Sales'), TrendingUp]] as const).map(([k, label, Icon]) => (
+        <button key={k} onClick={() => setView(k)} className="inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-[13.5px] font-extrabold"
+          style={{ backgroundColor: view === k ? NAVY : 'transparent', color: view === k ? '#fff' : '#6B7280' }}>
+          <Icon size={15} /> {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (view === 'sales') return <div className="space-y-3 pb-6">{viewSwitch}<EventSalesView /></div>;
+
+  if (!products) return <div className="space-y-3">{viewSwitch}<div className="text-center py-10 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div></div>;
 
   return (
     <div className="space-y-3 pb-20">
+      {viewSwitch}
+      <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2" style={{ border: `1px solid ${BORDER}` }}>
+        <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>{L('Người bán', 'Seller')}</span>
+        <NamePicker value={seller} onChange={changeSeller} names={staffNames} onManage={onManageStaff ?? (() => {})} />
+      </div>
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}`, color: '#8A6D14' }}>
         {L('📦 Sản phẩm lấy từ các đơn hàng (REP) của event, kể cả khi chưa xác nhận nhận hàng. Vẫn bán được khi số tồn về 0 hoặc âm.', '📦 Products come from the event\'s orders (REP), even before they are confirmed as received. Selling stays possible at zero or below.')}
       </div>
@@ -191,53 +226,6 @@ export default function EventCaisseTab() {
       {msg && (
         <div className="text-xs font-semibold text-center rounded-lg px-3 py-2" style={{ backgroundColor: msg.startsWith('✓') ? '#EAF6EC' : '#FBEAE8', color: msg.startsWith('✓') ? GREEN : RED }}>
           {msg}
-        </div>
-      )}
-
-      {/* Sales summary (Axel, 2026-09-14): "le total sales et la repartition par produit" — sums
-          EVERY sale ever recorded for this event (not just the last 50 the trace list below
-          shows), broken down per product on request. */}
-      {summary && summary.orderCount > 0 && (
-        <div className="bg-white rounded-2xl p-3.5" style={{ border: `1px solid ${BORDER}` }}>
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{L('Tổng doanh thu event', 'Total event sales')}</div>
-              <div className="text-lg font-extrabold tabular-nums" style={{ color: NAVY }}>{fmt(summary.totalRevenue)}</div>
-              <div className="text-[11px] mt-0.5" style={{ color: '#6B7280' }}>
-                {L('Tiền mặt', 'Cash')} <b style={{ color: INK }}>{fmt(summary.cashRevenue)}</b> · {L('Chuyển khoản', 'Bank transfer')} <b style={{ color: INK }}>{fmt(summary.transferRevenue)}</b> · {summary.orderCount} {L('đơn', 'sales')}
-              </div>
-            </div>
-            <button onClick={() => setShowBreakdown(v => !v)}
-              className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5"
-              style={{ backgroundColor: GOLD_PALE, color: '#8A6D14' }}>
-              {L('Theo sản phẩm', 'By product')} {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            </button>
-          </div>
-          {showBreakdown && (
-            <div className="mt-2.5 pt-2.5 space-y-1.5" style={{ borderTop: `1px solid ${BORDER}` }}>
-              {summary.byProduct.map(p => (
-                <div key={p.sku} className="flex items-center justify-between gap-2 text-xs">
-                  <span style={{ color: INK }}>{p.name} <span style={{ color: '#9CA3AF' }}>×{p.qty}</span></span>
-                  <span className="font-bold tabular-nums flex-shrink-0" style={{ color: '#8A6D14' }}>{fmt(p.revenue)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {history && history.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{L('Đã bán', 'Sold')} · {history.length}</div>
-          {history.map((s, i) => (
-            <div key={i} className="flex items-center justify-between bg-white rounded-xl px-3 py-2" style={{ border: '1px solid #F0EAC6' }}>
-              <div>
-                <div className="text-xs font-bold" style={{ color: INK }}>{s.label}</div>
-                <div className="text-[10px]" style={{ color: '#9CA3AF' }}>{s.time}</div>
-              </div>
-              <div className="text-xs font-extrabold" style={{ color: GREEN }}>+{fmt(s.amount)}</div>
-            </div>
-          ))}
         </div>
       )}
 

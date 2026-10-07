@@ -17,8 +17,8 @@ import { groupByCategory } from '@/lib/group-by-category';
 import { isOemSku } from '@/lib/oem';
 import { ShopLangContext, pickLang, useShopL, type ShopLang } from './shop-lang';
 
-const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
-const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
+export const LOSS_NAME_STORAGE_KEY = 'lab_shop_loss_name';
+export const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
 
 // Brand palette (Axel, 2026-09-12: "l'interface shop est pas dans le code couleur de l'app") —
 // same values as the already-rebranded surfaces (src/app/shop-manager/ShopManagerView.tsx,
@@ -72,7 +72,7 @@ function flattenForPicker(results: ProductSearchResult[]): LossPickOption[] {
   return out;
 }
 
-const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
+export const NAME_STORAGE_KEY = 'lab_shop_confirm_name';
 const LANG_STORAGE_KEY = 'lab_shop_lang';
 const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -2181,7 +2181,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           )
         ) : tab === 'caisse' ? (
-          <EventCaisseTab />
+          <EventCaisseTab staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)} />
         ) : tab === 'transfer' ? (
           <ShopTransfersTab shopName={shopName} readOnly={readOnly} staffNames={staffNames} onManageStaff={() => setShowStaffModal(true)}
             setZoomImage={setZoomImage} transfers={transfers} reload={loadTransfers} />
