@@ -152,28 +152,28 @@ export default function EventCaisseTab() {
                 <div className="text-[10.5px] mt-0.5" style={{ color: remaining <= 0 ? RED : '#9CA3AF' }}>{L('Còn', 'Left')} <b>{remaining}</b></div>
                 <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
                 <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
-                  <button onClick={() => changeQty(p.sku, -1)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
-                    <Minus size={14} />
+                  <button onClick={() => changeQty(p.sku, -1)} className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }} aria-label={L('Bớt 1', 'Remove one')}>
+                    <Minus size={16} />
                   </button>
-                  <span className="text-sm font-extrabold tabular-nums">{qty}</span>
-                  <button onClick={() => changeQty(p.sku, 1)} className="w-7 h-7 rounded-md text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }}>
-                    <Plus size={14} />
+                  <span className="text-base font-extrabold tabular-nums">{qty}</span>
+                  <button onClick={() => changeQty(p.sku, 1)} className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }} aria-label={L('Thêm 1', 'Add one')}>
+                    <Plus size={16} />
                   </button>
                 </div>
                 {/* Promo (Axel, 2026-09-14): "buy X get 1 free" decided by staff at the till, no
                     rule config — this just marks how many of the units above are free. */}
                 {qty > 0 && (
-                  <div className="flex items-center justify-between mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
-                    <span className="inline-flex items-center gap-1 text-[10.5px] font-bold" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
+                  <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
+                    <span className="inline-flex items-center gap-1 text-[10.5px] font-bold whitespace-nowrap" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
                       <Gift size={11} /> {L('Miễn phí', 'Free')}
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => changeFree(p.sku, -1)} disabled={free <= 0} className="w-5 h-5 rounded flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #E5C77A' }}>
-                        <Minus size={10} />
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button onClick={() => changeFree(p.sku, -1)} disabled={free <= 0} className="w-8 h-8 rounded-md flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #E5C77A' }} aria-label={L('Bớt 1 miễn phí', 'One less free')}>
+                        <Minus size={13} />
                       </button>
                       <span className="text-xs font-extrabold tabular-nums" style={{ minWidth: 12, textAlign: 'center' }}>{free}</span>
-                      <button onClick={() => changeFree(p.sku, 1)} disabled={free >= qty} className="w-5 h-5 rounded flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #E5C77A' }}>
-                        <Plus size={10} />
+                      <button onClick={() => changeFree(p.sku, 1)} disabled={free >= qty} className="w-8 h-8 rounded-md flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #E5C77A' }} aria-label={L('Thêm 1 miễn phí', 'One more free')}>
+                        <Plus size={13} />
                       </button>
                     </div>
                   </div>
@@ -239,7 +239,7 @@ export default function EventCaisseTab() {
       )}
 
       {cartCount > 0 && paymentStep === 'idle' && (
-        <div className="fixed left-0 right-0 bottom-0 px-4 py-3 flex items-center justify-between gap-3" style={{ backgroundColor: '#1A4731' }}>
+        <div className="fixed left-0 right-0 bottom-0 !mt-0 px-4 pt-3 flex items-center justify-between gap-3" style={{ backgroundColor: '#1A4731', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <div className="max-w-xl mx-auto w-full flex items-center justify-between gap-3">
             <div>
               <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#F0D98A' }}>
@@ -261,7 +261,7 @@ export default function EventCaisseTab() {
           transfert afficher le QR code". Full-screen sheet over the cart, same fixed-bottom-bar
           pattern as above. */}
       {paymentStep === 'choosing' && (
-        <div className="fixed inset-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(26,71,49,0.55)' }} onClick={() => setPaymentStep('idle')}>
+        <div className="fixed inset-0 !mt-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(26,71,49,0.55)' }} onClick={() => setPaymentStep('idle')}>
           <div className="bg-white rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-center">
               <div className="text-[10.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>{L('Tổng thanh toán', 'Total to pay')}</div>
@@ -291,7 +291,7 @@ export default function EventCaisseTab() {
           this now takes over the whole screen so the QR itself can be shown as large as possible
           when the phone is turned toward the customer. */}
       {paymentStep === 'transferQr' && (
-        <div className="fixed inset-0 z-20 flex flex-col" style={{ backgroundColor: '#fff' }}>
+        <div className="fixed inset-0 !mt-0 z-20 flex flex-col" style={{ backgroundColor: '#fff' }}>
           <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
             <button onClick={() => setPaymentStep('choosing')} className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: '#9CA3AF' }}>
               <ArrowLeft size={12} /> {L('Quay lại', 'Back')}

@@ -1191,23 +1191,33 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // matière) just contributes 0, same as everywhere else this total is computed.
   const orderCartTotal = orderCart.reduce((sum, l) => sum + l.qty * (l.priceB2c ?? 0), 0);
 
+  // Tab buttons. Inside an event (Axel, 2026-10-07: "vérifie que tout est optimisé pour
+  // l'utilisation sur téléphone") the bar is a strict 3-column grid with the icon above its label
+  // on a phone: six tabs in two even rows instead of the ragged 2/3/2/1 the wrapping layout gives
+  // at 360 px, so the till starts higher on the screen. Chuyển kho and Kiểm kê chính thức are left
+  // out there — an event shop cannot transfer and has no month-end inventory, both were dead ends.
+  // A shop's everyday screen keeps its layout unchanged.
+  const tabBtn = eventState?.inEvent
+    ? 'flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-[12px] sm:text-sm leading-tight text-center font-bold rounded-xl px-1.5 sm:px-3 py-2 sm:py-2.5 min-h-[56px] sm:min-h-0'
+    : 'flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5';
+
   return (
     <ShopLangContext.Provider value={lang}>
     <div className="min-h-screen" style={{ backgroundColor: CREAM }}>
       <div className="px-4 py-4 sm:px-6" style={{ backgroundColor: NAVY }}>
-        <div className="max-w-xl mx-auto flex items-center justify-between">
-          <div>
+        <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
+          <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: GOLD_LIGHT }}>
               {eventState?.inEvent ? '🎪 Event shop' : `La Parisienne Lab${readOnly ? (viewerRole === 'manager' ? '' : L(' · Chế độ Admin', ' · Admin mode')) : ''}`}
             </div>
-            <h1 className="text-white font-serif text-xl font-bold">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
+            <h1 className="text-white font-serif text-xl font-bold leading-tight break-words">{eventState?.inEvent ? eventState.eventName : shopName}</h1>
             {eventState?.inEvent && eventState.eventStart && eventState.eventEnd && (
               <div className="text-[11px] font-semibold mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>
                 {fmtDate(eventState.eventStart)} → {fmtDate(eventState.eventEnd)}
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
           {canSwitchLang && (
             <div className="inline-flex rounded-lg overflow-hidden text-[11px] font-bold" role="group" aria-label="Language / Ngôn ngữ"
               style={{ border: '1px solid rgba(255,255,255,0.28)' }}>
@@ -1285,47 +1295,48 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           </button>
         )}
-        <div className="flex flex-wrap gap-1.5">
+        <div className={eventState?.inEvent ? 'grid grid-cols-3 gap-1.5' : 'flex flex-wrap gap-1.5'}>
           <button onClick={() => setTab('deliveries')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className={tabBtn}
             style={{ backgroundColor: tab === 'deliveries' ? NAVY : 'white', color: tab === 'deliveries' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Truck size={16} /> {L('Giao hàng', 'Deliveries')}
           </button>
           {eventState?.inEvent ? (
             <button onClick={() => setTab('caisse')}
-              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+              className={tabBtn}
               style={{ backgroundColor: tab === 'caisse' ? NAVY : 'white', color: tab === 'caisse' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
               <ShoppingBag size={16} /> {L('Thu ngân', 'Cashier')}
             </button>
           ) : (
             <button onClick={() => setTab('cakes')}
-              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+              className={tabBtn}
               style={{ backgroundColor: tab === 'cakes' ? NAVY : 'white', color: tab === 'cakes' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
               <Cake size={16} /> {L('Bánh sinh nhật', 'Birthday cakes')}
             </button>
           )}
           <button onClick={() => setTab('losses')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className={tabBtn}
             style={{ backgroundColor: tab === 'losses' ? NAVY : 'white', color: tab === 'losses' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Trash2 size={16} /> {L('Hao hụt', 'Losses')}
           </button>
           <button onClick={() => setTab('stock')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className={tabBtn}
             style={{ backgroundColor: tab === 'stock' ? NAVY : 'white', color: tab === 'stock' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <ClipboardList size={16} /> {L('Kiểm kho', 'Stock count')}
           </button>
           <button onClick={() => setTab('report')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className={tabBtn}
             style={{ backgroundColor: tab === 'report' ? NAVY : 'white', color: tab === 'report' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <FileText size={16} /> {L('Báo cáo', 'Reports')}
           </button>
           <button onClick={() => setTab('order')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5"
+            className={tabBtn}
             style={{ backgroundColor: tab === 'order' ? NAVY : 'white', color: tab === 'order' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Package2 size={16} /> {L('Đặt hàng', 'Order')}
           </button>
+          {!eventState?.inEvent && (
           <button onClick={() => setTab('transfer')}
-            className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
+            className={`${tabBtn} relative`}
             style={{ backgroundColor: tab === 'transfer' ? NAVY : 'white', color: tab === 'transfer' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <ArrowRightLeft size={16} /> {L('Chuyển kho', 'Transfers')}
             {pendingIncomingTransfers > 0 && (
@@ -1334,9 +1345,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </span>
             )}
           </button>
-          {officialInv?.hasWarehouse && (
+          )}
+          {officialInv?.hasWarehouse && !eventState?.inEvent && (
             <button onClick={() => setTab('official-inventory')}
-              className="flex-1 basis-[31%] inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2.5 relative"
+              className={`${tabBtn} relative`}
               style={{ backgroundColor: tab === 'official-inventory' ? NAVY : 'white', color: tab === 'official-inventory' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
               <ClipboardCheck size={16} /> {L('Kiểm kê chính thức', 'Official inventory')}
               {officialInv.isLastDay && !officialInv.submitted && (
@@ -1883,7 +1895,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                     <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                       {g.lines.map(l => (
-                        <div key={l.sku} className="px-4 py-2.5 flex items-center gap-3">
+                        <div key={l.sku} className={eventState?.inEvent ? 'px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5' : 'px-4 py-2.5 flex items-center gap-3'}>
                           {l.imageUrl ? (
                             <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
                               className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
@@ -1892,12 +1904,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           ) : (
                             <div className="shrink-0 w-10 h-10 rounded" style={{ backgroundColor: GOLD_PALE }} />
                           )}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
+                          <div className={eventState?.inEvent ? 'min-w-0 flex-1 basis-[55%]' : 'min-w-0 flex-1'}>
+                            <div className={eventState?.inEvent ? 'text-sm font-semibold leading-snug break-words' : 'text-sm font-semibold overflow-x-auto whitespace-nowrap no-scrollbar'} style={{ WebkitOverflowScrolling: 'touch' }}>{l.name}</div>
                             <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.sku}{l.isExtra ? L(' · đã thêm', ' · added') : ''}</div>
                           </div>
+                          <div className={eventState?.inEvent ? 'ml-auto' : 'contents'}>
                           <QtyExprInput disabled={stockSessionSeq < stockLatestSessionSeq} placeholder="—" borderColor={BORDER} width={72}
                             value={stockDraft[l.sku] ?? ''} onChange={v => { setStockDraft(p => ({ ...p, [l.sku]: v })); setStockDirty(true); }} />
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2000,7 +2014,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           {reportToday && r.date > reportToday ? L('Chưa đến ngày', 'Not started yet')
                             : r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${L('đã kiểm', 'counted')}${r.stockSource === 'official' ? L(' · Kiểm kê chính thức', ' · Official inventory') : ''}`
                             : L('Chưa kiểm kho', 'Not counted yet')}
-                          {r.lossesReportCount ? ` · ${r.lossesReportCount} ${L('báo cáo hao hụt', 'loss reports')}` : ''}
+                          {r.lossesReportCount ? ` · ${r.lossesReportCount} ${L('báo cáo hao hụt', r.lossesReportCount === 1 ? 'loss report' : 'loss reports')}` : ''}
                         </div>
                       </div>
                       {r.stockCounted && (
@@ -2161,7 +2175,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <span className="text-[11px] font-semibold truncate" style={{ color: '#8A6D14' }}>
                         📝 {L('Nháp', 'Draft')} {orderDraftLoaded.createdByName ? `${L('của', 'by')} ${orderDraftLoaded.createdByName} · ` : ''}{L('cập nhật', 'updated')} {new Date(orderDraftLoaded.updatedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: RED }}>{L('Xoá nháp', 'Delete the draft')}</button>
+                      <button onClick={discardOrderDraft} className="text-[11px] font-bold shrink-0" style={{ color: RED }}>{L('Xoá nháp', 'Delete draft')}</button>
                     </div>
                   )}
                 </div>
@@ -2366,7 +2380,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2.5 disabled:opacity-40"
                     style={{ border: `1px solid ${BORDER}`, color: INK }}>
                     {orderDraftSaving ? <Loader2 size={14} className="animate-spin" /> : null}
-                    {L('Lưu nháp', 'Save the draft')}
+                    {L('Lưu nháp', 'Save draft')}
                   </button>
                   {/* Late (post-14h00) tomorrow orders are no longer blocked here -- the red
                       banner above is the deterrent now, not a disabled button (Axel, 2026-09-08). */}

@@ -186,8 +186,8 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
           <div className="px-4 py-4 text-xs text-gray-400">No events currently open</div>
         ) : active.map((e, i) => (
           <div key={e.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
-          <div className="flex items-center gap-2.5 px-4 py-2.5 text-sm">
-            <div className="font-semibold flex-1 min-w-0 truncate">{e.name}</div>
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 px-4 py-2.5 text-sm">
+            <div className="font-semibold basis-full sm:basis-0 sm:flex-1 min-w-0 break-words sm:truncate">{e.name}</div>
             <div className="text-xs text-gray-500 shrink-0">Warehouse {e.warehouseCode}</div>
             <button onClick={() => openEvent(e.id)} disabled={openingId === e.id}
               className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 shrink-0 text-white disabled:opacity-60"

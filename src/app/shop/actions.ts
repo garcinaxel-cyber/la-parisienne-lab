@@ -2603,6 +2603,10 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
       imageUrl: imageBySku.get(sku) ?? null, category: categoryBySku.get(sku) ?? null,
     }))
     .filter(p => p.unitPrice > 0)
+    // A line removed from the order in Odoo stays in lab_order_lines at quantity 0 (REP/2026/01854:
+    // three macaron flavours typed then taken off). Nothing of it is coming, so it is not offered
+    // for sale — unless some was already sold, in which case it stays visible with its negative count.
+    .filter(p => (orderedBySku.get(p.sku)?.qty ?? 0) > 0 || (soldBySku.get(p.sku) ?? 0) > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
   return { products, qrCodeUrl: auth.event.qrCodeUrl };
 }
