@@ -1,11 +1,11 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check } from 'lucide-react';
+import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import { allocateBaked, buildBatches, dOr, NOTE_KEY, noteText, type PlanRow } from '@/components/oem/plan';
-import { setProductionOrderAction } from '@/lib/oem-actions';
+import { setProductionOrderAction, fixProductionAction } from '@/lib/oem-actions';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
@@ -20,7 +20,7 @@ const fmt1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('en-US', { 
 // so the 80 g / 100 g formats that share one bulk read as one product with both SKUs.
 const baseName = (n: string) => n.replace(/\s*\(kg\)\s*$/i, '').replace(/\s+\d+\s*g$/i, '').trim();
 
-export default function StationOemView({ role, userId, userName }: { role: string; userId: string | null; userName: string | null }) {
+export default function StationOemView({ role, userId, userName, canFix = false }: { role: string; userId: string | null; userName: string | null; canFix?: boolean }) {
   const { lang, setLang } = useI18n();
   const vi = lang === 'vi';
   const supabase = useMemo(() => createClient(), []);
@@ -35,6 +35,11 @@ export default function StationOemView({ role, userId, userName }: { role: strin
   const [notes, setNotes] = useState<Record<string, string>>({}); // contract requirements per client
   const [ord, setOrd] = useState<number | null>(null); // order chosen in the entry sheet
   const [tagging, setTagging] = useState<string | null>(null);
+  // team lead only (canFix): edit the kg of a batch or cancel it while it waits for reception
+  const [fix, setFix] = useState<{ id: string; mode: 'edit' | 'cancel' } | null>(null);
+  const [fixKg, setFixKg] = useState('');
+  const [fixWhy, setFixWhy] = useState('');
+  const [fixing, setFixing] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [gk, setGk] = useState('');
   const [kg, setKg] = useState('');
@@ -185,6 +190,80 @@ export default function StationOemView({ role, userId, userName }: { role: strin
     await load(); setTagging(null);
   }
 
+  // ── team lead corrections (canFix) ──
+  const FIX_ERR: Record<string, [string, string]> = {
+    'already-received': ['Mẻ này đã được trợ lý nhận — không sửa được nữa.', 'Already received by an assistant — it can no longer be changed.'],
+    'Forbidden': ['Bạn không có quyền sửa mẻ nướng.', 'You are not allowed to change baked batches.'],
+    'not-your-team': ['Mẻ này không thuộc nhóm của bạn.', 'This batch is not from your team.'],
+    'bad-kg': ['Số kg không hợp lệ.', 'Invalid kg.'],
+    'Batch not found': ['Không tìm thấy mẻ này (có thể đã bị huỷ).', 'Batch not found (it may already be cancelled).'],
+  };
+  const fixNum = Number(fixKg.replace(',', '.')) || 0;
+  async function doFix() {
+    if (!fix || (fix.mode === 'edit' && !(fixNum > 0))) return;
+    setFixing(true); setErr(null);
+    const r = await fixProductionAction(fix.id, fix.mode === 'edit' ? fixNum : null, fixWhy.trim() || null);
+    setFixing(false);
+    if (r.error) { const m = FIX_ERR[r.error]; setErr(m ? (vi ? m[0] : m[1]) : r.error); }
+    else { setFlash(fix.mode === 'edit' ? (vi ? `Đã sửa thành ${fixNum} kg` : `Changed to ${fixNum} kg`) : (vi ? 'Đã huỷ mẻ' : 'Batch cancelled')); setTimeout(() => setFlash(null), 3500); }
+    setFix(null); setFixKg(''); setFixWhy('');
+    await load();
+  }
+  // batches of earlier days still waiting for reception: listed for the team lead only, so he can fix them too
+  const olderPending = canFix ? entries.filter(e => e.status !== 'received' && !today.some(t => t.id === e.id)) : [];
+  const entryRow = (t: Entry, withDate: boolean) => {
+    const open = fix?.id === t.id;
+    const fixable = canFix && t.status !== 'received';
+    return (
+      <div key={t.id} style={{ borderTop: '1px solid #F3F4F6' }}>
+        <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+          <span className="min-w-0">
+            <span className="block font-semibold">{rows.find(r => r.key === t.group_key)?.name ?? t.group_key}</span>
+            {canFix && t.created_by_name && <span className="block text-[11px]" style={{ color: '#9CA3AF' }}>{t.created_by_name}</span>}
+          </span>
+          <span className="text-right">
+            <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {withDate ? `${t.prod_date.slice(8, 10)}/${t.prod_date.slice(5, 7)} ` : ''}{new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.plan_seq != null ? ` · ${W(plans.some(p => p.perOrder && p.items.some(i => i.group_key === t.group_key)))} ${t.plan_seq}` : ''}</span>
+            <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#047857' : '#B45309' }}>
+              {t.status === 'received' ? `${vi ? 'Đã nhận' : 'Received'} ${t.received_kg} kg` : (vi ? 'Chờ trợ lý nhận' : 'Waiting for reception')}
+            </span>
+            {fixable && !open && (
+              <span className="flex justify-end gap-1.5 mt-1.5">
+                <button onClick={() => { setFix({ id: t.id, mode: 'edit' }); setFixKg(String(t.weight_kg)); setFixWhy(''); setErr(null); }}
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#F7F5F0', color: '#4B5563', border: '1px solid #EFE9DC' }}>
+                  <Pencil size={12} />{vi ? 'Sửa' : 'Edit'}
+                </button>
+                <button onClick={() => { setFix({ id: t.id, mode: 'cancel' }); setFixKg(''); setFixWhy(''); setErr(null); }}
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C', border: '1px solid #FBD5D5' }}>
+                  <Trash2 size={12} />{vi ? 'Huỷ' : 'Cancel'}
+                </button>
+              </span>
+            )}
+          </span>
+        </div>
+        {open && fix && (
+          <div className="mx-4 mb-3 rounded-xl px-3 py-2.5 space-y-2" style={fix.mode === 'cancel' ? { backgroundColor: '#FEF2F2', border: '1px solid #FBD5D5' } : { backgroundColor: '#F7F5F0', border: '1px solid #EFE9DC' }}>
+            <div className="text-xs font-bold" style={{ color: fix.mode === 'cancel' ? '#B91C1C' : '#374151' }}>
+              {fix.mode === 'cancel' ? (vi ? `Huỷ mẻ ${t.weight_kg} kg này?` : `Cancel this ${t.weight_kg} kg batch?`) : (vi ? 'Số kg đúng' : 'Correct weight (kg)')}
+            </div>
+            {fix.mode === 'edit' && (
+              <input inputMode="decimal" autoFocus value={fixKg} onChange={e => setFixKg(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-base font-bold bg-white" style={{ border: '1px solid #D1D5DB' }} />
+            )}
+            <input value={fixWhy} onChange={e => setFixWhy(e.target.value)} maxLength={300} placeholder={vi ? 'Lý do (không bắt buộc)' : 'Reason (optional)'}
+              className="w-full rounded-lg px-3 py-2 text-sm bg-white" style={{ border: '1px solid #D1D5DB' }} />
+            <div className="flex gap-2">
+              <button disabled={fixing || (fix.mode === 'edit' && !(fixNum > 0))} onClick={doFix}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: fix.mode === 'cancel' ? '#DC2626' : GREEN }}>
+                {fixing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}{fix.mode === 'cancel' ? (vi ? 'Xác nhận huỷ' : 'Confirm cancel') : (vi ? 'Lưu' : 'Save')}
+              </button>
+              <button disabled={fixing} onClick={() => setFix(null)} className="rounded-lg px-3 py-2 text-sm font-semibold bg-white" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>{vi ? 'Đóng' : 'Close'}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#F7F5F0' }}>
       <div className="sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
@@ -216,17 +295,13 @@ export default function StationOemView({ role, userId, userName }: { role: strin
         {today.length > 0 && (
           <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
             <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Hôm nay' : 'Today'}</div>
-            {today.map(t => (
-              <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm" style={{ borderTop: '1px solid #F3F4F6' }}>
-                <span className="font-semibold">{rows.find(r => r.key === t.group_key)?.name ?? t.group_key}</span>
-                <span className="text-right">
-                  <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.plan_seq != null ? ` · ${W(plans.some(p => p.perOrder && p.items.some(i => i.group_key === t.group_key)))} ${t.plan_seq}` : ''}</span>
-                  <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#047857' : '#B45309' }}>
-                    {t.status === 'received' ? `${vi ? 'Đã nhận' : 'Received'} ${t.received_kg} kg` : (vi ? 'Chờ trợ lý nhận' : 'Waiting for reception')}
-                  </span>
-                </span>
-              </div>
-            ))}
+            {today.map(t => entryRow(t, false))}
+          </div>
+        )}
+        {olderPending.length > 0 && (
+          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+            <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Chờ nhận — các ngày trước' : 'Waiting for reception — earlier days'}</div>
+            {olderPending.map(t => entryRow(t, true))}
           </div>
         )}
         {plans.map(p => {

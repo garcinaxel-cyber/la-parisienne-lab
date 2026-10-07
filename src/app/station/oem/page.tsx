@@ -1,6 +1,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import StationOemView from './StationOemView';
+import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
 
 export const revalidate = 0;
 // Packaging entries create + validate Odoo MOs inside the server action (several RPCs each).
@@ -16,5 +17,9 @@ export default async function StationOemPage() {
   const role = profile?.role ?? '';
   if (!['admin', 'lab_manager', 'assistant', 'chef', 'worker'].includes(role)) redirect('/login');
 
-  return <StationOemView role={role} userId={session.user.id} userName={profile?.full_name ?? null} />;
+  // team lead only (admin setting): may fix a batch before reception — re-checked in the server action
+  const { data: ed } = await supabase.from('lab_mm_settings').select('value').eq('key', PROD_EDITORS_KEY).maybeSingle();
+  const canFix = editorIds(ed?.value).includes(session.user.id);
+
+  return <StationOemView role={role} userId={session.user.id} userName={profile?.full_name ?? null} canFix={canFix} />;
 }

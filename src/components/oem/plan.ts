@@ -70,6 +70,10 @@ export function allocateBaked(own: number[], seqs: number[], bySeq: Record<numbe
 // Contract requirements shown to the kitchen (Axel 2026-10-03, asked by accounting: Maison Mooncake
 // contract art. 3 — 120-day shelf life from delivery, traceable ingredients). One free text per client in
 // lab_mm_settings, key "client_note:<client>"; an optional English version follows a line with only "---".
+// Accounts allowed to fix (edit / cancel) a baked batch before its reception: the team lead only,
+// never his staff (Axel, 2026-10-07). lab_mm_settings value = comma-separated user ids, admin-only.
+export const PROD_EDITORS_KEY = 'prod_editors';
+export const editorIds = (raw: string | null | undefined) => String(raw ?? '').split(',').map(x => x.trim()).filter(Boolean);
 export const NOTE_KEY = 'client_note:';
 export const noteText = (raw: string | null | undefined, vi: boolean) => {
   const [v, e] = (raw ?? '').split(/\n\s*---\s*\n/);

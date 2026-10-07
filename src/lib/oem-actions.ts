@@ -4,6 +4,7 @@ import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { odooExecute } from '@/lib/odoo';
 import { createAndProduceOemMO, resumeOemMO } from '@/lib/odoo-oem-mo';
 import { getScrapReasonTags, resolveProductsBySku, createLabScrap, createScrapAtLocation } from '@/lib/odoo-scrap';
+import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
 
 // OEM Orders tracker — packaging entries (Axel, 2026-09-25). Assistants record what was packed
 // each day (+ scrap). Only lab_mm_* tables are written; Odoo is touched only when the admin
@@ -237,6 +238,56 @@ export async function receiveProductionAction(id: string, receivedKg: number | n
     received_by: auth.id, received_by_name: auth.name, receive_note: (note ?? '').trim().slice(0, 300) || null,
   }).eq('id', id).eq('status', 'pending');
   return error ? { error: error.message } : { ok: true };
+}
+
+// Team-lead corrections (Axel, 2026-10-07): the accounts the admin ticked in Settings (key
+// prod_editors: Hung only, never his staff) may change the kg of a baked batch or cancel it, as
+// long as no assistant has received it. Chefs have no UPDATE/DELETE right on the production log
+// (RLS) and cannot write lab_mm_settings, so this action is the only way in; the caller is checked
+// here on the server, whatever the screen shows. Every correction is kept in lab_mm_production_audit.
+// newKg = null cancels the batch.
+export async function fixProductionAction(id: string, newKg: number | null, reason: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const svc = service();
+  if (!svc) return { error: 'Server not configured' };
+  const uid = session.user.id;
+  const { data: st } = await svc.from('lab_mm_settings').select('value').eq('key', PROD_EDITORS_KEY).maybeSingle();
+  if (!editorIds(st?.value).includes(uid)) return { error: 'Forbidden' };
+  const { data: row } = await svc.from('lab_mm_production_log')
+    .select('id, status, weight_kg, group_key, sku, prod_date, plan_seq, created_by, created_by_name').eq('id', id).maybeSingle();
+  if (!row) return { error: 'Batch not found' };
+  if (row.status !== 'pending') return { error: 'already-received' };
+  // only his own batches and those of his own team
+  if (row.created_by !== uid) {
+    const { data: teams } = await svc.from('lab_profiles').select('id, team').in('id', [uid, row.created_by].filter(Boolean));
+    const teamOf = (x: string | null) => (teams ?? []).find(r => r.id === x)?.team ?? null;
+    if (!teamOf(uid) || teamOf(uid) !== teamOf(row.created_by)) return { error: 'not-your-team' };
+  }
+  const old = Number(row.weight_kg);
+  let kg: number | null = null;
+  if (newKg != null) {
+    kg = Math.round(Number(newKg) * 1000) / 1000;
+    if (!(kg > 0) || kg > 2000) return { error: 'bad-kg' };
+    if (Math.abs(kg - old) < 0.0005) return { ok: true };
+    // .eq('status','pending'): if an assistant receives it at the same moment, the reception wins
+    const { data: done, error } = await svc.from('lab_mm_production_log').update({ weight_kg: kg }).eq('id', id).eq('status', 'pending').select('id');
+    if (error) return { error: error.message };
+    if (!done?.length) return { error: 'already-received' };
+  } else {
+    const { data: done, error } = await svc.from('lab_mm_production_log').delete().eq('id', id).eq('status', 'pending').select('id');
+    if (error) return { error: error.message };
+    if (!done?.length) return { error: 'already-received' };
+  }
+  const { data: who } = await svc.from('profiles').select('full_name').eq('id', uid).maybeSingle();
+  const { error: aErr } = await svc.from('lab_mm_production_audit').insert({
+    log_id: row.id, action: kg == null ? 'cancel' : 'edit', group_key: row.group_key, sku: row.sku, prod_date: row.prod_date,
+    plan_seq: row.plan_seq, entry_by_name: row.created_by_name, old_kg: old, new_kg: kg,
+    reason: (reason ?? '').trim().slice(0, 300) || null, done_by: uid, done_by_name: who?.full_name ?? null,
+  });
+  if (aErr) console.error('[oem] production audit not written', aErr.message);
+  return { ok: true };
 }
 
 // Which order/delivery a baked batch is for (Axel 2026-10-02: Hung chooses it; null = automatic).

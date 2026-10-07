@@ -1,10 +1,10 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Trash2, Pencil, Check, X, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { Empty } from './ui';
 import { fmt, localToday, itemKg, GREEN, MM_CLIENT, type Item, type ProdLog, type Hist, type LFn } from './model';
-import { NOTE_KEY, type PlanRow } from './plan';
+import { NOTE_KEY, PROD_EDITORS_KEY, editorIds, type PlanRow } from './plan';
 
 // Production log (Hung's kg entries, admin corrections) + order quantities / settings.
 const kgOf = (it: Item) => itemKg(it, it.qty_ordered);
@@ -28,6 +28,23 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
   const [nNote, setNNote] = useState('');
 
   const groups = useMemo(() => Array.from(new Map(items.map(i => [i.group_key, i.group_name])).entries()), [items]);
+  // corrections and cancellations of baked batches (team lead from the station, or admin here)
+  const [audit, setAudit] = useState<Audit[]>([]);
+  const loadAudit = useCallback(async () => {
+    const { data } = await supabase.from('lab_mm_production_audit')
+      .select('id, action, group_key, prod_date, entry_by_name, old_kg, new_kg, reason, done_by_name, done_at').order('done_at', { ascending: false }).limit(60);
+    setAudit((data ?? []) as Audit[]);
+  }, [supabase]);
+  useEffect(() => { loadAudit(); }, [loadAudit, logs]);
+  const auditShown = audit.filter(a => items.some(i => i.group_key === a.group_key));
+  // best effort: a failed trace never blocks the correction itself
+  async function trace(l: ProdLog | undefined, action: 'edit' | 'cancel', newKg: number | null, reason: string | null) {
+    if (!l) return;
+    await supabase.from('lab_mm_production_audit').insert({
+      log_id: l.id, action, group_key: l.group_key, sku: l.sku, prod_date: l.prod_date, plan_seq: l.plan_seq ?? null,
+      entry_by_name: l.created_by_name, old_kg: l.weight_kg, new_kg: newKg, reason, done_by: userId, done_by_name: userName,
+    });
+  }
   const shown = filter ? logs.filter(l => l.group_key === filter) : logs;
   const total = shown.reduce((s, l) => s + l.weight_kg, 0);
 
@@ -38,6 +55,8 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
     const { error } = await supabase.from('lab_mm_production_log').update({ weight_kg: kg, note: editNote.trim() || null }).eq('id', id);
     setBusy(false);
     if (error) { setMsg(error.message); return; }
+    const before = logs.find(l => l.id === id);
+    if (before && Math.abs(before.weight_kg - kg) >= 0.0005) await trace(before, 'edit', kg, editNote.trim() || null);
     setEditId(null); await reload();
   }
   async function del(id: string) {
@@ -45,6 +64,7 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
     const { error } = await supabase.from('lab_mm_production_log').delete().eq('id', id);
     setBusy(false); setConfirmDel(null);
     if (error) { setMsg(error.message); return; }
+    await trace(logs.find(l => l.id === id), 'cancel', null, null);
     await reload();
   }
   async function add() {
@@ -135,9 +155,32 @@ export function ProductionLog({ logs, items, groupName, canManage, userId, userN
           ))}
         </div>
       )}
+
+      {auditShown.length > 0 && (
+        <div className="space-y-1.5 pt-2">
+          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Lịch sử sửa / huỷ mẻ nướng', 'Corrections & cancellations')}</div>
+          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+            {auditShown.map((a, i) => (
+              <div key={a.id} className="px-3 py-2 text-sm" style={{ borderTop: i ? '1px solid #F3F4F6' : undefined }}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-semibold truncate">{groupName(a.group_key)}</span>
+                  <span className="font-bold shrink-0" style={{ color: a.action === 'cancel' ? '#B91C1C' : '#111827' }}>
+                    {a.action === 'cancel' ? `${fmt(Number(a.old_kg), 2)} kg → ${L('đã huỷ', 'cancelled')}` : `${fmt(Number(a.old_kg), 2)} → ${fmt(Number(a.new_kg ?? 0), 2)} kg`}
+                  </span>
+                </div>
+                <div className="text-[11px]" style={{ color: '#9CA3AF' }}>
+                  {new Date(a.done_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · {a.done_by_name || '—'}
+                  {' · '}{L('mẻ của', 'batch by')} {a.entry_by_name || '—'}{a.prod_date ? ` (${a.prod_date.slice(8, 10)}/${a.prod_date.slice(5, 7)})` : ''}{a.reason ? ` · ${a.reason}` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+type Audit = { id: string; action: 'edit' | 'cancel'; group_key: string; prod_date: string | null; entry_by_name: string | null; old_kg: number; new_kg: number | null; reason: string | null; done_by_name: string | null; done_at: string };
 
 export function OrderSettings({ items, hist, odooOn, plan, settings, userId, userName, reload, L }: {
   items: Item[]; hist: Hist[]; odooOn: boolean; plan: PlanRow[]; settings: Record<string, string>; userId: string | null; userName: string | null; reload: () => Promise<void>; L: LFn;
@@ -230,6 +273,8 @@ export function OrderSettings({ items, hist, odooOn, plan, settings, userId, use
       <PlanEditor plan={plan} userName={userName} reload={reload} L={L} />
 
       <NoteEditor items={items} settings={settings} userName={userName} reload={reload} L={L} />
+
+      <EditorPicker settings={settings} userName={userName} reload={reload} L={L} />
 
       <div className="space-y-1.5">
         <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Lịch sử thay đổi', 'Change history')}</div>
@@ -348,6 +393,67 @@ function NoteEditor({ items, settings, userName, reload, L }: { items: Item[]; s
           {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')}
         </button>
         {changed.length > 0 && <button onClick={() => setDraft({})} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
+        {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Who may fix a baked batch from the station before its reception (team lead only — Axel 2026-10-07).
+// Stored in lab_mm_settings (admin-only write); the server action re-checks it on every correction.
+function EditorPicker({ settings, userName, reload, L }: { settings: Record<string, string>; userName: string | null; reload: () => Promise<void>; L: LFn }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [people, setPeople] = useState<{ id: string; name: string; team: string }[]>([]);
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const cur = editorIds(settings[PROD_EDITORS_KEY]);
+  useEffect(() => {
+    (async () => {
+      const [p, t] = await Promise.all([
+        supabase.from('profiles').select('id, full_name').eq('role', 'chef'),
+        supabase.from('lab_profiles').select('id, team'),
+      ]);
+      const team: Record<string, string> = Object.fromEntries(((t.data ?? []) as any[]).map(r => [r.id, r.team ?? '']));
+      setPeople(((p.data ?? []) as any[]).map(r => ({ id: r.id, name: r.full_name || '—', team: team[r.id] ?? '' }))
+        .sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name)));
+    })();
+  }, [supabase]);
+  const sel = draft ?? cur;
+  const changed = draft != null && (draft.length !== cur.length || draft.some(x => !cur.includes(x)));
+  const toggle = (id: string) => setDraft(sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]);
+
+  async function save() {
+    setBusy(true); setMsg(null);
+    const u = await supabase.from('lab_mm_settings').upsert({ key: PROD_EDITORS_KEY, value: sel.join(','), updated_at: new Date().toISOString(), updated_by_name: userName });
+    setBusy(false);
+    if (u.error) { setMsg(u.error.message); return; }
+    setDraft(null); setMsg(L('Đã lưu.', 'Saved.')); await reload();
+  }
+
+  return (
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+      <div className="px-3 py-2 text-[11px]" style={{ color: '#6B7280', backgroundColor: '#F9FAFB' }}>
+        {L('Ai được sửa hoặc huỷ mẻ nướng của nhóm mình trên màn hình trạm, trước khi trợ lý nhận. Những bếp khác chỉ nhập được, không sửa được.',
+           'Who may edit or cancel a baked batch of their own team from the station screen, before an assistant receives it. Other chefs can only enter batches, not change them.')}
+      </div>
+      <div className="px-3 py-2 flex flex-wrap gap-1.5" style={{ borderTop: '1px solid #F3F4F6' }}>
+        {people.map(p => {
+          const on = sel.includes(p.id);
+          return (
+            <button key={p.id} onClick={() => toggle(p.id)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+              style={on ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#6B7280', border: '1px solid #EFE9DC' }}>
+              {on ? '✓ ' : ''}{p.name}{p.team ? ` · ${p.team}` : ''}
+            </button>
+          );
+        })}
+        {!people.length && <span className="text-xs" style={{ color: '#9CA3AF' }}>…</span>}
+      </div>
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #F3F4F6' }}>
+        <button onClick={save} disabled={busy || !changed} className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{L('Lưu', 'Save')}
+        </button>
+        {changed && <button onClick={() => setDraft(null)} className="text-xs" style={{ color: '#6B7280' }}>{L('Huỷ', 'Cancel')}</button>}
         {msg && <span className="text-xs font-semibold" style={{ color: /saved|lưu/i.test(msg) ? '#059669' : '#DC2626' }}>{msg}</span>}
       </div>
     </div>
