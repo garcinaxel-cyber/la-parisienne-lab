@@ -2656,6 +2656,7 @@ async function eventSalesTotals(supabase: NonNullable<ReturnType<typeof service>
 // sales: small enough to send whole, read in pages so nothing is cut at 1 000 rows.
 export type EventSaleLine = { sku: string; name: string; category: string | null; qty: number; unitPrice: number; free: boolean };
 export type EventSale = {
+  id: string;                 // lab_online_orders.order_batch_id
   no: string;                 // running number in the order the sales were recorded: 0001, 0002…
   day: string;                // Vietnam date, YYYY-MM-DD
   time: string;               // Vietnam time, HH:mm:ss
@@ -2663,11 +2664,36 @@ export type EventSale = {
   payment: 'cash' | 'transfer';
   amount: number;
   seller: string | null;
+  note: string | null;        // lab_online_orders.notes — corrections made after the sale
   lines: EventSaleLine[];
 };
 // cashFloat: the cash the till started the event with (Axel, 2026-10-08: "le cash initial qui est de
 // 1M, comme ça ils peuvent voir leur tréso en cash") — lab_event_shops.cash_float, null when not set.
 export type EventSalesLedger = { sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string; cashFloat: number | null };
+
+// Switch a sale between cash and transfer (Axel, 2026-10-08: "leur laisser la possibilité de
+// changer si une commande était en transfert ou en cash"). Only a sale of the caller's own event;
+// the change is written into the sale's note so the reconciliation can see it.
+export async function setEventSalePaymentAction(saleId: string, payment: 'cash' | 'transfer', by?: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  if (payment !== 'cash' && payment !== 'transfer') return { error: 'Bad payment' };
+  const { data: o, error } = await supabase.from('lab_online_orders').select('order_batch_id, payment_method, notes')
+    .eq('order_batch_id', saleId).eq('shop_name', auth.event.name).eq('source', 'event_stock').maybeSingle();
+  if (error) return { error: error.message };
+  if (!o) return { error: 'Không tìm thấy đơn' };
+  if (o.payment_method === payment) return { ok: true };
+  const hhmm = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  const label = (p: unknown) => (p === 'transfer' ? 'CK' : 'TM');
+  const who = String(by ?? '').trim().slice(0, 60);
+  const line = `Đổi ${label(o.payment_method)} → ${label(payment)} lúc ${hhmm}${who ? ` (${who})` : ''}`;
+  const notes = [String(o.notes ?? '').trim(), line].filter(Boolean).join(' · ').slice(0, 1000);
+  const { error: uErr } = await supabase.from('lab_online_orders').update({ payment_method: payment, notes })
+    .eq('order_batch_id', saleId).eq('shop_name', auth.event.name).eq('source', 'event_stock');
+  return uErr ? { error: uErr.message } : { ok: true };
+}
 
 export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSalesLedger; error?: string }> {
   const auth = await requireEventSession();
@@ -2676,8 +2702,8 @@ export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSales
   if (!supabase) return { error: 'Server not configured' };
   const shopName = auth.event.name;
   try {
-    const orders = await fetchAllPages<{ order_batch_id: string; created_at: string; amount_paid: number | null; payment_method: string | null; seller_name: string | null }>((f, t) =>
-      supabase.from('lab_online_orders').select('order_batch_id, created_at, amount_paid, payment_method, seller_name')
+    const orders = await fetchAllPages<{ order_batch_id: string; created_at: string; amount_paid: number | null; payment_method: string | null; seller_name: string | null; notes: string | null }>((f, t) =>
+      supabase.from('lab_online_orders').select('order_batch_id, created_at, amount_paid, payment_method, seller_name, notes')
         .eq('shop_name', shopName).eq('source', 'event_stock').order('created_at').order('order_batch_id').range(f, t));
     const ids = orders.map(o => o.order_batch_id);
     const chunks: string[][] = [];
@@ -2717,9 +2743,9 @@ export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSales
         });
       }
       return {
-        no: String(i + 1).padStart(4, '0'), day: vnDateStr(at), time, hour: Number(time.slice(0, 2)) % 24,
+        id: o.order_batch_id, no: String(i + 1).padStart(4, '0'), day: vnDateStr(at), time, hour: Number(time.slice(0, 2)) % 24,
         payment: o.payment_method === 'transfer' ? 'transfer' : 'cash',
-        amount: Number(o.amount_paid ?? 0), seller: (o.seller_name ?? '').trim() || null, lines,
+        amount: Number(o.amount_paid ?? 0), seller: (o.seller_name ?? '').trim() || null, note: (o.notes ?? '').trim() || null, lines,
       };
     });
     let cashFloat: number | null = null;

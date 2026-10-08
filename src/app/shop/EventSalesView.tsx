@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Banknote, ArrowRightLeft, ChevronDown, Loader2, RefreshCw } from 'lucide-react';
-import { getEventSalesLedgerAction, type EventSale, type EventSalesLedger } from './actions';
+import { getEventSalesLedgerAction, setEventSalePaymentAction, type EventSale, type EventSalesLedger } from './actions';
 import { NAVY, GOLD_PALE, INK, BORDER } from './ShopView';
 import { useShopL, useShopLang } from './shop-lang';
 
@@ -136,6 +136,19 @@ export default function EventSalesView() {
   const [openSales, setOpenSales] = useState<Set<string>>(new Set());
   const [allProducts, setAllProducts] = useState(false);
   const [shown, setShown] = useState(6);
+  // Switch cash <-> transfer on one sale, with a confirm step (Axel, 2026-10-08).
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [switchBusy, setSwitchBusy] = useState(false);
+  async function switchPayment(s: EventSale) {
+    setSwitchBusy(true);
+    let by: string | null = null;
+    try { by = localStorage.getItem('lab_shop_sale_name'); } catch {}
+    const res = await setEventSalePaymentAction(s.id, s.payment === 'cash' ? 'transfer' : 'cash', by);
+    setSwitchBusy(false);
+    setSwitching(null);
+    if (res.error) { setError(res.error); return; }
+    await load();
+  }
 
   async function load() {
     setLoading(true);
@@ -505,7 +518,21 @@ export default function EventSalesView() {
                     {L('Đơn', 'Sale')} <b style={{ color: INK }}>#{s.no}</b> · {s.day.slice(8, 10)}/{s.day.slice(5, 7)}/{s.day.slice(0, 4)} {L('lúc', 'at')} <b style={{ color: INK }}>{s.time}</b><br />
                     {L('Thanh toán', 'Paid by')}: <b style={{ color: INK }}>{payLabel(s.payment, true)}</b>
                     {s.seller && <><br />{L('Người bán', 'Sold by')}: <b style={{ color: INK }}>{s.seller}</b></>}
+                    {s.note && <><br />{L('Ghi chú', 'Note')}: <span style={{ color: INK }}>{s.note}</span></>}
                   </div>
+                  {switching === s.id ? (
+                    <div className="mt-2 flex items-center gap-2 flex-wrap">
+                      <span className="text-[11.5px] font-bold" style={{ color: INK }}>{s.payment === 'cash' ? L('Đổi sang chuyển khoản?', 'Change to transfer?') : L('Đổi sang tiền mặt?', 'Change to cash?')}</span>
+                      <button disabled={switchBusy} onClick={() => switchPayment(s)} className="rounded-lg px-3 py-1.5 text-[11.5px] font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>
+                        {switchBusy ? <Loader2 size={12} className="animate-spin inline" /> : L('Đồng ý', 'Yes')}</button>
+                      <button onClick={() => setSwitching(null)} className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold" style={{ color: MUTED, border: `1px solid ${BORDER}` }}>{L('Thôi', 'No')}</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setSwitching(s.id)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] font-extrabold" style={{ color: NAVY, border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+                      {s.payment === 'cash' ? <ArrowRightLeft size={12} /> : <Banknote size={12} />}
+                      {s.payment === 'cash' ? L('Đổi sang chuyển khoản', 'Change to transfer') : L('Đổi sang tiền mặt', 'Change to cash')}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
