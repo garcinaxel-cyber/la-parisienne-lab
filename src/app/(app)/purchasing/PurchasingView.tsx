@@ -269,6 +269,9 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
 }
 
 /* ===================== History ===================== */
+// The feature started in October 2026 (Axel, 2026-10-08: "ça sert à rien de mettre les mois précédents"):
+// no month chip before it. Older months appear on their own as time goes by (6 chips at most).
+const HISTORY_START = '2026-10';
 function monthKey(offset: number): string {
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
   const d = new Date(now.getFullYear(), now.getMonth() - offset, 1);
@@ -317,9 +320,9 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       <div className="flex gap-2 flex-wrap items-center">
-        {[0, 1, 2, 3, 4, 5].map(o => { const k = monthKey(o); const mi = Number(k.slice(5)) - 1; return (
+        {[0, 1, 2, 3, 4, 5].map(o => monthKey(o)).filter(k => k >= HISTORY_START).map(k => { const mi = Number(k.slice(5)) - 1; return (
           <button key={k} onClick={() => setMonth(k)} className="rounded-full px-3 py-1.5 text-[12.5px] font-bold" style={{ backgroundColor: month === k ? NAVY : '#fff', color: month === k ? '#fff' : NAVY, border: `1px solid ${month === k ? NAVY : BORDER}` }}>
-            {lang === 'vi' ? MONTHS_VI[mi] : MONTHS_EN[mi]}{o >= 3 ? ` ${k.slice(0, 4)}` : ''}</button>); })}
+            {lang === 'vi' ? MONTHS_VI[mi] : MONTHS_EN[mi]}{k.slice(0, 4) !== monthKey(0).slice(0, 4) ? ` ${k.slice(0, 4)}` : ''}</button>); })}
         <div className="flex rounded-lg overflow-hidden ml-auto" style={{ border: `1px solid ${BORDER}` }}>
           {([['lines', L('Theo dòng', 'By line')], ['products', L('Theo sản phẩm', 'By product')]] as const).map(([k, t]) => (
             <button key={k} onClick={() => setView(k)} className="px-3 py-1.5 text-[12.5px] font-extrabold" style={{ backgroundColor: view === k ? NAVY : '#fff', color: view === k ? '#fff' : GOLD_TEXT }}>{t}</button>))}
