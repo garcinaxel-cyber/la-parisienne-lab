@@ -7,7 +7,7 @@
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2 } from 'lucide-react';
-import { RAW_TYPES, subLabel, typeLabel, fmtQty, vnDayTime, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, submitPurchaseRequestAction,
@@ -65,8 +65,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const byId = useMemo(() => new Map((items ?? []).map(m => [m.tmplId, m])), [items]);
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return (items ?? []).filter(m => (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub) && (!s || m.name.toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s)));
-  }, [items, type, sub, q]);
+    return (items ?? []).filter(m => (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub)
+      && (!s || m.name.toLowerCase().includes(s) || (m.nameVi ?? '').toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s)))
+      .sort((a, b) => rawName(a, lang).localeCompare(rawName(b, lang), lang === 'vi' ? 'vi' : 'en'));
+  }, [items, type, sub, q, lang]);
+  // Lines already saved keep the Odoo name of the day; show them in the screen's language when the product is known.
+  const lineName = (l: { tmplId: number | null; name: string }) => { const m = l.tmplId != null ? byId.get(l.tmplId) : undefined; return m ? rawName(m, lang) : l.name; };
   const toBase = (m: RawMaterial, n: number) => { const u = unit[m.tmplId] ?? -1; return u >= 0 && m.packs[u] ? n * m.packs[u].factor : n; };
   const unitLabel = (m: RawMaterial) => { const u = unit[m.tmplId] ?? -1; return u >= 0 && m.packs[u] ? m.packs[u].label : m.uom; };
   const picked = Object.entries(qty).filter(([, v]) => v > 0).map(([k, v]) => ({ m: byId.get(Number(k))!, n: v })).filter(x => x.m);
@@ -161,7 +165,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
             return (
               <div key={m.tmplId} className="flex items-center gap-2.5 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-bold leading-snug">{m.name}</div>
+                  <div className="text-[13px] font-bold leading-snug">{rawName(m, lang)}</div>
                   <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>{subLabel(m.type, m.sub, lang)} · {m.sku ?? '—'}{mode === 'request' ? ` · ${m.uom}` : ''}</div>
                   {mode === 'take' && m.packs.length > 0 && (
                     <div className="flex gap-1 mt-1 flex-wrap">
@@ -205,7 +209,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 <div className="flex items-baseline gap-2"><b className="text-[13px] tabular-nums">#{w.no}</b><span className="text-[11.5px] flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · {w.takenBy}</span>
                   {w.lines.some(l => l.correctedQty != null) ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
                     : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}</div>
-                <div className="text-[12px] mt-1 leading-relaxed">{w.lines.map((l, i) => <span key={l.id}>{i > 0 && ' · '}{l.name} <b>{fmtQty(l.correctedQty ?? l.qty)} {l.uom}</b>{l.correctedQty != null && <span className="line-through ml-1" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)}</span>}</span>)}</div>
+                <div className="text-[12px] mt-1 leading-relaxed">{w.lines.map((l, i) => <span key={l.id}>{i > 0 && ' · '}{lineName(l)} <b>{fmtQty(l.correctedQty ?? l.qty)} {l.uom}</b>{l.correctedQty != null && <span className="line-through ml-1" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)}</span>}</span>)}</div>
               </div>
             ))}
           </div>
@@ -217,7 +221,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{title}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{ls.length}</span></div>
               {ls.map(l => (
                 <div key={l.id} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
-                  <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{l.name}</b><b className="tabular-nums text-[13px]">{fmtQty(l.qty)} {l.uom}</b></div>
+                  <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px]">{fmtQty(l.qty)} {l.uom}</b></div>
                   <div className="text-[11px] mb-2" style={{ color: '#6B7280' }}>{vnDayTime(l.createdAt).day} {vnDayTime(l.createdAt).time} · {l.requestedBy}{l.poRef ? ` · PO ${l.poRef}` : ''}{l.brand ? ` · ${l.brand}` : ''}</div>
                   <Track l={l} L={L} />
                 </div>
@@ -246,7 +250,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="text-[15px] font-extrabold">{L('Xác nhận phiếu lấy', 'Confirm withdrawal')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('hôm nay', 'today')}</div>
               {picked.map(({ m, n }) => { const u = unit[m.tmplId] ?? -1; return (
-                <div key={m.tmplId} className="flex justify-between gap-3 py-2 text-[13px]" style={{ borderTop: `1px solid ${HAIR}` }}><span>{m.name}</span>
+                <div key={m.tmplId} className="flex justify-between gap-3 py-2 text-[13px]" style={{ borderTop: `1px solid ${HAIR}` }}><span>{rawName(m, lang)}</span>
                   <b className="whitespace-nowrap tabular-nums">{u >= 0 ? `${fmtQty(n)} × ${m.packs[u].label}` : `${fmtQty(n)} ${m.uom}`}{u >= 0 && <span className="font-semibold" style={{ color: '#9CA3AF' }}> = {fmtQty(toBase(m, n))} {m.uom}</span>}</b></div>); })}
               <div className="rounded-xl px-3 py-2 text-xs mt-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}>{L('Phiếu được ghi ngay. Kho chỉ sửa nếu số lượng thực tế khác.', 'Recorded at once. Storage only corrects it if the real quantity differs.')}</div>
               <button disabled={busy} onClick={confirmTake} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Xác nhận', 'Confirm')}</button>
@@ -257,7 +261,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('không hiển thị giá', 'prices are not shown')}</div>
               {cart.map((c, i) => { const m = byId.get(c.tmplId); if (!m) return null; const upd = (p: Partial<CartLine>) => setCart(xs => xs.map((x, j) => j === i ? { ...x, ...p } : x)); return (
                 <div key={c.tmplId} className="py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
-                  <div className="flex items-center gap-2"><b className="flex-1 text-[13px]">{m.name}</b>
+                  <div className="flex items-center gap-2"><b className="flex-1 text-[13px]">{rawName(m, lang)}</b>
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
                       <button onClick={() => upd({ qty: Math.max(0, c.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
                       <input inputMode="decimal" value={fmtQty(c.qty)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); upd({ qty: isNaN(v) ? 0 : Math.max(0, v) }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />

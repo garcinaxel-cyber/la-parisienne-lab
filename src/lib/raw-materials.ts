@@ -7,6 +7,8 @@ export type RawPack = { label: string; factor: number }; // factor = base units 
 
 export type RawMaterial = {
   tmplId: number; sku: string | null; name: string; uom: string;
+  /** Vietnamese name from Odoo's vi_VN translation (Axel, 2026-10-08: "faut mettre les items en viet, les articles odoo"). */
+  nameVi: string | null;
   type: RawType; sub: string; packs: RawPack[];
   visible: boolean; checked: boolean; purchased: boolean;
   vendorId: number | null; vendorName: string | null; vendors: { id: number; name: string }[];
@@ -25,6 +27,10 @@ export const RAW_TYPES: Record<RawType, { vi: string; en: string; subs: Record<s
 export function subLabel(type: RawType, sub: string, lang: 'vi' | 'en'): string {
   const s = RAW_TYPES[type]?.subs[sub] ?? RAW_TYPES[type]?.subs.other;
   return s ? (lang === 'vi' ? s[0] : s[1]) : sub;
+}
+// Name to show: the Odoo Vietnamese name for a Vietnamese screen, the Odoo (English) name otherwise.
+export function rawName(m: { name: string; nameVi?: string | null }, lang: 'vi' | 'en'): string {
+  return lang === 'vi' && m.nameVi ? m.nameVi : m.name;
 }
 export function typeLabel(type: RawType, lang: 'vi' | 'en'): string {
   return lang === 'vi' ? RAW_TYPES[type].vi : RAW_TYPES[type].en;

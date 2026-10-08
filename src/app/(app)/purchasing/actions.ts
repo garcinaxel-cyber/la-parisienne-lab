@@ -149,6 +149,14 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     const tmpls = await odooExecute<any[]>('product.template', 'search_read', [[['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['active', '=', true]]],
       { fields: ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id'], limit: 3000 });
     const tmplIds = tmpls.map(t => t.id);
+    // Vietnamese names (Odoo vi_VN translation) for the chefs' screen. Never blocks the sync.
+    const viName = new Map<number, string>();
+    try {
+      for (let i = 0; i < tmplIds.length; i += 300) {
+        const rows = await odooExecute<any[]>('product.template', 'read', [tmplIds.slice(i, i + 300), ['name']], { context: { lang: 'vi_VN' } });
+        for (const r of rows) if (r?.name) viName.set(r.id, String(r.name).replace(/\s+/g, ' ').trim());
+      }
+    } catch { /* keep the names we have */ }
     const vendorsByTmpl = new Map<number, { id: number; name: string }[]>();
     for (let i = 0; i < tmplIds.length; i += 300) {
       const sup = await odooExecute<any[]>('product.supplierinfo', 'search_read', [[['product_tmpl_id', 'in', tmplIds.slice(i, i + 300)]]],
@@ -170,7 +178,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
       const chunk = tmpls.slice(i, i + 200);
       const fresh = chunk.filter(t => !have.has(t.id)).map(t => {
         const uom = normUom(t.uom_id?.[1] ?? 'kg'); const vend = vendorsByTmpl.get(t.id) ?? []; const c = classifyRaw(t.name);
-        return { tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), uom,
+        return { tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), name_vi: viName.get(t.id) ?? null, uom,
           type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: Number(t.purchased_product_qty) > 0, checked: false,
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
           active: true, synced_at: now };
@@ -180,6 +188,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
         const vend = vendorsByTmpl.get(t.id) ?? [];
         const { error } = await g.db.from('lab_raw_materials').update({
           product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), uom: normUom(t.uom_id?.[1] ?? 'kg'),
+          ...(viName.has(t.id) ? { name_vi: viName.get(t.id) } : {}),
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
           active: true, synced_at: now,
         }).eq('tmpl_id', t.id);

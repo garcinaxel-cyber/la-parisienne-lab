@@ -33,7 +33,7 @@ export function isPurchasing(a: RawActor | null): a is RawActor {
 
 export function mapMaterial(r: any): RawMaterial {
   return {
-    tmplId: r.tmpl_id, sku: r.sku ?? null, name: r.name, uom: r.uom, type: r.type, sub: r.sub,
+    tmplId: r.tmpl_id, sku: r.sku ?? null, name: r.name, nameVi: r.name_vi ?? null, uom: r.uom, type: r.type, sub: r.sub,
     packs: Array.isArray(r.packs) ? r.packs : [], visible: !!r.visible, checked: !!r.checked, purchased: !!r.purchased,
     vendorId: r.vendor_id ?? null, vendorName: r.vendor_name ?? null, vendors: Array.isArray(r.vendors) ? r.vendors : [],
   };
