@@ -50,6 +50,9 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const [uploading, setUploading] = useState(false);
   const [mine, setMine] = useState<PurchaseLine[]>([]);
   const [days, setDays] = useState(30);
+  // Axel, 2026-10-08: "il faut scroller tout en bas de la liste pour voir l'historique, c'est pas
+  // pratique" — the list and the history are two views of each mode, switched at the top.
+  const [view, setView] = useState<'list' | 'history'>('list');
 
   useEffect(() => {
     try { setName(localStorage.getItem(NAME_KEY) || userName || ''); } catch { setName(userName || ''); }
@@ -84,7 +87,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     }));
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
-    setQty({}); setUnit({}); setSheet(null);
+    setQty({}); setUnit({}); setSheet(null); setView('history');
     setMsg({ ok: true, text: L(`Đã ghi phiếu #${res.no}.`, `Slip #${res.no} recorded.`) });
     loadToday();
   }
@@ -97,7 +100,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
     const n = cart.length + newItems.length;
-    setCart([]); setNewItems([]); setSheet(null);
+    setCart([]); setNewItems([]); setSheet(null); setView('history');
     setMsg({ ok: true, text: L(`Đã gửi ${n} dòng cho bộ phận mua hàng.`, `${n} lines sent to purchasing.`) });
     loadMine();
   }
@@ -136,6 +139,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
       </div>
 
       {msg && <div className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: msg.ok ? '#EAF6EC' : '#FBEAE8', color: msg.ok ? '#067647' : LATE }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</div>}
+
+      <div className="flex gap-1.5">
+        {([['list', L('Chọn nguyên liệu', 'Pick items'), null],
+           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), mode === 'take' ? today.length : mine.length]] as const).map(([k, label, n]) => (
+          <button key={k} onClick={() => setView(k)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12.5px] font-extrabold"
+            style={{ backgroundColor: view === k ? PALE : '#fff', color: view === k ? GOLD_TEXT : '#6B7280', border: `1.5px solid ${view === k ? GOLD : BORDER}` }}>
+            {label}
+            {n != null && <span className="rounded-full px-1.5 text-[11px] tabular-nums" style={{ backgroundColor: view === k ? GOLD : '#F2F4F7', color: view === k ? '#fff' : '#344054' }}>{n}</span>}
+          </button>
+        ))}
+      </div>
+
+      {view === 'list' && (<>
 
       <div className="flex gap-1.5 overflow-x-auto pb-0.5">
         {(['all', 'dry', 'fresh', 'frozen'] as const).map(t => (
@@ -199,7 +215,9 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         </div>
       )}
 
-      {mode === 'take' ? (
+      </>)}
+
+      {view === 'history' && (mode === 'take' ? (
         <>
           <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{L('Phiếu lấy hôm nay', 'Today\'s withdrawals')}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{today.length}</span></div>
           <div className="bg-white rounded-2xl px-3" style={{ border: `1px solid ${BORDER}` }}>
@@ -231,7 +249,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
           {!mine.length && <div className="text-center text-xs py-3" style={{ color: '#9CA3AF' }}>{L('Chưa có yêu cầu nào trong thời gian này.', 'No request in this period.')}</div>}
           <button onClick={() => setDays(d => d + 60)} className="w-full rounded-xl py-2.5 text-[12.5px] font-extrabold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L(`Xem thêm (hiện ${days} ngày)`, `Show more (showing ${days} days)`)}</button>
         </>
-      )}
+      ))}
 
       {/* Bottom bar */}
       {mode === 'take' && picked.length > 0 && !sheet && (
