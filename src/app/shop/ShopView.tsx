@@ -1217,13 +1217,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // out there — an event shop cannot transfer and has no month-end inventory, both were dead ends.
   // A shop's everyday screen keeps its layout unchanged.
   // Theoretical stock on the count screen (event only; Axel, 2026-10-07: "a-t-on le stock
-  // théorique ? réception − sales"). The staff count first and compare afterwards: the figure
-  // appears next to each line once the count is marked finished ("Hoàn tất"), so it cannot simply
-  // be copied into the box. An admin looking at the event sees it at all times. The end-of-day
-  // report shows it to everyone.
-  const showStockTheo = !!eventState?.inEvent && (
-    (readOnly && viewerRole === 'admin') || !!stockSessions.find(x => x.seq === stockSessionSeq)?.finishedAt
-  );
+  // théorique ? réception − sales"). First shown to the staff only once the count was finished;
+  // since 2026-10-08 (Axel: "ils me disent qu'ils n'ont pas le stock expected sur leur app, moi en
+  // admin j'ai. Mets les lignes en rouge quand le stock est faible") everyone in the event sees it
+  // at all times, and a line turns red when little is left (see stockLow).
+  const showStockTheo = !!eventState?.inEvent;
+  // "Low": at most 20 % of what the event received for that product, and never less than 2 units.
+  const stockLow = (l: { theoretical?: number | null; received?: number | null }) =>
+    showStockTheo && l.theoretical != null && l.theoretical <= Math.max(2, Math.ceil((l.received ?? 0) * 0.2));
 
   const tabBtn = eventState?.inEvent
     ? 'flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-[12px] sm:text-sm leading-tight text-center font-bold rounded-xl px-1.5 sm:px-3 py-2 sm:py-2.5 min-h-[56px] sm:min-h-0'
@@ -1928,7 +1929,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                     <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                       {g.lines.map(l => (
-                        <div key={l.sku} className={eventState?.inEvent ? 'px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5' : 'px-4 py-2.5 flex items-center gap-3'}>
+                        <div key={l.sku} className={eventState?.inEvent ? 'px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5' : 'px-4 py-2.5 flex items-center gap-3'}
+                          style={stockLow(l) ? { backgroundColor: '#FEF3F2', boxShadow: `inset 3px 0 0 ${RED}` } : undefined}>
                           {l.imageUrl ? (
                             <button type="button" onClick={() => setZoomImage(l.imageUrl!)}
                               className="shrink-0 w-10 h-10 rounded overflow-hidden" aria-label={L('Xem ảnh sản phẩm', 'View the product photo')}>
@@ -1943,9 +1945,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             {showStockTheo && l.theoretical != null && (() => {
                               const typed = evalQty(stockDraft[l.sku]);
                               const gap = typed === null ? null : typed - l.theoretical;
+                              const low = stockLow(l);
                               return (
-                                <div className="text-[11px] font-semibold mt-0.5" style={{ color: gap === null ? '#8A6D14' : gap === 0 ? GREEN : RED }}>
+                                <div className="text-[11px] font-semibold mt-0.5" style={{ color: gap === null ? (low ? RED : '#8A6D14') : gap === 0 ? GREEN : RED }}>
                                   {L('Tồn lý thuyết', 'Expected')} {l.theoretical}{gap === null ? '' : gap === 0 ? ' · ✓' : ` · ${L('lệch', 'gap')} ${gap > 0 ? '+' : ''}${gap}`}
+                                  {low && <span className="ml-1.5 inline-block rounded px-1.5 text-[10px] font-extrabold text-white align-middle" style={{ backgroundColor: RED }}>
+                                    {l.theoretical! <= 0 ? L('Hết hàng', 'Out of stock') : L('Sắp hết', 'Running low')}</span>}
                                 </div>
                               );
                             })()}
