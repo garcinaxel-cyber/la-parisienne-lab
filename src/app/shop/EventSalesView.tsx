@@ -185,6 +185,15 @@ export default function EventSalesView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inScope, lang]);
 
+  // Cash that should be in the drawer: the starting float plus every cash sale from the start of the
+  // event up to the end of the day shown (whole event: up to now).
+  const drawer = useMemo(() => {
+    if (ledger?.cashFloat == null) return null;
+    const upto = all.filter(s => s.payment === 'cash' && (scope === 'all' || s.day <= scope));
+    const cashSales = sum(upto, s => s.amount);
+    return { float: ledger.cashFloat, cashSales, total: ledger.cashFloat + cashSales };
+  }, [ledger, all, scope]);
+
   if (!ledger) {
     return (
       <div className="text-center py-10 text-sm" style={{ color: error ? '#B42318' : MUTED }}>
@@ -266,6 +275,21 @@ export default function EventSalesView() {
           </button>
         ))}
       </div>
+
+      {drawer && (
+        <div className="rounded-2xl p-3.5 flex items-center gap-3" style={{ backgroundColor: '#E6F2EC', border: '1px solid #B7E3CC' }}>
+          <span className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-white" style={{ color: '#17603F' }}><Banknote size={20} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-extrabold uppercase tracking-wide" style={{ color: '#17603F' }}>
+              {L('Tiền mặt trong két', 'Cash in the drawer')}{scope !== 'all' ? ` · ${L('cuối ngày', 'end of')} ${ddmm(scope)}` : ''}
+            </div>
+            <div className="text-[22px] font-extrabold leading-tight" style={{ color: '#0F3D2A' }}>{fmt(drawer.total)}</div>
+            <div className="text-[11.5px]" style={{ color: '#2F5D47' }}>
+              {L('Quỹ đầu', 'Starting cash')} {fmt(drawer.float)} + {L('tiền mặt bán', 'cash sales')} {fmt(drawer.cashSales)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Headline + cash / transfer */}
       <div className="bg-white rounded-2xl p-3.5" style={card}>

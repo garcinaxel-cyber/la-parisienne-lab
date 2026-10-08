@@ -2660,7 +2660,9 @@ export type EventSale = {
   seller: string | null;
   lines: EventSaleLine[];
 };
-export type EventSalesLedger = { sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string };
+// cashFloat: the cash the till started the event with (Axel, 2026-10-08: "le cash initial qui est de
+// 1M, comme ça ils peuvent voir leur tréso en cash") — lab_event_shops.cash_float, null when not set.
+export type EventSalesLedger = { sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string; cashFloat: number | null };
 
 export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSalesLedger; error?: string }> {
   const auth = await requireEventSession();
@@ -2715,7 +2717,12 @@ export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSales
         amount: Number(o.amount_paid ?? 0), seller: (o.seller_name ?? '').trim() || null, lines,
       };
     });
-    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr() } };
+    let cashFloat: number | null = null;
+    try {
+      const { data: ev } = await supabase.from('lab_event_shops').select('cash_float').eq('name', shopName).eq('active', true).maybeSingle();
+      cashFloat = ev?.cash_float == null ? null : Number(ev.cash_float);
+    } catch { /* the float is only informative */ }
+    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr(), cashFloat } };
   } catch (e: any) {
     return { error: e?.message ?? 'Could not read the sales' };
   }
