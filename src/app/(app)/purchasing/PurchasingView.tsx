@@ -115,7 +115,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}` }}>
                         <td className="px-3 py-2"><b>{f.name}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.sku}</div></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}</td>
-                        <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}</span></div>)}</td>
+                        <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>)}</td>
                         <td className="px-3 py-2 text-[11.5px]">{group.map(l => (l.brand || l.note) ? <div key={l.id}>{l.brand && <span><b>{l.brand}</b> <span style={{ color: '#9CA3AF' }}>{l.brandStrict ? L('bắt buộc', 'required') : L('nếu có', 'if possible')}</span></span>}{l.brand && l.note ? ' · ' : ''}{l.note}</div> : null)}{!group.some(l => l.brand || l.note) && <span style={{ color: '#D0D5DD' }}>—</span>}</td>
                         <td className="px-3 py-2">
                           <select disabled={busy} value={f.vendorId ?? ''} onChange={e => { const id = Number(e.target.value) || null; run(setVendorAction(group.map(l => l.id), id, vendorOptions.find(v => v.id === id)?.name ?? null)); }}
@@ -153,7 +153,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
               {l.photoUrl ? <a href={l.photoUrl} target="_blank" rel="noreferrer"><img src={l.photoUrl} alt="" className="w-16 h-16 rounded-lg object-cover" /></a> : <div className="w-16 h-16 rounded-lg" style={{ backgroundColor: PALE }} />}
               <div className="flex-1 min-w-[200px] text-[12.5px]">
                 <b className="text-[13.5px]">{l.name}</b> · {fmtQty(l.qty)} {l.uom}
-                <div className="mt-0.5"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy} · {vnDayTime(l.createdAt).day}</span></div>
+                <div className="mt-0.5"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>
                 {l.note && <div className="mt-1">{l.note}</div>}
               </div>
               <div className="flex gap-2 flex-wrap items-center">
@@ -376,6 +376,7 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       {l.note && <div><span style={{ color: '#6B7280' }}>{L('Ghi chú', 'Note')}</span> {l.note}</div>}
                       <div className="sm:col-span-2 mt-1 space-y-0.5">
                         <Ev at={l.createdAt} text={L(`Chef ${l.requestedBy ?? ''} gửi yêu cầu`, `Chef ${l.requestedBy ?? ''} sent the request`)} />
+                        {l.approvedAt && <Ev at={l.approvedAt} text={`${l.approvedBy ?? ''} ${L('duyệt', 'approved')}${l.requestedQty != null ? ` · ${L('SL sửa', 'qty changed')} ${fmtQty(l.requestedQty)} → ${fmtQty(l.qty)} ${l.uom}` : ''}`} />}
                         {l.orderedAt && <Ev at={l.orderedAt} text={`${l.orderedBy ?? ''} ${L('đặt hàng', 'ordered')}${l.poRef ? ` · PO ${l.poRef}` : ''}${l.vendorName ? ` · ${shortVendor(l.vendorName)}` : ''}`} />}
                         {l.cancelledAt && <Ev at={l.cancelledAt} text={L('Đã huỷ', 'Cancelled')} />}
                       </div>

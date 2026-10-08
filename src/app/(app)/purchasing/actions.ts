@@ -126,7 +126,8 @@ export async function getHistoryAction(month: string): Promise<{ items?: Purchas
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
   const end = labDayUtcRange(next).start;
   try {
-    return { items: await loadLines(g.db, q => q.gte('created_at', start).lt('created_at', end).order('created_at', { ascending: false })) };
+    // Lines still waiting for the team lead, or turned down by him, never reached purchasing.
+    return { items: await loadLines(g.db, q => q.gte('created_at', start).lt('created_at', end).neq('status', 'to_approve').eq('rejected_by_lead', false).order('created_at', { ascending: false })) };
   } catch (e: any) { return { error: e.message }; }
 }
 

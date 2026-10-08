@@ -120,7 +120,9 @@ export const TEAM_SHORT: Record<string, { vi: string; en: string; color: string;
   baker: { vi: 'Baker', en: 'Baker', color: '#047857', bg: '#ecfdf5' },
 };
 
-export type PurchaseStatus = 'pending' | 'ordered' | 'received' | 'cancelled';
+// 'to_approve' (Axel, 2026-10-08): a request sent by a team member waits for the team lead
+// (lab_profiles.is_team_lead — Hưng for team hung) before purchasing sees it.
+export type PurchaseStatus = 'to_approve' | 'pending' | 'ordered' | 'received' | 'cancelled';
 export type PurchaseLine = {
   id: string; requestId: string; requestNo: number; team: string; requestedBy: string | null; createdAt: string;
   tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;
@@ -129,6 +131,7 @@ export type PurchaseLine = {
   vendorId: number | null; vendorName: string | null;
   status: PurchaseStatus; poRef: string | null; orderedAt: string | null; orderedBy: string | null;
   receivedAt: string | null; receivedBy: string | null; cancelledAt: string | null;
+  approvedAt: string | null; approvedBy: string | null; requestedQty: number | null; rejectedByLead: boolean; rejectReason: string | null; cancelledBy: string | null;
 };
 
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;

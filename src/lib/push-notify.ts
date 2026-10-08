@@ -171,3 +171,26 @@ export async function sendAdminPush(
 ): Promise<void> {
   await sendTeamPush(supabase, ADMIN_RELAY_PSEUDO_TEAM, payloadVi, payloadEn);
 }
+
+// Push to specific accounts (Axel, 2026-10-08: the team lead is told when a purchase request waits
+// for his approval). Same best-effort posture as sendTeamPush.
+export async function sendUsersPush(
+  supabase: SupabaseClient,
+  userIds: string[],
+  payloadVi: PushPayload,
+  payloadEn?: PushPayload,
+): Promise<void> {
+  if (!ensureConfigured() || !userIds.length) return;
+  try {
+    const { data: subs } = await supabase
+      .from('lab_push_subscriptions')
+      .select('id, endpoint, p256dh, auth, lang')
+      .in('user_id', userIds);
+    if (!subs?.length) return;
+    const { deadIds, failures } = await sendToSubs(subs, payloadVi, payloadEn);
+    if (deadIds.length) await supabase.from('lab_push_subscriptions').delete().in('id', deadIds);
+    await logPushFailures(supabase, 'team', 'users', failures);
+  } catch (e: any) {
+    await logPushFailures(supabase, 'team', 'users', [{ endpoint: '', message: (e?.message ?? String(e)).toString().slice(0, 300) }]);
+  }
+}

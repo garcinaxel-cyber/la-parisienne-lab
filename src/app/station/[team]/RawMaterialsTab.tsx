@@ -6,12 +6,12 @@
 //                "new product" with a photo, and the follow-up of the team's own requests.
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2 } from 'lucide-react';
+import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
 import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, submitPurchaseRequestAction,
-  getTeamRequestsAction, uploadRawPhotoAction,
+  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, type TeamRequestsMeta,
 } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -50,6 +50,11 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const [uploading, setUploading] = useState(false);
   const [mine, setMine] = useState<PurchaseLine[]>([]);
   const [days, setDays] = useState(30);
+  // Team lead approval (Axel, 2026-10-08): only the lead (Hưng) approves his team's requests.
+  const [meta, setMeta] = useState<TeamRequestsMeta>({ canApprove: false, needsApproval: false, leadName: null });
+  const [decide, setDecide] = useState<Record<string, { qty: number; keep: boolean }>>({});
+  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
   // Axel, 2026-10-08: "il faut scroller tout en bas de la liste pour voir l'historique, c'est pas
   // pratique" — the list and the history are two views of each mode, switched at the top.
   const [view, setView] = useState<'list' | 'history'>('list');
@@ -59,7 +64,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     getRawCatalogForChefAction().then(r => setItems(r.items ?? []));
   }, [userName]);
   const loadToday = useCallback(() => getTeamWithdrawalsTodayAction(team).then(r => setToday(r.items ?? [])), [team]);
-  const loadMine = useCallback(() => getTeamRequestsAction(team, days).then(r => setMine(r.items ?? [])), [team, days]);
+  const loadMine = useCallback(() => getTeamRequestsAction(team, days).then(r => { setMine(r.items ?? []); if (r.meta) setMeta(r.meta); }), [team, days]);
   useEffect(() => { loadToday(); }, [loadToday]);
   useEffect(() => { loadMine(); }, [loadMine]);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
@@ -101,7 +106,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
     const n = cart.length + newItems.length;
     setCart([]); setNewItems([]); setSheet(null); setView('history');
-    setMsg({ ok: true, text: L(`Đã gửi ${n} dòng cho bộ phận mua hàng.`, `${n} lines sent to purchasing.`) });
+    setMsg({ ok: true, text: res.needsApproval ? L(`Đã gửi ${n} dòng cho ${lead} duyệt.`, `${n} lines sent to ${lead} for approval.`) : L(`Đã gửi ${n} dòng cho bộ phận mua hàng.`, `${n} lines sent to purchasing.`) });
     loadMine();
   }
   async function pickPhoto(file: File | undefined) {
@@ -119,7 +124,39 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const chip = (on: boolean) => ({ backgroundColor: on ? NAVY : '#fff', color: on ? '#fff' : NAVY, border: `1px solid ${on ? NAVY : BORDER}` });
   const chipSm = (on: boolean) => ({ backgroundColor: on ? PALE : '#fff', color: on ? GOLD_TEXT : '#344054', border: `1px solid ${on ? GOLD : BORDER}` });
   const inCart = (id: number) => cart.some(c => c.tmplId === id);
+  const lead = meta.leadName || L('trưởng nhóm', 'the team lead');
+  const toApprove = mine.filter(l => l.status === 'to_approve');
+  const approveGroups = useMemo(() => {
+    const m = new Map<string, PurchaseLine[]>();
+    for (const l of mine) if (l.status === 'to_approve') { const a = m.get(l.requestId) ?? []; a.push(l); m.set(l.requestId, a); }
+    return Array.from(m.values()).sort((a, b) => a[0].createdAt.localeCompare(b[0].createdAt));
+  }, [mine]);
+  const dec = (l: PurchaseLine) => decide[l.id] ?? { qty: l.qty, keep: true };
+  const setDec = (l: PurchaseLine, p: Partial<{ qty: number; keep: boolean }>) => setDecide(d => ({ ...d, [l.id]: { ...dec(l), ...p } }));
+  async function decideGroup(ls: PurchaseLine[], rejectAll: boolean) {
+    setBusy(true);
+    const approve = rejectAll ? [] : ls.filter(l => dec(l).keep).map(l => ({ id: l.id, qty: dec(l).qty }));
+    const reject = rejectAll ? ls.map(l => l.id) : ls.filter(l => !dec(l).keep).map(l => l.id);
+    const res = await decideRequestLinesAction(team, approve, reject, rejectAll ? reason : null);
+    setBusy(false);
+    if (res.error) { setMsg({ ok: false, text: res.error }); return; }
+    setRejecting(null); setReason('');
+    setMsg({ ok: true, text: rejectAll ? L(`Đã từ chối phiếu #${ls[0].requestNo}.`, `Request #${ls[0].requestNo} turned down.`)
+      : L(`Đã duyệt ${approve.length} dòng — đã gửi bộ phận mua hàng.`, `${approve.length} lines approved — sent to purchasing.`) });
+    loadMine();
+  }
+  async function reopen(l: PurchaseLine) {
+    const res = await reopenForApprovalAction(team, l.id);
+    if (res.error) { setMsg({ ok: false, text: res.error }); return; }
+    loadMine();
+  }
   const pending = mine.filter(l => l.status === 'pending');
+  const ordered0 = mine.filter(l => l.status === 'ordered' || l.status === 'received');
+  const cancelled0 = mine.filter(l => l.status === 'cancelled');
+  const sections: [string, PurchaseLine[]][] = [
+    ...(meta.canApprove ? [] : [[L(`Chờ ${lead} duyệt`, `Waiting for ${lead}`), toApprove] as [string, PurchaseLine[]]]),
+    [L('Đang chờ', 'Waiting'), pending], [L('Đã đặt', 'Ordered'), ordered0], [L('Đã huỷ', 'Cancelled'), cancelled0],
+  ];
   const ordered = mine.filter(l => l.status === 'ordered' || l.status === 'received');
   const cancelled = mine.filter(l => l.status === 'cancelled');
 
@@ -138,11 +175,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
           : <><b className="flex-1">{name || '—'}</b><button onClick={() => setEditName(true)} className="text-xs font-extrabold" style={{ color: GOLD_TEXT }}>{L('Đổi', 'Change')}</button></>}
       </div>
 
+      {meta.canApprove && toApprove.length > 0 && !(mode === 'request' && view === 'history') && (
+        <button onClick={() => { setMode('request'); setView('history'); }} className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left" style={{ backgroundColor: '#FFF4CC', border: `1.5px solid ${GOLD}` }}>
+          <ShieldCheck size={18} style={{ color: GOLD_TEXT }} />
+          <span className="flex-1 text-[13px] font-extrabold" style={{ color: GOLD_TEXT }}>{L(`${approveGroups.length} yêu cầu chờ bạn duyệt`, `${approveGroups.length} requests wait for your approval`)}</span>
+          <span className="text-[12.5px] font-extrabold" style={{ color: NAVY }}>{L('Xem', 'Open')} ›</span>
+        </button>
+      )}
+
       {msg && <div className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: msg.ok ? '#EAF6EC' : '#FBEAE8', color: msg.ok ? '#067647' : LATE }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</div>}
 
       <div className="flex gap-1.5">
         {([['list', L('Chọn nguyên liệu', 'Pick items'), null],
-           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), mode === 'take' ? today.length : mine.length]] as const).map(([k, label, n]) => (
+           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), mode === 'take' ? today.length : mine.filter(l => l.status !== 'to_approve' || !meta.canApprove).length]] as const).map(([k, label, n]) => (
           <button key={k} onClick={() => setView(k)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12.5px] font-extrabold"
             style={{ backgroundColor: view === k ? PALE : '#fff', color: view === k ? GOLD_TEXT : '#6B7280', border: `1.5px solid ${view === k ? GOLD : BORDER}` }}>
             {label}
@@ -234,14 +279,53 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         </>
       ) : (
         <>
-          {([[L('Đang chờ', 'Waiting'), pending], [L('Đã đặt', 'Ordered'), ordered], [L('Đã huỷ', 'Cancelled'), cancelled]] as const).map(([title, ls]) => ls.length ? (
+          {meta.canApprove && approveGroups.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]" style={{ color: GOLD_TEXT }}>{L('Chờ bạn duyệt', 'Waiting for your approval')}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{toApprove.length}</span></div>
+              {approveGroups.map(ls => { const keep = ls.filter(l => dec(l).keep).length; const rid = ls[0].requestId; return (
+                <div key={rid} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1.5px solid ${GOLD}` }}>
+                  <div className="flex items-baseline gap-2 mb-1"><b className="text-[13px] tabular-nums">#{ls[0].requestNo}</b><span className="text-[11.5px] flex-1" style={{ color: '#6B7280' }}>{vnDayTime(ls[0].createdAt).day} {vnDayTime(ls[0].createdAt).time} · {ls[0].requestedBy}</span></div>
+                  {ls.map(l => { const d = dec(l); return (
+                    <div key={l.id} className="py-2" style={{ borderTop: `1px solid ${HAIR}`, opacity: d.keep ? 1 : 0.45 }}>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setDec(l, { keep: !d.keep })} className="w-6 h-6 rounded-md flex items-center justify-center flex-none" style={d.keep ? { backgroundColor: NAVY, color: '#fff' } : { border: `1.5px solid ${BORDER}` }}>{d.keep && <Check size={14} />}</button>
+                        <b className="flex-1 text-[13px] leading-snug" style={{ textDecoration: d.keep ? 'none' : 'line-through' }}>{lineName(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
+                        <div className="flex items-center rounded-lg overflow-hidden flex-none" style={{ border: `1px solid ${BORDER}` }}>
+                          <button disabled={!d.keep} onClick={() => setDec(l, { qty: Math.max(0.5, d.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
+                          <input disabled={!d.keep} inputMode="decimal" value={fmtQty(d.qty)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setDec(l, { qty: isNaN(v) ? 0 : Math.max(0, v) }); }} className="w-11 h-8 text-center font-extrabold text-[13px] outline-none tabular-nums" />
+                          <button disabled={!d.keep} onClick={() => setDec(l, { qty: d.qty + 1 })} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
+                        </div><span className="text-[11.5px] w-6 flex-none" style={{ color: '#6B7280' }}>{l.uom}</span>
+                      </div>
+                      {(d.qty !== l.qty && d.keep) || l.brand || l.note ? <div className="text-[11px] mt-0.5 ml-8" style={{ color: '#6B7280' }}>
+                        {d.qty !== l.qty && d.keep && <b style={{ color: GOLD_TEXT }}>{L(`chef xin ${fmtQty(l.qty)}`, `asked ${fmtQty(l.qty)}`)} </b>}{l.brand ? `${l.brand} (${l.brandStrict ? L('bắt buộc', 'required') : L('nếu có', 'if possible')}) ` : ''}{l.note ?? ''}</div> : null}
+                    </div>); })}
+                  {rejecting === rid ? (<>
+                    <input autoFocus value={reason} onChange={e => setReason(e.target.value)} placeholder={L('Lý do (tuỳ chọn) — chef sẽ thấy', 'Reason (optional) — the chef will see it')} className="w-full mt-2 rounded-lg px-2.5 py-2 text-[12.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
+                    <div className="flex gap-2 mt-2">
+                      <button disabled={busy} onClick={() => decideGroup(ls, true)} className="flex-1 rounded-xl py-2.5 text-[13px] font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: LATE }}>{L('Từ chối cả phiếu', 'Turn down the request')}</button>
+                      <button onClick={() => { setRejecting(null); setReason(''); }} className="rounded-xl px-4 py-2.5 text-[13px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Thôi', 'Back')}</button>
+                    </div></>) : (
+                    <div className="flex gap-2 mt-2">
+                      <button disabled={busy || (keep > 0 && ls.some(l => dec(l).keep && !(dec(l).qty > 0)))} onClick={() => keep ? decideGroup(ls, false) : setRejecting(rid)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-[13px] font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>
+                        {busy ? <Loader2 size={15} className="animate-spin" /> : <><ShieldCheck size={15} /> {keep === ls.length ? L('Duyệt — gửi mua hàng', 'Approve — send to purchasing') : keep ? L(`Duyệt ${keep}/${ls.length} dòng`, `Approve ${keep}/${ls.length} lines`) : L('Từ chối…', 'Turn down…')}</>}</button>
+                      {keep > 0 && <button onClick={() => setRejecting(rid)} className="rounded-xl px-3 py-2.5 text-[12.5px] font-bold" style={{ border: `1px solid ${BORDER}`, color: LATE }}>{L('Từ chối', 'Turn down')}</button>}
+                    </div>)}
+                </div>); })}
+            </div>
+          )}
+          {sections.map(([title, ls]) => ls.length ? (
             <div key={title} className="space-y-2">
               <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{title}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{ls.length}</span></div>
               {ls.map(l => (
                 <div key={l.id} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px]">{fmtQty(l.qty)} {l.uom}</b></div>
-                  <div className="text-[11px] mb-2" style={{ color: '#6B7280' }}>{vnDayTime(l.createdAt).day} {vnDayTime(l.createdAt).time} · {l.requestedBy}{l.poRef ? ` · PO ${l.poRef}` : ''}{l.brand ? ` · ${l.brand}` : ''}</div>
+                  <div className="text-[11px] mb-2" style={{ color: '#6B7280' }}>{vnDayTime(l.createdAt).day} {vnDayTime(l.createdAt).time} · {l.requestedBy}{l.poRef ? ` · PO ${l.poRef}` : ''}{l.brand ? ` · ${l.brand}` : ''}
+                    {l.approvedBy && <> · <b style={{ color: NAVY }}>✓ {l.approvedBy}</b>{l.requestedQty != null ? ` (${L('xin', 'asked')} ${fmtQty(l.requestedQty)})` : ''}</>}
+                    {l.rejectedByLead && <> · <b style={{ color: LATE }}>{L(`${l.cancelledBy ?? lead} không duyệt`, `not approved by ${l.cancelledBy ?? lead}`)}</b>{l.rejectReason ? ` — ${l.rejectReason}` : ''}</>}</div>
                   <Track l={l} L={L} />
+                  {meta.canApprove && ((l.status === 'cancelled' && l.rejectedByLead) || (l.status === 'pending' && l.approvedAt)) && (
+                    <button onClick={() => reopen(l)} className="inline-flex items-center gap-1 text-[11.5px] font-bold mt-1.5" style={{ color: GOLD_TEXT }}><RotateCcw size={12} /> {L('Hoàn tác (chờ duyệt lại)', 'Undo (back to approval)')}</button>
+                  )}
                 </div>
               ))}
             </div>
@@ -300,7 +384,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                   <div className="flex-1 text-[13px]"><b>{n.name}</b> <span className="text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span><div className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(n.qty)} {n.uom}{n.note ? ` · ${n.note}` : ''}</div></div>
                   <button onClick={() => setNewItems(xs => xs.filter((_, j) => j !== i))} style={{ color: '#9CA3AF' }}><X size={14} /></button>
                 </div>))}
-              <button disabled={busy} onClick={sendRequest} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Gửi cho bộ phận mua hàng', 'Send to purchasing')}</button>
+              {meta.needsApproval && <div className="rounded-xl px-3 py-2 text-xs mt-2 flex items-center gap-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}><ShieldCheck size={14} /> {L(`${lead} duyệt trước, rồi mới gửi bộ phận mua hàng.`, `${lead} approves first, then it goes to purchasing.`)}</div>}
+              <button disabled={busy} onClick={sendRequest} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : meta.needsApproval ? L(`Gửi cho ${lead} duyệt`, `Send to ${lead} for approval`) : L('Gửi cho bộ phận mua hàng', 'Send to purchasing')}</button>
               <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Tiếp tục chọn', 'Keep adding')}</button>
             </>)}
             {sheet === 'new' && (<>

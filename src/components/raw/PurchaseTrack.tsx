@@ -1,5 +1,5 @@
 'use client';
-// Progress of one purchase request line: Sent -> Ordered (or Sent -> Cancelled). Shared by the chef
+// Progress of one purchase request line: Sent -> (Approved) -> Ordered (or -> Cancelled). Shared by the chef
 // station tab and the purchasing history. 'Received' is left out on purpose for now (Axel,
 // 2026-10-08: deliveries are confirmed long after the real delivery — to be solved later).
 import type { PurchaseLine } from '@/lib/raw-materials';
@@ -8,23 +8,32 @@ import { vnDayTime } from '@/lib/raw-materials';
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', HAIR = '#EFE9CF', LATE = '#B42318';
 type LFn = (vi: string, en: string) => string;
 
+// Lines of a team with a lead get an extra "Approved" step between Sent and Ordered (Axel, 2026-10-08).
 export function Track({ l, L }: { l: PurchaseLine; L: LFn }) {
-  const ageDays = l.status === 'pending' ? Math.floor((Date.now() - new Date(l.createdAt).getTime()) / 86400000) : 0;
-  const late = l.status === 'pending' && ageDays >= 2;
+  const waiting = l.status === 'pending' || l.status === 'to_approve';
+  const ageDays = waiting ? Math.floor((Date.now() - new Date(l.createdAt).getTime()) / 86400000) : 0;
+  const late = waiting && ageDays >= 2;
+  const withApproval = l.status === 'to_approve' || !!l.approvedAt || l.rejectedByLead;
   if (l.status === 'cancelled') {
     return (
       <div className="flex items-start">
         <Step state="done" label={L('Gửi', 'Sent')} date={vnDayTime(l.createdAt).day} first />
-        <Step state="x" label={L('Đã huỷ', 'Cancelled')} date={vnDayTime(l.cancelledAt).day} />
+        {l.approvedAt && <Step state="done" label={L('Đã duyệt', 'Approved')} date={vnDayTime(l.approvedAt).day} />}
+        <Step state="x" label={l.rejectedByLead ? L('Không duyệt', 'Not approved') : L('Đã huỷ', 'Cancelled')} date={vnDayTime(l.cancelledAt).day} />
       </div>
     );
   }
-  const idx = l.status === 'pending' ? 0 : 1;
+  const steps = [
+    { label: L('Gửi', 'Sent'), date: vnDayTime(l.createdAt).day },
+    ...(withApproval ? [{ label: L('Duyệt', 'Approve'), date: l.approvedAt ? vnDayTime(l.approvedAt).day : '' }] : []),
+    { label: L('Đã đặt', 'Ordered'), date: l.orderedAt ? vnDayTime(l.orderedAt).day : '' },
+  ];
+  const idx = l.status === 'to_approve' ? 0 : l.status === 'pending' ? (withApproval ? 1 : 0) : steps.length - 1;
   const st = (i: number): 'done' | 'cur' | 'late' | 'todo' => (i <= idx ? 'done' : i === idx + 1 ? (late ? 'late' : 'cur') : 'todo');
   return (
     <div className="flex items-start">
-      <Step state={st(0)} label={L('Gửi', 'Sent')} date={vnDayTime(l.createdAt).day} first />
-      <Step state={st(1)} label={L('Đã đặt', 'Ordered')} date={l.orderedAt ? vnDayTime(l.orderedAt).day : late ? `${ageDays} ${L('ngày', 'days')}` : '—'} />
+      {steps.map((s, i) => <Step key={i} state={st(i)} label={s.label} first={i === 0}
+        date={s.date || (i === idx + 1 && late ? `${ageDays} ${L('ngày', 'days')}` : '—')} />)}
     </div>
   );
 }

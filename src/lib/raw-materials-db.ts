@@ -9,7 +9,7 @@ export function rawService() {
   return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 }
 
-export type RawActor = { userId: string; role: string; name: string; team: string | null };
+export type RawActor = { userId: string; role: string; name: string; team: string | null; isLead: boolean };
 
 // Who is calling. `team` comes from lab_profiles (chefs), never from the client.
 export async function rawActor(): Promise<RawActor | null> {
@@ -18,14 +18,26 @@ export async function rawActor(): Promise<RawActor | null> {
   if (!session) return null;
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!profile?.role) return null;
-  const { data: lab } = await supabase.from('lab_profiles').select('team').eq('id', session.user.id).maybeSingle();
-  return { userId: session.user.id, role: profile.role as string, name: (profile.full_name as string) || '', team: (lab?.team as string) ?? null };
+  const { data: lab } = await supabase.from('lab_profiles').select('team, is_team_lead').eq('id', session.user.id).maybeSingle();
+  return { userId: session.user.id, role: profile.role as string, name: (profile.full_name as string) || '', team: (lab?.team as string) ?? null, isLead: !!(lab as any)?.is_team_lead };
 }
 
 // Chefs act for their own team; admin / lab manager may act for any team (testing, cover).
 export function canActForTeam(a: RawActor, team: string): boolean {
   if (a.role === 'admin' || a.role === 'lab_manager') return true;
   return a.role === 'chef' && a.team === team;
+}
+// Team lead approval (Axel, 2026-10-08: "seulement Hưng dans son équipe puisse valider la
+// request"). Approvers = the team's lead(s) on their own team, plus admin as a backup.
+export function canApproveForTeam(a: RawActor, team: string): boolean {
+  return a.role === 'admin' || (a.role === 'chef' && a.isLead && a.team === team);
+}
+export async function teamLeads(db: NonNullable<ReturnType<typeof rawService>>, team: string): Promise<{ id: string; name: string }[]> {
+  const { data } = await db.from('lab_profiles').select('id').eq('team', team).eq('is_team_lead', true);
+  const ids = (data ?? []).map(r => r.id as string);
+  if (!ids.length) return [];
+  const { data: ps } = await db.from('profiles').select('id, full_name').in('id', ids);
+  return ids.map(id => ({ id, name: ((ps ?? []).find(p => p.id === id)?.full_name as string) || '' }));
 }
 export function isPurchasing(a: RawActor | null): a is RawActor {
   return !!a && (a.role === 'purchasing' || a.role === 'admin');
@@ -47,10 +59,12 @@ export function mapLine(l: any, req: any): PurchaseLine {
     newState: l.new_state ?? null, vendorId: l.vendor_id ?? null, vendorName: l.vendor_name ?? null, status: l.status,
     poRef: l.po_ref ?? null, orderedAt: l.ordered_at ?? null, orderedBy: l.ordered_by_name ?? null,
     receivedAt: l.received_at ?? null, receivedBy: l.received_by_name ?? null, cancelledAt: l.cancelled_at ?? null,
+    approvedAt: l.approved_at ?? null, approvedBy: l.approved_by_name ?? null, requestedQty: l.requested_qty == null ? null : Number(l.requested_qty),
+    rejectedByLead: !!l.rejected_by_lead, rejectReason: l.reject_reason ?? null, cancelledBy: l.cancelled_by_name ?? null,
   };
 }
 
-const LINE_COLS = 'id, request_id, tmpl_id, sku, name, uom, qty, brand, brand_strict, note, is_new, photo_url, new_state, vendor_id, vendor_name, status, po_ref, ordered_at, ordered_by_name, received_at, received_by_name, cancelled_at, created_at';
+const LINE_COLS = 'id, request_id, tmpl_id, sku, name, uom, qty, brand, brand_strict, note, is_new, photo_url, new_state, vendor_id, vendor_name, status, po_ref, ordered_at, ordered_by_name, received_at, received_by_name, cancelled_at, cancelled_by_name, approved_at, approved_by_name, requested_qty, rejected_by_lead, reject_reason, created_at';
 
 // Purchase lines with their request, filtered by a builder over lab_purchase_request_lines.
 export async function loadLines(db: NonNullable<ReturnType<typeof rawService>>, build: (q: any) => any): Promise<PurchaseLine[]> {
