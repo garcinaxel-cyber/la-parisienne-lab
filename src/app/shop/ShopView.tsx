@@ -1222,9 +1222,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // admin j'ai. Mets les lignes en rouge quand le stock est faible") everyone in the event sees it
   // at all times, and a line turns red when little is left (see stockLow).
   const showStockTheo = !!eventState?.inEvent;
-  // "Low": at most 20 % of what the event received for that product, and never less than 2 units.
-  const stockLow = (l: { theoretical?: number | null; received?: number | null }) =>
-    showStockTheo && l.theoretical != null && l.theoretical <= Math.max(2, Math.ceil((l.received ?? 0) * 0.2));
+  // "Low" is measured against what the event received for that product only (Axel, 2026-10-08:
+  // "compare avec la réception, tu peux pas mettre stock low sur 2 entremets alors qu'on en a
+  // commandé que 2"): some has been sold or lost, and what is left is at most 20 % of the
+  // reception (rounded up). Received 2 → red at 1 left; received 10 → at 2; untouched stock never.
+  const stockLow = (l: { theoretical?: number | null; received?: number | null }) => {
+    if (!showStockTheo || l.theoretical == null) return false;
+    const received = l.received ?? 0;
+    return l.theoretical < received && l.theoretical <= Math.ceil(received * 0.2);
+  };
 
   const tabBtn = eventState?.inEvent
     ? 'flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-[12px] sm:text-sm leading-tight text-center font-bold rounded-xl px-1.5 sm:px-3 py-2 sm:py-2.5 min-h-[56px] sm:min-h-0'
