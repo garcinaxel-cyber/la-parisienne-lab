@@ -2695,6 +2695,39 @@ export async function setEventSalePaymentAction(saleId: string, payment: 'cash' 
   return uErr ? { error: uErr.message } : { ok: true };
 }
 
+// Promos on/off at the event till (Axel, 2026-10-08: "toute l'équipe peut mettre on ou off"). The
+// rules themselves live in EventCaisseTab (PROMO_GROUPS); this only says which ones are switched off
+// for the current event. No row = on. Every switch is logged and pushed to the admins.
+export async function getEventPromoStateAction(): Promise<{ off?: string[]; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data, error } = await supabase.from('lab_event_promo_state').select('promo_id, active').eq('event_name', auth.event.name);
+  if (error) return { off: [] }; // never block the till over this
+  return { off: (data ?? []).filter(r => r.active === false).map(r => r.promo_id as string) };
+}
+
+export async function setEventPromoActiveAction(promoId: string, label: string, active: boolean, byName?: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireEventSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const id = String(promoId ?? '').trim().slice(0, 40);
+  if (!/^[a-z0-9-]+$/.test(id)) return { error: 'Bad promo' };
+  const who = String(byName ?? '').trim().slice(0, 60) || null;
+  const { error } = await supabase.from('lab_event_promo_state').upsert(
+    { event_name: auth.event.name, promo_id: id, active: !!active, updated_by_name: who, updated_at: new Date().toISOString() },
+    { onConflict: 'event_name,promo_id' });
+  if (error) return { error: error.message };
+  await supabase.from('lab_event_promo_log').insert({ event_name: auth.event.name, promo_id: id, active: !!active, by_name: who });
+  const name = String(label ?? id).slice(0, 120);
+  await awaitPush(sendAdminPush(supabase,
+    { title: 'La Parisienne Lab', body: `🎁 ${auth.event.name}: ${active ? 'BẬT' : 'TẮT'} khuyến mãi « ${name} »${who ? ` · ${who}` : ''}` },
+    { title: 'La Parisienne Lab', body: `🎁 ${auth.event.name}: promo ${active ? 'ON' : 'OFF'} « ${name} »${who ? ` · ${who}` : ''}` }));
+  return { ok: true };
+}
+
 export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSalesLedger; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, CheckCircle2, Loader2, Banknote, QrCode, ArrowLeft, Gift, Search, Cake, ShoppingBag, TrendingUp } from 'lucide-react';
-import { getEventCaisseCatalogAction, recordEventSaleAction, type EventCaisseProduct, type ShopStaffName } from './actions';
+import { getEventCaisseCatalogAction, recordEventSaleAction, getEventPromoStateAction, setEventPromoActiveAction, type EventCaisseProduct, type ShopStaffName } from './actions';
 import { NamePicker, NAVY, GOLD, GOLD_PALE, INK, BORDER, GREEN, RED, NAME_STORAGE_KEY, LOSS_NAME_STORAGE_KEY, STOCK_NAME_STORAGE_KEY } from './ShopView';
 import EventSalesView from './EventSalesView';
 import { useShopL } from './shop-lang';
@@ -88,6 +88,23 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   // 'idle' = cart view; 'choosing' = pick cash/transfer; 'transferQr' = showing the QR to confirm.
   const [paymentStep, setPaymentStep] = useState<'idle' | 'choosing' | 'transferQr'>('idle');
+  // Promos switched off for this event (Axel, 2026-10-08: "toute l'équipe peut mettre on ou off").
+  // A group switched off simply stops giving its free units; staff can still mark free ones by hand.
+  const [promoOff, setPromoOff] = useState<string[]>([]);
+  const [promoConfirm, setPromoConfirm] = useState<string | null>(null);
+  const [promoBusy, setPromoBusy] = useState(false);
+  const loadPromos = () => getEventPromoStateAction().then(r => { if (r.off) setPromoOff(r.off); });
+  useEffect(() => { loadPromos(); const t = setInterval(loadPromos, 60000); return () => clearInterval(t); }, []);
+  const activeGroups = useMemo(() => PROMO_GROUPS.filter(g => !promoOff.includes(g.id)), [promoOff]);
+  async function togglePromo(g: PromoGroup) {
+    const on = promoOff.includes(g.id);
+    setPromoBusy(true);
+    const res = await setEventPromoActiveAction(g.id, g.vi, on, seller.trim() || null);
+    setPromoBusy(false); setPromoConfirm(null);
+    if (res.error) { setMsg(res.error); return; }
+    setPromoOff(xs => on ? xs.filter(x => x !== g.id) : [...xs, g.id]);
+    setMsg(on ? L(`✓ Đã bật: ${g.vi}`, `✓ Promo on: ${g.en}`) : L(`Đã tắt: ${g.vi}`, `Promo off: ${g.en}`));
+  }
 
   async function load() {
     const p = await getEventCaisseCatalogAction();
@@ -120,15 +137,15 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
 
   const groupOf = useMemo(() => {
     const m = new Map<string, PromoGroup>();
-    for (const p of products ?? []) { const g = PROMO_GROUPS.find(x => x.match(p)); if (g) m.set(p.sku, g); }
+    for (const p of products ?? []) { const g = activeGroups.find(x => x.match(p)); if (g) m.set(p.sku, g); }
     return m;
-  }, [products]);
+  }, [products, activeGroups]);
   // Free units per sku: the fixed promo of its group, else what staff marked by hand. A discounted
   // line has none. Plus, per group, whether the customer is one unit away from another free one.
   const { freeBySku, promoHints } = useMemo(() => {
     const freeBySku: Record<string, number> = {};
     const promoHints: PromoGroup[] = [];
-    for (const g of PROMO_GROUPS) {
+    for (const g of activeGroups) {
       const lines = (products ?? []).filter(p => groupOf.get(p.sku) === g && (cart[p.sku] ?? 0) > 0 && discount[p.sku] == null)
         .sort((a, b) => a.unitPrice - b.unitPrice);
       const units = lines.reduce((s, p) => s + (cart[p.sku] ?? 0), 0);
@@ -142,7 +159,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
       if (f > 0) freeBySku[sku] = f;
     }
     return { freeBySku, promoHints };
-  }, [products, cart, freeCart, discount, groupOf]);
+  }, [products, cart, freeCart, discount, groupOf, activeGroups]);
   const paidUnit = (sku: string) => {
     const price = products?.find(x => x.sku === sku)?.unitPrice ?? 0;
     return Math.round(price * (100 - (discount[sku] ?? 0)) / 100);
@@ -202,12 +219,32 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
         {L('📦 Sản phẩm lấy từ các đơn hàng (REP) của event, kể cả khi chưa xác nhận nhận hàng. Vẫn bán được khi số tồn về 0 hoặc âm.', '📦 Products come from the event\'s orders (REP), even before they are confirmed as received. Selling stays possible at zero or below.')}
       </div>
 
-      {PROMO_GROUPS.some(g => products.some(p => groupOf.get(p.sku) === g)) && (
-        <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold space-y-0.5" style={{ backgroundColor: '#FEF3C7', border: '1px solid #E5C77A', color: '#92600A' }}>
-          {PROMO_GROUPS.filter(g => products.some(p => groupOf.get(p.sku) === g)).map(g => (
-            <div key={g.id} className="flex items-start gap-1.5"><Gift size={12} className="mt-0.5 flex-shrink-0" /> <span>{L(g.vi, g.en)}</span></div>
-          ))}
-          <div className="font-normal" style={{ color: '#A16207' }}>{L('Tự động tính trong giỏ, trộn được các vị.', 'Worked out automatically in the cart, flavours can be mixed.')}</div>
+      {PROMO_GROUPS.some(g => products.some(p => g.match(p))) && (
+        <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold space-y-1" style={{ backgroundColor: '#FEF3C7', border: '1px solid #E5C77A', color: '#92600A' }}>
+          {PROMO_GROUPS.filter(g => products.some(p => g.match(p))).map(g => {
+            const on = !promoOff.includes(g.id);
+            return (
+              <div key={g.id}>
+                <div className="flex items-center gap-2" style={{ opacity: on ? 1 : 0.55 }}>
+                  <Gift size={12} className="flex-shrink-0" />
+                  <span className="flex-1" style={{ textDecoration: on ? 'none' : 'line-through' }}>{L(g.vi, g.en)}</span>
+                  <button onClick={() => setPromoConfirm(promoConfirm === g.id ? null : g.id)} aria-label={on ? L('Tắt', 'Switch off') : L('Bật', 'Switch on')}
+                    className="flex-shrink-0 relative rounded-full transition-colors" style={{ width: 38, height: 22, backgroundColor: on ? NAVY : '#D1D5DB' }}>
+                    <span className="absolute top-[3px] rounded-full bg-white transition-all" style={{ width: 16, height: 16, left: on ? 19 : 3 }} />
+                  </button>
+                </div>
+                {promoConfirm === g.id && (
+                  <div className="flex items-center gap-2 mt-1.5 ml-5">
+                    <span className="flex-1 font-bold" style={{ color: '#7C4A03' }}>{on ? L('Tắt khuyến mãi này?', 'Switch this promo off?') : L('Bật lại khuyến mãi này?', 'Switch this promo back on?')}</span>
+                    <button disabled={promoBusy} onClick={() => togglePromo(g)} className="rounded-lg px-3 py-1.5 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: on ? RED : NAVY }}>
+                      {promoBusy ? <Loader2 size={12} className="animate-spin inline" /> : on ? L('Tắt', 'Off') : L('Bật', 'On')}</button>
+                    <button onClick={() => setPromoConfirm(null)} className="rounded-lg px-3 py-1.5 font-bold bg-white" style={{ border: '1px solid #E5C77A' }}>{L('Thôi', 'Back')}</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div className="font-normal" style={{ color: '#A16207' }}>{L('Tự động tính trong giỏ, trộn được các vị. Gạt nút để bật / tắt từng khuyến mãi.', 'Worked out automatically in the cart, flavours can be mixed. Use the switch to turn each promo on / off.')}</div>
         </div>
       )}
 
