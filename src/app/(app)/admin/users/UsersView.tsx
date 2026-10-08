@@ -8,7 +8,8 @@ import { createClient } from '@/lib/supabase-browser';
 import { inviteLabUser, generateResetLink } from './actions';
 
 const LAB_ROLES = ['lab_manager', 'assistant', 'chef', 'worker'] as const;
-const EDITABLE_ROLES = LAB_ROLES; // admins are shown read-only
+// 'purchasing' (Axel, 2026-10-08): storage manager + purchasing assistant — no station team.
+const EDITABLE_ROLES = [...LAB_ROLES, 'purchasing'] as const; // admins are shown read-only
 
 type UserRow = {
   id: string;
@@ -51,7 +52,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteForm, setInviteForm] = useState<{
     email: string; fullName: string;
-    role: 'chef' | 'assistant' | 'lab_manager' | 'worker'; team: string;
+    role: 'chef' | 'assistant' | 'lab_manager' | 'worker' | 'purchasing'; team: string;
   }>({ email: '', fullName: '', role: 'chef', team: '' });
 
   async function submitInvite() {
@@ -138,14 +139,14 @@ export default function UsersView({ users }: { users: UserRow[] }) {
 
   const ROLE_LABEL: Record<string, string> = {
     admin: 'Admin', sales: 'Sales', viewer: 'Viewer',
-    lab_manager: 'Lab Manager', assistant: 'Assistant', chef: 'Chef', worker: 'Worker',
+    lab_manager: 'Lab Manager', assistant: 'Assistant', chef: 'Chef', worker: 'Worker', purchasing: 'Purchasing',
   };
 
   const ROLE_BADGE: Record<string, string> = {
     admin: 'bg-navy text-white', sales: 'bg-gold/20 text-gold',
     viewer: 'bg-gray-100 text-gray-600', lab_manager: 'bg-purple-100 text-purple-700',
     assistant: 'bg-blue-100 text-blue-700', chef: 'bg-emerald-100 text-emerald-700',
-    worker: 'bg-orange-100 text-orange-700',
+    worker: 'bg-orange-100 text-orange-700', purchasing: 'bg-amber-100 text-amber-800',
   };
 
   return (
@@ -245,6 +246,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                       <option value="worker">Worker</option>
                       <option value="assistant">Assistant</option>
                       <option value="lab_manager">Lab Manager</option>
+                      <option value="purchasing">Purchasing</option>
                     </select>
                   </div>
                   <div>
@@ -414,6 +416,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
             { role: 'assistant', en: 'Import and review orders, mark exceptions', vi: 'Nhập và xem xét đơn, đánh dấu ngoại lệ' },
             { role: 'chef', en: "View own team's station, update production progress", vi: 'Xem trạm đội mình, cập nhật tiến độ sản xuất' },
             { role: 'worker', en: "View own team's station — read only, cannot mark progress", vi: 'Xem trạm đội mình — chỉ đọc, không thể cập nhật tiến độ' },
+            { role: 'purchasing', en: 'Purchasing: chefs\' purchase requests, storage withdrawals, raw material catalogue, OEM orders (read only)', vi: 'Mua hàng: yêu cầu mua của chef, phiếu lấy kho, danh mục nguyên liệu, đơn OEM (chỉ xem)' },
           ].map(({ role, en, vi }) => (
             <div key={role} className="flex items-start gap-2">
               <span className={`badge text-[10px] shrink-0 mt-0.5 ${ROLE_BADGE[role]}`}>{ROLE_LABEL[role]}</span>

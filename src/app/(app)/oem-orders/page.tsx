@@ -13,7 +13,8 @@ export default async function OemOrdersPage() {
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   const role = profile?.role ?? '';
-  if (!['admin', 'lab_manager', 'assistant'].includes(role)) redirect('/dashboard');
+  // 'purchasing' sees it read-only (Axel, 2026-10-08) — write actions stay gated in oem-actions.ts.
+  if (!['admin', 'lab_manager', 'assistant', 'purchasing'].includes(role)) redirect('/dashboard');
 
   return <OemOrdersPageView role={role} userId={session.user.id} userName={profile?.full_name ?? null} />;
 }

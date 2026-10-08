@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory, Truck, Wheat } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -17,6 +17,9 @@ const FAMILY_LABEL: Record<string, { vi: string; en: string }> = {
   shops:      { vi: 'Cửa hàng',     en: 'Boutiques' },
   piloting:   { vi: 'Điều hành',    en: 'Pilotage' },
 };
+
+// The purchasing role only gets these two entries (Axel, 2026-10-08).
+const PURCHASING_NAV = ['/purchasing', '/oem-orders'];
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const, family: 'today' },
@@ -35,6 +38,9 @@ const NAV = [
   // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake + Tianhe Food. The page itself only
   // lets admin/lab_manager/assistant in; hideFor just keeps the link away from the other roles.
   { href: '/oem-orders', icon: Factory,       labelVi: 'Đơn hàng OEM', labelEn: 'OEM Orders', family: 'production', hideFor: ['sales', 'viewer', 'shop', 'online_sales', 'shop_manager'] as UserRole[] },
+  // Purchasing (Axel, 2026-10-08): purchase requests, storage withdrawals, history, raw material catalogue.
+  // Only admin and the 'purchasing' role — not the assistant, not the lab manager.
+  { href: '/purchasing', icon: Truck, labelVi: 'Mua hàng', labelEn: 'Purchasing', family: 'production', onlyFor: ['admin', 'purchasing'] as UserRole[] },
   { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
   // Online-sales interface (2026-09-06): admin entry point to the online seller's space
   // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).
@@ -50,6 +56,8 @@ const NAV = [
 ];
 const ADMIN_NAV = [
   { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true, family: 'piloting' },
+  // Raw materials taken vs recipes (Axel, 2026-10-08) — costs inside, admin only.
+  { href: '/admin/raw-report', icon: Wheat, labelVi: 'Nguyên liệu: lấy / công thức', labelEn: 'Raw mat.: taken / recipes', adminOnly: true, family: 'piloting' },
   // Users: admin-only per Axel (2026-08-08) — was already page-blocked for lab_manager,
   // just wasn't hidden from the sidebar yet.
   { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true, family: 'piloting' },
@@ -117,7 +125,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             just under a small uppercase section header instead of one 20-item flat list. */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
           {(() => {
-            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role));
+            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href)));
             const visibleAdmin = isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [];
             const all = [...visibleNav, ...visibleAdmin];
             return FAMILY_ORDER.map((fam) => {
@@ -212,7 +220,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             bled into the next tab. w-16 + shrink-0 gives every tab the same fixed width and lets
             overflow-x-auto do the scrolling instead — no more overlap, whatever the tab count. */}
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role)), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
+          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href))), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
             const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
             const active = pathname === href || pathname.startsWith(href + '/');
             return (

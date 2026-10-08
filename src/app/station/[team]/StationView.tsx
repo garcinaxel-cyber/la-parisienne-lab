@@ -12,6 +12,7 @@ import { isOemSku } from '@/lib/oem';
 import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/lib/types';
 import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
+import RawMaterialsTab from './RawMaterialsTab';
 import { thumb } from '@/lib/img-thumb';
 import { armNotifySound, playNewOrderChime } from '@/lib/notify-sound';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
@@ -114,7 +115,9 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw';
+// Raw materials tab (withdrawals + purchase requests, Axel 2026-10-08) — test phase on team Hưng only.
+const RAW_TEAMS = ['hung'];
 
 type DateSummary = {
   delivery_date: string;
@@ -1186,6 +1189,13 @@ export default function StationView({
       count: 0,
       icon: <TrendingUp size={14} />,
     },
+    ...(RAW_TEAMS.includes(team) ? [{
+      id: 'raw' as Tab,
+      labelVi: 'Nguyên liệu',
+      labelEn: 'Raw mat.',
+      count: 0,
+      icon: <Package size={14} />,
+    }] : []),
   ];
 
   // Read-only roles at the station: worker & viewer (legacy 'employee' kept for safety)
@@ -2528,6 +2538,12 @@ export default function StationView({
           </div>
         );
       })()}
+
+      {activeTab === 'raw' && RAW_TEAMS.includes(team) && (
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <RawMaterialsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} userName={userName} />
+        </div>
+      )}
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (

@@ -26,8 +26,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (profile?.role === 'shop_manager') redirect('/shop-manager');
 
   // Only lab roles can access the app — catalogue-only users get bounced to login
-  const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker'];
+  const LAB_ROLES = ['admin', 'lab_manager', 'assistant', 'chef', 'worker', 'purchasing'];
   if (!profile || !LAB_ROLES.includes(profile.role)) redirect('/login');
+
+  // Purchasing (Axel, 2026-10-08): storage manager + purchasing assistant — their own pages
+  // (/purchasing) and the OEM orders screen, nothing else of the admin app.
+  const purchasingPath = headers().get('x-pathname') ?? '';
+  if (profile.role === 'purchasing' && !purchasingPath.startsWith('/purchasing') && !purchasingPath.startsWith('/oem-orders')) redirect('/purchasing');
 
   // Chefs and workers go to their station — they don't use the full admin layout.
   // Exception: chefs may open the fiche editor (recipe-only mode, gated again in the page + RLS).

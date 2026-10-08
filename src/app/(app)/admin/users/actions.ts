@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 export async function inviteLabUser(data: {
   email: string;
   fullName: string;
-  role: 'chef' | 'assistant' | 'lab_manager' | 'worker';
+  role: 'chef' | 'assistant' | 'lab_manager' | 'worker' | 'purchasing';
   team: string | null;
 }): Promise<{ error?: string; success?: true; link?: string }> {
   const { email, fullName, role, team } = data;

@@ -19,7 +19,7 @@ export default async function UsersPage() {
       id, full_name, role,
       lab_profiles(team)
     `)
-    .in('role', ['admin', 'lab_manager', 'assistant', 'chef', 'worker'])
+    .in('role', ['admin', 'lab_manager', 'assistant', 'chef', 'worker', 'purchasing'])
     .order('full_name');
 
   // Supabase returns one-to-one joins as arrays; normalise to single object
@@ -29,7 +29,7 @@ export default async function UsersPage() {
   }));
 
   // Sort by role hierarchy, then team, then name — not by arrival
-  const ROLE_ORDER: Record<string, number> = { admin: 0, lab_manager: 1, assistant: 2, chef: 3, worker: 4 };
+  const ROLE_ORDER: Record<string, number> = { admin: 0, lab_manager: 1, assistant: 2, purchasing: 3, chef: 4, worker: 5 };
   normalised.sort((a: any, b: any) => {
     const ra = ROLE_ORDER[a.role] ?? 9, rb = ROLE_ORDER[b.role] ?? 9;
     if (ra !== rb) return ra - rb;
