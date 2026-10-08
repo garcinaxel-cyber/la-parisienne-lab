@@ -2547,7 +2547,12 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     const { data: checkLines } = await supabase.from('lab_delivery_check_lines')
       .select('delivery_order_id, sku, product_name_vi, qty_expected, qty_checked')
       .in('delivery_order_id', Array.from(refByHeaderId.keys())).limit(10000);
-    for (const l of checkLines ?? []) put(checkedByRef, refByHeaderId.get(l.delivery_order_id), l.sku, l.product_name_vi, l.qty_checked ?? l.qty_expected);
+    for (const l of checkLines ?? []) {
+      put(checkedByRef, refByHeaderId.get(l.delivery_order_id), l.sku, l.product_name_vi, l.qty_checked ?? l.qty_expected);
+      // A Lab product found in the delivery check but not on the order (Axel, 2026-10-08: Chopiraps
+      // mini sent by mistake with REP/2026/01854) may borrow Odoo's price too — packaging never.
+      if (l.sku && !packagingSkus.has(l.sku)) producedSkus.add(l.sku);
+    }
   }
   const orderedBySku = new Map<string, { name: string; qty: number }>();
   const addOrdered = (sku: string, name: string, qty: number, ref?: string) => {
