@@ -188,6 +188,10 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
     setSubmitting(false);
     setPaymentStep('idle');
     if (res.error) { setMsg(res.error); return; }
+    // The sale is saved: show its effect on the counts right away, then refresh from the server
+    // in the background (speed pass, 2026-10-09) — the server figures always win once they arrive.
+    const soldNow = new Map(items.map(i => [i.sku, i.qty] as const));
+    setProducts(ps => ps ? ps.map(p => soldNow.has(p.sku) ? { ...p, available: p.available - (soldNow.get(p.sku) ?? 0) } : p) : ps);
     setCart({}); setFreeCart({}); setDiscount({});
     setMsg(L('✓ Đã ghi nhận bán hàng (không ảnh hưởng Odoo)', '✓ Sale recorded (no impact on Odoo)'));
     load();

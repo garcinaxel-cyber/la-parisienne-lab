@@ -264,11 +264,16 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const res = await actions.getMyShopTransfersAction(readOnly ? shopName : undefined);
     if (res.transfers) setTransfers(res.transfers);
   }, [readOnly, shopName]);
+  // An event has no transfer tab: no need to ask every minute (speed pass, 2026-10-09 — that
+  // call queued up in front of the till's own). Real shops: unchanged, and leaving the event
+  // starts it again.
+  const inEventNow = !!eventState?.inEvent;
   useEffect(() => {
+    if (inEventNow) return;
     loadTransfers();
     const id = setInterval(loadTransfers, 60_000);
     return () => clearInterval(id);
-  }, [loadTransfers]);
+  }, [loadTransfers, inEventNow]);
   const pendingIncomingTransfers = (transfers ?? []).filter(t => t.toShop === shopName && t.status === 'sent').length;
   const [orders, setOrders] = useState<ShopDeliveryOrder[] | null>(null);
   const [cakes, setCakes] = useState<ShopCake[] | null>(null);

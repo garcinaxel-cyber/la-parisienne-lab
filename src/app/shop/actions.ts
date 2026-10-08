@@ -2447,9 +2447,10 @@ export async function exitEventAction(): Promise<{ ok: boolean }> {
 // lab_manual_cakes/lab_assignments/Odoo, so it can never reach chef production or Odoo stock.
 // Gated to an actual event session (never a real shop's own PIN-less use) via requireEventSession.
 async function requireEventSession(): Promise<{ event: EventShop } | { error: string }> {
-  const auth = await requireShopOrStaff();
+  // Both reads at once (speed pass, 2026-10-09): the event lookup only reads the signed cookie's
+  // event row, it never answers anything before the login check below has passed.
+  const [auth, event] = await Promise.all([requireShopOrStaff(), currentEventOverride()]);
   if ('error' in auth) return { error: auth.error };
-  const event = await currentEventOverride();
   if (!event) return { error: 'Không ở trong event' };
   return { event };
 }
@@ -2826,6 +2827,83 @@ async function eventStockLedger(supabase: NonNullable<ReturnType<typeof service>
   };
 }
 
+// Price, photo and category of each SKU, as the till shows them (speed pass, Axel 2026-10-09:
+// "fluidifier l'app côté event"). These never move during a fair, yet every sale used to re-read
+// them, so they are kept CATALOG_META_TTL_MS per server instance. Only a clean read is kept: if
+// any of the reads fails the figures are used for this one answer and read again next time, so a
+// glitch can never hide a product for minutes. Quantities (ordered / sold) are never cached.
+type EventSkuMeta = { price: number; imageUrl: string | null; category: string | null; at: number };
+const eventSkuMetaCache = new Map<string, EventSkuMeta>();
+const CATALOG_META_TTL_MS = 120_000;
+
+async function eventSkuMeta(supabase: NonNullable<ReturnType<typeof service>>, skus: string[], producedSkus: Set<string>): Promise<Map<string, EventSkuMeta>> {
+  const now = Date.now();
+  const out = new Map<string, EventSkuMeta>();
+  const missing: string[] = [];
+  for (const s of skus) {
+    const m = eventSkuMetaCache.get(s);
+    if (m && now - m.at < CATALOG_META_TTL_MS) out.set(s, m); else missing.push(s);
+  }
+  if (!missing.length) return out;
+
+  const [priceRes, variantRes] = await Promise.all([
+    supabase.from('product_variants').select('sku, price_b2c').in('sku', missing),
+    supabase.from('lab_fiche_variants').select('sku, image_url, fiche_id').in('sku', missing),
+  ]);
+  let clean = !priceRes.error && !variantRes.error;
+  const priceBySku = new Map<string, number>();
+  for (const r of priceRes.data ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
+  // A Lab-made product with no website price used to vanish from the caisse without a word.
+  // Borrow Odoo's own sales price for those (tax included, same figure the shops sell at) —
+  // best-effort, cached per SKU for the life of this server instance so a slow Odoo can never
+  // hold up a sale twice. Anything under 1,000 ₫ is treated as "no price" (Odoo's default is 1).
+  const needOdooPrice = missing.filter(s => !priceBySku.has(s) && producedSkus.has(s) && !odooEventPriceCache.has(s));
+  // Images + category (Axel, 2026-09-14) — best-effort only, a missing match just renders without
+  // a thumbnail/category, same as every other sku->image lookup in this file. Read alongside Odoo.
+  const imageBySku = new Map<string, string>();
+  const ficheIdBySku = new Map<string, string>();
+  for (const v of variantRes.data ?? []) {
+    if (v.sku && v.image_url && !imageBySku.has(v.sku)) imageBySku.set(v.sku, v.image_url);
+    if (v.sku && v.fiche_id && !ficheIdBySku.has(v.sku)) ficheIdBySku.set(v.sku, v.fiche_id);
+  }
+  const ficheIds = Array.from(new Set(Array.from(ficheIdBySku.values())));
+  const [ficheRes] = await Promise.all([
+    ficheIds.length
+      ? supabase.from('lab_fiche_meta').select('id, image_url, category').in('id', ficheIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
+    (async () => {
+      if (!needOdooPrice.length || !odooConfigured()) return;
+      try {
+        const rows = await Promise.race([
+          odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', needOdooPrice]]],
+            { fields: ['default_code', 'list_price'], limit: 500, context: { active_test: false } }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('odoo price timeout')), 5000)),
+        ]);
+        for (const s of needOdooPrice) odooEventPriceCache.set(s, 0);
+        for (const r of rows ?? []) if (r.default_code && Number(r.list_price) >= 1000) odooEventPriceCache.set(r.default_code, Number(r.list_price));
+      } catch { clean = false; /* best-effort — the product simply stays without a price this time */ }
+    })(),
+  ]);
+  if ((ficheRes as any).error) clean = false;
+  const ficheById = new Map<string, { image_url: string | null; category: string | null }>();
+  for (const f of ((ficheRes as any).data ?? []) as any[]) ficheById.set(f.id, { image_url: f.image_url ?? null, category: f.category ?? null });
+
+  for (const s of missing) {
+    const p = odooEventPriceCache.get(s);
+    if (!priceBySku.has(s) && p && p > 0) priceBySku.set(s, p);
+    const fiche = ficheIdBySku.has(s) ? ficheById.get(ficheIdBySku.get(s)!) : undefined;
+    const m: EventSkuMeta = {
+      price: priceBySku.get(s) ?? 0,
+      imageUrl: imageBySku.get(s) ?? fiche?.image_url ?? null,
+      category: fiche?.category ?? null,
+      at: now,
+    };
+    out.set(s, m);
+    if (clean) eventSkuMetaCache.set(s, m);
+  }
+  return out;
+}
+
 export async function getEventCaisseCatalogAction(): Promise<{ products?: EventCaisseProduct[]; qrCodeUrl?: string | null; error?: string }> {
   const auth = await requireEventSession();
   if ('error' in auth) return { error: auth.error };
@@ -2833,65 +2911,25 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const { orderedBySku, producedSkus } = await eventOrderedLines(supabase, shopName);
+  // What was delivered and what was sold are independent reads — fetched together.
+  const [{ orderedBySku, producedSkus }, soldRows] = await Promise.all([
+    eventOrderedLines(supabase, shopName),
+    eventSoldRows(supabase, shopName, false),
+  ]);
   if (!orderedBySku.size) return { products: [], qrCodeUrl: auth.event.qrCodeUrl };
 
   const skus = Array.from(orderedBySku.keys());
-  const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', skus);
-  const priceBySku = new Map<string, number>();
-  for (const r of priceRows ?? []) if (r.sku && Number(r.price_b2c) > 0) priceBySku.set(r.sku, Number(r.price_b2c));
-  // A Lab-made product with no website price used to vanish from the caisse without a word.
-  // Borrow Odoo's own sales price for those (tax included, same figure the shops sell at) —
-  // best-effort, cached per SKU for the life of this server instance so a slow Odoo can never
-  // hold up a sale twice. Anything under 1,000 ₫ is treated as "no price" (Odoo's default is 1).
-  const needOdooPrice = skus.filter(s => !priceBySku.has(s) && producedSkus.has(s) && !odooEventPriceCache.has(s));
-  if (needOdooPrice.length && odooConfigured()) {
-    try {
-      const rows = await Promise.race([
-        odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', needOdooPrice]]],
-          { fields: ['default_code', 'list_price'], limit: 500, context: { active_test: false } }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('odoo price timeout')), 5000)),
-      ]);
-      for (const s of needOdooPrice) odooEventPriceCache.set(s, 0);
-      for (const r of rows ?? []) if (r.default_code && Number(r.list_price) >= 1000) odooEventPriceCache.set(r.default_code, Number(r.list_price));
-    } catch { /* best-effort — the product simply stays without a price this time */ }
-  }
-  for (const s of skus) {
-    const p = odooEventPriceCache.get(s);
-    if (!priceBySku.has(s) && p && p > 0) priceBySku.set(s, p);
-  }
-
-  // Images + category (Axel, 2026-09-14) — best-effort only, a missing match just renders without
-  // a thumbnail/category, same as every other sku->image lookup in this file.
-  const { data: variantRows } = await supabase.from('lab_fiche_variants').select('sku, image_url, fiche_id').in('sku', skus);
-  const imageBySku = new Map<string, string>();
-  const ficheIdBySku = new Map<string, string>();
-  for (const v of variantRows ?? []) {
-    if (v.sku && v.image_url && !imageBySku.has(v.sku)) imageBySku.set(v.sku, v.image_url);
-    if (v.sku && v.fiche_id && !ficheIdBySku.has(v.sku)) ficheIdBySku.set(v.sku, v.fiche_id);
-  }
-  const ficheIds = Array.from(new Set(Array.from(ficheIdBySku.values())));
-  const { data: ficheRows } = ficheIds.length
-    ? await supabase.from('lab_fiche_meta').select('id, image_url, category').in('id', ficheIds)
-    : { data: [] as any[] };
-  const ficheById = new Map<string, { image_url: string | null; category: string | null }>();
-  for (const f of ficheRows ?? []) ficheById.set(f.id, { image_url: f.image_url ?? null, category: f.category ?? null });
-  const categoryBySku = new Map<string, string | null>();
-  for (const sku of skus) {
-    const fiche = ficheIdBySku.has(sku) ? ficheById.get(ficheIdBySku.get(sku)!) : undefined;
-    if (!imageBySku.has(sku) && fiche?.image_url) imageBySku.set(sku, fiche.image_url);
-    categoryBySku.set(sku, fiche?.category ?? null);
-  }
+  const meta = await eventSkuMeta(supabase, skus, producedSkus);
 
   const soldBySku = new Map<string, number>();
-  for (const r of await eventSoldRows(supabase, shopName, false)) soldBySku.set(r.sku, (soldBySku.get(r.sku) ?? 0) + r.qty);
+  for (const r of soldRows) soldBySku.set(r.sku, (soldBySku.get(r.sku) ?? 0) + r.qty);
 
   const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
     .map(([sku, o]) => ({
       // May be zero or negative (Axel, 2026-10-07: "laisser la possibilité de vendre même si le
       // stock est négatif, ils auraient sûrement mal compté") — shown as-is, never blocks a sale.
-      sku, name: o.name, unitPrice: priceBySku.get(sku) ?? 0, available: o.qty - (soldBySku.get(sku) ?? 0),
-      imageUrl: imageBySku.get(sku) ?? null, category: categoryBySku.get(sku) ?? null,
+      sku, name: o.name, unitPrice: meta.get(sku)?.price ?? 0, available: o.qty - (soldBySku.get(sku) ?? 0),
+      imageUrl: meta.get(sku)?.imageUrl ?? null, category: meta.get(sku)?.category ?? null,
     }))
     .filter(p => p.unitPrice > 0)
     // A line removed from the order in Odoo stays in lab_order_lines at quantity 0 (REP/2026/01854:
@@ -2935,15 +2973,20 @@ export async function recordEventSaleAction(
     .filter(i => i.sku && i.qty > 0);
   if (!clean.length) return { error: 'Giỏ hàng trống' };
 
-  // The catalogue is re-read server-side for the price and the name — never trusted from the
-  // client. Stock is NOT a gate any more (Axel, 2026-10-07: sell even when the book says zero or
-  // negative, the count is more likely wrong than the shelf): the only refusal left is a SKU that
-  // is not part of this event at all.
-  const { products, error } = await getEventCaisseCatalogAction();
-  if (error) return { error };
-  const bySku = new Map((products ?? []).map(p => [p.sku, p]));
+  // The price and the name are re-read server-side — never trusted from the client. Stock is NOT
+  // a gate any more (Axel, 2026-10-07: sell even when the book says zero or negative, the count is
+  // more likely wrong than the shelf): the only refusal left is a SKU that is not part of this
+  // event or has no price. Speed pass (2026-10-09): only the event's deliveries and the cart's own
+  // SKUs are read now — same prices and names as the till shows, without rebuilding the whole
+  // catalogue (photos, categories, every sale so far) before each sale.
+  const { orderedBySku, producedSkus } = await eventOrderedLines(supabase, shopName);
+  const meta = await eventSkuMeta(supabase, Array.from(new Set(clean.map(i => i.sku))), producedSkus);
+  const bySku = new Map<string, { sku: string; name: string; unitPrice: number }>();
   for (const i of clean) {
-    if (!bySku.get(i.sku)) return { error: `Sản phẩm không thuộc event: ${i.sku}` };
+    const o = orderedBySku.get(i.sku);
+    const price = meta.get(i.sku)?.price ?? 0;
+    if (!o || !(price > 0)) return { error: `Sản phẩm không thuộc event: ${i.sku}` };
+    bySku.set(i.sku, { sku: i.sku, name: o.name, unitPrice: price });
   }
 
   const today = vnDateStr();
