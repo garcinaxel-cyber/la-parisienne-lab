@@ -2835,7 +2835,9 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
 // till — "buy 2 get 1 free", "buy 5 macaron get 1 free", whatever they agreed with the customer.
 // Always <= qty. Still counts against stock (the unit physically left the shelf) but contributes
 // 0 revenue — see the split into a paid row + a free row below.
-export type EventSaleItem = { sku: string; qty: number; freeQty?: number };
+// discountPct (Axel, 2026-10-08, Aeon event): a per-product percentage off the paid units of the
+// line — an alternative to the free units, never both on one line (the till sends one or the other).
+export type EventSaleItem = { sku: string; qty: number; freeQty?: number; discountPct?: number };
 
 export async function recordEventSaleAction(
   items: EventSaleItem[],
@@ -2854,8 +2856,10 @@ export async function recordEventSaleAction(
   const clean = (Array.isArray(items) ? items : []).slice(0, 50)
     .map(i => {
       const qty = Math.round(Number(i.qty));
-      const freeQty = Math.max(0, Math.min(qty, Math.round(Number(i.freeQty ?? 0))));
-      return { sku: String(i.sku ?? '').trim(), qty, freeQty };
+      const discountPct = Math.max(0, Math.min(100, Math.round(Number(i.discountPct ?? 0)) || 0));
+      // A discounted line carries no free unit (one promo or the other, see EventSaleItem).
+      const freeQty = discountPct > 0 ? 0 : Math.max(0, Math.min(qty, Math.round(Number(i.freeQty ?? 0))));
+      return { sku: String(i.sku ?? '').trim(), qty, freeQty, discountPct };
     })
     .filter(i => i.sku && i.qty > 0);
   if (!clean.length) return { error: 'Giỏ hàng trống' };
@@ -2876,7 +2880,10 @@ export async function recordEventSaleAction(
   const seller = String(sellerName ?? '').trim().slice(0, 80);
   // Free units contribute 0 to `total` (their row's unit_price is 0 — see rows below), so this
   // naturally already nets out every promo without any separate discount calculation.
-  const total = clean.reduce((sum, i) => sum + (i.qty - i.freeQty) * (bySku.get(i.sku)!.unitPrice), 0);
+  // A discount lowers the unit price of the paid units (rounded to the dong), so `total` and the
+  // line rows below always agree.
+  const paidUnit = (i: { sku: string; discountPct: number }) => Math.round(bySku.get(i.sku)!.unitPrice * (100 - i.discountPct) / 100);
+  const total = clean.reduce((sum, i) => sum + (i.qty - i.freeQty) * paidUnit(i), 0);
   const { error: ooErr } = await supabase.from('lab_online_orders').insert({
     order_batch_id: orderBatchId, source: 'event_stock', shop_name: shopName, channel: 'Event',
     delivery_date: today, payment_status: 'paid', amount_paid: total, payment_method: paymentMethod,
@@ -2888,7 +2895,10 @@ export async function recordEventSaleAction(
     const p = bySku.get(i.sku)!;
     const paidQty = i.qty - i.freeQty;
     const out: any[] = [];
-    if (paidQty > 0) out.push({ sku: p.sku, product_name_vi: p.name, qty: paidQty, unit_price: p.unitPrice, is_fee: false, order_batch_id: orderBatchId });
+    if (paidQty > 0) out.push({
+      sku: p.sku, product_name_vi: i.discountPct > 0 ? `${p.name} (giảm ${i.discountPct}%)` : p.name,
+      qty: paidQty, unit_price: paidUnit(i), is_fee: false, order_batch_id: orderBatchId,
+    });
     // Separate 0-price row for the free units — keeps them out of `total`/revenue while still
     // counting toward stock consumed (getEventCaisseCatalogAction sums qty across every
     // non-fee line for this SKU, this row included) and toward the sales-history line label.

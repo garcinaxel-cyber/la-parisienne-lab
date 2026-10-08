@@ -36,6 +36,24 @@ function fmt(v: number): string {
 // seller at the till does not rename the person who confirms deliveries.
 const SALE_NAME_STORAGE_KEY = 'lab_shop_sale_name';
 
+// Fixed promos (Axel, 2026-10-08, Aeon Hải Phòng event): "MCR mua 5 tặng 1, Bánh Tira mini + bánh
+// vuông mua 2 tặng 1 (Chopiraps, Oreolé, Delight)", then "Hạt điều cũng để mua 2 tặng 1" and "Bonbon
+// meringue cũng mua 2 tặng 1". Each group
+// is counted across all its products (flavours mix): every buy+1 units, one is free. The free units
+// go to the cheapest products of the group first. A line put on discount leaves its group.
+type PromoGroup = { id: string; buy: number; vi: string; en: string; shortVi: string; shortEn: string; match: (p: EventCaisseProduct) => boolean };
+const PROMO_GROUPS: PromoGroup[] = [
+  { id: 'macaron', buy: 5, shortVi: 'macaron', shortEn: 'macaron', vi: 'Macaron mua 5 tặng 1', en: 'Macarons: buy 5, get 1 free',
+    match: p => p.category === 'Macaron' || /^BMCR/i.test(p.sku) },
+  { id: 'tira-carre', buy: 2, shortVi: 'tiramisu mini / bánh vuông', shortEn: 'mini tiramisu / square cake', vi: 'Tiramisu mini + bánh vuông (Chopiraps, Oreolé, Matcha Delight) mua 2 tặng 1', en: 'Mini tiramisu + square cakes (Chopiraps, Oreolé, Matcha Delight): buy 2, get 1 free',
+    match: p => /tiramisu mini/i.test(p.name) || ['BCPRT', 'BOROL', 'BMCDL'].includes(p.sku) },
+  { id: 'cashew', buy: 2, shortVi: 'hạt điều', shortEn: 'cashews', vi: 'Hạt điều mua 2 tặng 1', en: 'Cashews: buy 2, get 1 free',
+    match: p => /^hạt điều/i.test(p.name.trim()) },
+  { id: 'meringue', buy: 2, shortVi: 'bonbon meringue', shortEn: 'meringue', vi: 'Bonbon meringue mua 2 tặng 1', en: 'Meringue bonbons: buy 2, get 1 free',
+    match: p => /^bonbon meringue/i.test(p.name.trim()) },
+];
+const DEFAULT_DISCOUNT = 10;
+
 export default function EventCaisseTab({ staffNames = null, onManageStaff }: { staffNames?: ShopStaffName[] | null; onManageStaff?: () => void }) {
   const L = useShopL();
   // "Bán hàng" = the till itself; "Doanh thu" = what was sold (per day, cash / transfer, every
@@ -56,6 +74,8 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [freeCart, setFreeCart] = useState<Record<string, number>>({});
+  // sku -> % off its paid units (Axel, 2026-10-08: "en %, pré-rempli 10 %", per product). Absent = no discount.
+  const [discount, setDiscount] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   // Axel, 2026-09-14: "un filtre par nom et aussi par categorie" — name search + category pills
@@ -94,24 +114,60 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
     setFreeCart(f => ({ ...f, [sku]: Math.max(0, Math.min(qty, (f[sku] ?? 0) + delta)) }));
   }
 
-  const total = Object.entries(cart).reduce((sum, [sku, qty]) => {
-    const p = products?.find(x => x.sku === sku);
-    const free = Math.min(freeCart[sku] ?? 0, qty);
-    return sum + Math.max(0, qty - free) * (p?.unitPrice ?? 0);
+  const groupOf = useMemo(() => {
+    const m = new Map<string, PromoGroup>();
+    for (const p of products ?? []) { const g = PROMO_GROUPS.find(x => x.match(p)); if (g) m.set(p.sku, g); }
+    return m;
+  }, [products]);
+  // Free units per sku: the fixed promo of its group, else what staff marked by hand. A discounted
+  // line has none. Plus, per group, whether the customer is one unit away from another free one.
+  const { freeBySku, promoHints } = useMemo(() => {
+    const freeBySku: Record<string, number> = {};
+    const promoHints: PromoGroup[] = [];
+    for (const g of PROMO_GROUPS) {
+      const lines = (products ?? []).filter(p => groupOf.get(p.sku) === g && (cart[p.sku] ?? 0) > 0 && discount[p.sku] == null)
+        .sort((a, b) => a.unitPrice - b.unitPrice);
+      const units = lines.reduce((s, p) => s + (cart[p.sku] ?? 0), 0);
+      let left = Math.floor(units / (g.buy + 1));
+      for (const p of lines) { const f = Math.min(left, cart[p.sku] ?? 0); if (f > 0) freeBySku[p.sku] = f; left -= f; }
+      if (units > 0 && units % (g.buy + 1) === g.buy) promoHints.push(g);
+    }
+    for (const [sku, qty] of Object.entries(cart)) {
+      if (groupOf.has(sku) || discount[sku] != null) continue;
+      const f = Math.min(freeCart[sku] ?? 0, qty);
+      if (f > 0) freeBySku[sku] = f;
+    }
+    return { freeBySku, promoHints };
+  }, [products, cart, freeCart, discount, groupOf]);
+  const paidUnit = (sku: string) => {
+    const price = products?.find(x => x.sku === sku)?.unitPrice ?? 0;
+    return Math.round(price * (100 - (discount[sku] ?? 0)) / 100);
+  };
+  const total = Object.entries(cart).reduce((sum, [sku, qty]) => sum + Math.max(0, qty - (freeBySku[sku] ?? 0)) * paidUnit(sku), 0);
+  const discountSaved = Object.entries(cart).reduce((sum, [sku, qty]) => {
+    const price = products?.find(x => x.sku === sku)?.unitPrice ?? 0;
+    return sum + (discount[sku] != null ? Math.max(0, qty - (freeBySku[sku] ?? 0)) * (price - paidUnit(sku)) : 0);
   }, 0);
   const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
-  const freeCount = Object.entries(freeCart).reduce((sum, [sku, f]) => sum + Math.min(f, cart[sku] ?? 0), 0);
+  const freeCount = Object.values(freeBySku).reduce((a, b) => a + b, 0);
+  function setLineDiscount(sku: string, pct: number | null) {
+    setDiscount(d => {
+      const n = { ...d };
+      if (pct == null) delete n[sku]; else n[sku] = Math.max(1, Math.min(100, Math.round(pct)));
+      return n;
+    });
+  }
 
   async function confirmSale(paymentMethod: 'cash' | 'transfer') {
     setSubmitting(true);
     setMsg(null);
     const items = Object.entries(cart).filter(([, qty]) => qty > 0)
-      .map(([sku, qty]) => ({ sku, qty, freeQty: Math.min(freeCart[sku] ?? 0, qty) }));
+      .map(([sku, qty]) => ({ sku, qty, freeQty: freeBySku[sku] ?? 0, discountPct: discount[sku] ?? 0 }));
     const res = await recordEventSaleAction(items, paymentMethod, seller.trim() || undefined);
     setSubmitting(false);
     setPaymentStep('idle');
     if (res.error) { setMsg(res.error); return; }
-    setCart({}); setFreeCart({});
+    setCart({}); setFreeCart({}); setDiscount({});
     setMsg(L('✓ Đã ghi nhận bán hàng (không ảnh hưởng Odoo)', '✓ Sale recorded (no impact on Odoo)'));
     load();
   }
@@ -141,6 +197,15 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: GOLD_PALE, border: `1px solid ${GOLD}`, color: '#8A6D14' }}>
         {L('📦 Sản phẩm lấy từ các đơn hàng (REP) của event, kể cả khi chưa xác nhận nhận hàng. Vẫn bán được khi số tồn về 0 hoặc âm.', '📦 Products come from the event\'s orders (REP), even before they are confirmed as received. Selling stays possible at zero or below.')}
       </div>
+
+      {PROMO_GROUPS.some(g => products.some(p => groupOf.get(p.sku) === g)) && (
+        <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold space-y-0.5" style={{ backgroundColor: '#FEF3C7', border: '1px solid #E5C77A', color: '#92600A' }}>
+          {PROMO_GROUPS.filter(g => products.some(p => groupOf.get(p.sku) === g)).map(g => (
+            <div key={g.id} className="flex items-start gap-1.5"><Gift size={12} className="mt-0.5 flex-shrink-0" /> <span>{L(g.vi, g.en)}</span></div>
+          ))}
+          <div className="font-normal" style={{ color: '#A16207' }}>{L('Tự động tính trong giỏ, trộn được các vị.', 'Worked out automatically in the cart, flavours can be mixed.')}</div>
+        </div>
+      )}
 
       {!products.length ? (
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>
@@ -173,7 +238,9 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
         <div className="grid grid-cols-2 gap-2.5">
           {filteredProducts.map(p => {
             const qty = cart[p.sku] ?? 0;
-            const free = Math.min(freeCart[p.sku] ?? 0, qty);
+            const group = groupOf.get(p.sku);
+            const disc = discount[p.sku];
+            const free = freeBySku[p.sku] ?? 0;
             const remaining = p.available - qty;
             return (
               <div key={p.sku} className="bg-white rounded-2xl p-3" style={{ border: `1px solid ${BORDER}` }}>
@@ -188,7 +255,14 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                 </div>
                 <div className="text-[13px] font-bold leading-tight" style={{ color: INK }}>{p.name}</div>
                 <div className="text-[10.5px] mt-0.5" style={{ color: remaining <= 0 ? RED : '#9CA3AF' }}>{L('Còn', 'Left')} <b>{remaining}</b></div>
-                <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>{fmt(p.unitPrice)}</div>
+                <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>
+                  {disc != null ? <><span className="line-through font-semibold" style={{ color: '#9CA3AF' }}>{fmt(p.unitPrice)}</span> {fmt(paidUnit(p.sku))}</> : fmt(p.unitPrice)}
+                </div>
+                {group && (
+                  <div className="inline-flex items-center gap-1 text-[10px] font-bold mt-1 rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
+                    <Gift size={10} /> {L(`Mua ${group.buy} tặng 1`, `Buy ${group.buy} get 1`)}
+                  </div>
+                )}
                 <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
                   <button onClick={() => changeQty(p.sku, -1)} className="w-10 h-10 rounded-lg text-white font-bold flex items-center justify-center" style={{ backgroundColor: NAVY }} aria-label={L('Bớt 1', 'Remove one')}>
                     <Minus size={16} />
@@ -199,8 +273,17 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                   </button>
                 </div>
                 {/* Promo (Axel, 2026-09-14): "buy X get 1 free" decided by staff at the till, no
-                    rule config — this just marks how many of the units above are free. */}
-                {qty > 0 && (
+                    rule config — this just marks how many of the units above are free. Products of a
+                    fixed promo group (PROMO_GROUPS) get theirs worked out instead, read-only. */}
+                {qty > 0 && disc == null && group && (
+                  <div className="flex items-center justify-between gap-1 mt-1.5 rounded-lg px-1.5 py-1.5" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
+                    <span className="inline-flex items-center gap-1 text-[10.5px] font-bold" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
+                      <Gift size={11} /> {L('Tặng tự động', 'Free (auto)')}
+                    </span>
+                    <span className="text-xs font-extrabold tabular-nums" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>{free}</span>
+                  </div>
+                )}
+                {qty > 0 && disc == null && !group && (
                   <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
                     <span className="inline-flex items-center gap-1 text-[10.5px] font-bold whitespace-nowrap" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
                       <Gift size={11} /> {L('Miễn phí', 'Free')}
@@ -216,6 +299,32 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                     </div>
                   </div>
                 )}
+                {/* Discount (Axel, 2026-10-08): per product, in %, pre-filled at 10 % — the other
+                    promo choice for a line, so a discounted line has no free unit. */}
+                {qty > 0 && (disc == null ? (
+                  <button onClick={() => setLineDiscount(p.sku, DEFAULT_DISCOUNT)}
+                    className="w-full mt-1.5 rounded-lg py-1.5 text-[11px] font-bold" style={{ border: '1px dashed #E5C77A', color: '#8A6D14' }}>
+                    {L('Giảm giá %', 'Discount %')}
+                  </button>
+                ) : (
+                  <div className="mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: '#EAF6EC' }}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10.5px] font-bold" style={{ color: GREEN }}>{L('Giảm giá', 'Discount')}</span>
+                      <button onClick={() => setLineDiscount(p.sku, null)} className="text-[10.5px] font-bold px-1 py-0.5" style={{ color: '#9CA3AF' }}>{L('Bỏ', 'Remove')}</button>
+                    </div>
+                    <div className="flex items-center justify-center gap-1 mt-0.5">
+                      <button onClick={() => setLineDiscount(p.sku, disc - 5)} disabled={disc <= 5} className="w-7 h-7 rounded-md flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #B7DFC0' }} aria-label={L('Giảm bớt 5%', '5% less')}>
+                        <Minus size={12} />
+                      </button>
+                      <input inputMode="numeric" value={disc} onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, ''), 10); if (!isNaN(v)) setLineDiscount(p.sku, v); }}
+                        className="w-9 h-7 rounded-md text-center text-xs font-extrabold tabular-nums" style={{ border: '1px solid #B7DFC0', outline: 'none' }} aria-label="%" />
+                      <span className="text-[11px] font-bold" style={{ color: GREEN }}>%</span>
+                      <button onClick={() => setLineDiscount(p.sku, disc + 5)} disabled={disc >= 100} className="w-7 h-7 rounded-md flex items-center justify-center disabled:opacity-30" style={{ backgroundColor: '#fff', border: '1px solid #B7DFC0' }} aria-label={L('Giảm thêm 5%', '5% more')}>
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             );
           })}
@@ -234,12 +343,17 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
           <div className="max-w-xl mx-auto w-full flex items-center justify-between gap-3">
             <div>
               <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#F0D98A' }}>
-                {L('Tổng đơn', 'Sale total')}{freeCount > 0 ? ` · ${freeCount} ${L('miễn phí', 'free')}` : ''}
+                {L('Tổng đơn', 'Sale total')}{freeCount > 0 ? ` · ${freeCount} ${L('miễn phí', 'free')}` : ''}{discountSaved > 0 ? ` · ${L('giảm', 'off')} ${fmt(discountSaved)}` : ''}
               </div>
+              {promoHints.length > 0 && (
+                <div className="text-[10.5px] font-bold" style={{ color: '#F0D98A' }}>
+                  🎁 {L('Được tặng thêm 1', '1 more free')}: {promoHints.map(g => L(g.shortVi, g.shortEn)).join(', ')}
+                </div>
+              )}
               <div className="text-base font-extrabold tabular-nums" style={{ color: '#FFFAEE' }}>{fmt(total)}</div>
             </div>
             <button onClick={() => setPaymentStep('choosing')}
-              className="inline-flex items-center gap-1.5 text-sm font-extrabold rounded-xl px-4 py-2.5"
+              className="inline-flex items-center gap-1.5 text-sm font-extrabold rounded-xl px-4 py-2.5 whitespace-nowrap flex-shrink-0"
               style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
               <CheckCircle2 size={14} />
               {L('Xác nhận bán', 'Confirm the sale')}
