@@ -45,9 +45,9 @@ type PromoGroup = { id: string; buy: number; vi: string; en: string; shortVi: st
 const PROMO_GROUPS: PromoGroup[] = [
   { id: 'macaron', buy: 5, shortVi: 'macaron', shortEn: 'macaron', vi: 'Macaron mua 5 tặng 1', en: 'Macarons: buy 5, get 1 free',
     match: p => p.category === 'Macaron' || /^BMCR/i.test(p.sku) },
-  { id: 'tira-carre', buy: 2, shortVi: 'tiramisu mini / bánh vuông', shortEn: 'mini tiramisu / square cake', vi: 'Tiramisu mini + bánh vuông (Chopiraps, Oreolé, Oreolé mini, Matcha Delight) mua 2 tặng 1', en: 'Mini tiramisu + square cakes (Chopiraps, Oreolé, mini Oreolé, Matcha Delight): buy 2, get 1 free',
-    // Axel, 2026-10-08: the mini Oreolé (WMOROLMN, 130 g) is in this promo too.
-    match: p => /tiramisu mini/i.test(p.name) || /oreol[eé] mini/i.test(p.name) || ['BCPRT', 'BOROL', 'BMCDL', 'WMOROLMN'].includes(p.sku) },
+  { id: 'tira-carre', buy: 2, shortVi: 'tiramisu mini / bánh vuông', shortEn: 'mini tiramisu / square cake', vi: 'Tiramisu mini + bánh vuông (Chopiraps, Oreolé, Chopiraps / Oreolé mini, Matcha Delight) mua 2 tặng 1', en: 'Mini tiramisu + square cakes (Chopiraps, Oreolé, mini Chopiraps / Oreolé, Matcha Delight): buy 2, get 1 free',
+    // Axel, 2026-10-08: the mini Oreolé (WMOROLMN, 130 g) and mini Chopiraps (WMCPRMN, 104 g) are in this promo too.
+    match: p => /tiramisu mini/i.test(p.name) || /(oreol[eé]|chopiraps) mini/i.test(p.name) || ['BCPRT', 'BOROL', 'BMCDL', 'WMOROLMN', 'WMCPRMN'].includes(p.sku) },
   { id: 'cashew', buy: 2, shortVi: 'hạt điều', shortEn: 'cashews', vi: 'Hạt điều mua 2 tặng 1', en: 'Cashews: buy 2, get 1 free',
     match: p => /^hạt điều/i.test(p.name.trim()) },
   { id: 'meringue', buy: 2, shortVi: 'bonbon meringue', shortEn: 'meringue', vi: 'Bonbon meringue mua 2 tặng 1', en: 'Meringue bonbons: buy 2, get 1 free',
