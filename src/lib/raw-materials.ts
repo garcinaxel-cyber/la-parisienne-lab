@@ -35,18 +35,32 @@ const has = (n: string, words: string[]) => words.some(w => n.includes(w));
 // First guess from the Odoo name only — purchasing checks and corrects it in the catalogue screen.
 export function classifyRaw(rawName: string): { type: RawType; sub: string } {
   const n = ` ${rawName.toLowerCase()} `;
-  const fruit = ['mango', 'xoài', 'passion', 'chanh leo', 'orange', ' cam ', 'lemon', 'chanh', 'apple', 'táo', 'strawberr', 'dâu',
-    'banana', 'chuối', 'pineapple', 'dứa', 'plum', 'mận', 'kumquat', 'quất', 'cherr', 'raspberr', 'mâm xôi', 'blueberr', 'việt quất',
-    'litchi', 'lychee', 'vải', 'peach', 'đào', 'grape', 'nho', 'kiwi', 'avocado', 'pandan', 'lá dứa', 'mint', 'bạc hà', 'fruit', 'yuzu', 'pomelo', 'bưởi'];
-  if (has(n, ['frozen', 'đông lạnh', 'purée', 'puree', 'ponthier', 'boiron'])) {
-    return { type: 'frozen', sub: has(n, ['purée', 'puree']) ? 'puree' : has(n, fruit) ? 'fruit' : 'other' };
+  const fruit = ['mango', 'xoài', 'passion', 'chanh leo', 'orange', ' cam ', 'lemon', 'lime', 'chanh', 'apple', 'táo', 'strawberr', 'dâu',
+    'banana', 'chuối', 'pineapple', 'dứa', 'plum', 'mận', 'kumquat', 'quất', 'quýt', 'mandarin', 'cherr', 'raspberr', 'mâm xôi', 'blueberr', 'việt quất',
+    'litchi', 'lychee', 'vải', 'peach', 'đào', 'grape', 'nho', 'kiwi', 'avocado', 'fruit', 'yuzu', 'pomelo', 'bưởi', 'watermelon', 'dưa hấu'];
+  // Flavourings, syrups, alcohols and colourings are shelf products even when their name says "cherry" or "milk".
+  const shelf = ['syrup', 'sirup', 'siro', 'flavor', 'flavour', 'aroma', 'arome', 'extract', 'essential oil', 'coloring', 'colouring', 'màu',
+    'bailey', 'liqueur', 'jam', 'mứt', 'canned', ' can ', 'oil', 'dầu'];
+  const veg = ['carrot', 'cà rốt', 'onion', 'hành', 'shallot', 'garlic', 'tỏi', 'celery', 'cucumber', 'dưa chuột', 'tomato', 'cà chua',
+    'mushroom', 'nấm', 'pepper', 'ớt', 'parsley', 'thyme', 'rosemary', 'coriander', 'mint', 'minth', 'bạc hà', 'pandan leaves', 'lá dứa',
+    'ginger', 'gừng', 'pumpkin', 'bí ', 'corn', 'ngô', 'flowers', 'hoa tươi'];
+  const meat = ['bacon', 'beef', 'pork', 'heo', 'lợn', 'chicken', ' gà', 'ham ', 'jambon', 'sausage', 'hotdog', 'serrano', 'liver'];
+  if (has(n, ['frozen', 'đông lạnh', 'purée', 'puree', 'ponthier', 'boiron']) && !has(n, ['jam', 'mứt', 'can '])) {
+    return { type: 'frozen', sub: has(n, ['purée', 'puree']) ? 'puree' : has(n, [...fruit, 'berries', 'mulberr']) ? 'fruit' : 'other' };
   }
   if (has(n, ['egg', 'trứng'])) return { type: 'fresh', sub: 'eggs' };
+  if (has(n, ['choco', 'cacao', 'cocoa', 'sô cô la', 'socola', 'ca cao']) && !has(n, ['syrup', 'siro', 'sauce'])) return { type: 'dry', sub: 'choco' };
+  if (has(n, shelf) || has(n, ['powder', 'bột', 'dried', 'dry ', 'sấy', 'khô', 'tea', 'trà'])) {
+    if (has(n, ['flour', 'bột mì', ' t45', ' t55', ' t65', 'sugar', 'đường', 'starch', 'tinh bột']) && !has(n, shelf)) return { type: 'dry', sub: 'flour' };
+    if (has(n, ['coconut', 'dừa', 'almond', 'hazelnut', 'pistachio', 'cashew', 'walnut']) && !has(n, shelf) && !has(n, ['milk'])) return { type: 'dry', sub: 'nuts' };
+    return { type: 'dry', sub: 'other' };
+  }
   if (has(n, ['milk', 'sữa', 'cream', 'kem', 'butter', ' bơ ', 'mascarpone', 'cheese', 'phô mai', 'phomai', 'yogurt', 'yoghurt', 'whip'])
-    && !has(n, ['powder', 'bột', 'condensed', 'đặc', 'coconut milk', 'can'])) return { type: 'fresh', sub: 'dairy' };
-  if (has(n, fruit) && !has(n, ['dried', 'dry', 'sấy', 'khô', 'powder', 'bột', 'can ', 'syrup', 'jam', 'mứt', 'juice'])) return { type: 'fresh', sub: 'fruit' };
-  if (has(n, ['choco', 'cacao', 'cocoa', 'sô cô la', 'socola', 'ca cao'])) return { type: 'dry', sub: 'choco' };
-  if (has(n, ['nut', 'hạt', 'almond', 'hạnh nhân', 'hazelnut', 'phỉ', 'pistachio', 'macadamia', 'maccadamia', 'cashew', 'điều', 'walnut', 'óc chó', 'pecan', 'sesame', 'vừng'])) return { type: 'dry', sub: 'nuts' };
+    && !has(n, ['condensed', 'đặc', 'coconut', 'peanut', 'đậu phộng', 'cashew', 'tartar', 'enhancer', 'butterfly', 'cannary'])) return { type: 'fresh', sub: 'dairy' };
+  if (has(n, meat) || has(n, veg)) return { type: 'fresh', sub: 'other' };
+  if (has(n, fruit)) return { type: 'fresh', sub: 'fruit' };
+  if (has(n, ['nut', 'hạt', 'almond', 'hạnh nhân', 'hazelnut', 'phỉ', 'pistachio', 'macadamia', 'maccadamia', 'cashew', 'điều', 'walnut', 'óc chó',
+    'pecan', 'sesame', 'vừng', 'peanut', 'lạc', 'đậu phộng', 'seeds', 'coconut', 'dừa'])) return { type: 'dry', sub: 'nuts' };
   if (has(n, ['flour', 'bột mì', ' t45', ' t55', ' t65', 'sugar', 'đường', 'starch', 'tinh bột'])) return { type: 'dry', sub: 'flour' };
   return { type: 'dry', sub: 'other' };
 }

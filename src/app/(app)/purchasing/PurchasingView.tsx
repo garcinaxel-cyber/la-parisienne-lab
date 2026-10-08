@@ -356,7 +356,7 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
               </div>
               {ls.map(l => { const o = open[l.id]; const dt = vnDayTime(l.createdAt); const age = Math.floor((Date.now() - new Date(l.createdAt).getTime()) / 86400000); return (
                 <div key={l.id} style={{ borderTop: `1px solid ${HAIR}` }}>
-                  <button onClick={() => setOpen(s => ({ ...s, [l.id]: !s[l.id] }))} className="w-full text-left grid gap-3 items-center px-4 py-2.5 hover:bg-[#FFFDF6]" style={{ gridTemplateColumns: 'minmax(56px,70px) minmax(160px,1.4fr) minmax(120px,1fr) minmax(220px,280px) 18px' }}>
+                  <button onClick={() => setOpen(s => ({ ...s, [l.id]: !s[l.id] }))} className="w-full text-left grid gap-3 items-center px-4 py-2.5 hover:bg-[#FFFDF6]" style={{ gridTemplateColumns: 'minmax(56px,70px) minmax(160px,1.4fr) minmax(120px,1fr) minmax(160px,200px) 18px' }}>
                     <div><b className="block text-[12.5px] tabular-nums">{dt.day}</b><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{dt.time}</span></div>
                     <div className="min-w-0"><b className="block text-[13px] truncate">{l.name}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
                       <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div>
