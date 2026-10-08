@@ -51,6 +51,9 @@ const PROMO_GROUPS: PromoGroup[] = [
     match: p => /^hạt điều/i.test(p.name.trim()) },
   { id: 'meringue', buy: 2, shortVi: 'bonbon meringue', shortEn: 'meringue', vi: 'Bonbon meringue mua 2 tặng 1', en: 'Meringue bonbons: buy 2, get 1 free',
     match: p => /^bonbon meringue/i.test(p.name.trim()) },
+  // Axel, 2026-10-08: "cho chạy mua 2 tặng 1 bánh lưỡi mèo luôn nhé" — all flavours mixed, like the cashews.
+  { id: 'langue-de-chat', buy: 2, shortVi: 'bánh lưỡi mèo', shortEn: 'langue de chat', vi: 'Bánh quy lưỡi mèo mua 2 tặng 1', en: 'Langue de chat biscuits: buy 2, get 1 free',
+    match: p => /lưỡi mèo/i.test(p.name) || /^BQLM/i.test(p.sku) },
 ];
 const DEFAULT_DISCOUNT = 10;
 
