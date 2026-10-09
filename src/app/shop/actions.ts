@@ -2540,7 +2540,13 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
   // counted in the event's Kiểm kho.
   const packagingSkus = new Set<string>();
   for (const l of plRes.data ?? []) { put(syncedByRef, l.order_ref, l.sku, l.product_name_vi, l.qty); if (l.sku) packagingSkus.add(l.sku); }
-  const headers = (hdRes.data ?? []) as { id: string; order_ref: string; marked_not_delivered: boolean | null }[];
+  const headers = (hdRes.data ?? []) as { id: string; order_ref: string; marked_not_delivered: boolean | null; delivery_date: string | null }[];
+  // One REP can be split over two delivery days (Axel, 2026-10-09: REP/2026/01910 — "on bascule
+  // la partie où ils ont accusé réception 0 à demain et on garde la même REP"): a second
+  // lab_delivery_orders header with the same order_ref on the next day holds the late lines.
+  // Each checked line therefore takes ITS header's day, not the first day seen for the ref.
+  const dateByHeader = new Map(headers.map(h => [h.id, typeof h.delivery_date === 'string' ? h.delivery_date.slice(0, 10) : null]));
+  const checkedDate = new Map<string, string>();
   const notDelivered = new Set(headers.filter(h => h.marked_not_delivered).map(h => h.order_ref));
   const refByHeaderId = new Map(headers.filter(h => !h.marked_not_delivered).map(h => [h.id, h.order_ref]));
   const checkedByRef = new Map<string, Map<string, SrcLine>>();
@@ -2550,16 +2556,19 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
       .in('delivery_order_id', Array.from(refByHeaderId.keys())).limit(10000);
     for (const l of checkLines ?? []) {
       put(checkedByRef, refByHeaderId.get(l.delivery_order_id), l.sku, l.product_name_vi, l.qty_checked ?? l.qty_expected);
+      const lineDay = dateByHeader.get(l.delivery_order_id);
+      const dayKey = `${String(refByHeaderId.get(l.delivery_order_id) ?? '').trim()}|${String(l.sku ?? '').trim()}`;
+      if (lineDay && (!checkedDate.has(dayKey) || (checkedDate.get(dayKey) as string) < lineDay)) checkedDate.set(dayKey, lineDay);
       // A Lab product found in the delivery check but not on the order (Axel, 2026-10-08: Chopiraps
       // mini sent by mistake with REP/2026/01854) may borrow Odoo's price too — packaging never.
       if (l.sku && !packagingSkus.has(l.sku)) producedSkus.add(l.sku);
     }
   }
   const orderedBySku = new Map<string, { name: string; qty: number }>();
-  const addOrdered = (sku: string, name: string, qty: number, ref?: string) => {
+  const addOrdered = (sku: string, name: string, qty: number, ref?: string, date?: string | null) => {
     const cur = orderedBySku.get(sku);
     orderedBySku.set(sku, { name: cur?.name || name || sku, qty: (cur?.qty ?? 0) + qty });
-    if (qty) receipts.push({ date: (ref && dateByRef.get(ref)) || null, sku, qty });
+    if (qty) receipts.push({ date: date || (ref && dateByRef.get(ref)) || null, sku, qty });
   };
   const knownRefs = new Set<string>([...Array.from(syncedByRef.keys()), ...Array.from(checkedByRef.keys())]);
   for (const ref of Array.from(knownRefs)) {
@@ -2568,8 +2577,9 @@ async function eventOrderedLines(supabase: NonNullable<ReturnType<typeof service
     const synced = syncedByRef.get(ref);
     const skusOfRef = new Set<string>([...Array.from(checked?.keys() ?? []), ...Array.from(synced?.keys() ?? [])]);
     for (const sku of Array.from(skusOfRef)) {
-      const src = checked?.get(sku) ?? synced!.get(sku)!;
-      addOrdered(sku, src.name, src.qty, ref);
+      const fromCheck = checked?.get(sku);
+      const src = fromCheck ?? synced!.get(sku)!;
+      addOrdered(sku, src.name, src.qty, ref, fromCheck ? checkedDate.get(`${ref}|${sku}`) : null);
     }
   }
   for (const row of moRes.data ?? []) {
