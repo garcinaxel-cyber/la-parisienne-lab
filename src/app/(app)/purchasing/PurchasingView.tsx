@@ -167,12 +167,8 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
           <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-[15px] font-extrabold">{L('Tạo PO nháp trên Odoo', 'Create a draft PO in Odoo')}</div>
             <div className="text-[12px] rounded-lg p-2 max-h-40 overflow-y-auto" style={{ backgroundColor: PALE }}>{selLines.map(l => <div key={l.id}>{l.name} · <b>{fmtQty(l.qty)} {l.uom}</b> <span style={{ color: '#9CA3AF' }}>#{l.requestNo}</span></div>)}</div>
-            <label className="block"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Nhà cung cấp của PO', 'Vendor for this PO')}</span>
-              <select value={poVendor} onChange={e => setPoVendor(e.target.value)} className="w-full rounded-lg px-2.5 py-2 text-[13px] bg-white" style={{ border: `1px solid ${BORDER}` }}>
-                <option value="">{L('Chưa chọn NCC (chọn sau trên Odoo)', 'No vendor yet (choose later in Odoo)')}</option>
-                {suggested.length > 0 && <optgroup label={L('Gợi ý cho các sản phẩm này', 'Suggested for these items')}>{suggested.map(v => <option key={v.id} value={v.id}>{shortVendor(v.name)}</option>)}</optgroup>}
-                <optgroup label={L('Tất cả nhà cung cấp', 'All vendors')}>{board.vendors.filter(v => !suggested.some(x => x.id === v.id)).map(v => <option key={v.id} value={v.id}>{shortVendor(v.name)}</option>)}</optgroup>
-              </select></label>
+            <div><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Nhà cung cấp của PO', 'Vendor for this PO')}</span>
+              <VendorPicker L={L} value={poVendor} onChange={setPoVendor} suggested={suggested} vendors={board.vendors} /></div>
             {!poVendor && <div className="text-[11.5px] rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>{L('PO được lưu không có NCC. Chọn NCC trên Odoo trước khi xác nhận.', 'The PO is saved without a vendor. Set the vendor in Odoo before confirming.')}</div>}
             <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{L('Giá lấy theo bảng giá NCC trên Odoo. App không xác nhận PO — bạn xác nhận trên Odoo.', 'Prices come from the vendor price list in Odoo. The app never confirms the PO — you confirm it in Odoo.')}</div>
             <div className="flex gap-2 justify-end">
@@ -259,6 +255,52 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+// Axel, 2026-10-09: quick search in the vendor list (accent-insensitive, "dai tan" finds ĐẠI TÂN VIỆT).
+function normVendor(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+}
+function VendorPicker({ L, value, onChange, suggested, vendors }: {
+  L: LFn; value: string; onChange: (v: string) => void;
+  suggested: { id: number; name: string }[]; vendors: { id: number; name: string }[];
+}) {
+  const [q, setQ] = useState('');
+  const nq = normVendor(q.trim());
+  const match = (n: string) => !nq || nq.split(/\s+/).every(w => normVendor(n).includes(w));
+  const sug = suggested.filter(v => match(v.name));
+  const rest = vendors.filter(v => !suggested.some(x => x.id === v.id) && match(v.name));
+  const current = value ? (vendors.find(v => String(v.id) === value) ?? suggested.find(v => String(v.id) === value)) : null;
+  const row = (id: string, label: string) => {
+    const on = value === id;
+    return (
+      <button key={id || 'none'} type="button" onClick={() => onChange(id)}
+        className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md"
+        style={{ backgroundColor: on ? '#EAF3EE' : undefined, color: on ? NAVY : '#1F2937', fontWeight: on ? 800 : 500 }}>
+        <span className="w-3.5 shrink-0">{on && <Check size={13} />}</span><span className="truncate">{label}</span>
+      </button>
+    );
+  };
+  const head = (t: string) => <div className="px-2.5 pt-2 pb-1 text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{t}</div>;
+  return (
+    <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+      <div className="flex items-center gap-2 px-2.5 py-2" style={{ borderBottom: `1px solid ${HAIR}` }}>
+        <Search size={14} style={{ color: '#9CA3AF' }} />
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nhà cung cấp…', 'Search vendors…')}
+          className="flex-1 text-[13px] outline-none bg-transparent" />
+        {q && <button type="button" onClick={() => setQ('')} aria-label="clear"><X size={14} style={{ color: '#9CA3AF' }} /></button>}
+      </div>
+      <div className="text-[12px] px-2.5 py-1.5" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>
+        {L('Đã chọn: ', 'Selected: ')}<b>{current ? shortVendor(current.name) : L('Chưa chọn NCC', 'No vendor yet')}</b>
+      </div>
+      <div className="max-h-56 overflow-y-auto p-1">
+        {!nq && row('', L('Chưa chọn NCC (chọn sau trên Odoo)', 'No vendor yet (choose later in Odoo)'))}
+        {sug.length > 0 && <>{head(L('Gợi ý cho các sản phẩm này', 'Suggested for these items'))}{sug.map(v => row(String(v.id), shortVendor(v.name)))}</>}
+        {rest.length > 0 && <>{head(L('Tất cả nhà cung cấp', 'All vendors'))}{rest.map(v => row(String(v.id), shortVendor(v.name)))}</>}
+        {nq && !sug.length && !rest.length && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy nhà cung cấp', 'No vendor found')}</div>}
+      </div>
     </div>
   );
 }
