@@ -57,6 +57,8 @@ export function middleware(req: NextRequest) {
   // est redirigé vers /login en 200 OK et le job ne tourne jamais.
   if (pathname.startsWith('/api/lab/retention')) return NextResponse.next();
   if (pathname.startsWith('/api/lab/archive-monthly')) return NextResponse.next();
+  // Off-recipe daily recap (2026-10-09): Vercel cron, CRON_SECRET-gated in the route itself.
+  if (pathname.startsWith('/api/lab/off-recipe-recap')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 

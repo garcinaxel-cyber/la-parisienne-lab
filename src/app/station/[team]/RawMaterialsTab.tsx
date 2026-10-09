@@ -7,7 +7,7 @@
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
-import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
@@ -43,6 +43,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const [unit, setUnit] = useState<Record<number, number>>({});
   const [sheet, setSheet] = useState<null | 'take' | 'cart' | 'new'>(null);
   const [today, setToday] = useState<Withdrawal[]>([]);
+  // What an off-recipe item was taken for (Axel, 2026-10-09), per raw material, optional.
+  const [usedFor, setUsedFor] = useState<Record<number, string>>({});
   // Withdrawal history (Axel, 2026-10-09): today / yesterday / 7 days, one line per ingredient,
   // and a per-ingredient total for the period.
   const [period, setPeriod] = useState<'today' | 'yesterday' | '7d'>('today');
@@ -99,10 +101,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(true);
     const res = await recordWithdrawalAction(team, name.trim(), picked.map(({ m, n }) => {
       const u = unit[m.tmplId] ?? -1;
-      return { tmplId: m.tmplId, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null };
+      return { tmplId: m.tmplId, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null,
+        usedFor: isOffRecipe(m) ? (usedFor[m.tmplId] ?? '').trim() || null : null };
     }));
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
+    setUsedFor({});
     setQty({}); setUnit({}); setSheet(null); setView('history');
     setMsg({ ok: true, text: L(`Đã ghi phiếu #${res.no}.`, `Slip #${res.no} recorded.`) });
     loadToday();
@@ -225,8 +229,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
       </label>
       {/* Axel, 2026-10-09: every station that gets this tab shows it. */}
       <div className="rounded-xl px-3 py-2 text-[12px] font-semibold leading-snug" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
-        {L('Thiếu nguyên liệu trong danh sách? Liên hệ Axel: ghi rõ tên nguyên liệu còn thiếu và dùng cho công thức nào.',
-          'A raw material missing from the list? Contact Axel with the missing item\'s name and the recipe it is for.')}
+        {L('Thiếu nguyên liệu trong danh sách? Liên hệ anh Lân hoặc Axel: ghi rõ tên nguyên liệu còn thiếu và dùng cho công thức nào.',
+          'A raw material missing from the list? Contact Lân or Axel with the missing item\'s name and the recipe it is for.')}
       </div>
       {mode === 'request' && (
         <button onClick={() => { setDraft({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null }); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
@@ -345,6 +349,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                       <div className="flex-1 min-w-0">
                         <div className="text-[13.5px] font-bold leading-snug">{lineName(l)}</div>
                         {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                        {l.offRecipe && <div className="text-[11px] font-bold" style={{ color: '#8A5A00' }}>⚠ {L('Ngoài công thức', 'Off recipe')}{l.usedFor ? ` · ${L('cho', 'for')}: ${l.usedFor}` : ''}</div>}
                       </div>
                       <div className="text-right whitespace-nowrap">
                         <span className="text-[15px] font-extrabold tabular-nums">{fmtQty(qOf(l))}</span> <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
@@ -434,9 +439,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
             {sheet === 'take' && (<>
               <div className="text-[15px] font-extrabold">{L('Xác nhận phiếu lấy', 'Confirm withdrawal')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('hôm nay', 'today')}</div>
-              {picked.map(({ m, n }) => { const u = unit[m.tmplId] ?? -1; return (
-                <div key={m.tmplId} className="flex justify-between gap-3 py-2 text-[13px]" style={{ borderTop: `1px solid ${HAIR}` }}><span>{rawName(m, lang)}</span>
-                  <b className="whitespace-nowrap tabular-nums">{u >= 0 ? `${fmtQty(n)} × ${m.packs[u].label}` : `${fmtQty(n)} ${m.uom}`}{u >= 0 && <span className="font-semibold" style={{ color: '#9CA3AF' }}> = {fmtQty(toBase(m, n))} {m.uom}</span>}</b></div>); })}
+              {picked.map(({ m, n }) => { const u = unit[m.tmplId] ?? -1; const off = isOffRecipe(m); return (
+                <div key={m.tmplId} className="py-2 text-[13px]" style={{ borderTop: `1px solid ${HAIR}` }}>
+                  <div className="flex justify-between gap-3"><span>{rawName(m, lang)}</span>
+                    <b className="whitespace-nowrap tabular-nums">{u >= 0 ? `${fmtQty(n)} × ${m.packs[u].label}` : `${fmtQty(n)} ${m.uom}`}{u >= 0 && <span className="font-semibold" style={{ color: '#9CA3AF' }}> = {fmtQty(toBase(m, n))} {m.uom}</span>}</b></div>
+                  {off && (
+                    <div className="mt-1.5 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', border: '1px solid #F5D78A' }}>
+                      <div className="text-[11.5px] font-extrabold" style={{ color: '#8A5A00' }}>⚠ {L('Chưa có trong công thức', 'Not in any recipe')}</div>
+                      <div className="text-[11.5px] mt-0.5 leading-snug" style={{ color: '#8A5A00' }}>{L('Nguyên liệu này chưa có trong công thức nào. Báo anh Lân hoặc Axel và ghi rõ dùng cho món nào để bổ sung công thức.', 'This ingredient is not in any recipe yet. Tell Lân or Axel and say which product it is for, so the recipe can be added.')}</div>
+                      <input value={usedFor[m.tmplId] ?? ''} onChange={e => setUsedFor(x => ({ ...x, [m.tmplId]: e.target.value }))} maxLength={120}
+                        placeholder={L('Dùng cho món nào? (tuỳ chọn)', 'What is it for? (optional)')} className="w-full mt-1.5 rounded-md px-2 py-1.5 text-[12.5px] outline-none bg-white" style={{ border: '1px solid #F5D78A' }} />
+                    </div>
+                  )}
+                </div>); })}
               <div className="rounded-xl px-3 py-2 text-xs mt-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}>{L('Phiếu được ghi ngay. Kho chỉ sửa nếu số lượng thực tế khác.', 'Recorded at once. Storage only corrects it if the real quantity differs.')}</div>
               <button disabled={busy} onClick={confirmTake} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Xác nhận', 'Confirm')}</button>
               <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Sửa lại', 'Go back')}</button>

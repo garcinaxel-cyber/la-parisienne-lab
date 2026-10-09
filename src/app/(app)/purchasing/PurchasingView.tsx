@@ -305,6 +305,7 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
                           {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                          {l.offRecipe && <div className="text-[11px] font-bold" style={{ color: '#8A5A00' }}>⚠ {L('Ngoài công thức', 'Off recipe')}{l.usedFor ? ` · ${L('cho', 'for')}: ${l.usedFor}` : ''}</div>}
                         </div>
                         <div className="text-right whitespace-nowrap">
                           <span className="text-[14px] font-extrabold tabular-nums">{fmtQty(l.correctedQty ?? l.qty)}</span> <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
@@ -552,7 +553,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
               <th className="text-left px-3 py-2">{L('Nguyên liệu (tên Odoo)', 'Raw material (Odoo name)')}</th><th className="text-left px-3 py-2">{L('Đơn vị', 'Unit')}</th>
               <th className="text-left px-3 py-2">{L('Loại', 'Type')}</th><th className="text-left px-3 py-2">{L('Nhóm', 'Group')}</th>
-              <th className="text-left px-3 py-2">{L('Quy cách', 'Packs')}</th><th className="text-center px-3 py-2">{L('Chef thấy', 'Chefs see')}</th><th></th></tr></thead>
+              <th className="text-left px-3 py-2">{L('Quy cách', 'Packs')}</th><th className="text-center px-3 py-2">{L('Công thức', 'Recipes')}</th><th className="text-center px-3 py-2">{L('Chef thấy', 'Chefs see')}</th><th></th></tr></thead>
             <tbody>
               {rows.slice(0, 400).map(m => (
                 <tr key={m.tmplId} style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -572,6 +573,15 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                         <button onClick={() => { const f = parseFloat(packFactor.replace(',', '.')); if (packLabel.trim() && f > 0) patch(m, { packs: [...m.packs, { label: packLabel.trim(), factor: f }] }); setPackFor(null); setPackLabel(''); setPackFactor(''); }} style={{ color: NAVY }}><Check size={13} /></button>
                       </div>
                     ) : <button onClick={() => { setPackFor(m.tmplId); setPackLabel(''); setPackFactor(''); }} className="text-[11px] font-bold" style={{ color: GOLD_TEXT }}>+ {L('quy cách', 'pack')}</button>}
+                  </td>
+                  <td className="px-3 py-2 text-center whitespace-nowrap">
+                    {/* Off-recipe alert at the station (Axel, 2026-10-09): number of Odoo recipes using it, and
+                        "no recipe needed" for ice, spray… so the chefs are never asked about them. */}
+                    {m.bomCount != null && m.bomCount > 0
+                      ? <span className="text-[11px] font-bold" style={{ color: '#067647' }}>{m.bomCount}</span>
+                      : <button onClick={() => patch(m, { noRecipeNeeded: !m.noRecipeNeeded })} className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5"
+                          style={m.noRecipeNeeded ? { backgroundColor: '#F2F4F7', color: '#344054' } : { backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
+                          {m.noRecipeNeeded ? L('Không cần công thức', 'No recipe needed') : m.bomCount === 0 ? L('⚠ Chưa có', '⚠ None') : '—'}</button>}
                   </td>
                   <td className="px-3 py-2 text-center"><button onClick={() => patch(m, { visible: !m.visible })} aria-label="visible" className="inline-block w-9 h-5 rounded-full relative align-middle" style={{ backgroundColor: m.visible ? NAVY : '#D0D5DD' }}>
                     <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: m.visible ? 18 : 2 }} /></button></td>

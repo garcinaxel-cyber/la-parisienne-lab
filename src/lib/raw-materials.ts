@@ -12,7 +12,14 @@ export type RawMaterial = {
   type: RawType; sub: string; packs: RawPack[];
   visible: boolean; checked: boolean; purchased: boolean;
   vendorId: number | null; vendorName: string | null; vendors: { id: number; name: string }[];
+  /** Active Odoo BOM lines using it (null = not known yet) and the "no recipe needed" switch (Axel, 2026-10-09). */
+  bomCount: number | null; noRecipeNeeded: boolean;
 };
+
+// Taken from storage but used in no Odoo recipe — the chef is asked what it was for (Axel, 2026-10-09).
+export function isOffRecipe(m: { bomCount: number | null; noRecipeNeeded: boolean }): boolean {
+  return m.bomCount === 0 && !m.noRecipeNeeded;
+}
 
 export const RAW_TYPES: Record<RawType, { vi: string; en: string; subs: Record<string, [string, string]> }> = {
   // Sub-groups split further on 2026-10-09 (Axel: "Phụ gia & khác" held 124 items).
@@ -140,7 +147,8 @@ export type PurchaseLine = {
 };
 
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;
-  packLabel: string | null; packCount: number | null; correctedQty: number | null; correctedBy: string | null };
+  packLabel: string | null; packCount: number | null; correctedQty: number | null; correctedBy: string | null;
+  offRecipe: boolean; usedFor: string | null };
 export type Withdrawal = { id: string; no: number; team: string; takenBy: string | null; createdAt: string; lines: WithdrawalLine[] };
 
 // Odoo vendor names are long legal names ("CHI NHÁNH CÔNG TY TNHH ... TẠI HÀ NỘI") — a short form for lists.

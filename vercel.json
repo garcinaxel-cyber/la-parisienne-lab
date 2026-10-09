@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/lab/off-recipe-recap", "schedule": "0 11 * * *" }
+  ]
+}

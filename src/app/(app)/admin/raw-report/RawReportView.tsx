@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Wheat, Loader2, AlertTriangle, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
-import { TEAM_SHORT, fmtQty } from '@/lib/raw-materials';
-import { getRawReportAction, type RawReport, type ReportRow } from './actions';
+import { TEAM_SHORT, fmtQty, vnDayTime } from '@/lib/raw-materials';
+import { getRawReportAction, getOffRecipeLinesAction, type RawReport, type ReportRow, type OffRecipeLine } from './actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF';
 const OVER = '#C08A12', UNDER = '#1E7D55';
@@ -42,6 +42,9 @@ export default function RawReportView() {
     if (r.error) setErr(r.error); else setData(r.data!);
   }, [P, period]);
   useEffect(() => { load(); }, [load]);
+  // Off-recipe withdrawals to regularise (Axel, 2026-10-09).
+  const [off, setOff] = useState<{ items: OffRecipeLine[]; regularised: number } | null>(null);
+  useEffect(() => { getOffRecipeLinesAction(30).then(r => { if (r.items) setOff({ items: r.items, regularised: r.regularised ?? 0 }); }); }, []);
 
   const teamsIn = team === 'all' ? TEAMS : [team];
   const sum = (o: Record<string, number>) => teamsIn.reduce((s, t) => s + (o[t] ?? 0), 0);
@@ -77,6 +80,28 @@ export default function RawReportView() {
       </div>
       <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{P[period].from} → {P[period].to} · {L('● = team có ghi phiếu lấy. Giai đoạn thử: chỉ team Hưng.', '● = team recording withdrawals. Test phase: team Hưng only.')}</div>
       {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: '#B42318' }}>{err}</div>}
+      {off && (off.items.length > 0 || off.regularised > 0) && (
+        <div className="bg-white rounded-2xl px-4 py-3" style={{ border: '1.5px solid #F5D78A' }}>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <b className="text-[14px]" style={{ color: '#8A5A00' }}>⚠ {L('Nguyên liệu ngoài công thức', 'Off-recipe ingredients')} · {off.items.length}</b>
+            <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{L('30 ngày · lấy kho nhưng chưa có trong công thức Odoo nào', '30 days · taken from storage but in no Odoo recipe')}{off.regularised ? ` · ${off.regularised} ${L('đã bổ sung', 'regularised')}` : ''}</span>
+          </div>
+          {off.items.length === 0 ? <div className="text-xs py-2" style={{ color: '#067647' }}>{L('Tất cả đã được bổ sung công thức.', 'All regularised.')}</div> : (
+            <div className="mt-1">
+              {off.items.map(x => (
+                <div key={x.id} className="flex items-baseline gap-3 py-2 text-[12.5px]" style={{ borderTop: `1px solid ${BORDER}` }}>
+                  <span className="w-12 flex-none tabular-nums" style={{ color: '#6B7280' }}>{vnDayTime(x.day).day}</span>
+                  <span className="flex-none text-[10.5px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: TEAM_SHORT[x.team]?.bg, color: TEAM_SHORT[x.team]?.color }}>{TEAM_SHORT[x.team]?.[lang === 'vi' ? 'vi' : 'en'] ?? x.team}</span>
+                  <span className="flex-1 min-w-0"><b>{lang === 'vi' && x.nameVi ? x.nameVi : x.name}</b>
+                    <span style={{ color: x.usedFor ? '#344054' : '#9CA3AF' }}> · {x.usedFor ? `${L('cho', 'for')}: ${x.usedFor}` : L('chef chưa ghi món', 'no product given')}</span>
+                    {x.takenBy ? <span style={{ color: '#9CA3AF' }}> · {x.takenBy}</span> : null}</span>
+                  <span className="font-extrabold tabular-nums whitespace-nowrap">{fmtQty(x.qty)} {x.uom}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {!data ? <div className="text-sm text-center py-10" style={{ color: '#6B7280' }}>{loading ? L('Đang tính (đọc công thức Odoo)…', 'Computing (reading Odoo recipes)…') : ''}</div> : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

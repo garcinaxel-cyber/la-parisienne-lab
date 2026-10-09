@@ -170,6 +170,18 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
         vendorsByTmpl.set(t, arr);
       }
     }
+    // How many active Odoo BOM lines use each raw material (Axel, 2026-10-09: off-recipe alert at the
+    // station). Best effort: if Odoo refuses, the counts already stored stay as they are.
+    let bomByProduct: Map<number, number> | null = new Map();
+    try {
+      for (let off = 0; off < 20000; off += 2000) {
+        const ls = await odooExecute<any[]>('mrp.bom.line', 'search_read', [[['product_id.categ_id', '=', RAW_MATERIAL_CATEG_ID], ['bom_id.active', '=', true]]],
+          { fields: ['product_id'], limit: 2000, offset: off });
+        for (const l of ls) { const pid = l.product_id?.[0]; if (pid) bomByProduct.set(pid, (bomByProduct.get(pid) ?? 0) + 1); }
+        if (ls.length < 2000) break;
+      }
+    } catch { bomByProduct = null; }
+    const bomOf = (t: any) => (bomByProduct ? { bom_count: bomByProduct.get(t.product_variant_id?.[0]) ?? 0 } : {});
     const { data: existing } = await g.db.from('lab_raw_materials').select('tmpl_id').limit(5000);
     const have = new Set((existing ?? []).map(r => r.tmpl_id));
     const now = new Date().toISOString();
@@ -182,7 +194,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
         return { tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), name_vi: viName.get(t.id) ?? null, uom,
           type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: Number(t.purchased_product_qty) > 0, checked: false,
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
-          active: true, synced_at: now };
+          active: true, synced_at: now, ...bomOf(t) };
       });
       if (fresh.length) { const { error } = await g.db.from('lab_raw_materials').insert(fresh); if (error) return { error: error.message }; added += fresh.length; }
       for (const t of chunk.filter(t => have.has(t.id))) {
@@ -191,7 +203,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
           product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), uom: normUom(t.uom_id?.[1] ?? 'kg'),
           ...(viName.has(t.id) ? { name_vi: viName.get(t.id) } : {}),
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
-          active: true, synced_at: now,
+          active: true, synced_at: now, ...bomOf(t),
         }).eq('tmpl_id', t.id);
         if (error) return { error: error.message };
         updated++;
@@ -203,7 +215,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
   } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
 }
 
-export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[] }) {
+export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[]; noRecipeNeeded?: boolean }) {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   const p: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by_name: g.a.name || null };
@@ -211,6 +223,7 @@ export async function updateMaterialAction(tmplId: number, patch: { type?: strin
   if (typeof patch.sub === 'string' && /^[a-z]{2,12}$/.test(patch.sub)) p.sub = patch.sub;
   if (typeof patch.visible === 'boolean') p.visible = patch.visible;
   if (typeof patch.checked === 'boolean') p.checked = patch.checked;
+  if (typeof patch.noRecipeNeeded === 'boolean') p.no_recipe_needed = patch.noRecipeNeeded;
   if (Array.isArray(patch.packs)) p.packs = patch.packs
     .map(x => ({ label: String(x.label ?? '').trim().slice(0, 30), factor: Number(x.factor) }))
     .filter(x => x.label && x.factor > 0).slice(0, 5);

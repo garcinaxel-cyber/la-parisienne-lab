@@ -16,7 +16,7 @@ export async function getRawCatalogForChefAction(): Promise<{ items?: RawMateria
   return { items: (data ?? []).map(mapMaterial) };
 }
 
-export type WithdrawalInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null };
+export type WithdrawalInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null; usedFor?: string | null };
 
 export async function recordWithdrawalAction(team: string, takenBy: string, lines: WithdrawalInput[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
   const a = await rawActor();
@@ -27,7 +27,7 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
   const clean = (lines ?? []).map(l => ({ ...l, qty: Math.round(Number(l.qty) * 1000) / 1000 })).filter(l => l.tmplId && l.qty > 0).slice(0, 80);
   if (!clean.length) return { error: 'Empty' };
   // Names and units are re-read server-side, never trusted from the phone.
-  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom').in('tmpl_id', clean.map(l => l.tmplId));
+  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, bom_count, no_recipe_needed').in('tmpl_id', clean.map(l => l.tmplId));
   const byId = new Map((mats ?? []).map(m => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
   const { data: w, error } = await db.from('lab_raw_withdrawals')
@@ -36,7 +36,10 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
   const rows = clean.map(l => {
     const m = byId.get(l.tmplId)!;
     return { withdrawal_id: w.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: l.qty,
-      pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null };
+      pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null,
+      // Off-recipe flag decided here from the catalogue, never from the phone (Axel, 2026-10-09).
+      off_recipe: m.bom_count === 0 && !m.no_recipe_needed,
+      used_for: String(l.usedFor ?? '').trim().slice(0, 120) || null };
   });
   const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
   if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }

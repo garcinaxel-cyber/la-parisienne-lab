@@ -111,3 +111,38 @@ export async function getRawReportAction(from: string, to: string): Promise<{ da
 
   return { data: { rows: Array.from(rows.values()), unresolved: unresolved.sort((x, y) => y.qty - x.qty).slice(0, 40), teamsWithSlips } };
 }
+
+
+// Off-recipe withdrawals still to regularise (Axel, 2026-10-09): lines flagged when recorded, whose
+// raw material is still in no Odoo recipe and not marked "no recipe needed". Last 30 days.
+export type OffRecipeLine = { id: string; day: string; team: string; takenBy: string | null; name: string; nameVi: string | null; qty: number; uom: string; usedFor: string | null };
+export async function getOffRecipeLinesAction(days = 30): Promise<{ items?: OffRecipeLine[]; regularised?: number; error?: string }> {
+  const a = await rawActor();
+  if (!a || a.role !== 'admin') return { error: 'Admin only' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const since = new Date(Date.now() - Math.min(Math.max(days, 1), 120) * 86400000).toISOString();
+  const { data: ws } = await db.from('lab_raw_withdrawals').select('id, team, taken_by, created_at').gte('created_at', since).limit(3000);
+  const byW = new Map((ws ?? []).map((w: any) => [w.id, w]));
+  const ids = Array.from(byW.keys());
+  const lines: any[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await db.from('lab_raw_withdrawal_lines').select('id, withdrawal_id, tmpl_id, name, uom, qty, corrected_qty, used_for')
+      .in('withdrawal_id', ids.slice(i, i + 200)).eq('off_recipe', true);
+    lines.push(...(data ?? []));
+  }
+  const tmplIds = Array.from(new Set(lines.map(l => l.tmpl_id).filter(Boolean)));
+  const { data: mats } = tmplIds.length ? await db.from('lab_raw_materials').select('tmpl_id, name_vi, bom_count, no_recipe_needed').in('tmpl_id', tmplIds) : { data: [] as any[] };
+  const mat = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
+  let regularised = 0;
+  const items: OffRecipeLine[] = [];
+  for (const l of lines) {
+    const m: any = mat.get(l.tmpl_id);
+    if (m && (Number(m.bom_count) > 0 || m.no_recipe_needed)) { regularised++; continue; }
+    const w: any = byW.get(l.withdrawal_id);
+    items.push({ id: l.id, day: String(w?.created_at ?? ''), team: w?.team ?? '', takenBy: w?.taken_by ?? null, name: l.name, nameVi: m?.name_vi ?? null,
+      qty: Number(l.corrected_qty ?? l.qty), uom: l.uom, usedFor: l.used_for ?? null });
+  }
+  items.sort((x, y) => y.day.localeCompare(x.day));
+  return { items, regularised };
+}
