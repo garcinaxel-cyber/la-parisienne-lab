@@ -35,6 +35,11 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
   const printLines = lines.filter(l => !l.hidden_from_print);
 
   const fmtMoney = (n: number) => new Intl.NumberFormat('vi-VN').format(Math.round(n));
+  // Discount columns (2026-10-09, S04171 -35%): only when a printed line really carries a
+  // discount in Odoo — every other printout keeps exactly its former columns. "Đơn giá" is then
+  // the price before the discount, "CK" the discount, "Thành tiền" what the customer pays.
+  const showDiscount = showPricing && printLines.some(l => (pricing!.bySku[l.sku ?? '']?.discountPct ?? 0) > 0);
+  const fmtPct = (n: number) => `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(n)}%`;
 
   // Subtotal (untaxed) + VAT, both based on DELIVERED qty like every per-line amount here.
   // VAT is summed per-line at each line's OWN rate (see odoo-so-pricing.ts's taxRate doc
@@ -225,11 +230,12 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
           <thead>
             <tr style={{ textAlign: 'center' }}>
               <th style={{ width: '4%' }}>STT</th>
-              <th style={{ width: `${(showPricing ? 28 : 38) + (hideRequested ? 10 : 0)}%` }}>Mã hàng</th>
+              <th style={{ width: `${(showPricing ? (showDiscount ? 21 : 28) : 38) + (hideRequested ? 10 : 0)}%` }}>Mã hàng</th>
               <th style={{ width: '8%' }}>ĐVT</th>
               {!hideRequested && <th style={{ width: '10%' }}>S.L Yêu cầu</th>}
               <th style={{ width: '10%' }}>S.L Thực tế</th>
               {showPricing && <th style={{ width: '12%' }}>Đơn giá</th>}
+              {showDiscount && <th style={{ width: '7%' }}>CK</th>}
               {showPricing && <th style={{ width: '13%' }}>Thành tiền</th>}
               <th style={{ width: showPricing ? '15%' : '30%' }}>Ghi chú</th>
             </tr>
@@ -238,6 +244,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
             {printLines.map((l, i) => {
               const delivered = l.qty_checked ?? l.qty_expected;
               const unit = showPricing ? pricing!.bySku[l.sku ?? '']?.unitPrice : undefined;
+              const lp = showDiscount ? pricing!.bySku[l.sku ?? ''] : undefined;
               return (
                 <tr key={l.id}>
                   <td style={{ textAlign: 'center' }}>{i + 1}</td>
@@ -245,7 +252,8 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
                   <td style={{ textAlign: 'center' }}>Đơn vị</td>
                   {!hideRequested && <td style={{ textAlign: 'center' }}>{l.qty_expected}</td>}
                   <td style={{ textAlign: 'center' }}>{delivered}</td>
-                  {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit) : ''}</td>}
+                  {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(showDiscount && lp ? lp.listUnitPrice : unit) : ''}</td>}
+                  {showDiscount && <td style={{ textAlign: 'center' }}>{lp && lp.discountPct > 0 ? fmtPct(lp.discountPct) : ''}</td>}
                   {showPricing && <td style={{ textAlign: 'right' }}>{unit != null ? fmtMoney(unit * delivered) : ''}</td>}
                   <td style={{ fontSize: 10.5, whiteSpace: 'pre-line' }}>{[l.note, l.discrepancy_note].filter(Boolean).join('\n')}</td>
                 </tr>
@@ -255,7 +263,7 @@ export default function DeliveryPrintView({ header, lines, pricing, openValidate
           {showPricing && (() => {
             // colSpan covers every column up to and including "Đơn giá" — one fewer when
             // "S.L Yêu cầu" is hidden (the default).
-            const footColSpan = hideRequested ? 5 : 6;
+            const footColSpan = (hideRequested ? 5 : 6) + (showDiscount ? 1 : 0);
             return (
             <tfoot>
               <tr>

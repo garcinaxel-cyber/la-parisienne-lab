@@ -21,7 +21,11 @@
 import { odooExecute } from '@/lib/odoo';
 
 export interface SoLinePricing {
-  bySku: Record<string, { unitPrice: number; taxRate: number }>;
+  // unitPrice: untaxed, AFTER the line's discount (what the customer pays, as before).
+  // listUnitPrice / discountPct (2026-10-09, S04171 HAPPY TRUE MARKET -35%: the shop asked for
+  // the customer to see the discounted price too): untaxed price BEFORE the discount and the
+  // discount itself, so the printout can show both. discountPct 0 = no discount on that SKU.
+  bySku: Record<string, { unitPrice: number; taxRate: number; listUnitPrice: number; discountPct: number }>;
   currency: string;
 }
 
@@ -33,7 +37,7 @@ export async function fetchSoLinePricing(orderRef: string): Promise<SoLinePricin
 
   const lines = await odooExecute<any[]>('sale.order.line', 'search_read',
     [[['order_id', '=', order.id], ['display_type', '=', false]]],
-    { fields: ['product_id', 'product_uom_qty', 'price_subtotal', 'price_tax'], limit: 500 });
+    { fields: ['product_id', 'product_uom_qty', 'price_subtotal', 'price_tax', 'price_unit', 'discount'], limit: 500 });
   if (!lines.length) return { bySku: {}, currency: order.currency_id?.[1] ?? 'VND' };
 
   const productIds = Array.from(new Set(lines.map(l => l.product_id?.[0]).filter(Boolean))) as number[];
@@ -46,18 +50,29 @@ export async function fetchSoLinePricing(orderRef: string): Promise<SoLinePricin
   // Weighted average unit price AND tax rate per SKU — handles the rare case of two lines for
   // the same SKU (e.g. a free-replacement line at price_subtotal=0 alongside a paid one, both
   // seen live on S03135/BMGM) by summing amount/tax/qty separately before dividing.
-  const totalsBySku: Record<string, { amount: number; tax: number; qty: number }> = {};
+  const totalsBySku: Record<string, { amount: number; listAmount: number; tax: number; qty: number }> = {};
   for (const l of lines) {
     const sku = skuByProductId[l.product_id?.[0]];
     if (!sku) continue;
-    const e = totalsBySku[sku] ??= { amount: 0, tax: 0, qty: 0 };
-    e.amount += Number(l.price_subtotal ?? 0);
+    const e = totalsBySku[sku] ??= { amount: 0, listAmount: 0, tax: 0, qty: 0 };
+    const amount = Number(l.price_subtotal ?? 0);
+    const disc = Math.max(0, Math.min(100, Number(l.discount ?? 0)));
+    e.amount += amount;
+    // Untaxed amount before the discount, rebuilt from Odoo's own untaxed line total. A line at
+    // 100% has no untaxed total left to rebuild from — it then counts as not discounted (its
+    // amount stays 0, exactly as before), so the printout never invents a list price.
+    e.listAmount += disc > 0 && disc < 100 ? amount / (1 - disc / 100) : amount;
     e.tax += Number(l.price_tax ?? 0);
     e.qty += Number(l.product_uom_qty ?? 0);
   }
-  const bySku: Record<string, { unitPrice: number; taxRate: number }> = {};
+  const bySku: SoLinePricing['bySku'] = {};
   for (const [sku, t] of Object.entries(totalsBySku)) {
-    if (t.qty > 0) bySku[sku] = { unitPrice: t.amount / t.qty, taxRate: t.amount > 0 ? t.tax / t.amount : 0 };
+    if (t.qty <= 0) continue;
+    const discountPct = t.listAmount > 0 ? Math.round((1 - t.amount / t.listAmount) * 10000) / 100 : 0;
+    bySku[sku] = {
+      unitPrice: t.amount / t.qty, taxRate: t.amount > 0 ? t.tax / t.amount : 0,
+      listUnitPrice: t.listAmount / t.qty, discountPct: discountPct > 0.004 ? discountPct : 0,
+    };
   }
   return { bySku, currency: order.currency_id?.[1] ?? 'VND' };
 }
