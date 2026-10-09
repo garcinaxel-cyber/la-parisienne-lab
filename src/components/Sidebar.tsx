@@ -88,7 +88,7 @@ const ADMIN_NAV = [
 ];
 const FAMILY_ORDER = ['today', 'production', 'shops', 'piloting'] as const;
 
-export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; reconciliationIssues?: number }) {
+export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; reconciliationIssues?: number }) {
   const { t, lang, setLang } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
@@ -125,7 +125,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             just under a small uppercase section header instead of one 20-item flat list. */}
         <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
           {(() => {
-            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href)));
+            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role) || (n.href === '/purchasing' && !!profile?.can_purchase)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href)));
             const visibleAdmin = isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [];
             const all = [...visibleNav, ...visibleAdmin];
             return FAMILY_ORDER.map((fam) => {
@@ -220,7 +220,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
             bled into the next tab. w-16 + shrink-0 gives every tab the same fixed width and lets
             overflow-x-auto do the scrolling instead — no more overlap, whatever the tab count. */}
         <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href))), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
+          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role) || (n.href === '/purchasing' && !!profile?.can_purchase)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href))), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
             const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
             const active = pathname === href || pathname.startsWith(href + '/');
             return (

@@ -9,17 +9,18 @@ export function rawService() {
   return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 }
 
-export type RawActor = { userId: string; role: string; name: string; team: string | null; isLead: boolean };
+// canPurchase (Axel, 2026-10-09): purchasing access on top of another role (Hien stays 'assistant' for the OEM orders).
+export type RawActor = { userId: string; role: string; name: string; team: string | null; isLead: boolean; canPurchase: boolean };
 
 // Who is calling. `team` comes from lab_profiles (chefs), never from the client.
 export async function rawActor(): Promise<RawActor | null> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return null;
-  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
+  const { data: profile } = await supabase.from('profiles').select('role, full_name, can_purchase').eq('id', session.user.id).single();
   if (!profile?.role) return null;
   const { data: lab } = await supabase.from('lab_profiles').select('team, is_team_lead').eq('id', session.user.id).maybeSingle();
-  return { userId: session.user.id, role: profile.role as string, name: (profile.full_name as string) || '', team: (lab?.team as string) ?? null, isLead: !!(lab as any)?.is_team_lead };
+  return { userId: session.user.id, role: profile.role as string, name: (profile.full_name as string) || '', team: (lab?.team as string) ?? null, isLead: !!(lab as any)?.is_team_lead, canPurchase: !!(profile as any).can_purchase };
 }
 
 // Chefs act for their own team; admin / lab manager may act for any team (testing, cover).
@@ -42,11 +43,11 @@ export async function teamLeads(db: NonNullable<ReturnType<typeof rawService>>, 
 // Everyone holding the 'purchasing' role (Axel, 2026-10-09: they get a push when a request
 // reaches the purchasing queue).
 export async function purchasingUserIds(db: NonNullable<ReturnType<typeof rawService>>): Promise<string[]> {
-  const { data } = await db.from('profiles').select('id').eq('role', 'purchasing');
+  const { data } = await db.from('profiles').select('id').or('role.eq.purchasing,can_purchase.eq.true');
   return (data ?? []).map(r => r.id as string);
 }
 export function isPurchasing(a: RawActor | null): a is RawActor {
-  return !!a && (a.role === 'purchasing' || a.role === 'admin');
+  return !!a && (a.role === 'purchasing' || a.role === 'admin' || a.canPurchase);
 }
 
 export function mapMaterial(r: any): RawMaterial {

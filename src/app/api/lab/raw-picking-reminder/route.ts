@@ -35,7 +35,7 @@ export async function GET(req: Request) {
 
   const toRemind = ws.filter(w => !w.reminded_at || now - new Date(w.reminded_at).getTime() >= 10 * 60000 - 30000);
   if (toRemind.length) {
-    const { data: ps } = await db.from('profiles').select('id').eq('role', 'purchasing');
+    const { data: ps } = await db.from('profiles').select('id').or('role.eq.purchasing,can_purchase.eq.true');
     const ids = (ps ?? []).map(p => p.id as string);
     const oldest = mins(toRemind[0].created_at);
     const p: PushPayload = {

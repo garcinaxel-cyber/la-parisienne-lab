@@ -11,8 +11,8 @@ export default async function PurchasingPage({ searchParams }: { searchParams: {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
-  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
-  if (!['purchasing', 'admin'].includes(profile?.role ?? '')) redirect('/dashboard');
+  const { data: profile } = await supabase.from('profiles').select('role, full_name, can_purchase').eq('id', session.user.id).single();
+  if (!['purchasing', 'admin'].includes(profile?.role ?? '') && !(profile as any)?.can_purchase) redirect('/dashboard');
   const tab = ['requests', 'storage', 'history', 'catalogue'].includes(searchParams?.tab ?? '') ? searchParams.tab! : 'requests';
   return <PurchasingView initialTab={tab as any} userName={profile?.full_name ?? ''} />;
 }
