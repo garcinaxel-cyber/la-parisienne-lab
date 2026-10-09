@@ -56,6 +56,24 @@ export async function getTeamWithdrawalsTodayAction(team: string): Promise<{ ite
   } catch (e: any) { return { error: e.message }; }
 }
 
+// The team's own withdrawals over a short period (Axel, 2026-10-09: "où se trouve l'historique des
+// prises de stock de Hưng ?" — the team only saw today's). Read only, no prices.
+export async function getTeamWithdrawalsAction(team: string, period: 'today' | 'yesterday' | '7d'): Promise<{ items?: Withdrawal[]; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const today = vnTodayStr();
+  const shift = (d: string, n: number) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+  const from = period === 'today' ? today : period === 'yesterday' ? shift(today, -1) : shift(today, -6);
+  const to = period === 'yesterday' ? shift(today, -1) : today;
+  try {
+    const items = await loadWithdrawals(db, q => q.eq('team', team).gte('created_at', labDayUtcRange(from).start).lt('created_at', labDayUtcRange(to).end).order('created_at', { ascending: false }));
+    return { items };
+  } catch (e: any) { return { error: e.message }; }
+}
+
 export type RequestLineInput = { tmplId: number; qty: number; brand?: string | null; brandStrict?: boolean; note?: string | null };
 export type NewProductInput = { name: string; qty: number; uom: string; note?: string | null; photoUrl?: string | null };
 

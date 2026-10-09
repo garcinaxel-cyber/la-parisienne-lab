@@ -10,7 +10,7 @@ import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, U
 import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
-  getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, submitPurchaseRequestAction,
+  getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
   getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, type TeamRequestsMeta,
 } from './raw-actions';
 
@@ -43,6 +43,11 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const [unit, setUnit] = useState<Record<number, number>>({});
   const [sheet, setSheet] = useState<null | 'take' | 'cart' | 'new'>(null);
   const [today, setToday] = useState<Withdrawal[]>([]);
+  // Withdrawal history (Axel, 2026-10-09): today / yesterday / 7 days, one line per ingredient,
+  // and a per-ingredient total for the period.
+  const [period, setPeriod] = useState<'today' | 'yesterday' | '7d'>('today');
+  const [hist, setHist] = useState<Withdrawal[] | null>(null);
+  const [byItem, setByItem] = useState(false);
   // request
   const [cart, setCart] = useState<CartLine[]>([]);
   const [newItems, setNewItems] = useState<NewItem[]>([]);
@@ -66,6 +71,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const loadToday = useCallback(() => getTeamWithdrawalsTodayAction(team).then(r => setToday(r.items ?? [])), [team]);
   const loadMine = useCallback(() => getTeamRequestsAction(team, days).then(r => { setMine(r.items ?? []); if (r.meta) setMeta(r.meta); }), [team, days]);
   useEffect(() => { loadToday(); }, [loadToday]);
+  const loadHist = useCallback(() => {
+    if (period === 'today') return;
+    setHist(null);
+    getTeamWithdrawalsAction(team, period).then(r => setHist(r.items ?? []));
+  }, [team, period]);
+  useEffect(() => { if (view === 'history' && mode === 'take') loadHist(); }, [view, mode, loadHist]);
   useEffect(() => { loadMine(); }, [loadMine]);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
   function saveName(v: string) { setName(v); try { localStorage.setItem(NAME_KEY, v); } catch {} }
@@ -262,21 +273,88 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
       </>)}
 
-      {view === 'history' && (mode === 'take' ? (
+      {view === 'history' && (mode === 'take' ? ((() => {
+        const list = period === 'today' ? today : hist;
+        const qOf = (l: Withdrawal['lines'][number]) => l.correctedQty ?? l.qty;
+        // Per-ingredient totals for the period (storage correction wins, as everywhere).
+        const totals = new Map<string, { name: string; uom: string; qty: number; slips: number }>();
+        for (const w of list ?? []) for (const l of w.lines) {
+          const k = `${l.tmplId ?? l.name}|${l.uom}`;
+          const t = totals.get(k) ?? { name: lineName(l), uom: l.uom, qty: 0, slips: 0 };
+          t.qty += qOf(l); t.slips += 1; totals.set(k, t);
+        }
+        const totalRows = Array.from(totals.values()).sort((x, y) => x.name.localeCompare(y.name, lang === 'vi' ? 'vi' : 'en'));
+        // Slips grouped by day, newest first.
+        const groups: { ymd: string; day: string; items: Withdrawal[] }[] = [];
+        for (const w of list ?? []) {
+          const d = vnDayTime(w.createdAt);
+          const g = groups[groups.length - 1];
+          if (g && g.ymd === d.ymd) g.items.push(w); else groups.push({ ymd: d.ymd, day: d.day, items: [w] });
+        }
+        const periods: [typeof period, string][] = [['today', L('Hôm nay', 'Today')], ['yesterday', L('Hôm qua', 'Yesterday')], ['7d', L('7 ngày', '7 days')]];
+        return (
         <>
-          <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{L('Phiếu lấy hôm nay', 'Today\'s withdrawals')}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{today.length}</span></div>
-          <div className="bg-white rounded-2xl px-3" style={{ border: `1px solid ${BORDER}` }}>
-            {!today.length && <div className="py-4 text-center text-xs" style={{ color: '#9CA3AF' }}>{L('Chưa có phiếu nào hôm nay.', 'No withdrawal today yet.')}</div>}
-            {today.map(w => (
-              <div key={w.id} className="py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
-                <div className="flex items-baseline gap-2"><b className="text-[13px] tabular-nums">#{w.no}</b><span className="text-[11.5px] flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · {w.takenBy}</span>
-                  {w.lines.some(l => l.correctedQty != null) ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
-                    : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}</div>
-                <div className="text-[12px] mt-1 leading-relaxed">{w.lines.map((l, i) => <span key={l.id}>{i > 0 && ' · '}{lineName(l)} <b>{fmtQty(l.correctedQty ?? l.qty)} {l.uom}</b>{l.correctedQty != null && <span className="line-through ml-1" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)}</span>}</span>)}</div>
-              </div>
+          <div className="grid grid-cols-3 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
+            {periods.map(([k, lab]) => (
+              <button key={k} onClick={() => setPeriod(k)} className="rounded-lg py-2 text-[13px] font-extrabold"
+                style={{ backgroundColor: period === k ? NAVY : 'transparent', color: period === k ? '#fff' : '#6B7280' }}>{lab}</button>
             ))}
           </div>
+          <div className="flex justify-between items-center px-1 pt-1">
+            <b className="text-[13px]">{L('Phiếu lấy kho', 'Storage withdrawals')} <span className="font-normal" style={{ color: '#6B7280' }}>· {list ? list.length : '…'}</span></b>
+            {!!list?.length && (
+              <button onClick={() => setByItem(v => !v)} className="text-[12px] font-extrabold rounded-lg px-2.5 py-1"
+                style={byItem ? { backgroundColor: NAVY, color: '#fff' } : { border: `1px solid ${BORDER}`, color: GOLD_TEXT, backgroundColor: '#fff' }}>
+                {L('Tổng theo nguyên liệu', 'Total per ingredient')}
+              </button>
+            )}
+          </div>
+          {!list && <div className="py-6 flex justify-center"><Loader2 size={18} className="animate-spin" style={{ color: '#9CA3AF' }} /></div>}
+          {list && !list.length && <div className="bg-white rounded-2xl py-5 text-center text-xs" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có phiếu nào.', 'No withdrawal.')}</div>}
+          {list && !!list.length && byItem && (
+            <div className="bg-white rounded-2xl px-3" style={{ border: `1px solid ${BORDER}` }}>
+              {totalRows.map((t, i) => (
+                <div key={i} className="flex items-baseline gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${HAIR}` : 'none' }}>
+                  <div className="flex-1 min-w-0"><div className="text-[13.5px] font-bold leading-snug">{t.name}</div>
+                    <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{t.slips} {L('lần lấy', t.slips > 1 ? 'times' : 'time')}</div></div>
+                  <div className="text-[15px] font-extrabold tabular-nums whitespace-nowrap">{fmtQty(t.qty)} <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{t.uom}</span></div>
+                </div>
+              ))}
+            </div>
+          )}
+          {list && !!list.length && !byItem && groups.map(g => (
+            <div key={g.ymd} className="space-y-1.5">
+              {period === '7d' && <div className="px-1 pt-1 text-[12px] font-extrabold" style={{ color: GOLD_TEXT }}>{g.day} · {g.items.length} {L('phiếu', g.items.length > 1 ? 'slips' : 'slip')}</div>}
+              {g.items.map(w => {
+                const corrected = w.lines.some(l => l.correctedQty != null);
+                return (
+                <div key={w.id} className="bg-white rounded-2xl px-3 pt-2.5 pb-1" style={{ border: `1px solid ${BORDER}` }}>
+                  <div className="flex items-center gap-2 pb-1.5">
+                    <b className="text-[14px] tabular-nums">#{w.no}</b>
+                    <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
+                    {corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
+                      : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}
+                  </div>
+                  {w.lines.map(l => (
+                    <div key={l.id} className="flex items-baseline gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13.5px] font-bold leading-snug">{lineName(l)}</div>
+                        {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                      </div>
+                      <div className="text-right whitespace-nowrap">
+                        <span className="text-[15px] font-extrabold tabular-nums">{fmtQty(qOf(l))}</span> <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                        {l.correctedQty != null && <div className="text-[11px] line-through tabular-nums" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)} {l.uom}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                );
+              })}
+            </div>
+          ))}
         </>
+        );
+      })()
       ) : (
         <>
           {meta.canApprove && approveGroups.length > 0 && (
