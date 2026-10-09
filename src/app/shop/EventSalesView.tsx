@@ -5,6 +5,10 @@ import { getEventSalesLedgerAction, setEventSalePaymentAction, type EventSale, t
 import { NAVY, GOLD_PALE, INK, BORDER } from './ShopView';
 import { useShopL, useShopLang } from './shop-lang';
 
+// Per page load only (module memory, never stored on the phone); 15 min at most.
+let ledgerCache: { ledger: EventSalesLedger; at: number } | null = null;
+const LEDGER_CACHE_MS = 15 * 60 * 1000;
+
 // "Doanh thu" — the Sales side of the event till (Axel, 2026-10-07: "une version facile, par
 // jour, en consolidé, graphique si tu veux ... adaptée version mobile" + "par virement, par cash
 // aussi + traçabilité des transactions"). One read (getEventSalesLedgerAction: every sale of the
@@ -126,7 +130,9 @@ function PayBadge({ pay, label }: { pay: 'cash' | 'transfer'; label: string }) {
 export default function EventSalesView() {
   const L = useShopL();
   const lang = useShopLang();
-  const [ledger, setLedger] = useState<EventSalesLedger | null>(null);
+  // Last ledger seen on this phone (speed pass, 2026-10-09): shown at once when coming back to this
+  // tab, while the fresh one loads (spinner on the refresh button) and replaces it.
+  const [ledger, setLedger] = useState<EventSalesLedger | null>(() => (ledgerCache && Date.now() - ledgerCache.at < LEDGER_CACHE_MS ? ledgerCache.ledger : null));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [scope, setScope] = useState<string>('all');
@@ -152,11 +158,20 @@ export default function EventSalesView() {
 
   async function load() {
     setLoading(true);
-    const res = await getEventSalesLedgerAction();
+    // Plain GET first (runs beside the sales instead of in their queue); the server action stays
+    // as the fallback, so the view never ends up worse off than before.
+    let res: { ledger?: EventSalesLedger; error?: string } | null = null;
+    try {
+      const r = await fetch('/api/event/sales-ledger', { cache: 'no-store', credentials: 'same-origin' });
+      const j = r.ok && (r.headers.get('content-type') ?? '').includes('application/json') ? await r.json() : null;
+      if (j && (j.ledger || j.error)) res = j;
+    } catch { /* fall back below */ }
+    if (!res || (!res.ledger && res.error !== 'Không ở trong event')) res = await getEventSalesLedgerAction();
     setLoading(false);
     if (res.error || !res.ledger) { setError(res.error ?? 'Error'); return; }
     setError(null);
     setLedger(res.ledger);
+    ledgerCache = { ledger: res.ledger, at: Date.now() };
   }
   useEffect(() => { load(); }, []);
 

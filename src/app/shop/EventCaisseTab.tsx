@@ -93,7 +93,16 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
   const [promoOff, setPromoOff] = useState<string[]>([]);
   const [promoConfirm, setPromoConfirm] = useState<string | null>(null);
   const [promoBusy, setPromoBusy] = useState(false);
-  const loadPromos = () => getEventPromoStateAction().then(r => { if (r.off) setPromoOff(r.off); });
+  // Read through a plain GET (never queued behind a sale); the server action stays as the fallback.
+  const loadPromos = async () => {
+    try {
+      const r = await fetch('/api/event/promo-state', { cache: 'no-store', credentials: 'same-origin' });
+      const j = r.ok && (r.headers.get('content-type') ?? '').includes('application/json') ? await r.json() : null;
+      if (j && Array.isArray(j.off)) { setPromoOff(j.off); return; }
+    } catch { /* fall back below */ }
+    const r = await getEventPromoStateAction();
+    if (r.off) setPromoOff(r.off);
+  };
   useEffect(() => { loadPromos(); const t = setInterval(loadPromos, 60000); return () => clearInterval(t); }, []);
   const activeGroups = useMemo(() => PROMO_GROUPS.filter(g => !promoOff.includes(g.id)), [promoOff]);
   async function togglePromo(g: PromoGroup) {
