@@ -27,7 +27,11 @@ export type Board = {
 // the lines become 'ordered'; cancelled -> back to the queue; still a draft -> vendor/amount refreshed.
 // Best effort: if Odoo cannot be read, the board simply shows what it knew.
 async function refreshDraftPos(db: NonNullable<ReturnType<typeof rawService>>): Promise<DraftPo[]> {
-  const { data: rows } = await db.from('lab_purchase_request_lines').select('id, po_odoo_id').eq('status', 'pending').not('po_odoo_id', 'is', null).limit(2000);
+  // 'ordered' lines too (Axel, 2026-10-09: "j'ai supprimé la PO validée et ça montre toujours que c'est
+  // confirmé"): a confirmed PO later cancelled or deleted in Odoo sends its lines back to the queue.
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const { data: rows } = await db.from('lab_purchase_request_lines').select('id, po_odoo_id, status')
+    .in('status', ['pending', 'ordered']).not('po_odoo_id', 'is', null).gte('created_at', since).limit(2000);
   const poIds = Array.from(new Set((rows ?? []).map(r => Number(r.po_odoo_id))));
   if (!poIds.length) return [];
   let pos: any[] = [];
@@ -41,8 +45,8 @@ async function refreshDraftPos(db: NonNullable<ReturnType<typeof rawService>>): 
     const p = byId.get(id);
     if (!p || p.state === 'cancel') {
       // Gone or cancelled in Odoo: the lines go back to the purchasing queue.
-      await db.from('lab_purchase_request_lines').update({ po_odoo_id: null, po_ref: null, po_created_at: null, po_created_by_name: null })
-        .eq('po_odoo_id', id).eq('status', 'pending');
+      await db.from('lab_purchase_request_lines').update({ status: 'pending', po_odoo_id: null, po_ref: null, po_created_at: null, po_created_by_name: null,
+        ordered_at: null, ordered_by_name: null }).eq('po_odoo_id', id).in('status', ['pending', 'ordered']);
       continue;
     }
     if (p.state === 'purchase' || p.state === 'done') {
@@ -52,6 +56,9 @@ async function refreshDraftPos(db: NonNullable<ReturnType<typeof rawService>>): 
       }).eq('po_odoo_id', id).eq('status', 'pending');
       continue;
     }
+    // Back to draft in Odoo (reset after confirmation): the lines wait again with this draft.
+    await db.from('lab_purchase_request_lines').update({ status: 'pending', ordered_at: null, ordered_by_name: null })
+      .eq('po_odoo_id', id).eq('status', 'ordered');
     drafts.push({ id, name: p.name, vendorId: p.partner_id ? p.partner_id[0] : null, vendorName: p.partner_id ? p.partner_id[1] : null, state: p.state, amountTotal: Number(p.amount_total) || 0 });
   }
   return drafts;
@@ -235,6 +242,7 @@ export async function getHistoryAction(month: string): Promise<{ items?: Purchas
   const start = labDayUtcRange(`${month}-01`).start;
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
   const end = labDayUtcRange(next).start;
+  await refreshDraftPos(g.db).catch(() => []); // PO cancelled/deleted in Odoo -> history shows it right away
   try {
     // Lines still waiting for the team lead, or turned down by him, never reached purchasing.
     return { items: await loadLines(g.db, q => q.gte('created_at', start).lt('created_at', end).neq('status', 'to_approve').eq('rejected_by_lead', false).order('created_at', { ascending: false })) };
