@@ -2912,19 +2912,24 @@ export async function getEventCaisseCatalogAction(): Promise<{ products?: EventC
   if (!supabase) return { error: 'Server not configured' };
 
   // What was delivered and what was sold are independent reads — fetched together.
-  const [{ orderedBySku, producedSkus }, soldRows] = await Promise.all([
+  // hidden_skus (Axel, 2026-10-09): products the event keeps off its till although they are in
+  // stock (truffle macaron at the Hải Phòng fair: too expensive there, they don't sell it).
+  const [{ orderedBySku, producedSkus }, soldRows, hiddenRes] = await Promise.all([
     eventOrderedLines(supabase, shopName),
     eventSoldRows(supabase, shopName, false),
+    supabase.from('lab_event_shops').select('hidden_skus').eq('id', auth.event.id).maybeSingle(),
   ]);
+  const hidden = new Set<string>(((hiddenRes.data as any)?.hidden_skus as string[] | null) ?? []);
   if (!orderedBySku.size) return { products: [], qrCodeUrl: auth.event.qrCodeUrl };
 
-  const skus = Array.from(orderedBySku.keys());
+  const skus = Array.from(orderedBySku.keys()).filter(sku => !hidden.has(sku));
   const meta = await eventSkuMeta(supabase, skus, producedSkus);
 
   const soldBySku = new Map<string, number>();
   for (const r of soldRows) soldBySku.set(r.sku, (soldBySku.get(r.sku) ?? 0) + r.qty);
 
   const products: EventCaisseProduct[] = Array.from(orderedBySku.entries())
+    .filter(([sku]) => !hidden.has(sku))
     .map(([sku, o]) => ({
       // May be zero or negative (Axel, 2026-10-07: "laisser la possibilité de vendre même si le
       // stock est négatif, ils auraient sûrement mal compté") — shown as-is, never blocks a sale.
