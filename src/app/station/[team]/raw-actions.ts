@@ -1,9 +1,9 @@
 'use server';
 // Raw materials — chef side (Axel, 2026-10-08). Phase 1: storage withdrawals and purchase requests
 // are recorded in the app only; nothing goes to Odoo. Test phase: team Hưng only (see RAW_TEAMS).
-import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
+import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
-import type { RawMaterial, PurchaseLine, Withdrawal } from '@/lib/raw-materials';
+import { TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { labDayUtcRange, vnTodayStr } from '@/lib/odoo';
 
 export async function getRawCatalogForChefAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
@@ -74,6 +74,19 @@ export async function getTeamWithdrawalsAction(team: string, period: 'today' | '
   } catch (e: any) { return { error: e.message }; }
 }
 
+// Push to the purchasing team when lines land in their queue (Axel, 2026-10-09: Vietnamese only,
+// whatever the phone's language). Best effort: a failed push never blocks the request.
+async function notifyPurchasing(db: NonNullable<ReturnType<typeof rawService>>, team: string, no: number | null, count: number, who: string, approved: boolean) {
+  const ids = await purchasingUserIds(db);
+  if (!ids.length || count <= 0) return;
+  const teamVi = TEAM_SHORT[team]?.vi ?? team;
+  const body = approved
+    ? `🛒 Yêu cầu mua${no != null ? ` #${no}` : ''} đã được ${who || 'trưởng nhóm'} duyệt · Team ${teamVi} · ${count} dòng`
+    : `🛒 Yêu cầu mua mới${no != null ? ` #${no}` : ''} · Team ${teamVi} · ${who || '—'} · ${count} dòng`;
+  const payload = { title: 'La Parisienne Lab', body, url: '/purchasing?tab=requests', tag: 'raw-purchasing' };
+  await awaitPush(sendUsersPush(db, ids, payload, payload));
+}
+
 export type RequestLineInput = { tmplId: number; qty: number; brand?: string | null; brandStrict?: boolean; note?: string | null };
 export type NewProductInput = { name: string; qty: number; uom: string; note?: string | null; photoUrl?: string | null };
 
@@ -124,6 +137,7 @@ export async function submitPurchaseRequestAction(team: string, requestedBy: str
       { title: 'La Parisienne Lab', body: `🛒 Yêu cầu mua #${r.no} chờ bạn duyệt · ${who} · ${rows.length} dòng`, url: `/station/${team}`, tag: 'raw-approve' },
       { title: 'La Parisienne Lab', body: `🛒 Purchase request #${r.no} waits for your approval · ${who} · ${rows.length} lines`, url: `/station/${team}`, tag: 'raw-approve' }));
   }
+  if (!wait) await notifyPurchasing(db, team, Number(r.no), rows.length, String(requestedBy ?? '').trim() || a.name || '', false);
   return { ok: true, no: Number(r.no), needsApproval: wait };
 }
 
@@ -167,6 +181,7 @@ export async function decideRequestLinesAction(team: string, approve: { id: stri
   const lines = await teamLines(db, team, [...(approve ?? []).map(x => x.id), ...(reject ?? [])]);
   const byId = new Map(lines.filter(l => l.status === 'to_approve').map(l => [l.id, l]));
   const now = new Date().toISOString();
+  let approvedCount = 0;
   for (const x of approve ?? []) {
     const l = byId.get(x.id); if (!l) continue;
     const q = Math.round(Number(x.qty) * 1000) / 1000;
@@ -177,6 +192,7 @@ export async function decideRequestLinesAction(team: string, approve: { id: stri
       ...(changed ? { requested_qty: l.requested_qty ?? l.qty } : {}),
     }).eq('id', l.id).eq('status', 'to_approve');
     if (error) return { error: error.message };
+    approvedCount++;
   }
   const rej = (reject ?? []).filter(id => byId.has(id));
   if (rej.length) {
@@ -185,6 +201,11 @@ export async function decideRequestLinesAction(team: string, approve: { id: stri
       status: 'cancelled', cancelled_at: now, cancelled_by_name: a.name || null, rejected_by_lead: true, reject_reason: why,
     }).in('id', rej).eq('status', 'to_approve');
     if (error) return { error: error.message };
+  }
+  if (approvedCount) {
+    const reqIds = Array.from(new Set(lines.filter(l => (approve ?? []).some(x => x.id === l.id)).map(l => l.request_id)));
+    const { data: rq } = reqIds.length === 1 ? await db.from('lab_purchase_requests').select('no').eq('id', reqIds[0]).maybeSingle() : { data: null };
+    await notifyPurchasing(db, team, rq?.no != null ? Number(rq.no) : null, approvedCount, a.name || '', true);
   }
   return { ok: true };
 }

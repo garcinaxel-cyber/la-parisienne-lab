@@ -39,6 +39,12 @@ export async function teamLeads(db: NonNullable<ReturnType<typeof rawService>>, 
   const { data: ps } = await db.from('profiles').select('id, full_name').in('id', ids);
   return ids.map(id => ({ id, name: ((ps ?? []).find(p => p.id === id)?.full_name as string) || '' }));
 }
+// Everyone holding the 'purchasing' role (Axel, 2026-10-09: they get a push when a request
+// reaches the purchasing queue).
+export async function purchasingUserIds(db: NonNullable<ReturnType<typeof rawService>>): Promise<string[]> {
+  const { data } = await db.from('profiles').select('id').eq('role', 'purchasing');
+  return (data ?? []).map(r => r.id as string);
+}
 export function isPurchasing(a: RawActor | null): a is RawActor {
   return !!a && (a.role === 'purchasing' || a.role === 'admin');
 }
