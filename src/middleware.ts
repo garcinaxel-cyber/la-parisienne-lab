@@ -61,6 +61,7 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/lab/off-recipe-recap')) return NextResponse.next();
   // Withdrawal-slip reminder (2026-10-09): pg_cron every 10 min, CRON_SECRET-gated in the route.
   if (pathname.startsWith('/api/lab/raw-picking-reminder')) return NextResponse.next();
+  if (pathname.startsWith('/api/lab/raw-photo-cleanup')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
 
