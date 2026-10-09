@@ -270,8 +270,14 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   const { data: packagingLines } = await supabase.from('lab_order_packaging_lines')
     .select('order_ref, delivery_date, shop_name').in('delivery_date', [today, tomorrow]);
 
+  // Plus delivery headers that exist on their own for these days — a REP split over two days
+  // (Axel, 2026-10-09, REP/2026/01910: the part received as 0 moved to the next day under the
+  // same ref) has no lab_order_lines on its second day, only its lab_delivery_orders header.
+  const { data: ownHeaders } = await supabase.from('lab_delivery_orders')
+    .select('order_ref, delivery_date, shop_name').in('delivery_date', [today, tomorrow]);
+
   const pairs = new Map<string, { date: string; orderRef: string }>();
-  for (const l of [...(orderLines ?? []), ...(packagingLines ?? [])]) {
+  for (const l of [...(orderLines ?? []), ...(packagingLines ?? []), ...(ownHeaders ?? [])]) {
     if (normalizeShopName(l.shop_name) !== target) continue;
     pairs.set(`${l.delivery_date}||${l.order_ref}`, { date: l.delivery_date, orderRef: l.order_ref });
   }
