@@ -223,6 +223,11 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         <Search size={14} style={{ color: '#9CA3AF' }} />
         <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nguyên liệu hoặc mã…', 'Search a raw material or code…')} className="flex-1 py-2.5 text-[13.5px] outline-none bg-transparent" />
       </label>
+      {/* Axel, 2026-10-09: every station that gets this tab shows it. */}
+      <div className="rounded-xl px-3 py-2 text-[12px] font-semibold leading-snug" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
+        {L('Thiếu nguyên liệu trong danh sách? Liên hệ Axel: ghi rõ tên nguyên liệu còn thiếu và dùng cho công thức nào.',
+          'A raw material missing from the list? Contact Axel with the missing item\'s name and the recipe it is for.')}
+      </div>
       {mode === 'request' && (
         <button onClick={() => { setDraft({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null }); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm mới (chưa có trong danh sách)', 'New product (not in the list)')}</button>
