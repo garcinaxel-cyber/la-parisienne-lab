@@ -122,25 +122,32 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       const sched = batches.map((b, k) => {
         const need = groups.map(g => {
           const a = alloc[g]; const name = byKey[g]?.name ?? g;
-          if (!perOrder) return { key: g, name, cum: b.cumKgByGroup[g], baked: 0, left: a.remakeLeft + a.ownLeft.slice(0, k + 1).reduce((s, x) => s + x, 0) };
-          // re-make for losses goes to the first order still open (the last one if all are baked)
-          const open = a.ownLeft.findIndex(x => x > 0.0005);
-          return { key: g, name, cum: own(g, k), baked: Math.max(0, own(g, k) - a.ownLeft[k]), left: a.ownLeft[k] + (k === (open < 0 ? batches.length - 1 : open) ? a.remakeLeft : 0) };
+          // re-make for losses goes to the first order / delivery still open (the last one if all are baked)
+          const open = a.ownLeft.findIndex(x => x > 0.0005); const ro = open < 0 ? batches.length - 1 : open;
+          // Axel 2026-10-09: a delivery shows its OWN kg (the chef read the cumulative 91 kg as one batch);
+          // what earlier deliveries still miss is shown apart (prev), never added into this one.
+          const prev = a.ownLeft.slice(0, k).reduce((s, x) => s + x, 0) + (ro < k ? a.remakeLeft : 0);
+          return { key: g, name, cum: own(g, k), baked: Math.max(0, own(g, k) - a.ownLeft[k]), left: a.ownLeft[k] + (k === ro ? a.remakeLeft : 0), prev };
         });
         const left = need.reduce((s, x) => s + x.left, 0);
+        const prevLeft = need.reduce((s, x) => s + x.prev, 0);
         const shipped = items.every(i => (delivered[i.sku] ?? 0) >= (b.cumQty[i.sku] ?? 0) - 0.0005);
-        return { b, need, left, done: left < 0.05, shipped };
+        return { b, need, left, prevLeft, done: left < 0.05, shipped };
       });
       const kgUnits = items.every(i => i.unit === 'kg');
       const total = items.reduce((s, i) => s + i.qty_ordered, 0);
       const done = items.reduce((s, i) => s + Math.min(i.qty_ordered, delivered[i.sku] ?? 0), 0);
       // kg declared with no order chosen (entered from the main station screen): counted in order, flagged
       const untagged = perOrder && batches.length > 1 ? groups.reduce((s, g) => s + (byKey[g]?.bySeq[0] ?? 0), 0) : 0;
-      return { client, items, sched, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder, untagged };
+      const whole = groups.map(g => ({ key: g, name: byKey[g]?.name ?? g, baked: byKey[g]?.baked ?? 0, T: (byKey[g]?.target ?? 0) + (byKey[g]?.remake ?? 0) }));
+      const lastBy = [...batches].reverse().find(b => b.produceBy)?.produceBy ?? null;
+      return { client, items, sched, whole, lastBy, groups, nextIdx: sched.findIndex(x => !x.done), kgUnits, total, done, perOrder, untagged };
     }).filter(p => p.sched.length);
   }, [allItems, plan, rows, delivered]);
   // the chef can open any delivery (tap on the timeline); default = the next one not baked yet
   const [pick, setPick] = useState<Record<string, number>>({});
+  // per client: 'd' = per delivery (default), 't' = whole order, like the 17h report (Axel 2026-10-09)
+  const [view, setView] = useState<Record<string, 'd' | 't'>>({});
   const shownOf = (p: { client: string; sched: unknown[]; nextIdx: number }) => (pick[p.client] != null && pick[p.client] < p.sched.length ? pick[p.client] : p.nextIdx);
   const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(isoToday)) / 86400000);
   const Lx = (v: string, e: string) => (vi ? v : e);
@@ -267,6 +274,47 @@ export default function StationOemView({ role, userId, userName, canFix = false 
     );
   };
 
+  const pctTxt = (x: number) => (x > 0 && x < 10 ? fmt1(x) : String(Math.round(x)));
+  const wholeView = (p: (typeof plans)[number]) => {
+    const T = p.whole.reduce((s, x) => s + x.T, 0); const B = p.whole.reduce((s, x) => s + Math.min(x.baked, x.T), 0);
+    const pc = T ? Math.min(100, (B / T) * 100) : 0; const left = Math.max(0, T - B);
+    // pace: needed = kg left / working days (Mon–Sat) until the last bake-by date; actual = last 7 days, per production day
+    const since = new Date(Date.parse(isoToday) - 6 * 86400000).toISOString().slice(0, 10);
+    const recent = entries.filter(e => p.groups.includes(e.group_key) && e.prod_date >= since && e.prod_date <= isoToday);
+    const kg7 = recent.reduce((s, e) => s + (e.status === 'received' ? e.received_kg ?? 0 : e.weight_kg), 0);
+    const days7 = new Set(recent.map(e => e.prod_date)).size; const actual = days7 ? kg7 / days7 : 0;
+    let wd = 0; if (p.lastBy) for (let t = Date.parse(isoToday); t <= Date.parse(p.lastBy); t += 86400000) if (new Date(t).getUTCDay() !== 0) wd++;
+    const need = wd ? left / wd : null; const ok = need != null && actual >= need;
+    const notStarted = p.whole.filter(x => x.baked < 0.05).length;
+    return (
+      <div className="px-4 pb-3 space-y-3">
+        <div className="flex items-end justify-between gap-3 pt-1">
+          <div><div className="text-4xl font-extrabold leading-none" style={{ color: '#2B1D12' }}>{pctTxt(pc)}%</div>
+            <div className="text-xs mt-1" style={{ color: '#7A6A5A' }}>{vi ? 'toàn bộ đơn hàng đã nướng' : 'of the whole order baked'}</div></div>
+          <div className="text-right text-sm" style={{ color: '#4A3A2C' }}><b className="text-[15px]" style={{ color: '#2B1D12' }}>{fmt1(B)} / {fmt1(T)} kg</b><br />{vi ? 'còn lại' : 'left'} {fmt1(left)} kg</div>
+        </div>
+        <span className="block h-3.5 rounded-full overflow-hidden" style={{ backgroundColor: '#F1E4D0' }}><span className="block h-full rounded-full" style={{ width: `${pc}%`, backgroundColor: '#9C5F2A' }} /></span>
+        <div className="space-y-2.5 pt-1">
+          {p.whole.map(x => { const q = x.T ? Math.min(100, (x.baked / x.T) * 100) : 0; return (
+            <div key={x.key}>
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="font-semibold min-w-0 truncate">{x.name}</span>
+                <span className="whitespace-nowrap" style={{ color: '#4A3A2C' }}><b>{pctTxt(q)}%</b> · {fmt1(x.baked)} / {fmt1(x.T)} kg</span>
+              </div>
+              <span className="block h-2 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#F1E4D0' }}><span className="block h-full rounded-full" style={{ width: `${q}%`, backgroundColor: '#9C5F2A' }} /></span>
+            </div>); })}
+        </div>
+        <div className="text-xs leading-relaxed pt-2" style={{ color: '#4A3A2C', borderTop: '1px solid #EFE9DC' }}>
+          <b>{vi ? 'Tốc độ' : 'Pace'}:</b>{' '}
+          {need != null ? (vi ? `cần khoảng ${fmt1(need)} kg/ngày đến ${dOr(p.lastBy, Lx)}` : `about ${fmt1(need)} kg/day needed until ${dOr(p.lastBy, Lx)}`) : (vi ? 'chưa có ngày giao cuối' : 'no final date yet')}
+          {days7 > 0 && <>{' · '}{vi ? `thực tế ~${fmt1(actual)} kg/ngày (${days7} ngày gần đây)` : `actual ~${fmt1(actual)} kg/day (last ${days7} days)`}</>}
+          {need != null && days7 > 0 && <b style={{ color: ok ? '#047857' : '#B91C1C' }}> {ok ? (vi ? '✓ kịp tiến độ' : '✓ on track') : (vi ? '⚠ chậm hơn cần thiết' : '⚠ behind pace')}</b>}
+          <br /><b>{vi ? 'Chưa bắt đầu' : 'Not started'}:</b> {notStarted} / {p.whole.length} {vi ? 'sản phẩm' : 'products'}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#F7F5F0' }}>
       <div className="sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
@@ -319,6 +367,15 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 <div className="text-sm font-semibold mt-1 whitespace-pre-line leading-snug" style={{ color: '#5B4520' }}>{noteText(notes[p.client], vi)}</div>
               </div>
             )}
+            {!p.perOrder && (
+              <div className="mx-4 mb-3 grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: '#F1EEE6' }}>
+                {(['d', 't'] as const).map(v => { const on = (view[p.client] ?? 'd') === v; return (
+                  <button key={v} onClick={() => setView(s => ({ ...s, [p.client]: v }))} className="rounded-lg py-2 text-sm font-bold transition"
+                    style={on ? { backgroundColor: GREEN, color: '#fff' } : { color: '#6B7280' }}>
+                    {v === 'd' ? (vi ? 'Theo đợt giao' : 'Per delivery') : (vi ? 'Toàn bộ đơn hàng' : 'Whole order')}
+                  </button>); })}
+              </div>
+            )}
             {p.perOrder ? (
               <div className="px-4 pb-3 pt-1 space-y-2.5">
                 {p.sched.map(x => {
@@ -369,7 +426,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                   </div>
                 )}
               </div>
-            ) : next ? (() => {
+            ) : (view[p.client] ?? 'd') === 't' ? wholeView(p) : next ? (() => {
               const dl = next.b.produceBy ? daysTo(next.b.produceBy) : null; const late = dl != null && dl < 0 && !next.done;
               return (
                 <div className="px-4 pb-3 space-y-2">
@@ -384,15 +441,20 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                     <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
                       {p.perOrder
                         ? `${vi ? 'Giao' : 'Ship'} ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.kg)} kg`
-                        : vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% đơn hàng (cộng dồn)` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.cumPct)}% of the order (cumulative)`}
+                        : vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt1(Number(next.b.row.pct))}% đơn hàng · ${fmt1(next.b.kg)} kg` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt1(Number(next.b.row.pct))}% of the order · ${fmt1(next.b.kg)} kg`}
                       {!next.done && <>{' · '}<b>{fmt1(next.left)} kg</b> {vi ? 'còn thiếu' : 'left'}{dl != null && <>{' · '}{late ? (vi ? `trễ ${-dl} ngày` : `${-dl} days late`) : (vi ? `còn ${dl} ngày` : `${dl} days left`)}</>}</>}
                     </div>
                   </div>
+                  {next.prevLeft > 0.05 && (
+                    <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C', border: '1px solid #FBD5D5' }}>
+                      {vi ? `Các đợt trước còn thiếu ${fmt1(next.prevLeft)} kg — nướng bù trước.` : `Earlier deliveries still miss ${fmt1(next.prevLeft)} kg — bake those first.`}
+                    </div>
+                  )}
                   {next.need.map(x => (
                     <div key={x.key} className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="font-semibold min-w-0 truncate">{x.name}</span>
                       <span className="whitespace-nowrap">
-                        {x.left > 0.05 ? <b>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</b> : <b style={{ color: '#047857' }}>✓</b>}
+                        {x.left > 0.05 ? <b>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</b> : <b style={{ color: '#047857' }}>✓ {vi ? 'đủ' : 'done'}</b>}
                         <span className="text-xs" style={{ color: '#9CA3AF' }}> / {fmt1(x.cum)} kg</span>
                       </span>
                     </div>
@@ -411,13 +473,14 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 <span className="block h-full rounded-full" style={{ width: `${p.total ? Math.min(100, (p.done / p.total) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
               </span>
             </div>
-            {!p.perOrder && <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
+            {!p.perOrder && (view[p.client] ?? 'd') === 'd' && <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
               {p.sched.map((x, k) => (
                 <button key={x.b.row.id} onClick={() => setPick(s => ({ ...s, [p.client]: k }))} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
                   style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === p.nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === p.nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
                   <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{W(p.perOrder)} {x.b.row.seq} · {fmt(x.b.kg)} kg</div>
                   <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : x.b.produceBy ? `${vi ? 'Nướng trước' : 'Bake by'} ${dOr(x.b.produceBy, Lx)}` : (vi ? 'Chưa có ngày' : 'Date TBC')}</div>
                   <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
+                  {!x.done && <div className="text-[10px] font-bold" style={{ color: '#B45309' }}>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</div>}
                 </button>
               ))}
             </div>}
