@@ -130,6 +130,8 @@ export const TEAM_SHORT: Record<string, { vi: string; en: string; color: string;
   hung: { vi: 'Hưng', en: 'Hung', color: '#0369a1', bg: '#eff6ff' },
   entremet: { vi: 'Entremet', en: 'Entremet', color: '#b45309', bg: '#fffbeb' },
   baker: { vi: 'Baker', en: 'Baker', color: '#047857', bg: '#ecfdf5' },
+  // Requests typed by storage / purchasing itself (Axel, 2026-10-09: Hien's own needs).
+  kho: { vi: 'Kho', en: 'Storage', color: '#344054', bg: '#F2F4F7' },
 };
 
 // 'to_approve' (Axel, 2026-10-08): a request sent by a team member waits for the team lead
@@ -151,7 +153,9 @@ export type PurchaseLine = {
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;
   packLabel: string | null; packCount: number | null; correctedQty: number | null; correctedBy: string | null;
   offRecipe: boolean; usedFor: string | null };
-export type Withdrawal = { id: string; no: number; team: string; takenBy: string | null; createdAt: string; lines: WithdrawalLine[] };
+// status (Axel, 2026-10-09): a new slip waits for storage (purchasing role) to confirm it before the chef takes the goods.
+export type Withdrawal = { id: string; no: number; team: string; takenBy: string | null; createdAt: string; lines: WithdrawalLine[];
+  status: 'to_confirm' | 'confirmed'; confirmedAt: string | null; confirmedBy: string | null };
 
 // Odoo vendor names are long legal names ("CHI NHÁNH CÔNG TY TNHH ... TẠI HÀ NỘI") — a short form for lists.
 export function shortVendor(name: string | null | undefined): string {

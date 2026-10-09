@@ -93,7 +93,7 @@ export async function loadLines(db: NonNullable<ReturnType<typeof rawService>>, 
 }
 
 export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawService>>, build: (q: any) => any): Promise<Withdrawal[]> {
-  const { data: ws, error } = await build(db.from('lab_raw_withdrawals').select('id, no, team, taken_by, created_at')).limit(2000);
+  const { data: ws, error } = await build(db.from('lab_raw_withdrawals').select('id, no, team, taken_by, created_at, status, confirmed_at, confirmed_by_name')).limit(2000);
   if (error) throw new Error(error.message);
   const ids = (ws ?? []).map((w: any) => w.id);
   const lines = new Map<string, any[]>();
@@ -105,6 +105,7 @@ export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawServi
   }
   return (ws ?? []).map((w: any) => ({
     id: w.id, no: Number(w.no), team: w.team, takenBy: w.taken_by ?? null, createdAt: w.created_at,
+    status: w.status === 'to_confirm' ? 'to_confirm' : 'confirmed', confirmedAt: w.confirmed_at ?? null, confirmedBy: w.confirmed_by_name ?? null,
     lines: (lines.get(w.id) ?? []).map(l => ({
       id: l.id, tmplId: l.tmpl_id ?? null, sku: l.sku ?? null, name: l.name, uom: l.uom, qty: Number(l.qty),
       packLabel: l.pack_label ?? null, packCount: l.pack_count == null ? null : Number(l.pack_count),

@@ -1,7 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw } from 'lucide-react';
+import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw, Bell, Clock } from 'lucide-react';
+import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
 import { useI18n } from '@/lib/i18n';
 import {
   RAW_TYPES, subLabel, typeLabel, shortVendor, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
@@ -11,6 +12,7 @@ import {
   getPurchasingBoardAction, setVendorAction, markOrderedAction, cancelLinesAction, undoLineStepAction,
   linkNewProductAction, markNewToCreateAction, getWithdrawalsDayAction, correctWithdrawalLineAction, getHistoryAction,
   getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, createDraftPoAction, type Board,
+  getPendingWithdrawalsAction, confirmWithdrawalAction, addStorageRequestAction,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
 
@@ -37,6 +39,15 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
     ['catalogue', L('Danh mục', 'Catalogue'), 'catalogue'],
   ];
   const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')]];
+  // Slips waiting for storage's confirmation (Axel, 2026-10-09), shown as a badge on Stock picking.
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => getPendingWithdrawalsAction().then(r => { if (alive && r.items) setPendingCount(r.items.length); });
+    tick();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') tick(); }, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [tab]);
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -44,12 +55,16 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2"><Truck size={24} className="text-gold" /> {L('Mua hàng', 'Purchasing')}</h1>
           <p className="text-ink-light text-sm mt-0.5">{L('Mua hàng: yêu cầu mua của các chef. Lấy kho: phiếu lấy nguyên liệu từ kho. Giai đoạn thử: không ghi gì vào Odoo.', 'Purchasing: the chefs\' purchase requests. Stock picking: what they take from storage. Test phase: nothing is written to Odoo.')}</p>
         </div>
-        <Link href="/oem-orders" className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2 bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Factory size={15} /> {L('Đơn hàng OEM', 'OEM orders')}</Link>
+        <div className="flex items-center gap-2">
+          <PushBell L={L} />
+          <Link href="/oem-orders" className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2 bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Factory size={15} /> {L('Đơn hàng OEM', 'OEM orders')}</Link>
+        </div>
       </div>
       <div className="flex gap-1 overflow-x-auto rounded-xl p-1 bg-white" style={{ border: `1px solid ${BORDER}` }}>
         {sections.map(([k, label, first]) => (
           <button key={k} onClick={() => setTab(section === k ? tab : first)} className="flex-1 min-w-[110px] rounded-lg py-2 text-[13px] font-extrabold whitespace-nowrap"
-            style={{ backgroundColor: section === k ? NAVY : 'transparent', color: section === k ? '#fff' : '#6B7280' }}>{label}</button>
+            style={{ backgroundColor: section === k ? NAVY : 'transparent', color: section === k ? '#fff' : '#6B7280' }}>{label}
+            {k === 'picking' && pendingCount > 0 && <span className="ml-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-extrabold px-1.5 min-w-[20px]" style={{ backgroundColor: LATE, color: '#fff' }}>{pendingCount}</span>}</button>
         ))}
       </div>
       {section === 'purchase' && (
@@ -61,7 +76,7 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
         </div>
       )}
       {tab === 'requests' && <RequestsTab L={L} lang={lang as any} />}
-      {tab === 'storage' && <StorageTab L={L} lang={lang as any} />}
+      {tab === 'storage' && <StorageTab L={L} lang={lang as any} onPending={setPendingCount} />}
       {tab === 'history' && <HistoryTab L={L} lang={lang as any} />}
       {tab === 'catalogue' && <CatalogueTab L={L} lang={lang as any} />}
     </div>
@@ -69,6 +84,44 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
 }
 
 type LFn = (vi: string, en: string) => string;
+
+// Notifications for the purchasing screen (Axel, 2026-10-09): Hien gets the new purchase requests and
+// the slips to confirm on his phone. Subscribes this device as pseudo-team 'purchasing' (pushes to
+// this screen go by user id, see purchasingUserIds).
+function PushBell({ L }: { L: LFn }) {
+  const [st, setSt] = useState<'checking' | 'off' | 'on' | 'unsupported' | 'not-configured'>('checking');
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      const sup = pushSupport();
+      if (sup !== 'ready') { if (!c) setSt(sup); return; }
+      const sub = await getExistingPushSubscription();
+      if (!c) setSt(sub ? 'on' : 'off');
+    })();
+    return () => { c = true; };
+  }, []);
+  async function toggle() {
+    const { subscribePushAction, unsubscribePushAction } = await import('@/app/station/[team]/actions');
+    if (st === 'on') {
+      const ep = await unsubscribeCurrentPush();
+      if (ep) await unsubscribePushAction(ep);
+      setSt('off'); return;
+    }
+    if (st !== 'off') return;
+    const r = await requestPushSubscription();
+    if (!r.ok) { setSt(r.reason === 'not-configured' ? 'not-configured' : 'off'); return; }
+    const res = await subscribePushAction('purchasing', r.subscription);
+    setSt(res.error ? 'off' : 'on');
+  }
+  if (st === 'checking' || st === 'unsupported' || st === 'not-configured') return null;
+  const on = st === 'on';
+  return (
+    <button onClick={toggle} className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2"
+      style={on ? { backgroundColor: '#ECFDF3', border: '1px solid #ABEFC6', color: '#067647' } : { backgroundColor: '#FFF6E0', border: `1px solid ${GOLD}`, color: '#8A5A00' }}>
+      <Bell size={15} /> {on ? L('Thông báo: bật', 'Notifications on') : L('Bật thông báo', 'Turn on notifications')}
+    </button>
+  );
+}
 
 /* ===================== Requests ===================== */
 function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
@@ -81,6 +134,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [poOpen, setPoOpen] = useState(false);
   const [poVendor, setPoVendor] = useState<string>('');
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const load = useCallback(async () => {
     const r = await getPurchasingBoardAction();
     if (r.error) setErr(r.error); else { setErr(null); setBoard(r.data!); }
@@ -129,6 +183,12 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{err}</div>}
+      <div className="flex justify-end">
+        <button onClick={() => setAddOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>
+          <Plus size={15} /> {L('Thêm nhu cầu của kho', 'Add a storage need')}</button>
+      </div>
+      {addOpen && <AddNeedDialog L={L} lang={lang} catalogue={board.catalogue} onClose={() => setAddOpen(false)}
+        onDone={no => { setAddOpen(false); setOkMsg(L(`✓ Đã thêm yêu cầu #${no} (Kho) vào danh sách chờ.`, `✓ Request #${no} (Storage) added to the queue.`)); load(); }} />}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Kpi label={L('Dòng đang chờ', 'Lines waiting')} value={String(pending.length)} sub={L('chưa đặt hàng', 'not ordered yet')} />
         <Kpi label={L('Nhà cung cấp', 'Vendors')} value={String(vendorKeys.filter(k => k !== 'none').length)} sub={L('theo NCC trong Odoo', 'from Odoo vendors')} />
@@ -305,6 +365,73 @@ function VendorPicker({ L, value, onChange, suggested, vendors }: {
   );
 }
 
+// Storage's own needs (Axel, 2026-10-09: Hien adds requests from this screen). Team 'kho', no approval.
+function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
+  L: LFn; lang: 'vi' | 'en'; catalogue: Board['catalogue']; onClose: () => void; onDone: (no: number) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [picks, setPicks] = useState<{ tmplId: number; qty: string; note: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const label = (c: Board['catalogue'][number]) => (lang === 'vi' && c.nameVi) || c.name;
+  const byId = useMemo(() => new Map(catalogue.map(c => [c.tmplId, c])), [catalogue]);
+  const nq = normVendor(q.trim());
+  const results = !nq ? [] : catalogue.filter(c => c.visible && !picks.some(p => p.tmplId === c.tmplId)
+    && nq.split(/\s+/).every(w => normVendor(`${c.name} ${c.nameVi ?? ''} ${c.sku ?? ''}`).includes(w))).slice(0, 30);
+  const valid = picks.filter(p => parseFloat(p.qty.replace(',', '.')) > 0);
+  async function submit() {
+    setBusy(true); setErr(null);
+    const r = await addStorageRequestAction(valid.map(p => ({ tmplId: p.tmplId, qty: parseFloat(p.qty.replace(',', '.')), note: p.note })));
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    onDone(r.no!);
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={() => !busy && onClose()}>
+      <div className="bg-white rounded-2xl p-4 w-full max-w-lg space-y-3 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="text-[15px] font-extrabold">{L('Thêm nhu cầu của kho', 'Add a storage need')}</div>
+        <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="flex items-center gap-2 px-2.5 py-2">
+            <Search size={14} style={{ color: '#9CA3AF' }} />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nguyên liệu…', 'Search raw materials…')} className="flex-1 text-[13px] outline-none bg-transparent" />
+            {q && <button type="button" onClick={() => setQ('')} aria-label="clear"><X size={14} style={{ color: '#9CA3AF' }} /></button>}
+          </div>
+          {nq && <div className="max-h-48 overflow-y-auto p-1" style={{ borderTop: `1px solid ${HAIR}` }}>
+            {results.map(c => (
+              <button key={c.tmplId} type="button" onClick={() => { setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '' }]); setQ(''); }}
+                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
+                <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{label(c)}</span><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
+              </button>
+            ))}
+            {!results.length && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy', 'Nothing found')}</div>}
+          </div>}
+        </div>
+        {picks.length > 0 && <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+          {picks.map((p, i) => { const c = byId.get(p.tmplId); return (
+            <div key={p.tmplId} className="px-3 py-2 space-y-1.5" style={{ borderTop: i ? `1px solid ${HAIR}` : 'none' }}>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 text-[13px] font-bold leading-snug">{c ? label(c) : p.tmplId}</span>
+                <input inputMode="decimal" value={p.qty} placeholder="0" onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, qty: e.target.value } : x))}
+                  className="w-20 rounded-md px-2 py-1 text-right text-[14px] font-extrabold" style={{ border: `1px solid ${GOLD}` }} />
+                <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{c?.uom}</span>
+                <button type="button" onClick={() => setPicks(ps => ps.filter(x => x.tmplId !== p.tmplId))} aria-label="remove"><X size={15} style={{ color: '#9CA3AF' }} /></button>
+              </div>
+              <input value={p.note} onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, note: e.target.value } : x))}
+                placeholder={L('Ghi chú / thương hiệu (tuỳ chọn)', 'Note / brand (optional)')} className="w-full rounded-md px-2 py-1 text-[12.5px]" style={{ border: `1px solid ${HAIR}` }} />
+            </div>
+          ); })}
+        </div>}
+        {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{err}</div>}
+        <div className="flex gap-2 justify-end">
+          <button disabled={busy} onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Huỷ', 'Cancel')}</button>
+          <button disabled={busy || !valid.length} onClick={submit} className="rounded-lg px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: valid.length ? NAVY : '#9CA3AF' }}>
+            {busy ? <Loader2 size={14} className="animate-spin inline" /> : L(`Thêm ${valid.length || ''} dòng`, `Add ${valid.length || ''} line${valid.length > 1 ? 's' : ''}`)}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
     <div className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
@@ -317,7 +444,20 @@ function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: 
 
 /* ===================== Stock picking ===================== */
 function todayVN(): string { return vnDayTime(new Date().toISOString()).ymd; }
-function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
+function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPending?: (n: number) => void }) {
+  // Slips waiting for storage (Axel, 2026-10-09: "hien confirm d'abord"), any day, oldest first.
+  const [pending, setPending] = useState<Withdrawal[] | null>(null);
+  const [pv, setPv] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const loadPending = useCallback(async () => {
+    const r = await getPendingWithdrawalsAction();
+    if (r.items) { setPending(r.items); onPending?.(r.items.length); }
+  }, [onPending]);
+  useEffect(() => {
+    loadPending();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadPending(); }, 20000);
+    return () => clearInterval(t);
+  }, [loadPending]);
   const [date, setDate] = useState(todayVN());
   const [items, setItems] = useState<Withdrawal[] | null>(null);
   const [edit, setEdit] = useState<string | null>(null);
@@ -332,6 +472,19 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   useEffect(() => { setItems(null); load(); }, [load]);
   const lines = (items ?? []).reduce((s, w) => s + w.lines.length, 0);
   const corrected = (items ?? []).reduce((s, w) => s + w.lines.filter(l => l.correctedQty != null).length, 0);
+  async function confirmSlip(w: Withdrawal) {
+    setConfirming(w.id); setErr(null);
+    const qtys = w.lines.map(l => {
+      const raw = pv[l.id];
+      const v = raw == null || raw.trim() === '' ? null : parseFloat(raw.replace(',', '.'));
+      return { lineId: l.id, qty: v == null || isNaN(v) ? null : v };
+    });
+    const r = await confirmWithdrawalAction(w.id, qtys);
+    setConfirming(null);
+    if (r.error) setErr(r.error);
+    setPv(prev => { const n = { ...prev }; w.lines.forEach(l => delete n[l.id]); return n; });
+    loadPending(); load();
+  }
   async function save(w: Withdrawal) {
     for (const l of w.lines) {
       const raw = val[l.id]; if (raw == null) continue;
@@ -345,8 +498,47 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
-        {L('Phiếu được ghi ngay khi chef xác nhận. Không cần duyệt. Chỉ sửa nếu số lượng thực tế khác.', 'Slips are recorded when the chef confirms. Nothing to approve. Only correct a quantity if the real one differs.')}
+        {L('Chef gửi phiếu, kho xác nhận trước khi chef lấy hàng. Sửa số lượng nếu thực tế khác (0 = không đưa).', 'The chef sends a slip; storage confirms it before the chef takes the goods. Change a quantity if the real one differs (0 = not given).')}
       </div>
+      {pending && pending.length > 0 && (
+        <div className="rounded-2xl overflow-hidden bg-white" style={{ border: `1.5px solid ${LATE}` }}>
+          <div className="px-4 py-2.5 flex items-center gap-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>
+            <Clock size={15} /><b className="text-sm flex-1">{L(`Chờ xác nhận · ${pending.length} phiếu`, `To confirm · ${pending.length} slip${pending.length > 1 ? 's' : ''}`)}</b>
+          </div>
+          {pending.map(w => {
+            const mins = Math.max(0, Math.round((Date.now() - new Date(w.createdAt).getTime()) / 60000));
+            const late = mins >= 10;
+            return (
+              <div key={w.id} className="px-4 py-3" style={{ borderTop: `1px solid ${HAIR}` }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <b className="text-[14px] tabular-nums">#{w.no}</b>
+                  <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
+                  <span className="text-[11px] font-extrabold rounded-md px-2 py-0.5" style={late ? { backgroundColor: LATE, color: '#fff' } : { backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
+                    {L(`chờ ${mins} phút`, `waiting ${mins} min`)}</span>
+                </div>
+                <div className="mt-1.5">
+                  {w.lines.map(l => (
+                    <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
+                        {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                        {l.offRecipe && <div className="text-[11px] font-bold" style={{ color: '#8A5A00' }}>⚠ {L('Ngoài công thức', 'Off recipe')}{l.usedFor ? ` · ${L('cho', 'for')}: ${l.usedFor}` : ''}</div>}
+                      </div>
+                      <input inputMode="decimal" value={pv[l.id] ?? fmtQty(l.qty)} onChange={e => setPv(v => ({ ...v, [l.id]: e.target.value }))}
+                        className="w-20 rounded-md px-2 py-1.5 text-right text-[14px] font-extrabold tabular-nums" style={{ border: `1px solid ${pv[l.id] != null && pv[l.id] !== fmtQty(l.qty) ? LATE : GOLD}` }} />
+                      <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button disabled={confirming === w.id} onClick={() => confirmSlip(w)} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: NAVY }}>
+                    {confirming === w.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />} {L('Xác nhận', 'Confirm')}</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         {([[todayVN(), L('Hôm nay', 'Today')], [addDays(todayVN(), -1), L('Hôm qua', 'Yesterday')]] as const).map(([d, lab]) => (
           <button key={d} onClick={() => setDate(d)} className="rounded-full px-3 py-1.5 text-[12.5px] font-extrabold"
@@ -391,9 +583,11 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <b className="text-[13px] tabular-nums">#{w.no}</b>
                 <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
-                {w.lines.some(l => l.correctedQty != null)
-                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
-                  : <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}
+                {w.status === 'to_confirm'
+                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ xác nhận', 'To confirm')}</span>
+                  : w.lines.some(l => l.correctedQty != null)
+                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}{w.confirmedBy ? ` · ${w.confirmedBy}` : ''}</span>
+                  : <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã xác nhận', 'Confirmed')}{w.confirmedBy ? ` · ${w.confirmedBy}` : ''}</span>}
               </div>
               {edit === w.id ? (
                 <div className="mt-2 space-y-1.5">
@@ -427,7 +621,7 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>
+                  {w.status !== 'to_confirm' && <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>}
                 </>
               )}
             </div>

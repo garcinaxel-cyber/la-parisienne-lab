@@ -5,6 +5,7 @@
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecute } from '@/lib/odoo';
+import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
 async function guard() {
   const a = await rawActor();
@@ -18,7 +19,7 @@ const ids = (v: unknown) => (Array.isArray(v) ? v : []).map(String).filter(Boole
 export type DraftPo = { id: number; name: string; vendorId: number | null; vendorName: string | null; state: string; amountTotal: number };
 export type Board = {
   lines: PurchaseLine[]; vendors: { id: number; name: string }[];
-  catalogue: { tmplId: number; name: string; sku: string | null; uom: string; vendorIds: number[] }[];
+  catalogue: { tmplId: number; name: string; nameVi: string | null; visible: boolean; sku: string | null; uom: string; vendorIds: number[] }[];
   drafts: DraftPo[];
 };
 
@@ -62,13 +63,13 @@ export async function getPurchasingBoardAction(): Promise<{ data?: Board; error?
   try {
     const drafts = await refreshDraftPos(g.db);
     const lines = await loadLines(g.db, q => q.eq('status', 'pending').order('created_at', { ascending: true }));
-    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, sku, uom, vendors').eq('active', true).order('name').limit(3000);
+    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, name_vi, sku, uom, vendors, visible').eq('active', true).order('name').limit(3000);
     const vend = new Map<number, string>();
     for (const m of mats ?? []) for (const v of (m.vendors as any[]) ?? []) if (v?.id && !vend.has(v.id)) vend.set(v.id, v.name);
     return { data: {
       lines,
       vendors: Array.from(vend.entries()).map(([id, name]) => ({ id, name })).sort((x, y) => x.name.localeCompare(y.name)),
-      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, sku: m.sku, uom: m.uom, vendorIds: ((m.vendors as any[]) ?? []).map(v => Number(v?.id)).filter(Boolean) })),
+      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, nameVi: (m as any).name_vi ?? null, visible: !!(m as any).visible, sku: m.sku, uom: m.uom, vendorIds: ((m.vendors as any[]) ?? []).map(v => Number(v?.id)).filter(Boolean) })),
       drafts,
     } };
   } catch (e: any) { return { error: e.message }; }
@@ -155,6 +156,74 @@ export async function correctWithdrawalLineAction(lineId: string, qty: number | 
     ? { corrected_qty: null, corrected_by_name: null, corrected_at: null }
     : { corrected_qty: v, corrected_by_name: g.a.name || null, corrected_at: new Date().toISOString() }).eq('id', lineId);
   return error ? { error: error.message } : { ok: true };
+}
+
+// Slips waiting for storage to confirm, any day (Axel, 2026-10-09: "hien confirm d'abord").
+export async function getPendingWithdrawalsAction(): Promise<{ items?: Withdrawal[]; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  try {
+    return { items: await loadWithdrawals(g.db, q => q.eq('status', 'to_confirm').order('created_at', { ascending: true })) };
+  } catch (e: any) { return { error: e.message }; }
+}
+
+// Storage confirms a slip, with the real quantities given out (null = as asked). The chef's team
+// is pushed so they know they can take the goods.
+export async function confirmWithdrawalAction(withdrawalId: string, qtys: { lineId: string; qty: number | null }[]): Promise<{ ok?: boolean; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status').eq('id', withdrawalId).maybeSingle();
+  if (!w) return { error: 'Not found' };
+  if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  const { data: lines } = await g.db.from('lab_raw_withdrawal_lines').select('id, qty').eq('withdrawal_id', w.id);
+  const byId = new Map((lines ?? []).map(l => [l.id as string, Number(l.qty)]));
+  const now = new Date().toISOString();
+  let changed = 0;
+  for (const x of (qtys ?? []).slice(0, 200)) {
+    if (!byId.has(x.lineId)) continue;
+    const v = x.qty == null || isNaN(Number(x.qty)) ? null : Math.max(0, Math.round(Number(x.qty) * 1000) / 1000);
+    const differs = v != null && Math.abs(v - byId.get(x.lineId)!) > 1e-9;
+    const { error } = await g.db.from('lab_raw_withdrawal_lines').update(differs
+      ? { corrected_qty: v, corrected_by_name: g.a.name || null, corrected_at: now }
+      : { corrected_qty: null, corrected_by_name: null, corrected_at: null }).eq('id', x.lineId);
+    if (error) return { error: error.message };
+    if (differs) changed++;
+  }
+  const { data: upd, error } = await g.db.from('lab_raw_withdrawals')
+    .update({ status: 'confirmed', confirmed_at: now, confirmed_by_name: g.a.name || null })
+    .eq('id', w.id).eq('status', 'to_confirm').select('id');
+  if (error) return { error: error.message };
+  if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  const extra = changed ? ` · ${changed} dòng đã sửa số lượng` : '';
+  const extraEn = changed ? ` · ${changed} line(s) corrected` : '';
+  await awaitPush(sendTeamPush(g.db, w.team,
+    { title: 'La Parisienne Lab', body: `✅ Kho đã xác nhận phiếu #${w.no}${extra} — có thể lấy hàng`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
+    { title: 'La Parisienne Lab', body: `✅ Storage confirmed slip #${w.no} (${w.team})${extraEn}`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
+  return { ok: true };
+}
+
+// Storage's own needs (Axel, 2026-10-09: Hien adds requests straight from the purchasing screen).
+// Team 'kho', no approval: the lines land in the queue directly.
+export async function addStorageRequestAction(lines: { tmplId: number; qty: number; note?: string | null }[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const clean = (lines ?? []).filter(l => l.tmplId && Number(l.qty) > 0).slice(0, 80);
+  if (!clean.length) return { error: 'Empty' };
+  const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId));
+  const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
+  if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  const { data: r, error } = await g.db.from('lab_purchase_requests')
+    .insert({ team: 'kho', requested_by: g.a.name || null, created_by: g.a.userId }).select('id, no').single();
+  if (error || !r) return { error: error?.message ?? 'Insert failed' };
+  const rows = clean.map(l => {
+    const m: any = byId.get(l.tmplId);
+    const note = String(l.note ?? '').trim().slice(0, 300) || null;
+    return { request_id: r.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: Math.round(Number(l.qty) * 1000) / 1000,
+      note, vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status: 'pending' };
+  });
+  const { error: lErr } = await g.db.from('lab_purchase_request_lines').insert(rows);
+  if (lErr) { await g.db.from('lab_purchase_requests').delete().eq('id', r.id); return { error: lErr.message }; }
+  return { ok: true, no: Number(r.no) };
 }
 
 // History: every line created in the given lab-local month ('YYYY-MM'), all statuses.

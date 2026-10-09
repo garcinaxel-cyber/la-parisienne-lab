@@ -11,7 +11,7 @@ import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
-  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, type TeamRequestsMeta,
+  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, type TeamRequestsMeta,
 } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -73,6 +73,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const loadToday = useCallback(() => getTeamWithdrawalsTodayAction(team).then(r => setToday(r.items ?? [])), [team]);
   const loadMine = useCallback(() => getTeamRequestsAction(team, days).then(r => { setMine(r.items ?? []); if (r.meta) setMeta(r.meta); }), [team, days]);
   useEffect(() => { loadToday(); }, [loadToday]);
+  // While a slip waits for storage, refresh today's slips so the chef sees the confirmation arrive.
+  const waiting = today.some(w => w.status === 'to_confirm');
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadToday(); }, 15000);
+    return () => clearInterval(t);
+  }, [waiting, loadToday]);
+  const [reminded, setReminded] = useState<Record<string, number>>({});
+  async function remind(w: Withdrawal) {
+    setReminded(r => ({ ...r, [w.id]: Date.now() }));
+    const r = await remindStorageAction(team, w.id);
+    setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: L('Đã nhắc kho.', 'Storage reminded.') });
+  }
   const loadHist = useCallback(() => {
     if (period === 'today') return;
     setHist(null);
@@ -108,7 +121,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
     setUsedFor({});
     setQty({}); setUnit({}); setSheet(null); setView('history');
-    setMsg({ ok: true, text: L(`Đã ghi phiếu #${res.no}.`, `Slip #${res.no} recorded.`) });
+    setPeriod('today');
+    setMsg({ ok: true, text: L(`Đã gửi phiếu #${res.no}. Chờ kho xác nhận rồi mới lấy hàng.`, `Slip #${res.no} sent. Wait for storage to confirm before taking the goods.`) });
     loadToday();
   }
   async function sendRequest() {
@@ -341,9 +355,21 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                   <div className="flex items-center gap-2 pb-1.5">
                     <b className="text-[14px] tabular-nums">#{w.no}</b>
                     <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
-                    {corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
-                      : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}
+                    {w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ kho xác nhận', 'Waiting for storage')}</span>
+                      : corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
+                      : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>✓ {L('Kho đã xác nhận', 'Confirmed')}</span>}
                   </div>
+                  {w.status === 'to_confirm' && (() => {
+                    const mins = Math.max(0, Math.round((Date.now() - new Date(w.createdAt).getTime()) / 60000));
+                    const recent = reminded[w.id] && Date.now() - reminded[w.id] < 3 * 60 * 1000;
+                    return (
+                      <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 mb-1.5 text-[12px]" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
+                        <span className="flex-1">{L(`Chưa lấy hàng: chờ kho xác nhận (${mins} phút).`, `Do not take yet: waiting for storage (${mins} min).`)}</span>
+                        {mins >= 2 && <button disabled={!!recent} onClick={() => remind(w)} className="flex-none rounded-md px-2.5 py-1 text-[12px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#8A5A00', color: '#fff' }}>
+                          {recent ? L('Đã nhắc', 'Reminded') : L('Nhắc kho', 'Remind storage')}</button>}
+                      </div>
+                    );
+                  })()}
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-baseline gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
                       <div className="flex-1 min-w-0">
@@ -437,7 +463,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => setSheet(null)}>
           <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             {sheet === 'take' && (<>
-              <div className="text-[15px] font-extrabold">{L('Xác nhận phiếu lấy', 'Confirm withdrawal')}</div>
+              <div className="text-[15px] font-extrabold">{L('Gửi phiếu lấy kho', 'Send withdrawal slip')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('hôm nay', 'today')}</div>
               {picked.map(({ m, n }) => { const u = unit[m.tmplId] ?? -1; const off = isOffRecipe(m); return (
                 <div key={m.tmplId} className="py-2 text-[13px]" style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -452,8 +478,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     </div>
                   )}
                 </div>); })}
-              <div className="rounded-xl px-3 py-2 text-xs mt-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}>{L('Phiếu được ghi ngay. Kho chỉ sửa nếu số lượng thực tế khác.', 'Recorded at once. Storage only corrects it if the real quantity differs.')}</div>
-              <button disabled={busy} onClick={confirmTake} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Xác nhận', 'Confirm')}</button>
+              <div className="rounded-xl px-3 py-2 text-xs mt-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}>{L('Kho sẽ xác nhận phiếu (có thể sửa số lượng). Chờ kho xác nhận rồi mới lấy hàng.', 'Storage confirms the slip (and may change a quantity). Wait for the confirmation before taking the goods.')}</div>
+              <button disabled={busy} onClick={confirmTake} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Gửi cho kho', 'Send to storage')}</button>
               <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Sửa lại', 'Go back')}</button>
             </>)}
             {sheet === 'cart' && (<>
