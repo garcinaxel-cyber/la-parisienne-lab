@@ -55,6 +55,9 @@ const PROMO_GROUPS: PromoGroup[] = [
   // Axel, 2026-10-08: "cho chạy mua 2 tặng 1 bánh lưỡi mèo luôn nhé" — all flavours mixed, like the cashews.
   { id: 'langue-de-chat', buy: 2, shortVi: 'bánh lưỡi mèo', shortEn: 'langue de chat', vi: 'Bánh quy lưỡi mèo mua 2 tặng 1', en: 'Langue de chat biscuits: buy 2, get 1 free',
     match: p => /lưỡi mèo/i.test(p.name) || /^BQLM/i.test(p.sku) },
+  // Axel, 2026-10-09: "buy 2 get 1 for fingercake/yoko/chocolove" — one group, the three families mixed.
+  { id: 'finger-yoko-chocolove', buy: 2, shortVi: 'finger / Yoko / Chocolove', shortEn: 'finger / Yoko / Chocolove', vi: 'Bánh finger + Yoko + Chocolove mua 2 tặng 1', en: 'Finger cakes + Yoko + Chocolove: buy 2, get 1 free',
+    match: p => /finger/i.test(p.name) || /yoko/i.test(p.name) || /chocolove/i.test(p.name) || ['BBCFC', 'BBMCF', 'BMATCHAF', 'BSF', 'BYK', 'BCCL'].includes(p.sku) },
 ];
 const DEFAULT_DISCOUNT = 10;
 
