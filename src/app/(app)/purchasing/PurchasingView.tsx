@@ -26,22 +26,40 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
   const { lang } = useI18n();
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
   const [tab, setTab] = useState<Tab>(initialTab);
-  const tabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['storage', L('Kho hôm nay', 'Storage today')], ['history', L('Lịch sử', 'History')], ['catalogue', L('Danh mục', 'Catalogue')]];
+  // Axel, 2026-10-09: "le stock picking et purchase est un peu trop mélangé" — three clearly separate
+  // spaces: Purchasing (requests + purchase history), Stock picking (the chefs' storage slips, any
+  // day), Catalogue. Same tab ids as before, so ?tab= links keep working.
+  type Section = 'purchase' | 'picking' | 'catalogue';
+  const section: Section = tab === 'storage' ? 'picking' : tab === 'catalogue' ? 'catalogue' : 'purchase';
+  const sections: [Section, string, Tab][] = [
+    ['purchase', L('Mua hàng', 'Purchasing'), 'requests'],
+    ['picking', L('Lấy kho', 'Stock picking'), 'storage'],
+    ['catalogue', L('Danh mục', 'Catalogue'), 'catalogue'],
+  ];
+  const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')]];
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2"><Truck size={24} className="text-gold" /> {L('Mua hàng', 'Purchasing')}</h1>
-          <p className="text-ink-light text-sm mt-0.5">{L('Yêu cầu mua và phiếu lấy kho nguyên liệu của các chef. Giai đoạn thử: không ghi gì vào Odoo.', 'Chefs\' raw material purchase requests and storage withdrawals. Test phase: nothing is written to Odoo.')}</p>
+          <p className="text-ink-light text-sm mt-0.5">{L('Mua hàng: yêu cầu mua của các chef. Lấy kho: phiếu lấy nguyên liệu từ kho. Giai đoạn thử: không ghi gì vào Odoo.', 'Purchasing: the chefs\' purchase requests. Stock picking: what they take from storage. Test phase: nothing is written to Odoo.')}</p>
         </div>
         <Link href="/oem-orders" className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2 bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Factory size={15} /> {L('Đơn hàng OEM', 'OEM orders')}</Link>
       </div>
       <div className="flex gap-1 overflow-x-auto rounded-xl p-1 bg-white" style={{ border: `1px solid ${BORDER}` }}>
-        {tabs.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)} className="flex-1 min-w-[110px] rounded-lg py-2 text-[13px] font-extrabold whitespace-nowrap"
-            style={{ backgroundColor: tab === k ? NAVY : 'transparent', color: tab === k ? '#fff' : '#6B7280' }}>{label}</button>
+        {sections.map(([k, label, first]) => (
+          <button key={k} onClick={() => setTab(section === k ? tab : first)} className="flex-1 min-w-[110px] rounded-lg py-2 text-[13px] font-extrabold whitespace-nowrap"
+            style={{ backgroundColor: section === k ? NAVY : 'transparent', color: section === k ? '#fff' : '#6B7280' }}>{label}</button>
         ))}
       </div>
+      {section === 'purchase' && (
+        <div className="flex gap-1.5">
+          {purchaseTabs.map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)} className="rounded-full px-3.5 py-1.5 text-[12.5px] font-extrabold"
+              style={tab === k ? { backgroundColor: PALE, border: `1.5px solid ${GOLD}`, color: GOLD_TEXT } : { backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: '#6B7280' }}>{label}</button>
+          ))}
+        </div>
+      )}
       {tab === 'requests' && <RequestsTab L={L} lang={lang as any} />}
       {tab === 'storage' && <StorageTab L={L} lang={lang as any} />}
       {tab === 'history' && <HistoryTab L={L} lang={lang as any} />}
@@ -184,7 +202,7 @@ function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: 
   );
 }
 
-/* ===================== Storage today ===================== */
+/* ===================== Stock picking ===================== */
 function todayVN(): string { return vnDayTime(new Date().toISOString()).ymd; }
 function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [date, setDate] = useState(todayVN());
@@ -192,6 +210,11 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [edit, setEdit] = useState<string | null>(null);
   const [val, setVal] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
+  const [byItem, setByItem] = useState(false);
+  // Names in the screen's language (slips keep the Odoo name of the day): same catalogue as the chefs.
+  const [viName, setViName] = useState<Map<number, string>>(new Map());
+  useEffect(() => { getCatalogueAction().then(r => setViName(new Map((r.items ?? []).filter(m => m.nameVi).map(m => [m.tmplId, m.nameVi as string])))); }, []);
+  const nm = (l: { tmplId: number | null; name: string }) => (lang === 'vi' && l.tmplId != null && viName.get(l.tmplId)) || l.name;
   const load = useCallback(async () => { const r = await getWithdrawalsDayAction(date); if (r.error) setErr(r.error); else { setErr(null); setItems(r.items!); } }, [date]);
   useEffect(() => { setItems(null); load(); }, [load]);
   const lines = (items ?? []).reduce((s, w) => s + w.lines.length, 0);
@@ -212,9 +235,14 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         {L('Phiếu được ghi ngay khi chef xác nhận. Không cần duyệt. Chỉ sửa nếu số lượng thực tế khác.', 'Slips are recorded when the chef confirms. Nothing to approve. Only correct a quantity if the real one differs.')}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
+        {([[todayVN(), L('Hôm nay', 'Today')], [addDays(todayVN(), -1), L('Hôm qua', 'Yesterday')]] as const).map(([d, lab]) => (
+          <button key={d} onClick={() => setDate(d)} className="rounded-full px-3 py-1.5 text-[12.5px] font-extrabold"
+            style={date === d ? { backgroundColor: NAVY, color: '#fff' } : { backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: '#6B7280' }}>{lab}</button>
+        ))}
         <input type="date" value={date} onChange={e => setDate(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-sm bg-white" style={{ border: `1px solid ${BORDER}` }} />
-        {date !== todayVN() && <button onClick={() => setDate(todayVN())} className="text-xs font-bold" style={{ color: GOLD_TEXT }}>{L('Hôm nay', 'Today')}</button>}
         <button onClick={load} className="p-1.5 rounded-md" style={{ color: '#6B7280' }}><RefreshCw size={14} /></button>
+        {!!items?.length && <button onClick={() => setByItem(v => !v)} className="ml-auto text-[12px] font-extrabold rounded-lg px-2.5 py-1.5"
+          style={byItem ? { backgroundColor: NAVY, color: '#fff' } : { border: `1px solid ${BORDER}`, color: GOLD_TEXT, backgroundColor: '#fff' }}>{L('Tổng theo nguyên liệu', 'Total per ingredient')}</button>}
       </div>
       <div className="grid grid-cols-3 gap-2">
         <Kpi label={L('Phiếu', 'Slips')} value={String(items?.length ?? 0)} />
@@ -224,6 +252,26 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
       {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{err}</div>}
       {!items ? <div className="text-sm text-center py-6" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
         : !items.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có phiếu lấy nào trong ngày.', 'No withdrawal that day.')}</div>
+        : byItem ? (() => {
+          const t = new Map<string, { name: string; uom: string; qty: number; teams: Set<string> }>();
+          for (const w of items) for (const l of w.lines) {
+            const k = `${l.tmplId ?? l.name}|${l.uom}`;
+            const e = t.get(k) ?? { name: nm(l), uom: l.uom, qty: 0, teams: new Set<string>() };
+            e.qty += l.correctedQty ?? l.qty; e.teams.add(w.team); t.set(k, e);
+          }
+          const rows = Array.from(t.values()).sort((a, b) => a.name.localeCompare(b.name, lang === 'vi' ? 'vi' : 'en'));
+          return (
+            <div className="bg-white rounded-2xl px-4" style={{ border: `1px solid ${BORDER}` }}>
+              {rows.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${HAIR}` : 'none' }}>
+                  <span className="flex-1 text-[13.5px] font-bold">{r.name}</span>
+                  <span className="flex gap-1">{Array.from(r.teams).map(tm => <TeamBadge key={tm} team={tm} lang={lang} />)}</span>
+                  <span className="text-[15px] font-extrabold tabular-nums whitespace-nowrap">{fmtQty(r.qty)} <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{r.uom}</span></span>
+                </div>
+              ))}
+            </div>
+          );
+        })()
         : <div className="bg-white rounded-2xl px-4" style={{ border: `1px solid ${BORDER}` }}>
           {items.map(w => (
             <div key={w.id} className="py-3" style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -238,7 +286,7 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                 <div className="mt-2 space-y-1.5">
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-center gap-2 text-[12.5px]">
-                      <span className="flex-1">{l.name}</span>
+                      <span className="flex-1">{nm(l)}</span>
                       <input inputMode="decimal" defaultValue={fmtQty(l.correctedQty ?? l.qty)} onChange={e => setVal(v => ({ ...v, [l.id]: e.target.value }))}
                         className="w-20 rounded-md px-2 py-1 text-right font-bold" style={{ border: `1px solid ${GOLD}` }} />
                       <span className="w-6 text-xs" style={{ color: '#6B7280' }}>{l.uom}</span>
@@ -251,11 +299,18 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                 </div>
               ) : (
                 <>
-                  <div className="text-[12px] mt-1 leading-relaxed">
-                    {w.lines.map((l, i) => (
-                      <span key={l.id}>{i > 0 && ' · '}{l.name} <b>{fmtQty(l.correctedQty ?? l.qty)} {l.uom}</b>
-                        {l.correctedQty != null && <span className="line-through ml-1" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)}</span>}
-                        {l.packLabel && l.packCount ? <span style={{ color: '#9CA3AF' }}> ({fmtQty(l.packCount)} × {l.packLabel})</span> : null}</span>
+                  <div className="mt-1.5">
+                    {w.lines.map(l => (
+                      <div key={l.id} className="flex items-baseline gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
+                          {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                        </div>
+                        <div className="text-right whitespace-nowrap">
+                          <span className="text-[14px] font-extrabold tabular-nums">{fmtQty(l.correctedQty ?? l.qty)}</span> <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                          {l.correctedQty != null && <div className="text-[11px] line-through tabular-nums" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)} {l.uom}</div>}
+                        </div>
+                      </div>
                     ))}
                   </div>
                   <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>
