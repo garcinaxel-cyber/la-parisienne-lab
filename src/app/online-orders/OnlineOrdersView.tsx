@@ -34,6 +34,10 @@ async function compressImage(file: File, maxSide = 1200, quality = 0.72): Promis
 }
 
 type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
+// Same rounding as the server's netUnitPrice (online-orders/actions.ts).
+function netPrice(gross: number, pct: number): number {
+  return pct > 0 ? Math.round(gross * (100 - Math.min(100, pct)) / 100) : gross;
+}
 type Tab = 'order' | 'track' | 'stats' | 'customers';
 
 export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }: { fullName: string; isAdmin: boolean; readOnly?: boolean }) {
@@ -123,6 +127,12 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
   const [deliveryFee, setDeliveryFee] = useState('0');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'unpaid' | 'partial'>('unpaid');
   const [amountPaid, setAmountPaid] = useState('0');
+  // Discounts (Axel, 2026-10-09) — per line % lives on each CartLine (discountPct); the order
+  // discount (% or ₫) and its mandatory reason live here. Same rounding as the server's
+  // netUnitPrice / orderDiscountAmount so the total she sees is the total that gets saved.
+  const [orderDiscKind, setOrderDiscKind] = useState<'pct' | 'amount'>('pct');
+  const [orderDiscValue, setOrderDiscValue] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<OnlineProduct[]>([]);
@@ -170,13 +180,25 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     if (res.url) updateLine(key, { designPhotoUrl: res.url });
   }
 
-  const cartTotal = useMemo(() => cart.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0), [cart]);
+  const cartGross = useMemo(() => cart.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0), [cart]);
+  const cartTotal = useMemo(() => cart.reduce((s, l) => s + l.qty * netPrice(Number(l.unitPrice) || 0, Number(l.discountPct) || 0), 0), [cart]);
+  const lineDiscountTotal = cartGross - cartTotal;
+  const orderDiscountAmt = useMemo(() => {
+    const v = Number(orderDiscValue);
+    if (!Number.isFinite(v) || v <= 0 || cartTotal <= 0) return 0;
+    const amt = orderDiscKind === 'pct' ? Math.round(cartTotal * Math.min(100, v) / 100) : Math.round(v);
+    return Math.max(0, Math.min(cartTotal, amt));
+  }, [orderDiscKind, orderDiscValue, cartTotal]);
+  const hasDiscount = lineDiscountTotal > 0 || orderDiscountAmt > 0;
   const feesTotal = useMemo(() => feeCart.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0), [feeCart]);
-  const grandTotal = cartTotal + feesTotal + (Number(deliveryFee) || 0);
+  const grandTotal = cartTotal - orderDiscountAmt + feesTotal + (Number(deliveryFee) || 0);
 
   async function handleSubmit() {
     if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: tr('errChannel') }); return; }
     if (!cart.length) { setSubmitMsg({ kind: 'error', text: tr('errEmpty') }); return; }
+    if (hasDiscount && !discountReason.trim()) { setSubmitMsg({ kind: 'error', text: tr('errDiscountReason') }); return; }
+    const orderDiscount = orderDiscountAmt > 0 ? { kind: orderDiscKind, value: Number(orderDiscValue) } : null;
+    const discountFields = { orderDiscount, discountReason: hasDiscount ? discountReason.trim() : null };
     setSubmitting(true); setSubmitMsg(null);
     if (source === 'shop_stock') {
       const res = await actions.submitShopStockSaleAction({
@@ -184,8 +206,9 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
         customerName: customerName || null, customerPhone: customerPhone || null,
         deliveryAddress: deliveryAddress || null, district: district || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
-        items: cart.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, lineNote: l.lineNote ?? null })),
+        items: cart.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, qty: l.qty, unitPrice: l.unitPrice, lineNote: l.lineNote ?? null, discountPct: Number(l.discountPct) || null })),
         fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
+        ...discountFields,
       });
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
@@ -197,8 +220,9 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
         deliveryAddress: deliveryAddress || null, district: district || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
         deliveryMode,
-        items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => rest),
+        items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => ({ ...rest, discountPct: Number(rest.discountPct) || null })),
         fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
+        ...discountFields,
       });
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
@@ -207,6 +231,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     }
     setCart([]); setFeeCart([]); setChannel(''); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setDistrict(''); setNotes(''); setDeliveryMode('shop');
     setDeliveryFee('0'); setPaymentStatus('unpaid'); setAmountPaid('0');
+    setOrderDiscKind('pct'); setOrderDiscValue(''); setDiscountReason('');
   }
 
   return (
@@ -239,6 +264,9 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
               newFeePrice={newFeePrice} setNewFeePrice={setNewFeePrice} addFeeType={addFeeType}
               updateFeeTypePrice={updateFeeTypePrice} updateFeeTypeLabel={updateFeeTypeLabel} deleteFeeType={deleteFeeType}
               cartTotal={cartTotal} feesTotal={feesTotal} grandTotal={grandTotal}
+              cartGross={cartGross} lineDiscountTotal={lineDiscountTotal} orderDiscountAmt={orderDiscountAmt} hasDiscount={hasDiscount}
+              orderDiscKind={orderDiscKind} setOrderDiscKind={setOrderDiscKind} orderDiscValue={orderDiscValue} setOrderDiscValue={setOrderDiscValue}
+              discountReason={discountReason} setDiscountReason={setDiscountReason}
               submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
             />
           )}
@@ -351,6 +379,8 @@ function OrderTab(props: any) {
     newFeeEmoji, setNewFeeEmoji, newFeeLabel, setNewFeeLabel, newFeePrice, setNewFeePrice, addFeeType,
     updateFeeTypePrice, updateFeeTypeLabel, deleteFeeType,
     cartTotal, feesTotal, grandTotal, submitting, submitMsg, onSubmit,
+    cartGross, lineDiscountTotal, orderDiscountAmt, hasDiscount,
+    orderDiscKind, setOrderDiscKind, orderDiscValue, setOrderDiscValue, discountReason, setDiscountReason,
   } = props;
   const { tr } = useL();
 
@@ -478,8 +508,17 @@ function OrderTab(props: any) {
                     style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: CREAM }} className="flex items-center justify-center"><Plus size={12} color={NAVY} /></button>
                 </div>
                 <input type="number" min={0} value={l.unitPrice} onChange={e => updateLine(l.key, { unitPrice: Number(e.target.value) })}
-                  placeholder={tr('unitPrice')} className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
-                <div style={{ fontSize: 13.5, fontWeight: 700, minWidth: 64, textAlign: 'right' }}>{fmtCompactVnd(l.qty * (Number(l.unitPrice) || 0))}</div>
+                  placeholder={tr('unitPrice')} className="flex-1 min-w-0 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+                <label className="flex items-center gap-1 shrink-0" style={{ fontSize: 11, color: INK_LIGHT }}>
+                  {tr('discPct')}
+                  <input type="number" min={0} max={100} inputMode="decimal" value={l.discountPct ?? ''} aria-label={tr('discPct')}
+                    onChange={e => { const v = e.target.value === '' ? null : Math.max(0, Math.min(100, Number(e.target.value))); updateLine(l.key, { discountPct: v }); }}
+                    placeholder="0" className="w-12 px-1.5 py-1.5 rounded text-sm text-right" style={{ border: `1px solid ${Number(l.discountPct) > 0 ? '#B45309' : BORDER}` }} />
+                </label>
+                <div style={{ minWidth: 64, textAlign: 'right' }}>
+                  {Number(l.discountPct) > 0 && <div style={{ fontSize: 11, color: INK_LIGHT, textDecoration: 'line-through' }}>{fmtCompactVnd(l.qty * (Number(l.unitPrice) || 0))}</div>}
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: Number(l.discountPct) > 0 ? '#B45309' : undefined }}>{fmtCompactVnd(l.qty * netPrice(Number(l.unitPrice) || 0, Number(l.discountPct) || 0))}</div>
+                </div>
               </div>
               <input value={l.lineNote ?? ''} onChange={e => updateLine(l.key, { lineNote: e.target.value })}
                 placeholder={tr('lineNote')} maxLength={300}
@@ -615,6 +654,39 @@ function OrderTab(props: any) {
 
       <SectionLabel>{tr('payment')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+        <div className="flex justify-between items-center mb-2">
+          <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('subtotal')}</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtVnd(cartGross)}</span>
+        </div>
+        {lineDiscountTotal > 0 && (
+          <div className="flex justify-between items-center mb-2">
+            <span style={{ fontSize: 13, color: '#B45309' }}>{tr('lineDiscRow')}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#B45309' }}>−{fmtVnd(lineDiscountTotal)}</span>
+          </div>
+        )}
+        <div className="flex justify-between items-center gap-2 mb-2">
+          <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('orderDisc')}</span>
+          <div className="flex items-center gap-1.5">
+            <div className="flex rounded-md overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+              {(['pct', 'amount'] as const).map(k => (
+                <button key={k} type="button" onClick={() => setOrderDiscKind(k)} aria-pressed={orderDiscKind === k}
+                  style={{ fontSize: 12, fontWeight: 700, padding: '5px 9px', backgroundColor: orderDiscKind === k ? NAVY : '#fff', color: orderDiscKind === k ? '#fff' : INK_LIGHT }}>
+                  {k === 'pct' ? '%' : '₫'}
+                </button>
+              ))}
+            </div>
+            <input type="number" min={0} inputMode="decimal" value={orderDiscValue} onChange={(e: any) => setOrderDiscValue(e.target.value)}
+              placeholder="0" aria-label={tr('orderDisc')} className="w-24 px-2 py-1 rounded text-sm text-right" style={{ border: `1px solid ${orderDiscountAmt > 0 ? '#B45309' : BORDER}` }} />
+          </div>
+        </div>
+        {orderDiscountAmt > 0 && (
+          <div className="flex justify-end mb-2" style={{ fontSize: 13, fontWeight: 600, color: '#B45309' }}>−{fmtVnd(orderDiscountAmt)}</div>
+        )}
+        {hasDiscount && (
+          <input value={discountReason} onChange={(e: any) => setDiscountReason(e.target.value)} maxLength={120}
+            placeholder={tr('discReason')} aria-label={tr('discReason')}
+            className="w-full px-2 py-1.5 rounded text-sm mb-2" style={{ border: `1px solid ${discountReason.trim() ? BORDER : '#B45309'}`, backgroundColor: discountReason.trim() ? '#fff' : '#FFFBEB' }} />
+        )}
         {feesTotal > 0 && (
           <div className="flex justify-between items-center mb-2">
             <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('feesRow')}</span>
@@ -1309,7 +1381,7 @@ function StatsTab() {
               <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtVnd(s.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(s.total, sumShop)}</span></span>
             </div>
             <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
-              <div style={{ width: `${(s.total / maxShop) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
+              <div style={{ width: `${Math.max(0, (s.total / maxShop) * 100)}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
             </div>
           </div>
         ))}
@@ -1328,7 +1400,7 @@ function StatsTab() {
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumCat)}</span></span>
               </div>
               <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
-                <div style={{ width: `${(c.total / maxCat) * 100}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
+                <div style={{ width: `${Math.max(0, (c.total / maxCat) * 100)}%`, height: '100%', backgroundColor: SHOP_HUES[i % SHOP_HUES.length], borderRadius: 5 }} />
               </div>
             </button>
             {open && (
@@ -1361,7 +1433,7 @@ function StatsTab() {
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}><b>{fmtCompactVnd(c.total)}</b> <span style={{ color: INK_LIGHT, fontSize: 11.5 }}>· {pct(c.total, sumChannel)}</span></span>
               </div>
               <div style={{ backgroundColor: CREAM, borderRadius: 5, height: 8, overflow: 'hidden' }}>
-                <div style={{ width: `${(c.total / maxChannel) * 100}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />
+                <div style={{ width: `${Math.max(0, (c.total / maxChannel) * 100)}%`, height: '100%', backgroundColor: GOLD, borderRadius: 5 }} />
               </div>
             </button>
             {open && (
