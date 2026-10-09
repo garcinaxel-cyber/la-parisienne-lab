@@ -41,7 +41,20 @@ const SALE_NAME_STORAGE_KEY = 'lab_shop_sale_name';
 // meringue cũng mua 2 tặng 1". Each group
 // is counted across all its products (flavours mix): every buy+1 units, one is free. The free units
 // go to the cheapest products of the group first. A line put on discount leaves its group.
-type PromoGroup = { id: string; buy: number; vi: string; en: string; shortVi: string; shortEn: string; match: (p: EventCaisseProduct) => boolean };
+// trigger (combo promos): each paid unit matching trigger gives one free unit among `match` (the cheapest first).
+type PromoGroup = { id: string; buy: number; vi: string; en: string; shortVi: string; shortEn: string; match: (p: EventCaisseProduct) => boolean; trigger?: (p: EventCaisseProduct) => boolean };
+const isTiraMini = (p: EventCaisseProduct) => /tiramisu mini/i.test(p.name) || /^BTM/i.test(p.sku);
+const isFingerYokoChocolove = (p: EventCaisseProduct) => /finger/i.test(p.name) || /yoko/i.test(p.name) || /chocolove/i.test(p.name) || ['BBCFC', 'BBMCF', 'BMATCHAF', 'BSF', 'BYK', 'BCCL'].includes(p.sku);
+const isMacaron = (p: EventCaisseProduct) => p.category === 'Macaron' || /^BMCR/i.test(p.sku);
+// Combo promos (Axel, 2026-10-09, Aeon Hải Phòng: "Buy 1 tiramini get 1 finger cake / chocolove / yoko /
+// macaron / tiramini"). Worked out before the groups below; the units it uses (paid trigger + free gift)
+// no longer count in those groups.
+const COMBO_PROMOS: PromoGroup[] = [
+  { id: 'tiramini-combo', buy: 1, shortVi: 'tiramisu mini', shortEn: 'mini tiramisu',
+    vi: 'Mua 1 tiramisu mini tặng 1 (finger / Chocolove / Yoko / macaron / tiramisu mini — tặng món rẻ nhất)',
+    en: 'Buy 1 mini tiramisu, get 1 free (finger / Chocolove / Yoko / macaron / mini tiramisu — cheapest one free)',
+    trigger: isTiraMini, match: p => isTiraMini(p) || isFingerYokoChocolove(p) || isMacaron(p) },
+];
 const PROMO_GROUPS: PromoGroup[] = [
   { id: 'macaron', buy: 5, shortVi: 'macaron', shortEn: 'macaron', vi: 'Macaron mua 5 tặng 1', en: 'Macarons: buy 5, get 1 free',
     match: p => p.category === 'Macaron' || /^BMCR/i.test(p.sku) },
@@ -57,8 +70,9 @@ const PROMO_GROUPS: PromoGroup[] = [
     match: p => /lưỡi mèo/i.test(p.name) || /^BQLM/i.test(p.sku) },
   // Axel, 2026-10-09: "buy 2 get 1 for fingercake/yoko/chocolove" — one group, the three families mixed.
   { id: 'finger-yoko-chocolove', buy: 2, shortVi: 'finger / Yoko / Chocolove', shortEn: 'finger / Yoko / Chocolove', vi: 'Bánh finger + Yoko + Chocolove mua 2 tặng 1', en: 'Finger cakes + Yoko + Chocolove: buy 2, get 1 free',
-    match: p => /finger/i.test(p.name) || /yoko/i.test(p.name) || /chocolove/i.test(p.name) || ['BBCFC', 'BBMCF', 'BMATCHAF', 'BSF', 'BYK', 'BCCL'].includes(p.sku) },
+    match: isFingerYokoChocolove },
 ];
+const ALL_PROMOS: PromoGroup[] = [...COMBO_PROMOS, ...PROMO_GROUPS];
 const DEFAULT_DISCOUNT = 10;
 
 export default function EventCaisseTab({ staffNames = null, onManageStaff }: { staffNames?: ShopStaffName[] | null; onManageStaff?: () => void }) {
@@ -108,6 +122,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
   };
   useEffect(() => { loadPromos(); const t = setInterval(loadPromos, 60000); return () => clearInterval(t); }, []);
   const activeGroups = useMemo(() => PROMO_GROUPS.filter(g => !promoOff.includes(g.id)), [promoOff]);
+  const activeCombos = useMemo(() => COMBO_PROMOS.filter(g => !promoOff.includes(g.id)), [promoOff]);
   async function togglePromo(g: PromoGroup) {
     const on = promoOff.includes(g.id);
     setPromoBusy(true);
@@ -157,21 +172,47 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
   const { freeBySku, promoHints } = useMemo(() => {
     const freeBySku: Record<string, number> = {};
     const promoHints: PromoGroup[] = [];
+    // Units still available for the promos (a discounted line takes part in none).
+    const rem: Record<string, number> = {};
+    for (const [sku, q] of Object.entries(cart)) if (discount[sku] == null && q > 0) rem[sku] = q;
+    for (const c of activeCombos) {
+      const elig = (products ?? []).filter(p => (rem[p.sku] ?? 0) > 0 && (c.trigger!(p) || c.match(p)));
+      const units: { sku: string; price: number; trig: boolean; rew: boolean }[] = [];
+      for (const p of elig) for (let i = 0; i < (rem[p.sku] ?? 0); i++) units.push({ sku: p.sku, price: p.unitPrice, trig: c.trigger!(p), rew: c.match(p) });
+      units.sort((a, b) => a.price - b.price || Number(a.trig) - Number(b.trig));
+      const T = units.filter(u => u.trig).length;
+      let freed = 0, freedTrig = 0;
+      const freeHere: Record<string, number> = {};
+      for (const u of units) {
+        if (!u.rew) continue;
+        if (u.trig ? T - freedTrig - 1 >= freed + 1 : T - freedTrig > freed) {
+          freeHere[u.sku] = (freeHere[u.sku] ?? 0) + 1; freed++; if (u.trig) freedTrig++;
+        }
+      }
+      for (const [sku, f] of Object.entries(freeHere)) { freeBySku[sku] = (freeBySku[sku] ?? 0) + f; rem[sku] -= f; }
+      // The paid trigger units that earned a gift are used up too (dearest first).
+      let used = freed;
+      for (const p of elig.filter(x => c.trigger!(x)).sort((a, b) => b.unitPrice - a.unitPrice)) {
+        const k = Math.min(used, rem[p.sku] ?? 0); rem[p.sku] -= k; used -= k; if (!used) break;
+      }
+      if (T - freedTrig > freed) promoHints.push(c);
+    }
     for (const g of activeGroups) {
-      const lines = (products ?? []).filter(p => groupOf.get(p.sku) === g && (cart[p.sku] ?? 0) > 0 && discount[p.sku] == null)
+      const lines = (products ?? []).filter(p => groupOf.get(p.sku) === g && (rem[p.sku] ?? 0) > 0)
         .sort((a, b) => a.unitPrice - b.unitPrice);
-      const units = lines.reduce((s, p) => s + (cart[p.sku] ?? 0), 0);
+      const units = lines.reduce((s, p) => s + (rem[p.sku] ?? 0), 0);
       let left = Math.floor(units / (g.buy + 1));
-      for (const p of lines) { const f = Math.min(left, cart[p.sku] ?? 0); if (f > 0) freeBySku[p.sku] = f; left -= f; }
+      for (const p of lines) { const f = Math.min(left, rem[p.sku] ?? 0); if (f > 0) freeBySku[p.sku] = (freeBySku[p.sku] ?? 0) + f; left -= f; }
       if (units > 0 && units % (g.buy + 1) === g.buy) promoHints.push(g);
     }
+    const inCombo = (sku: string) => { const p = (products ?? []).find(x => x.sku === sku); return !!p && activeCombos.some(c => c.trigger!(p) || c.match(p)); };
     for (const [sku, qty] of Object.entries(cart)) {
-      if (groupOf.has(sku) || discount[sku] != null) continue;
+      if (groupOf.has(sku) || inCombo(sku) || discount[sku] != null) continue;
       const f = Math.min(freeCart[sku] ?? 0, qty);
       if (f > 0) freeBySku[sku] = f;
     }
     return { freeBySku, promoHints };
-  }, [products, cart, freeCart, discount, groupOf, activeGroups]);
+  }, [products, cart, freeCart, discount, groupOf, activeGroups, activeCombos]);
   const paidUnit = (sku: string) => {
     const price = products?.find(x => x.sku === sku)?.unitPrice ?? 0;
     return Math.round(price * (100 - (discount[sku] ?? 0)) / 100);
@@ -235,9 +276,9 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
         {L('📦 Sản phẩm lấy từ các đơn hàng (REP) của event, kể cả khi chưa xác nhận nhận hàng. Vẫn bán được khi số tồn về 0 hoặc âm.', '📦 Products come from the event\'s orders (REP), even before they are confirmed as received. Selling stays possible at zero or below.')}
       </div>
 
-      {PROMO_GROUPS.some(g => products.some(p => g.match(p))) && (
+      {ALL_PROMOS.some(g => products.some(p => g.match(p))) && (
         <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold space-y-1" style={{ backgroundColor: '#FEF3C7', border: '1px solid #E5C77A', color: '#92600A' }}>
-          {PROMO_GROUPS.filter(g => products.some(p => g.match(p))).map(g => {
+          {ALL_PROMOS.filter(g => products.some(p => g.match(p))).map(g => {
             const on = !promoOff.includes(g.id);
             return (
               <div key={g.id}>
@@ -295,7 +336,9 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
         <div className="grid grid-cols-2 gap-2.5">
           {filteredProducts.map(p => {
             const qty = cart[p.sku] ?? 0;
+            const combo = activeCombos.find(c => c.trigger!(p) || c.match(p));
             const group = groupOf.get(p.sku);
+            const autoFree = !!group || !!combo;
             const disc = discount[p.sku];
             const free = freeBySku[p.sku] ?? 0;
             const remaining = p.available - qty;
@@ -315,9 +358,11 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                 <div className="text-xs font-extrabold mt-1" style={{ color: '#8A6D14' }}>
                   {disc != null ? <><span className="line-through font-semibold" style={{ color: '#9CA3AF' }}>{fmt(p.unitPrice)}</span> {fmt(paidUnit(p.sku))}</> : fmt(p.unitPrice)}
                 </div>
-                {group && (
-                  <div className="inline-flex items-center gap-1 text-[10px] font-bold mt-1 rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
-                    <Gift size={10} /> {L(`Mua ${group.buy} tặng 1`, `Buy ${group.buy} get 1`)}
+                {(combo || group) && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {combo && combo.trigger!(p) && <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}><Gift size={10} /> {L('Mua 1 tặng 1', 'Buy 1 get 1')}</span>}
+                    {combo && !combo.trigger!(p) && <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}><Gift size={10} /> {L('Quà tiramisu mini', 'Mini tiramisu gift')}</span>}
+                    {group && !(combo && combo.trigger!(p)) && <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}><Gift size={10} /> {L(`Mua ${group.buy} tặng 1`, `Buy ${group.buy} get 1`)}</span>}
                   </div>
                 )}
                 <div className="flex items-center justify-between mt-2 rounded-lg px-1.5 py-1" style={{ backgroundColor: GOLD_PALE }}>
@@ -332,7 +377,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                 {/* Promo (Axel, 2026-09-14): "buy X get 1 free" decided by staff at the till, no
                     rule config — this just marks how many of the units above are free. Products of a
                     fixed promo group (PROMO_GROUPS) get theirs worked out instead, read-only. */}
-                {qty > 0 && disc == null && group && (
+                {qty > 0 && disc == null && autoFree && (
                   <div className="flex items-center justify-between gap-1 mt-1.5 rounded-lg px-1.5 py-1.5" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
                     <span className="inline-flex items-center gap-1 text-[10.5px] font-bold" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
                       <Gift size={11} /> {L('Tặng tự động', 'Free (auto)')}
@@ -340,7 +385,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
                     <span className="text-xs font-extrabold tabular-nums" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>{free}</span>
                   </div>
                 )}
-                {qty > 0 && disc == null && !group && (
+                {qty > 0 && disc == null && !autoFree && (
                   <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mt-1.5 rounded-lg px-1.5 py-1" style={{ backgroundColor: free > 0 ? '#FEF3C7' : 'transparent' }}>
                     <span className="inline-flex items-center gap-1 text-[10.5px] font-bold whitespace-nowrap" style={{ color: free > 0 ? '#92600A' : '#9CA3AF' }}>
                       <Gift size={11} /> {L('Miễn phí', 'Free')}
