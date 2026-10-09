@@ -144,6 +144,8 @@ export type PurchaseLine = {
   status: PurchaseStatus; poRef: string | null; orderedAt: string | null; orderedBy: string | null;
   receivedAt: string | null; receivedBy: string | null; cancelledAt: string | null;
   approvedAt: string | null; approvedBy: string | null; requestedQty: number | null; rejectedByLead: boolean; rejectReason: string | null; cancelledBy: string | null;
+  /** Draft purchase order created in Odoo from the app (phase 2, 2026-10-09); the line stays 'pending' until it is confirmed. */
+  poOdooId: number | null;
 };
 
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;

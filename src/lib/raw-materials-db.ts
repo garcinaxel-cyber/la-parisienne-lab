@@ -68,10 +68,11 @@ export function mapLine(l: any, req: any): PurchaseLine {
     receivedAt: l.received_at ?? null, receivedBy: l.received_by_name ?? null, cancelledAt: l.cancelled_at ?? null,
     approvedAt: l.approved_at ?? null, approvedBy: l.approved_by_name ?? null, requestedQty: l.requested_qty == null ? null : Number(l.requested_qty),
     rejectedByLead: !!l.rejected_by_lead, rejectReason: l.reject_reason ?? null, cancelledBy: l.cancelled_by_name ?? null,
+    poOdooId: l.po_odoo_id == null ? null : Number(l.po_odoo_id),
   };
 }
 
-const LINE_COLS = 'id, request_id, tmpl_id, sku, name, uom, qty, brand, brand_strict, note, is_new, photo_url, new_state, vendor_id, vendor_name, status, po_ref, ordered_at, ordered_by_name, received_at, received_by_name, cancelled_at, cancelled_by_name, approved_at, approved_by_name, requested_qty, rejected_by_lead, reject_reason, created_at';
+const LINE_COLS = 'id, request_id, tmpl_id, sku, name, uom, qty, brand, brand_strict, note, is_new, photo_url, new_state, vendor_id, vendor_name, status, po_ref, ordered_at, ordered_by_name, received_at, received_by_name, cancelled_at, cancelled_by_name, approved_at, approved_by_name, requested_qty, rejected_by_lead, reject_reason, created_at, po_odoo_id';
 
 // Purchase lines with their request, filtered by a builder over lab_purchase_request_lines.
 export async function loadLines(db: NonNullable<ReturnType<typeof rawService>>, build: (q: any) => any): Promise<PurchaseLine[]> {

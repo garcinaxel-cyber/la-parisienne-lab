@@ -10,7 +10,7 @@ import {
 import {
   getPurchasingBoardAction, setVendorAction, markOrderedAction, cancelLinesAction, undoLineStepAction,
   linkNewProductAction, markNewToCreateAction, getWithdrawalsDayAction, correctWithdrawalLineAction, getHistoryAction,
-  getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, type Board,
+  getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, createDraftPoAction, type Board,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
 
@@ -76,6 +76,11 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [po, setPo] = useState<Record<string, string>>({});
+  // Phase 2 (Axel, 2026-10-09): tick any lines, whatever vendor, -> one draft PO in Odoo.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [poOpen, setPoOpen] = useState(false);
+  const [poVendor, setPoVendor] = useState<string>('');
+  const [okMsg, setOkMsg] = useState<string | null>(null);
   const load = useCallback(async () => {
     const r = await getPurchasingBoardAction();
     if (r.error) setErr(r.error); else { setErr(null); setBoard(r.data!); }
@@ -87,7 +92,28 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   }
   if (!board) return <div className="text-sm text-center py-10" style={{ color: '#6B7280' }}>{err ?? L('Đang tải…', 'Loading…')}</div>;
 
-  const pending = board.lines.filter(l => l.status === 'pending' && !(l.isNew && l.newState !== 'linked'));
+  const inPo = board.lines.filter(l => l.status === 'pending' && l.poOdooId);
+  const pending = board.lines.filter(l => l.status === 'pending' && !l.poOdooId && !(l.isNew && l.newState !== 'linked'));
+  const toggle = (idsArr: string[], on: boolean) => setSel(prev => { const n = new Set(prev); idsArr.forEach(i => on ? n.add(i) : n.delete(i)); return n; });
+  const selLines = pending.filter(l => sel.has(l.id));
+  const suggested = (() => {
+    const m = new Map<number, string>();
+    const vname = (id: number) => board.vendors.find(v => v.id === id)?.name ?? String(id);
+    for (const l of selLines) {
+      if (l.vendorId) m.set(l.vendorId, l.vendorName ?? vname(l.vendorId));
+      for (const id of board.catalogue.find(c => c.tmplId === l.tmplId)?.vendorIds ?? []) if (!m.has(id)) m.set(id, vname(id));
+    }
+    return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
+  })();
+  async function createPo() {
+    setBusy(true); setErr(null);
+    const r = await createDraftPoAction(selLines.map(l => l.id), Number(poVendor) || null);
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setPoOpen(false); setSel(new Set()); setPoVendor('');
+    setOkMsg(L(`✓ Đã tạo PO nháp ${r.poName} trên Odoo — kiểm tra giá rồi xác nhận trên Odoo.`, `✓ Draft PO ${r.poName} created in Odoo — check prices, then confirm it in Odoo.`));
+    await load();
+  }
   const news = board.lines.filter(l => l.status === 'pending' && l.isNew && l.newState !== 'linked');
   // Pending lines by vendor, then merged by product.
   const byVendor = new Map<string, PurchaseLine[]>();
@@ -109,8 +135,52 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         <Kpi label={L('Chưa có NCC', 'No vendor')} value={String(byVendor.get('none')?.length ?? 0)} sub={L('cần chọn', 'to assign')} warn={(byVendor.get('none')?.length ?? 0) > 0} />
         <Kpi label={L('Sản phẩm mới', 'New products')} value={String(news.length)} sub={L('cần gắn hoặc tạo', 'to link or create')} />
       </div>
-      {!pending.length && !news.length && (
+      {okMsg && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{okMsg}</div>}
+      {!pending.length && !news.length && !inPo.length && (
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có yêu cầu nào.', 'No request yet.')}</div>
+      )}
+      {board.drafts.length > 0 && (
+        <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="px-4 py-2.5 text-sm font-bold" style={{ borderBottom: `1px solid ${HAIR}` }}>{L('PO nháp trên Odoo — chờ xác nhận', 'Draft POs in Odoo — waiting for confirmation')} · {board.drafts.length}</div>
+          {board.drafts.map(d => { const dl = inPo.filter(l => l.poOdooId === d.id); return (
+            <div key={d.id} className="px-4 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <b className="text-[13px]">{d.name}</b>
+                {d.vendorId ? <span className="text-xs" style={{ color: '#344054' }}>{shortVendor(d.vendorName)}</span>
+                  : <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FBEAE8', color: LATE }}>⚠ {L('Chưa có NCC — chưa được xác nhận', 'No vendor — do not confirm yet')}</span>}
+                <span className="ml-auto text-xs tabular-nums" style={{ color: '#6B7280' }}>{d.amountTotal ? `${Math.round(d.amountTotal).toLocaleString('vi-VN')} ₫` : L('chưa có giá', 'no price yet')}</span>
+              </div>
+              <div className="text-[11.5px] mt-1" style={{ color: '#6B7280' }}>{dl.map(l => `${l.name} ${fmtQty(l.qty)} ${l.uom}`).join(' · ')}</div>
+            </div>); })}
+          <div className="px-4 py-2 text-[11px]" style={{ backgroundColor: PALE, color: '#6B7280' }}>{L('Xác nhận PO trên Odoo. App tự cập nhật “Đã đặt” khi PO được xác nhận, hoặc trả dòng về hàng chờ nếu PO bị huỷ.', 'Confirm the PO in Odoo. The app switches to “Ordered” once confirmed, or puts the lines back in the queue if the PO is cancelled.')}</div>
+        </div>
+      )}
+      {sel.size > 0 && (
+        <div className="sticky top-2 z-20 flex items-center gap-2 rounded-xl px-3 py-2.5 flex-wrap shadow-md" style={{ backgroundColor: NAVY, color: '#fff' }}>
+          <b className="text-[13px] flex-1">{L(`Đã chọn ${selLines.length} dòng`, `${selLines.length} lines selected`)}</b>
+          <button onClick={() => setSel(new Set())} className="text-xs font-bold px-2" style={{ color: '#F0D98A' }}>{L('Bỏ chọn', 'Clear')}</button>
+          <button disabled={busy || !selLines.length} onClick={() => { setPoVendor(suggested.length === 1 ? String(suggested[0].id) : ''); setPoOpen(true); }} className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ backgroundColor: '#F0D98A', color: NAVY }}>{L('Tạo PO nháp trên Odoo', 'Create draft PO in Odoo')} ›</button>
+        </div>
+      )}
+      {poOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={() => !busy && setPoOpen(false)}>
+          <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="text-[15px] font-extrabold">{L('Tạo PO nháp trên Odoo', 'Create a draft PO in Odoo')}</div>
+            <div className="text-[12px] rounded-lg p-2 max-h-40 overflow-y-auto" style={{ backgroundColor: PALE }}>{selLines.map(l => <div key={l.id}>{l.name} · <b>{fmtQty(l.qty)} {l.uom}</b> <span style={{ color: '#9CA3AF' }}>#{l.requestNo}</span></div>)}</div>
+            <label className="block"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Nhà cung cấp của PO', 'Vendor for this PO')}</span>
+              <select value={poVendor} onChange={e => setPoVendor(e.target.value)} className="w-full rounded-lg px-2.5 py-2 text-[13px] bg-white" style={{ border: `1px solid ${BORDER}` }}>
+                <option value="">{L('Chưa chọn NCC (chọn sau trên Odoo)', 'No vendor yet (choose later in Odoo)')}</option>
+                {suggested.length > 0 && <optgroup label={L('Gợi ý cho các sản phẩm này', 'Suggested for these items')}>{suggested.map(v => <option key={v.id} value={v.id}>{shortVendor(v.name)}</option>)}</optgroup>}
+                <optgroup label={L('Tất cả nhà cung cấp', 'All vendors')}>{board.vendors.filter(v => !suggested.some(x => x.id === v.id)).map(v => <option key={v.id} value={v.id}>{shortVendor(v.name)}</option>)}</optgroup>
+              </select></label>
+            {!poVendor && <div className="text-[11.5px] rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>{L('PO được lưu không có NCC. Chọn NCC trên Odoo trước khi xác nhận.', 'The PO is saved without a vendor. Set the vendor in Odoo before confirming.')}</div>}
+            <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{L('Giá lấy theo bảng giá NCC trên Odoo. App không xác nhận PO — bạn xác nhận trên Odoo.', 'Prices come from the vendor price list in Odoo. The app never confirms the PO — you confirm it in Odoo.')}</div>
+            <div className="flex gap-2 justify-end">
+              <button disabled={busy} onClick={() => setPoOpen(false)} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Huỷ', 'Cancel')}</button>
+              <button disabled={busy} onClick={createPo} className="rounded-lg px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={14} className="animate-spin inline" /> : L('Tạo PO nháp', 'Create draft PO')}</button>
+            </div>
+          </div>
+        </div>
       )}
       {vendorKeys.map(k => {
         const ls = byVendor.get(k)!; const none = k === 'none';
@@ -123,14 +193,15 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]" style={{ minWidth: 720 }}>
                 <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
-                  <th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material')}</th><th className="text-right px-3 py-2">{L('Tổng', 'Total')}</th>
+                  <th className="w-8 px-2 py-2"></th><th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material')}</th><th className="text-right px-3 py-2">{L('Tổng', 'Total')}</th>
                   <th className="text-left px-3 py-2">{L('Từ', 'From')}</th><th className="text-left px-3 py-2">{L('Ghi chú / thương hiệu', 'Note / brand')}</th>
                   <th className="text-left px-3 py-2">{L('Nhà cung cấp', 'Vendor')}</th><th></th></tr></thead>
                 <tbody>
                   {merge(ls).map(group => {
                     const f = group[0]; const total = group.reduce((s, l) => s + l.qty, 0);
                     return (
-                      <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}`, backgroundColor: group.every(l => sel.has(l.id)) ? '#FFFBEF' : undefined }}>
+                        <td className="px-2 py-2 text-center">{f.tmplId != null && <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={group.every(l => sel.has(l.id))} onChange={e => toggle(group.map(l => l.id), e.target.checked)} aria-label="select" />}</td>
                         <td className="px-3 py-2"><b>{f.name}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.sku}</div></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}</td>
                         <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>)}</td>
@@ -151,7 +222,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             </div>
             {!none && (
               <div className="flex items-center gap-2 px-4 py-2.5 flex-wrap" style={{ backgroundColor: PALE }}>
-                <span className="text-[11.5px] flex-1 min-w-[220px]" style={{ color: '#6B7280' }}>{L('Giai đoạn thử: tạo PO trong Odoo như hiện nay, rồi nhập số PO để chef thấy “Đã đặt”.', 'Test phase: create the PO in Odoo as today, then enter its number so chefs see “Ordered”.')}</span>
+                <span className="text-[11.5px] flex-1 min-w-[220px]" style={{ color: '#6B7280' }}>{L('Hoặc PO đã tạo tay trong Odoo: nhập số PO để chef thấy “Đã đặt”.', 'Or a PO made by hand in Odoo: enter its number so chefs see “Ordered”.')}</span>
                 <input value={po[k] ?? ''} onChange={e => setPo(p => ({ ...p, [k]: e.target.value }))} placeholder={L('Số PO, vd P00412', 'PO no., e.g. P00412')}
                   className="rounded-lg px-2.5 py-1.5 text-xs bg-white w-36" style={{ border: `1px solid ${BORDER}` }} />
                 <button disabled={busy} onClick={() => run(markOrderedAction(ls.map(l => l.id), po[k] ?? ''))} className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-extrabold text-white" style={{ backgroundColor: NAVY }}>
