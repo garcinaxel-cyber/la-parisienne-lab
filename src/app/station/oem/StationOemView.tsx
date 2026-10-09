@@ -278,12 +278,12 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   const wholeView = (p: (typeof plans)[number]) => {
     const T = p.whole.reduce((s, x) => s + x.T, 0); const B = p.whole.reduce((s, x) => s + Math.min(x.baked, x.T), 0);
     const pc = T ? Math.min(100, (B / T) * 100) : 0; const left = Math.max(0, T - B);
-    // pace: needed = kg left / working days (Mon–Sat) until the last bake-by date; actual = last 7 days, per production day
+    // pace: needed = kg left / days (Sundays included) until the last bake-by date; actual = last 7 days, per production day
     const since = new Date(Date.parse(isoToday) - 6 * 86400000).toISOString().slice(0, 10);
     const recent = entries.filter(e => p.groups.includes(e.group_key) && e.prod_date >= since && e.prod_date <= isoToday);
     const kg7 = recent.reduce((s, e) => s + (e.status === 'received' ? e.received_kg ?? 0 : e.weight_kg), 0);
     const days7 = new Set(recent.map(e => e.prod_date)).size; const actual = days7 ? kg7 / days7 : 0;
-    let wd = 0; if (p.lastBy) for (let t = Date.parse(isoToday); t <= Date.parse(p.lastBy); t += 86400000) if (new Date(t).getUTCDay() !== 0) wd++;
+    const wd = p.lastBy ? Math.max(0, daysTo(p.lastBy) + 1) : 0; // the lab bakes 7 days a week (Axel 2026-10-09)
     const need = wd ? left / wd : null; const ok = need != null && actual >= need;
     const notStarted = p.whole.filter(x => x.baked < 0.05).length;
     return (
