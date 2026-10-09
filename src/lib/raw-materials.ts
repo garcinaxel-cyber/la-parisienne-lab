@@ -15,11 +15,16 @@ export type RawMaterial = {
 };
 
 export const RAW_TYPES: Record<RawType, { vi: string; en: string; subs: Record<string, [string, string]> }> = {
+  // Sub-groups split further on 2026-10-09 (Axel: "Phụ gia & khác" held 124 items).
   dry: { vi: 'Khô', en: 'Dry', subs: {
-    flour: ['Bột & đường', 'Flour & sugar'], choco: ['Sô-cô-la & ca cao', 'Chocolate & cocoa'],
-    nuts: ['Hạt', 'Nuts'], other: ['Phụ gia & khác', 'Additives & other'] } },
+    flour: ['Bột, gạo & đường', 'Flour, rice & sugar'], choco: ['Sô-cô-la & ca cao', 'Chocolate & cocoa'],
+    nuts: ['Hạt', 'Nuts'], dried: ['Trái cây khô, mứt & đồ hộp', 'Dried, candied & canned fruit'],
+    flavor: ['Hương liệu & chiết xuất', 'Flavourings & extracts'], color: ['Màu & trang trí', 'Colouring & decoration'],
+    tea: ['Trà & cà phê', 'Tea & coffee'], drink: ['Rượu & siro', 'Alcohol & syrups'], spice: ['Gia vị, dầu & sốt', 'Spices, oils & sauces'],
+    other: ['Phụ gia & khác', 'Additives & other'] } },
   fresh: { vi: 'Mát / tươi', en: 'Chilled / fresh', subs: {
-    dairy: ['Sữa & kem', 'Dairy'], eggs: ['Trứng', 'Eggs'], fruit: ['Trái cây tươi', 'Fresh fruit'], other: ['Khác', 'Other'] } },
+    dairy: ['Sữa & kem', 'Dairy'], eggs: ['Trứng', 'Eggs'], fruit: ['Trái cây tươi', 'Fresh fruit'],
+    veg: ['Rau củ & thảo mộc', 'Vegetables & herbs'], meat: ['Thịt & cá', 'Meat & fish'], other: ['Khác', 'Other'] } },
   frozen: { vi: 'Đông lạnh', en: 'Frozen', subs: {
     puree: ['Purée', 'Purée'], fruit: ['Trái cây đông lạnh', 'Frozen fruit'], other: ['Khác', 'Other'] } },
 };
