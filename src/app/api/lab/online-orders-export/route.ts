@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   // event_stock excluded (Axel, 2026-09-14) — same as the Suivi/Analytic tabs this export
   // mirrors: an event's mini-caisse sale has no delivery/payment tracking to export here.
   const { data: orders } = await supabase.from('lab_online_orders').select('*')
-    .neq('source', 'event_stock')
+    .not('source', 'in', '(event_stock,event_void)')
     .gte('delivery_date', from).lte('delivery_date', to).order('delivery_date');
   const rows = orders ?? [];
 

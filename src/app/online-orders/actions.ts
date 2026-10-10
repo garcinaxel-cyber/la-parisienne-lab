@@ -575,7 +575,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // caisse sale (source='event_stock') is a point-of-sale transaction already handed over in
   // person; it has no lab/shop delivery to track and refunding it here made no sense. Events get
   // their own revenue summary (getEventSalesSummaryAction, EventCaisseTab), so excluded here.
-  let oq = supabase.from('lab_online_orders').select('*').neq('source', 'event_stock');
+  let oq = supabase.from('lab_online_orders').select('*').not('source', 'in', '(event_stock,event_void)');
   if (opts?.deliveryDate) {
     oq = oq.eq('delivery_date', opts.deliveryDate).order('created_at', { ascending: false });
   } else {
@@ -717,7 +717,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     // event sale isn't a shop customer relationship, it has its own tracking in the event tab.
     supabase.from('lab_online_orders')
       .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, district, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
-      .neq('source', 'event_stock'),
+      .not('source', 'in', '(event_stock,event_void)'),
     supabase.from('lab_manual_cake_ledger')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
@@ -1208,7 +1208,7 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
   // grand total) ends up netted to exactly 0, the same as the old full exclusion.
   // Axel, 2026-09-14: event_stock excluded — event sales have their own revenue summary
   // (getEventSalesSummaryAction) and shouldn't be mixed into the online-sales channel's figures.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').neq('source', 'event_stock').gte('created_at', since).limit(5000);
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').not('source', 'in', '(event_stock,event_void)').gte('created_at', since).limit(5000);
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
@@ -1464,7 +1464,7 @@ export async function getChannelProductDetailsAction(channel: string, from: stri
     const since = new Date(new Date(from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString();
     const { data: orders, error } = await supabase.from('lab_online_orders')
       .select('order_batch_id, delivery_date, created_at, source, channel')
-      .neq('source', 'event_stock').gte('created_at', since).limit(5000);
+      .not('source', 'in', '(event_stock,event_void)').gte('created_at', since).limit(5000);
     if (error) return { error: error.message };
     const matched = (orders ?? []).filter((o: any) => {
       const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);
