@@ -14,7 +14,7 @@ import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/
 import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
-import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, type EventShop } from '@/lib/event-shops';
+import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, parseDailyTargets, type EventShop } from '@/lib/event-shops';
 import { isOemSku } from '@/lib/oem';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
@@ -2686,11 +2686,12 @@ export type EventSale = {
 };
 // cashFloat: the cash the till started the event with (Axel, 2026-10-08: "le cash initial qui est de
 // 1M, comme ça ils peuvent voir leur tréso en cash") — lab_event_shops.cash_float, null when not set.
-// dailyTarget / openTime / closeTime (Axel, 2026-10-10): the day's sales target and the opening hours,
-// for the target ring on the Sales screen — lab_event_shops.daily_target (null = no target).
+// dailyTargets / openTime / closeTime (Axel, 2026-10-10): the sales target of each day that has one
+// ({ 'YYYY-MM-DD': amount } — "pour aujourd'hui pas les autres jours") and the opening hours, for the
+// target ring on the Sales screen — lab_event_shops.daily_targets.
 export type EventSalesLedger = {
   sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string; cashFloat: number | null;
-  dailyTarget?: number | null; openTime?: string; closeTime?: string;
+  dailyTargets?: Record<string, number>; openTime?: string; closeTime?: string;
 };
 
 // Switch a sale between cash and transfer (Axel, 2026-10-08: "leur laisser la possibilité de
@@ -2804,16 +2805,16 @@ export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSales
       };
     });
     let cashFloat: number | null = null;
-    let dailyTarget: number | null = null, openTime = '10:00', closeTime = '22:00';
+    let dailyTargets: Record<string, number> = {}, openTime = '10:00', closeTime = '22:00';
     try {
       // select('*'): keeps working whatever columns exist (the target ones came with lab_v117).
       const { data: ev } = await supabase.from('lab_event_shops').select('*').eq('name', shopName).eq('active', true).maybeSingle();
       cashFloat = ev?.cash_float == null ? null : Number(ev.cash_float);
-      dailyTarget = ev?.daily_target == null ? null : Number(ev.daily_target);
+      dailyTargets = parseDailyTargets(ev?.daily_targets);
       if (typeof ev?.open_time === 'string') openTime = ev.open_time;
       if (typeof ev?.close_time === 'string') closeTime = ev.close_time;
     } catch { /* the float and the target are only informative */ }
-    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr(), cashFloat, dailyTarget, openTime, closeTime } };
+    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr(), cashFloat, dailyTargets, openTime, closeTime } };
   } catch (e: any) {
     return { error: e?.message ?? 'Could not read the sales' };
   }

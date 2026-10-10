@@ -154,11 +154,11 @@ export async function setEventDatesAction(id: string, startDate: string | null, 
 }
 
 // Daily sales target + opening hours (Axel, 2026-10-10: "un compte à rebours visuel pour la target
-// des 50 M du jour", "fermeture 22h") — shown on the event's Sales screen. Empty target = none.
-export async function setEventTargetAction(id: string, target: number | null, openTime: string, closeTime: string): Promise<{ ok?: boolean; error?: string }> {
+// des 50 M du jour", "fermeture 22h") — one amount per day, a day left empty has none.
+export async function setEventTargetAction(id: string, targets: Record<string, number>, openTime: string, closeTime: string): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireAdmin();
   if ('error' in auth) return { error: auth.error };
-  const res = await setEventTarget(String(id ?? ''), target, String(openTime ?? ''), String(closeTime ?? ''));
+  const res = await setEventTarget(String(id ?? ''), targets ?? {}, String(openTime ?? ''), String(closeTime ?? ''));
   if (res.error) return { error: res.error };
   revalidatePath('/admin/events');
   return { ok: true };

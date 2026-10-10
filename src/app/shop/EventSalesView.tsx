@@ -223,9 +223,9 @@ export default function EventSalesView() {
     return { float: ledger.cashFloat, cashSales, total: ledger.cashFloat + cashSales };
   }, [ledger, all, scope]);
 
-  // Daily target ring (2026-10-10) — one day shown + a target set on the event, else nothing.
+  // Daily target ring (2026-10-10) — only for a day that has its own target, else nothing.
   const tgt = useDailyTarget({
-    sales: all, day: scope === 'all' ? null : scope, today, target: ledger?.dailyTarget ?? null,
+    sales: all, day: scope === 'all' ? null : scope, today, target: scope === 'all' ? null : (ledger?.dailyTargets?.[scope] ?? null),
     openTime: ledger?.openTime, closeTime: ledger?.closeTime,
   });
   const [tgtOpen, setTgtOpen] = useState(false);

@@ -65,19 +65,32 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
     setDateDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
     load();
   }
-  // Daily sales target + opening hours (2026-10-10) — shown on the event's Sales screen only.
-  const [targetDraft, setTargetDraft] = useState<Record<string, { target: string; open: string; close: string }>>({});
+  // Sales target per day + opening hours (2026-10-10) — shown on the event's Sales screen only.
+  // One field per event day; a day left empty has no target.
+  const [targetDraft, setTargetDraft] = useState<Record<string, { days: Record<string, string>; open: string; close: string }>>({});
   const [targetBusyId, setTargetBusyId] = useState<string | null>(null);
+  const eventDayList = (e: EventShop): string[] => {
+    if (!e.startDate || !e.endDate || e.endDate < e.startDate) return [];
+    const out: string[] = []; const d = new Date(e.startDate + 'T00:00:00Z');
+    for (let i = 0; i < 31; i++) { const k = d.toISOString().slice(0, 10); if (k > e.endDate) break; out.push(k); d.setUTCDate(d.getUTCDate() + 1); }
+    return out;
+  };
   const targetOf = (e: EventShop) => targetDraft[e.id] ?? {
-    target: e.dailyTarget ? String(Math.round(e.dailyTarget / 1e6 * 10) / 10) : '', open: e.openTime || '10:00', close: e.closeTime || '22:00',
+    days: Object.fromEntries(Object.entries(e.dailyTargets ?? {}).map(([k, v]) => [k, String(Math.round(v / 1e6 * 10) / 10)])),
+    open: e.openTime || '10:00', close: e.closeTime || '22:00',
   };
   async function saveTarget(e: EventShop) {
     const d = targetOf(e);
-    const m = d.target.trim() === '' ? null : Number(d.target.replace(',', '.'));
-    if (m !== null && (!Number.isFinite(m) || m <= 0)) { setOpenError('Target: a number of millions, e.g. 50'); return; }
+    const targets: Record<string, number> = {};
+    for (const [day, raw] of Object.entries(d.days)) {
+      if (!raw.trim()) continue;
+      const m = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(m) || m <= 0) { setOpenError(`Target ${fmtDay(day)}: a number of millions, e.g. 50`); return; }
+      targets[day] = Math.round(m * 1e6);
+    }
     setTargetBusyId(e.id);
     setOpenError(null);
-    const res = await setEventTargetAction(e.id, m === null ? null : Math.round(m * 1e6), d.open, d.close);
+    const res = await setEventTargetAction(e.id, targets, d.open, d.close);
     setTargetBusyId(null);
     if (res.error) { setOpenError(res.error); return; }
     setTargetDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
@@ -273,10 +286,16 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
           <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-xs text-gray-500">
             <span className="font-semibold">Daily target</span>
             {canManage ? (
+              eventDayList(e).length === 0 ? <span className="text-gray-400">set the event days first</span> : (
               <>
-                <input type="text" inputMode="decimal" value={targetOf(e).target} placeholder="none" aria-label="Daily sales target in millions"
-                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), target: ev.target.value } }))}
-                  className="rounded-lg px-2 py-1 text-xs w-16 text-right" style={{ border: '1px solid #E5E7EB' }} />
+                {eventDayList(e).map(day => (
+                  <label key={day} className="inline-flex items-center gap-1">
+                    <span>{fmtDay(day)}</span>
+                    <input type="text" inputMode="decimal" value={targetOf(e).days[day] ?? ''} placeholder="—" aria-label={`Sales target ${day} in millions`}
+                      onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), days: { ...targetOf(e).days, [day]: ev.target.value } } }))}
+                      className="rounded-lg px-2 py-1 text-xs w-12 text-right" style={{ border: '1px solid #E5E7EB' }} />
+                  </label>
+                ))}
                 <span>M ₫ · open</span>
                 <input type="time" value={targetOf(e).open} aria-label="Opening time"
                   onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), open: ev.target.value } }))}
@@ -291,11 +310,13 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
                     {targetBusyId === e.id ? '…' : 'Save'}
                   </button>
                 )}
-              </>
+              </>)
             ) : (
-              <span>{e.dailyTarget ? `${Math.round(e.dailyTarget / 1e6 * 10) / 10}M ₫ · ${e.openTime}–${e.closeTime}` : 'none'}</span>
+              <span>{Object.keys(e.dailyTargets ?? {}).length
+                ? Object.entries(e.dailyTargets).sort().map(([k, v]) => `${fmtDay(k)} ${Math.round(v / 1e6 * 10) / 10}M`).join(' · ') + ` · ${e.openTime}–${e.closeTime}`
+                : 'none'}</span>
             )}
-            <span className="text-gray-400">Shown on the event's Sales screen (ring + pace). Empty = no target.</span>
+            <span className="text-gray-400">Shown on the event's Sales screen for that day only (ring + pace). Empty = no target.</span>
           </div>
           </div>
         ))}
