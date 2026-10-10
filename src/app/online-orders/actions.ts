@@ -251,8 +251,16 @@ export async function submitOnlineOrderAction(input: {
   if (!supabase) return { error: 'Server not configured' };
 
   if (!SHOPS.includes(input.shop)) return { error: 'Invalid shop' };
-  // Axel review 2026-09-06: online orders are always fulfilled by a shop, never by the Lab itself.
-  if (input.shop === 'Lab') return { error: 'Lab cannot handle online orders' };
+  // Lab as the handling shop (Axel, 2026-10-10, reverses the 2026-09-06 rule): same process as a
+  // manual order delivered by the Lab -- a quotation on the LAB partner (the assistants rename the
+  // customer in Odoo afterwards, so no duplicate partner is ever created from here), the Lab
+  // delivers straight to the customer. Same requirements as the shop-link form's direct delivery.
+  const isLabDirect = input.shop === 'Lab';
+  if (isLabDirect) {
+    if (!clean(input.customerName, 120) || !clean(input.customerPhone, 40)) return { error: 'Lab giao trực tiếp cần tên + SĐT khách' };
+    if (!clean(input.deliveryAddress, 300)) return { error: 'Lab giao trực tiếp cần địa chỉ giao' };
+    if (!clean(input.readyTime, 8)) return { error: 'Lab giao trực tiếp cần giờ cần xong' };
+  }
   const channel = clean(input.channel, 60);
   if (!channel) return { error: 'Missing channel' };
   const items = Array.isArray(input.items) ? input.items : [];
@@ -260,7 +268,7 @@ export async function submitOnlineOrderAction(input: {
   const today = new Date().toISOString().split('T')[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate ?? '') || input.deliveryDate < today) return { error: 'Invalid delivery date' };
   if (!['paid', 'unpaid', 'partial'].includes(input.paymentStatus)) return { error: 'Invalid payment status' };
-  const deliveryMode: 'shop' | 'direct' = input.deliveryMode === 'direct' ? 'direct' : 'shop';
+  const deliveryMode: 'shop' | 'direct' = isLabDirect || input.deliveryMode === 'direct' ? 'direct' : 'shop';
 
   type Resolved = {
     ficheId: string; variantId: string | null; sku: string | null; team: string;

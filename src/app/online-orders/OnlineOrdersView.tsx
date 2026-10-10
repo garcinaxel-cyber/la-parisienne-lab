@@ -11,9 +11,12 @@ import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytic
 import CustomersTab from './CustomersTab';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
-// Online orders are always fulfilled by a shop — the Lab itself is never a valid target
-// (Axel review 2026-09-06). Server-side guard in submitOnlineOrderAction mirrors this.
+// Shops that can handle an online order. 'Lab' (Axel, 2026-10-10) is offered for Lab orders only,
+// as the last choice: same process as a manual order delivered by the Lab (quotation on the LAB
+// partner, renamed by the assistants in Odoo, Lab delivers straight to the customer). Shop-stock
+// sales stay shop-only -- there is no stock count for the Lab.
 const ONLINE_SHOPS = SHOP_NAMES_ALL.filter(s => s !== 'Lab');
+const LAB_SHOP = 'Lab';
 
 // Client-side downscale before any upload (design photo or payment screenshot): a phone
 // screenshot is 2–5 MB, the same picture at 1200px JPEG is ~100–250 KB. Keeps Supabase
@@ -197,6 +200,9 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     if (!channel.trim()) { setSubmitMsg({ kind: 'error', text: tr('errChannel') }); return; }
     if (!cart.length) { setSubmitMsg({ kind: 'error', text: tr('errEmpty') }); return; }
     if (hasDiscount && !discountReason.trim()) { setSubmitMsg({ kind: 'error', text: tr('errDiscountReason') }); return; }
+    if (source === 'lab' && shop === LAB_SHOP && (!customerName.trim() || !customerPhone.trim() || !deliveryAddress.trim() || !readyTime)) {
+      setSubmitMsg({ kind: 'error', text: tr('errLabDirect') }); return;
+    }
     const orderDiscount = orderDiscountAmt > 0 ? { kind: orderDiscKind, value: Number(orderDiscValue) } : null;
     const discountFields = { orderDiscount, discountReason: hasDiscount ? discountReason.trim() : null };
     setSubmitting(true); setSubmitMsg(null);
@@ -219,7 +225,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
         customerName: customerName || null, customerPhone: customerPhone || null,
         deliveryAddress: deliveryAddress || null, district: district || null, notes: notes || null,
         deliveryFee: Number(deliveryFee) || 0, paymentStatus, amountPaid: Number(amountPaid) || 0,
-        deliveryMode,
+        deliveryMode: shop === LAB_SHOP ? 'direct' : deliveryMode,
         items: cart.map(({ key, nameVi, imageUrl, isCake, listPrice, ...rest }) => ({ ...rest, discountPct: Number(rest.discountPct) || null })),
         fees: feeCart.map(l => ({ emoji: l.emoji, label: l.label, qty: l.qty, unitPrice: l.unitPrice })),
         ...discountFields,
@@ -390,7 +396,7 @@ function OrderTab(props: any) {
       <SectionLabel>{tr('sourceLabel')}</SectionLabel>
       <div className="grid grid-cols-2 gap-2 mb-1.5">
         {([['lab', tr('srcLab')], ['shop_stock', tr('srcStock')]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setSource(k)}
+          <button key={k} onClick={() => { setSource(k); if (k === 'shop_stock' && shop === LAB_SHOP) setShop(ONLINE_SHOPS[0]); }}
             style={{
               backgroundColor: source === k ? (k === 'shop_stock' ? '#B45309' : NAVY) : '#fff',
               color: source === k ? '#FFFAEE' : INK, border: source === k ? 'none' : `1px solid ${BORDER}`,
@@ -426,8 +432,8 @@ function OrderTab(props: any) {
 
       <SectionLabel>{tr('shopLabel')}</SectionLabel>
       <div className="flex flex-wrap gap-2 mb-4">
-        {ONLINE_SHOPS.map((s: string) => (
-          <button key={s} onClick={() => setShop(s)}
+        {(isStock ? ONLINE_SHOPS : [...ONLINE_SHOPS, LAB_SHOP]).map((s: string) => (
+          <button key={s} onClick={() => { setShop(s); if (s === LAB_SHOP) setDeliveryMode('direct'); }}
             style={{
               backgroundColor: shop === s ? NAVY : '#fff', color: shop === s ? '#FFFAEE' : INK,
               border: shop === s ? 'none' : `1px solid ${BORDER}`, fontSize: 12.5, fontWeight: shop === s ? 600 : 500,
@@ -441,16 +447,16 @@ function OrderTab(props: any) {
           <SectionLabel>{tr('deliveryModeLabel')}</SectionLabel>
           <div className="grid grid-cols-2 gap-2 mb-1.5">
             {([['shop', tr('dmShop')], ['direct', tr('dmDirect')]] as const).map(([k, label]) => (
-              <button key={k} onClick={() => setDeliveryMode(k)}
+              <button key={k} onClick={() => setDeliveryMode(k)} disabled={shop === LAB_SHOP && k === 'shop'}
                 style={{
                   backgroundColor: deliveryMode === k ? NAVY : '#fff', color: deliveryMode === k ? '#FFFAEE' : INK,
                   border: deliveryMode === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12.5, fontWeight: deliveryMode === k ? 700 : 500,
-                  padding: '9px 8px', borderRadius: 10,
+                  padding: '9px 8px', borderRadius: 10, opacity: shop === LAB_SHOP && k === 'shop' ? 0.4 : 1,
                 }}>{label}</button>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 16 }}>
-            {deliveryMode === 'direct' ? tr('dmDirectHint') : tr('dmShopHint')}
+          <div style={{ fontSize: 11, color: shop === LAB_SHOP ? NAVY : INK_LIGHT, marginBottom: 16, fontWeight: shop === LAB_SHOP ? 600 : 400 }}>
+            {shop === LAB_SHOP ? tr('dmLabHint') : deliveryMode === 'direct' ? tr('dmDirectHint') : tr('dmShopHint')}
           </div>
         </>
       )}
@@ -1138,12 +1144,12 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                   <div className="flex-1 text-center py-1.5 rounded-lg" style={{
                     backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
                     border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                  }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</div>
+                  }}>{o.shopName === LAB_SHOP ? (o.shopDelivered ? tr('custDelivered') : tr('custNot')) : (o.shopDelivered ? tr('shopDelivered') : tr('shopNot'))}</div>
                 ) : (
                   <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
                     backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
                     border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                  }}>{o.shopDelivered ? tr('shopDelivered') : tr('shopNot')}</button>
+                  }}>{o.shopName === LAB_SHOP ? (o.shopDelivered ? tr('custDelivered') : tr('custNot')) : (o.shopDelivered ? tr('shopDelivered') : tr('shopNot'))}</button>
                 )}
                     </div>
                     {/* Refund (Axel, 2026-09-14): order-level only, 'lab'/'shop_stock' sources only
