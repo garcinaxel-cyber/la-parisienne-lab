@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarDays, Loader2, AlertCircle, QrCode, X, Store } from 'lucide-react';
-import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, setEventDatesAction, type CreateEventFormResult } from './actions';
+import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, setEventDatesAction, setEventTargetAction, type CreateEventFormResult } from './actions';
 import type { EventShop } from '@/lib/event-shops';
 
 // Same downsize-before-upload as the online-orders payment-proof upload (OnlineOrdersView.tsx) —
@@ -63,6 +63,24 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
     setDateBusyId(null);
     if (res.error) { setOpenError(res.error); return; }
     setDateDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
+    load();
+  }
+  // Daily sales target + opening hours (2026-10-10) — shown on the event's Sales screen only.
+  const [targetDraft, setTargetDraft] = useState<Record<string, { target: string; open: string; close: string }>>({});
+  const [targetBusyId, setTargetBusyId] = useState<string | null>(null);
+  const targetOf = (e: EventShop) => targetDraft[e.id] ?? {
+    target: e.dailyTarget ? String(Math.round(e.dailyTarget / 1e6 * 10) / 10) : '', open: e.openTime || '10:00', close: e.closeTime || '22:00',
+  };
+  async function saveTarget(e: EventShop) {
+    const d = targetOf(e);
+    const m = d.target.trim() === '' ? null : Number(d.target.replace(',', '.'));
+    if (m !== null && (!Number.isFinite(m) || m <= 0)) { setOpenError('Target: a number of millions, e.g. 50'); return; }
+    setTargetBusyId(e.id);
+    setOpenError(null);
+    const res = await setEventTargetAction(e.id, m === null ? null : Math.round(m * 1e6), d.open, d.close);
+    setTargetBusyId(null);
+    if (res.error) { setOpenError(res.error); return; }
+    setTargetDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
     load();
   }
   const [creating, setCreating] = useState(false);
@@ -251,6 +269,33 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
               <span>{e.startDate && e.endDate ? `${fmtDay(e.startDate)} to ${fmtDay(e.endDate)}` : 'not set'}</span>
             )}
             <span className="text-gray-400">Reports in the event show these days only.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-xs text-gray-500">
+            <span className="font-semibold">Daily target</span>
+            {canManage ? (
+              <>
+                <input type="text" inputMode="decimal" value={targetOf(e).target} placeholder="none" aria-label="Daily sales target in millions"
+                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), target: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs w-16 text-right" style={{ border: '1px solid #E5E7EB' }} />
+                <span>M ₫ · open</span>
+                <input type="time" value={targetOf(e).open} aria-label="Opening time"
+                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), open: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                <span>close</span>
+                <input type="time" value={targetOf(e).close} aria-label="Closing time"
+                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), close: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                {targetDraft[e.id] && (
+                  <button onClick={() => saveTarget(e)} disabled={targetBusyId === e.id}
+                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                    {targetBusyId === e.id ? '…' : 'Save'}
+                  </button>
+                )}
+              </>
+            ) : (
+              <span>{e.dailyTarget ? `${Math.round(e.dailyTarget / 1e6 * 10) / 10}M ₫ · ${e.openTime}–${e.closeTime}` : 'none'}</span>
+            )}
+            <span className="text-gray-400">Shown on the event's Sales screen (ring + pace). Empty = no target.</span>
           </div>
           </div>
         ))}

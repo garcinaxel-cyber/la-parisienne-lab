@@ -3,7 +3,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 import { odooExecute } from '@/lib/odoo';
-import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, getActiveEventById, resetEventPin, setEventDates, type EventShop } from '@/lib/event-shops';
+import { createEventShop, listEventShops, closeEventShop, setEventQrCodeUrl, getActiveEventById, resetEventPin, setEventDates, setEventTarget, type EventShop } from '@/lib/event-shops';
 import { setEventSessionCookie } from '@/lib/event-session';
 
 function service() {
@@ -148,6 +148,17 @@ export async function setEventDatesAction(id: string, startDate: string | null, 
   const auth = await requireAdmin();
   if ('error' in auth) return { error: auth.error };
   const res = await setEventDates(String(id ?? ''), startDate || null, endDate || null);
+  if (res.error) return { error: res.error };
+  revalidatePath('/admin/events');
+  return { ok: true };
+}
+
+// Daily sales target + opening hours (Axel, 2026-10-10: "un compte à rebours visuel pour la target
+// des 50 M du jour", "fermeture 22h") — shown on the event's Sales screen. Empty target = none.
+export async function setEventTargetAction(id: string, target: number | null, openTime: string, closeTime: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireAdmin();
+  if ('error' in auth) return { error: auth.error };
+  const res = await setEventTarget(String(id ?? ''), target, String(openTime ?? ''), String(closeTime ?? ''));
   if (res.error) return { error: res.error };
   revalidatePath('/admin/events');
   return { ok: true };

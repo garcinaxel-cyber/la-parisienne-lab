@@ -4,6 +4,7 @@ import { Banknote, ArrowRightLeft, ChevronDown, Loader2, RefreshCw } from 'lucid
 import { getEventSalesLedgerAction, setEventSalePaymentAction, type EventSale, type EventSalesLedger } from './actions';
 import { NAVY, GOLD_PALE, INK, BORDER } from './ShopView';
 import { useShopL, useShopLang } from './shop-lang';
+import { useDailyTarget, TargetRing, TargetLine, TargetDetail, TargetFx } from './EventDailyTarget';
 
 // Per page load only (module memory, never stored on the phone); 15 min at most.
 let ledgerCache: { ledger: EventSalesLedger; at: number } | null = null;
@@ -222,6 +223,21 @@ export default function EventSalesView() {
     return { float: ledger.cashFloat, cashSales, total: ledger.cashFloat + cashSales };
   }, [ledger, all, scope]);
 
+  // Daily target ring (2026-10-10) — one day shown + a target set on the event, else nothing.
+  const tgt = useDailyTarget({
+    sales: all, day: scope === 'all' ? null : scope, today, target: ledger?.dailyTarget ?? null,
+    openTime: ledger?.openTime, closeTime: ledger?.closeTime,
+  });
+  const [tgtOpen, setTgtOpen] = useState(false);
+  // While today's target is on screen, refresh the figures every 90 s (only when the page is visible).
+  const tgtLive = !!tgt && tgt.isToday;
+  useEffect(() => {
+    if (!tgtLive) return;
+    const t = setInterval(() => { if (typeof document === 'undefined' || document.visibilityState === 'visible') load(); }, 90_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tgtLive]);
+
   if (!ledger) {
     return (
       <div className="text-center py-10 text-sm" style={{ color: error ? '#B42318' : MUTED }}>
@@ -320,7 +336,8 @@ export default function EventSalesView() {
       )}
 
       {/* Headline + cash / transfer */}
-      <div className="bg-white rounded-2xl p-3.5" style={card}>
+      <div className="bg-white rounded-2xl p-3.5 relative" style={card}>
+        {tgt && <TargetFx st={tgt} day={scope} />}
         <div className="flex items-start justify-between gap-2">
           <div className={label} style={{ color: FAINT }}>
             {isDay ? `${longDay(scope)}${scope === today ? ` · ${L('đến giờ', 'so far')}` : ''}` : L('Tổng doanh thu event', 'Total event sales')}
@@ -329,13 +346,22 @@ export default function EventSalesView() {
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
           </button>
         </div>
-        <div className="text-[30px] font-extrabold leading-tight" style={{ color: NAVY }}>{fmt(totals.total)}</div>
+        {tgt ? (
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[30px] font-extrabold leading-tight min-w-0" style={{ color: NAVY }}>{fmt(totals.total)}</div>
+            <TargetRing st={tgt} open={tgtOpen} onClick={() => setTgtOpen(o => !o)} />
+          </div>
+        ) : (
+          <div className="text-[30px] font-extrabold leading-tight" style={{ color: NAVY }}>{fmt(totals.total)}</div>
+        )}
         {totals.count > 0 && (
           <div className="flex mt-3" style={{ gap: 2, height: 12 }}>
             {totals.cash > 0 && <span style={{ width: `${(totals.cash / totals.total) * 100}%`, backgroundColor: CASH, borderRadius: totals.transfer > 0 ? '6px 0 0 6px' : 6 }} />}
             {totals.transfer > 0 && <span style={{ flex: 1, backgroundColor: TRANSFER, borderRadius: totals.cash > 0 ? '0 6px 6px 0' : 6 }} />}
           </div>
         )}
+        {tgt && <TargetLine st={tgt} />}
+        {tgt && tgtOpen && <TargetDetail st={tgt} />}
         <div className="grid grid-cols-2 gap-2 mt-2.5">
           {(['cash', 'transfer'] as const).map(p => {
             const amount = p === 'cash' ? totals.cash : totals.transfer, n = p === 'cash' ? totals.cashCount : totals.count - totals.cashCount;

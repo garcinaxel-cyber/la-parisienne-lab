@@ -30,6 +30,9 @@ export type EventShop = {
   // whose dates were never set: nothing is restricted then (reports keep the shops' usual
   // current month + previous month window).
   startDate: string | null; endDate: string | null;
+  // Daily sales target (Axel, 2026-10-10) — shown on the event's Sales screen only. Null = none.
+  // Opening hours (HH:mm, Vietnam time) drive the pace and the time left.
+  dailyTarget: number | null; openTime: string; closeTime: string;
 };
 
 function fromRow(r: any): EventShop {
@@ -37,6 +40,8 @@ function fromRow(r: any): EventShop {
     id: r.id, name: r.name, warehouseCode: r.warehouse_code, odooWarehouseId: r.odoo_warehouse_id,
     active: r.active, createdAt: r.created_at, closedAt: r.closed_at, qrCodeUrl: r.qr_code_url ?? null,
     startDate: r.start_date ?? null, endDate: r.end_date ?? null,
+    dailyTarget: r.daily_target == null ? null : Number(r.daily_target),
+    openTime: r.open_time ?? '10:00', closeTime: r.close_time ?? '22:00',
   };
 }
 
@@ -167,6 +172,20 @@ export async function setEventDates(id: string, startDate: string | null, endDat
   if ((startDate === null) !== (endDate === null)) return { error: 'Set both dates, or neither' };
   if (startDate && endDate && endDate < startDate) return { error: 'The end date is before the start date' };
   const { error } = await supabase.from('lab_event_shops').update({ start_date: startDate, end_date: endDate }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// Daily sales target + opening hours (Axel, 2026-10-10). target null = no target shown.
+export async function setEventTarget(id: string, target: number | null, openTime: string, closeTime: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!hm.test(openTime) || !hm.test(closeTime)) return { error: 'Invalid time (HH:mm)' };
+  if (closeTime <= openTime) return { error: 'Closing time must be after opening time' };
+  if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10_000_000_000)) return { error: 'Invalid target' };
+  const { error } = await supabase.from('lab_event_shops')
+    .update({ daily_target: target === null ? null : Math.round(target), open_time: openTime, close_time: closeTime }).eq('id', id);
   if (error) return { error: error.message };
   return { ok: true };
 }

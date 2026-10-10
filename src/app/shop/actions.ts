@@ -2686,7 +2686,12 @@ export type EventSale = {
 };
 // cashFloat: the cash the till started the event with (Axel, 2026-10-08: "le cash initial qui est de
 // 1M, comme ça ils peuvent voir leur tréso en cash") — lab_event_shops.cash_float, null when not set.
-export type EventSalesLedger = { sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string; cashFloat: number | null };
+// dailyTarget / openTime / closeTime (Axel, 2026-10-10): the day's sales target and the opening hours,
+// for the target ring on the Sales screen — lab_event_shops.daily_target (null = no target).
+export type EventSalesLedger = {
+  sales: EventSale[]; eventStart: string | null; eventEnd: string | null; today: string; cashFloat: number | null;
+  dailyTarget?: number | null; openTime?: string; closeTime?: string;
+};
 
 // Switch a sale between cash and transfer (Axel, 2026-10-08: "leur laisser la possibilité de
 // changer si une commande était en transfert ou en cash"). Only a sale of the caller's own event;
@@ -2799,11 +2804,16 @@ export async function getEventSalesLedgerAction(): Promise<{ ledger?: EventSales
       };
     });
     let cashFloat: number | null = null;
+    let dailyTarget: number | null = null, openTime = '10:00', closeTime = '22:00';
     try {
-      const { data: ev } = await supabase.from('lab_event_shops').select('cash_float').eq('name', shopName).eq('active', true).maybeSingle();
+      // select('*'): keeps working whatever columns exist (the target ones came with lab_v117).
+      const { data: ev } = await supabase.from('lab_event_shops').select('*').eq('name', shopName).eq('active', true).maybeSingle();
       cashFloat = ev?.cash_float == null ? null : Number(ev.cash_float);
-    } catch { /* the float is only informative */ }
-    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr(), cashFloat } };
+      dailyTarget = ev?.daily_target == null ? null : Number(ev.daily_target);
+      if (typeof ev?.open_time === 'string') openTime = ev.open_time;
+      if (typeof ev?.close_time === 'string') closeTime = ev.close_time;
+    } catch { /* the float and the target are only informative */ }
+    return { ledger: { sales, eventStart: auth.event.startDate ?? null, eventEnd: auth.event.endDate ?? null, today: vnDateStr(), cashFloat, dailyTarget, openTime, closeTime } };
   } catch (e: any) {
     return { error: e?.message ?? 'Could not read the sales' };
   }
