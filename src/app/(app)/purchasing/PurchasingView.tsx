@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw, Bell, Clock } from 'lucide-react';
-import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
+import PushBell from '@/components/PushBell';
 import { useI18n } from '@/lib/i18n';
 import {
   RAW_TYPES, subLabel, typeLabel, shortVendor, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
@@ -84,44 +84,6 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
 }
 
 type LFn = (vi: string, en: string) => string;
-
-// Notifications for the purchasing screen (Axel, 2026-10-09): Hien gets the new purchase requests and
-// the slips to confirm on his phone. Subscribes this device as pseudo-team 'purchasing' (pushes to
-// this screen go by user id, see purchasingUserIds).
-function PushBell({ L }: { L: LFn }) {
-  const [st, setSt] = useState<'checking' | 'off' | 'on' | 'unsupported' | 'not-configured'>('checking');
-  useEffect(() => {
-    let c = false;
-    (async () => {
-      const sup = pushSupport();
-      if (sup !== 'ready') { if (!c) setSt(sup); return; }
-      const sub = await getExistingPushSubscription();
-      if (!c) setSt(sub ? 'on' : 'off');
-    })();
-    return () => { c = true; };
-  }, []);
-  async function toggle() {
-    const { subscribePushAction, unsubscribePushAction } = await import('@/app/station/[team]/actions');
-    if (st === 'on') {
-      const ep = await unsubscribeCurrentPush();
-      if (ep) await unsubscribePushAction(ep);
-      setSt('off'); return;
-    }
-    if (st !== 'off') return;
-    const r = await requestPushSubscription();
-    if (!r.ok) { setSt(r.reason === 'not-configured' ? 'not-configured' : 'off'); return; }
-    const res = await subscribePushAction('purchasing', r.subscription);
-    setSt(res.error ? 'off' : 'on');
-  }
-  if (st === 'checking' || st === 'unsupported' || st === 'not-configured') return null;
-  const on = st === 'on';
-  return (
-    <button onClick={toggle} className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2"
-      style={on ? { backgroundColor: '#ECFDF3', border: '1px solid #ABEFC6', color: '#067647' } : { backgroundColor: '#FFF6E0', border: `1px solid ${GOLD}`, color: '#8A5A00' }}>
-      <Bell size={15} /> {on ? L('Thông báo: bật', 'Notifications on') : L('Bật thông báo', 'Turn on notifications')}
-    </button>
-  );
-}
 
 /* ===================== Requests ===================== */
 function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {

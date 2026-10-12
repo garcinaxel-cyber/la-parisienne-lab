@@ -12,6 +12,7 @@ import RawMaterials from './RawMaterials';
 import { ProductionLog, OrderSettings } from './Admin';
 import { buildBatches, planOf, PLAN_COLS, splitPlan, type PlanRow } from './plan';
 import { MM_CLIENT } from './model';
+import PushBell from '@/components/PushBell';
 
 // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake biscuits (MM- SKUs) + Tianhe Food
 // cashews (OEM- SKUs). Purely additive: reads/writes the lab_mm_* tables only (+ the read-only
@@ -175,6 +176,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
             );
           })}
         </div>
+        {role === 'purchasing' && <PushBell L={L} compact />}
         <button onClick={load} className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center" style={{ border: `1px solid ${LINE}`, backgroundColor: '#fff', color: MUTED }} aria-label="refresh">
           <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
         </button>
