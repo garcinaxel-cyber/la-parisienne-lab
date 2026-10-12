@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw, Bell, Clock } from 'lucide-react';
+import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw, Bell, Clock, ListFilter, ArrowUpDown } from 'lucide-react';
 import PushBell from '@/components/PushBell';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -769,6 +769,9 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [syncing, setSyncing] = useState(false);
   const [packFor, setPackFor] = useState<number | null>(null);
   const [packLabel, setPackLabel] = useState(''); const [packFactor, setPackFactor] = useState('');
+  const [cf, setCf] = useState<Partial<Record<ColKey, Set<string>>>>({});
+  const [sort, setSort] = useState<{ key: 'name' | 'bom'; dir: 1 | -1 }>({ key: 'name', dir: 1 });
+  const [openCol, setOpenCol] = useState<{ k: ColKey; rect: { left: number; bottom: number }; sorts?: ColSortOpt[] } | null>(null);
   const load = useCallback(async () => { const r = await getCatalogueAction(); if (r.error) setMsg(r.error); else { setItems(r.items!); setSyncedAt(r.syncedAt ?? null); } }, []);
   useEffect(() => { load(); }, [load]);
   async function sync() {
@@ -788,9 +791,62 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   // kept underneath; the search matches both names and the SKU, accents ignored.
   const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
   const nq = fold(q.trim());
-  const rows = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
-    && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))))
-    .sort((a, b) => rawName(a, lang).localeCompare(rawName(b, lang), lang === 'vi' ? 'vi' : 'en'));
+  const base = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
+    && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))));
+  // Excel-like column filters (Axel, 2026-10-12): each header opens a checklist of its values with
+  // counts; filters combine with each other and with the chips above. Sort on name / recipes.
+  const colVal = (m: RawMaterial, k: ColKey): string => {
+    switch (k) {
+      case 'vendor': return m.vendorName ?? '__none';
+      case 'uom': return m.uom || '—';
+      case 'type': return m.type;
+      case 'group': return `${m.type}|${m.sub}`;
+      case 'packs': return m.packs.length ? 'yes' : 'no';
+      case 'recipes': return m.bomCount != null && m.bomCount > 0 ? 'has' : m.noRecipeNeeded ? 'nr' : m.bomCount === 0 ? 'none' : 'unk';
+      case 'visible': return m.visible ? 'on' : 'off';
+      case 'status': return m.checked ? 'checked' : 'todo';
+    }
+  };
+  const colLabel = (k: ColKey, v: string): string => {
+    switch (k) {
+      case 'vendor': return v === '__none' ? L('Chưa có NCC', 'No vendor') : shortVendor(v);
+      case 'type': return typeLabel(v as RawType, lang);
+      case 'group': { const [t, sb] = v.split('|'); return `${subLabel(t as RawType, sb, lang)} · ${typeLabel(t as RawType, lang)}`; }
+      case 'packs': return v === 'yes' ? L('Có quy cách', 'Has packs') : L('Chưa có quy cách', 'No pack');
+      case 'recipes': return v === 'has' ? L('Có công thức', 'Used in recipes') : v === 'nr' ? L('Không cần công thức', 'No recipe needed') : v === 'none' ? L('⚠ Chưa có', '⚠ None') : L('Chưa rõ', 'Unknown');
+      case 'visible': return v === 'on' ? L('Chef thấy', 'Shown to chefs') : L('Ẩn', 'Hidden');
+      case 'status': return v === 'checked' ? L('Đã duyệt', 'Checked') : L('Gợi ý', 'Suggested');
+      default: return v;
+    }
+  };
+  const FIXED_ORDER: Partial<Record<ColKey, string[]>> = { recipes: ['has', 'none', 'nr', 'unk'], packs: ['yes', 'no'], visible: ['on', 'off'], status: ['todo', 'checked'], type: Object.keys(RAW_TYPES) };
+  const passCols = (m: RawMaterial, except: ColKey | null) =>
+    (Object.keys(cf) as ColKey[]).every(k => k === except || !cf[k] || cf[k]!.has(colVal(m, k)));
+  const optionsFor = (k: ColKey) => {
+    const cnt = new Map<string, number>();
+    for (const m of base) if (passCols(m, k)) { const v = colVal(m, k); cnt.set(v, (cnt.get(v) ?? 0) + 1); }
+    for (const v of Array.from(cf[k] ?? [])) if (!cnt.has(v)) cnt.set(v, 0);
+    const opts = Array.from(cnt.entries()).map(([key, count]) => ({ key, label: colLabel(k, key), count }));
+    const fo = FIXED_ORDER[k];
+    return fo ? opts.sort((a, b) => fo.indexOf(a.key) - fo.indexOf(b.key)) : opts.sort((a, b) => a.label.localeCompare(b.label, lang === 'vi' ? 'vi' : 'en'));
+  };
+  const coll = lang === 'vi' ? 'vi' : 'en';
+  const rows = base.filter(m => passCols(m, null)).sort((a, b) => sort.key === 'bom'
+    ? sort.dir * ((a.bomCount ?? -1) - (b.bomCount ?? -1)) || rawName(a, lang).localeCompare(rawName(b, lang), coll)
+    : sort.dir * rawName(a, lang).localeCompare(rawName(b, lang), coll));
+  const activeCols = (Object.keys(cf) as ColKey[]).filter(k => cf[k]);
+  const colTitle: Record<ColKey, string> = { vendor: L('Nhà cung cấp', 'Vendor'), uom: L('Đơn vị', 'Unit'), type: L('Loại', 'Type'), group: L('Nhóm', 'Group'), packs: L('Quy cách', 'Packs'), recipes: L('Công thức', 'Recipes'), visible: L('Chef thấy', 'Chefs see'), status: L('Trạng thái', 'Status') };
+  const Th = ({ k, label, align = 'left', sorts }: { k: ColKey; label: string; align?: 'left' | 'center' | 'right'; sorts?: ColSortOpt[] }) => {
+    const on = !!cf[k] || (!!sorts && sorts.some(o => o.key === sort.key && (o.key !== 'name' || sort.dir !== 1)));
+    return (
+      <th className={`px-3 py-2 whitespace-nowrap text-${align}`}>
+        <button onMouseDown={e => e.stopPropagation()} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setOpenCol(openCol?.k === k ? null : { k, rect: { left: r.left, bottom: r.bottom }, sorts }); }}
+          className="inline-flex items-center gap-1 uppercase tracking-wide font-bold rounded px-1 -mx-1 py-0.5 hover:bg-[#FFFAEE]" style={{ color: on ? GOLD_TEXT : '#9CA3AF' }}>
+          {label}<ListFilter size={12} strokeWidth={on ? 2.6 : 2} style={{ color: on ? GOLD : '#C0C4CC' }} />
+        </button>
+      </th>
+    );
+  };
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -819,15 +875,35 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             className="ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-extrabold" style={{ border: `1px solid ${NAVY}`, color: NAVY, backgroundColor: '#fff' }}><Check size={13} /> {L(`Duyệt ${rows.length} dòng đang hiện`, `Accept the ${rows.length} shown`)}</button>
         )}
       </div>
+      {(activeCols.length > 0 || sort.key !== 'name' || sort.dir !== 1) && (
+        <div className="flex items-center gap-1.5 flex-wrap text-xs">
+          <span className="font-bold" style={{ color: '#6B7280' }}>{L('Lọc theo cột:', 'Column filters:')}</span>
+          {activeCols.map(k => (
+            <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1.5 py-1 font-bold" style={{ backgroundColor: PALE, border: `1px solid ${GOLD}`, color: GOLD_TEXT }}>
+              {colTitle[k]} ({cf[k]!.size})
+              <button onClick={() => setCf(c => { const n = { ...c }; delete n[k]; return n; })} aria-label="clear"><X size={12} /></button>
+            </span>))}
+          {(sort.key !== 'name' || sort.dir !== 1) && <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-bold" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: NAVY }}><ArrowUpDown size={11} /> {sort.key === 'bom' ? L('Công thức', 'Recipes') : L('Tên Z → A', 'Name Z → A')}</span>}
+          <button onClick={() => { setCf({}); setSort({ key: 'name', dir: 1 }); }} className="font-extrabold underline ml-1" style={{ color: NAVY }}>{L('Bỏ tất cả', 'Clear all')}</button>
+          <span style={{ color: '#9CA3AF' }}>· {rows.length} {L('dòng', 'rows')}</span>
+        </div>
+      )}
+      {openCol && (
+        <ColFilterPop L={L} rect={openCol.rect} title={colTitle[openCol.k]} options={optionsFor(openCol.k)} selected={cf[openCol.k]}
+          onChange={sel => setCf(c => { const n = { ...c }; if (sel) n[openCol.k] = sel; else delete n[openCol.k]; return n; })}
+          sorts={openCol.sorts} sort={sort} onSort={(key, dir) => setSort({ key, dir })} onClose={() => setOpenCol(null)} />
+      )}
       {!items ? <div className="text-sm text-center py-6" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
         : !all.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#6B7280' }}>{L('Danh mục trống — bấm “Đồng bộ” để lấy nguyên liệu từ Odoo.', 'Empty catalogue — press “Sync” to load the raw materials from Odoo.')}</div>
         : (
         <div className="bg-white rounded-2xl overflow-x-auto" style={{ border: `1px solid ${BORDER}` }}>
           <table className="w-full text-[12.5px]" style={{ minWidth: 860 }}>
             <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
-              <th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material (Odoo name)')}</th><th className="text-left px-3 py-2">{L('Đơn vị', 'Unit')}</th>
-              <th className="text-left px-3 py-2">{L('Loại', 'Type')}</th><th className="text-left px-3 py-2">{L('Nhóm', 'Group')}</th>
-              <th className="text-left px-3 py-2">{L('Quy cách', 'Packs')}</th><th className="text-center px-3 py-2">{L('Công thức', 'Recipes')}</th><th className="text-center px-3 py-2">{L('Chef thấy', 'Chefs see')}</th><th></th></tr></thead>
+              <Th k="vendor" label={L('Nguyên liệu', 'Raw material (Odoo name)')} sorts={[{ key: 'name', dir: 1, label: L('Tên A → Z', 'Name A → Z') }, { key: 'name', dir: -1, label: L('Tên Z → A', 'Name Z → A') }]} />
+              <Th k="uom" label={L('Đơn vị', 'Unit')} /><Th k="type" label={L('Loại', 'Type')} /><Th k="group" label={L('Nhóm', 'Group')} />
+              <Th k="packs" label={L('Quy cách', 'Packs')} />
+              <Th k="recipes" label={L('Công thức', 'Recipes')} align="center" sorts={[{ key: 'bom', dir: -1, label: L('Nhiều công thức nhất', 'Most recipes first') }, { key: 'bom', dir: 1, label: L('Ít công thức nhất', 'Fewest recipes first') }]} />
+              <Th k="visible" label={L('Chef thấy', 'Chefs see')} align="center" /><Th k="status" label={L('Trạng thái', 'Status')} align="right" /></tr></thead>
             <tbody>
               {rows.slice(0, 400).map(m => (
                 <tr key={m.tmplId} style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -869,6 +945,84 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
           {rows.length > 400 && <div className="text-xs text-center py-2" style={{ color: '#6B7280' }}>{L(`Hiện 400 / ${rows.length} — dùng tìm kiếm`, `Showing 400 of ${rows.length} — use the search`)}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ===================== Excel-like column filter ===================== */
+type ColKey = 'vendor' | 'uom' | 'type' | 'group' | 'packs' | 'recipes' | 'visible' | 'status';
+type ColSortOpt = { key: 'name' | 'bom'; dir: 1 | -1; label: string };
+
+function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort, onSort, onClose }: {
+  L: LFn; rect: { left: number; bottom: number }; title: string;
+  options: { key: string; label: string; count: number }[];
+  selected: Set<string> | undefined; onChange: (sel: Set<string> | undefined) => void;
+  sorts?: ColSortOpt[]; sort: { key: 'name' | 'bom'; dir: 1 | -1 }; onSort: (key: 'name' | 'bom', dir: 1 | -1) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const scroll = (e: Event) => { if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return; onClose(); };
+    // deferred so the click that opened it does not close it
+    const t = setTimeout(() => { document.addEventListener('mousedown', down); document.addEventListener('keydown', key); window.addEventListener('scroll', scroll, true); window.addEventListener('resize', onClose); }, 0);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); window.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', onClose); };
+  }, [onClose]);
+  const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const nq = fold(q.trim());
+  const shown = nq ? options.filter(o => fold(o.label).includes(nq)) : options;
+  const allKeys = options.map(o => o.key);
+  const isOn = (k: string) => !selected || selected.has(k);
+  const normalize = (set: Set<string>) => (allKeys.every(k => set.has(k)) ? undefined : set);
+  const toggle = (k: string) => { const n = new Set(selected ?? allKeys); if (n.has(k)) n.delete(k); else n.add(k); onChange(normalize(n)); };
+  const allShownOn = shown.length > 0 && shown.every(o => isOn(o.key));
+  const toggleAll = () => { const n = new Set(selected ?? allKeys); for (const o of shown) { if (allShownOn) n.delete(o.key); else n.add(o.key); } onChange(normalize(n)); };
+  const only = (k: string) => onChange(normalize(new Set([k])));
+  const W = 290;
+  const left = typeof window !== 'undefined' ? Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) : rect.left;
+  const maxH = typeof window !== 'undefined' ? Math.max(220, window.innerHeight - rect.bottom - 16) : 400;
+  return (
+    <div ref={ref} className="fixed z-50 bg-white rounded-xl shadow-xl flex flex-col text-[12.5px] normal-case tracking-normal"
+      style={{ top: rect.bottom + 4, left, width: W, maxHeight: Math.min(maxH, 460), border: `1px solid ${BORDER}` }}>
+      <div className="px-3 pt-2.5 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{title}</div>
+      {sorts && sorts.length > 0 && (
+        <div className="px-1.5 pb-1.5" style={{ borderBottom: `1px solid ${HAIR}` }}>
+          {sorts.map(o => { const act = sort.key === o.key && sort.dir === o.dir; return (
+            <button key={`${o.key}${o.dir}`} onClick={() => onSort(o.key, o.dir)} className="w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left font-bold hover:bg-[#FFFAEE]"
+              style={{ color: act ? GOLD_TEXT : NAVY }}><ArrowUpDown size={12} />{o.label}{act && <Check size={12} className="ml-auto" />}</button>); })}
+        </div>
+      )}
+      <div className="px-2.5 pt-2">
+        <label className="flex items-center gap-1.5 rounded-lg px-2" style={{ border: `1px solid ${BORDER}` }}>
+          <Search size={12} style={{ color: '#9CA3AF' }} />
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm…', 'Search…')} className="flex-1 py-1.5 text-[12.5px] outline-none bg-transparent" />
+        </label>
+      </div>
+      <div className="px-1.5 pt-1.5">
+        <label className="flex items-center gap-2 rounded-md px-1.5 py-1 cursor-pointer font-extrabold hover:bg-[#FFFAEE]" style={{ color: NAVY }}>
+          <input type="checkbox" checked={allShownOn} onChange={toggleAll} style={{ accentColor: NAVY }} />
+          {nq ? L('Chọn tất cả kết quả', 'Select all results') : L('Chọn tất cả', 'Select all')}
+        </label>
+      </div>
+      <div className="flex-1 overflow-y-auto px-1.5 pb-1.5" style={{ minHeight: 60 }}>
+        {shown.length === 0 && <div className="px-1.5 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không có giá trị', 'No values')}</div>}
+        {shown.map(o => (
+          <div key={o.key} className="group flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-[#FFFAEE]">
+            <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+              <input type="checkbox" checked={isOn(o.key)} onChange={() => toggle(o.key)} style={{ accentColor: NAVY }} />
+              <span className="truncate" style={{ color: o.count ? '#1F2937' : '#9CA3AF' }}>{o.label}</span>
+            </label>
+            <button onClick={() => only(o.key)} className="hidden group-hover:inline text-[10.5px] font-extrabold" style={{ color: GOLD_TEXT }}>{L('chỉ', 'only')}</button>
+            <span className="text-[11px] tabular-nums" style={{ color: '#9CA3AF' }}>{o.count}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+        <button onClick={() => onChange(undefined)} disabled={!selected} className="text-xs font-extrabold disabled:opacity-40" style={{ color: NAVY }}>{L('Bỏ lọc cột này', 'Clear this filter')}</button>
+        <button onClick={onClose} className="text-xs font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: NAVY }}>OK</button>
+      </div>
     </div>
   );
 }

@@ -98,4 +98,6 @@ declare module 'lucide-react' {
   export const Banknote: LucideIcon;
   export const Gift: LucideIcon;
   export const FolderArchive: LucideIcon;
+  export const ListFilter: LucideIcon;
+  export const ArrowUpDown: LucideIcon;
 }
