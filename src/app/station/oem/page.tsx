@@ -15,7 +15,7 @@ export default async function StationOemPage() {
   if (!session) redirect('/login');
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   const role = profile?.role ?? '';
-  if (!['admin', 'lab_manager', 'assistant', 'chef', 'worker'].includes(role)) redirect('/login');
+  if (!['admin', 'lab_manager', 'assistant', 'purchasing', 'chef', 'worker'].includes(role)) redirect('/login');
 
   // team lead only (admin setting): may fix a batch before reception — re-checked in the server action
   const { data: ed } = await supabase.from('lab_mm_settings').select('value').eq('key', PROD_EDITORS_KEY).maybeSingle();

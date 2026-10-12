@@ -166,7 +166,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   }, [plans]);
 
   // same rule as the station: workers/viewers are read-only
-  const canLog = ['admin', 'lab_manager', 'assistant', 'chef'].includes(role);
+  const canLog = ['admin', 'lab_manager', 'assistant', 'purchasing', 'chef'].includes(role);
   const sel = rows.find(r => r.key === gk);
   const kgNum = Number(kg.replace(',', '.')) || 0;
   // the product's client has separate orders → the chef must say which one this batch is for

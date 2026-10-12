@@ -23,7 +23,8 @@ import { MM_CLIENT } from './model';
 //   + for admin/lab_manager: Production (kg) log and Settings.
 
 type Tab = 'today' | 'progress' | 'deliveries' | 'inventory' | 'production' | 'settings';
-const STAFF = ['admin', 'lab_manager', 'assistant'];
+// 'purchasing' (Hiền) works on OEM like an assistant (Axel, 2026-10-12).
+const STAFF = ['admin', 'lab_manager', 'assistant', 'purchasing'];
 const MANAGERS = ['admin', 'lab_manager'];
 
 export default function OemOrdersView({ role, userId, userName }: { role: string; userId: string | null; userName: string | null }) {
@@ -33,8 +34,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const supabase = useMemo(() => createClient(), []);
   const canManage = MANAGERS.includes(role);
   const canPack = STAFF.includes(role);
-  // purchasing (Hiền) can receive Hưng's batches but not pack or edit (Axel, 2026-10-12).
-  const canReceive = canPack || role === 'purchasing';
+  const canReceive = canPack;
   // Production (kg) log + Settings (Odoo switch, order quantities): admin only (Axel, 2026-09-25).
   // lab_manager keeps the right to correct any packaging line (canManage) inside the normal tabs.
   const isAdmin = role === 'admin';

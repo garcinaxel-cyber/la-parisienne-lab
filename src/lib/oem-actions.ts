@@ -14,10 +14,10 @@ import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
 //   scrap_bulk      → nothing in Odoo (the bulk was never an Odoo stock item on its own)
 
 type Kind = 'packed' | 'scrap_bulk' | 'scrap_finished' | 'found';
-const STAFF = ['admin', 'lab_manager', 'assistant'];
+// 'purchasing' (Hiền) works on OEM exactly like an assistant (Axel, 2026-10-12, lab_v119).
+const STAFF = ['admin', 'lab_manager', 'assistant', 'purchasing'];
 const MANAGERS = ['admin', 'lab_manager'];
-// 'purchasing' (Hiền) may receive Hưng's batches, nothing else (Axel, 2026-10-12).
-const RECEIVERS = [...STAFF, 'purchasing'];
+const RECEIVERS = STAFF;
 
 async function me(allowed: string[] = STAFF) {
   const supabase = createClient();
@@ -299,7 +299,7 @@ export async function setProductionOrderAction(id: string, seq: number | null): 
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager', 'assistant', 'chef'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
+  if (!['admin', 'lab_manager', 'assistant', 'purchasing', 'chef'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
   const svc = service();
   if (!svc) return { error: 'Server not configured' };
   const { data: row } = await svc.from('lab_mm_production_log').select('id, group_key').eq('id', id).single();
