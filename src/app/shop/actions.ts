@@ -279,7 +279,13 @@ async function fetchPendingReceptions(
   supabase: NonNullable<ReturnType<typeof service>>, shopName: string, minDate: string, maxDate: string,
 ): Promise<Map<string, (ReceptionPendingOrder & { headerId: string })[]>> {
   const out = new Map<string, (ReceptionPendingOrder & { headerId: string })[]>();
-  const from = minDate < RECEPTION_GATE_FROM ? RECEPTION_GATE_FROM : minDate;
+  // Rolling cap (Axel, 2026-10-12: "cape les 7 derniers jours en glissé"): never older than
+  // RECEPTION_LATE_DAYS before today, nor before the go-live date — so a shop that never did its
+  // receptions (Long Biên) never sees a month of backlog, and a day that drops out of the late
+  // tab also stops locking its report (it could no longer be fixed).
+  const rollingStart = addVnDays(vnDateStr(), -RECEPTION_LATE_DAYS);
+  const floor = rollingStart > RECEPTION_GATE_FROM ? rollingStart : RECEPTION_GATE_FROM;
+  const from = minDate < floor ? floor : minDate;
   if (from > maxDate) return out;
   const target = normalizeShopName(shopName);
   const headers = (await fetchAllPages<{ id: string; delivery_date: string; order_ref: string; shop_name: string | null; marked_not_delivered: boolean | null }>((f, t) =>
