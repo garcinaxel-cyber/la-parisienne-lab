@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import Sidebar from '@/components/Sidebar';
+import { rawService } from '@/lib/raw-materials-db';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
@@ -74,6 +75,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   ]);
   const pendingTransfers = (pendingInternalTransfers ?? 0) + (pendingShopLabTransfers ?? 0) + (pendingShopLabLosses ?? 0);
 
+  // Purchasing badge (Axel, 2026-10-12: "un voyant rouge ... comme l'OEM"): purchase request lines
+  // still to order + storage slips waiting for confirmation. Only for who can open /purchasing;
+  // counted with the service key, same as the purchasing screen itself (purchasing/actions.ts guard).
+  let pendingPurchasing = 0;
+  if (profile.role === 'purchasing' || profile.role === 'admin' || (profile as any).can_purchase) {
+    const db = rawService();
+    if (db) {
+      const [{ count: toOrder }, { count: toConfirm }] = await Promise.all([
+        db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+        db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm'),
+      ]);
+      pendingPurchasing = (toOrder ?? 0) + (toConfirm ?? 0);
+    }
+  }
+
   // Check badge: admin-only table (RLS), so only fetched for admins. Sums all 4 checks
   // (2026-08-20) — issue_count alone used to mean "reconciliation only".
   let reconciliationIssues = 0;
@@ -88,7 +104,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} reconciliationIssues={reconciliationIssues} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>
