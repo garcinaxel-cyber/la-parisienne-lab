@@ -5,7 +5,7 @@ import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTri
 import PushBell from '@/components/PushBell';
 import { useI18n } from '@/lib/i18n';
 import {
-  RAW_TYPES, subLabel, typeLabel, shortVendor, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
+  RAW_TYPES, subLabel, typeLabel, shortVendor, rawName, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
   type PurchaseLine, type RawMaterial, type Withdrawal, type RawType,
 } from '@/lib/raw-materials';
 import {
@@ -31,14 +31,14 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
   // Axel, 2026-10-09: "le stock picking et purchase est un peu trop mélangé" — three clearly separate
   // spaces: Purchasing (requests + purchase history), Stock picking (the chefs' storage slips, any
   // day), Catalogue. Same tab ids as before, so ?tab= links keep working.
-  type Section = 'purchase' | 'picking' | 'catalogue';
-  const section: Section = tab === 'storage' ? 'picking' : tab === 'catalogue' ? 'catalogue' : 'purchase';
+  // Axel, 2026-10-12: Catalogue moved inside Purchasing (3rd sub-tab next to Requests / history).
+  type Section = 'purchase' | 'picking';
+  const section: Section = tab === 'storage' ? 'picking' : 'purchase';
   const sections: [Section, string, Tab][] = [
     ['purchase', L('Mua hàng', 'Purchasing'), 'requests'],
     ['picking', L('Lấy kho', 'Stock picking'), 'storage'],
-    ['catalogue', L('Danh mục', 'Catalogue'), 'catalogue'],
   ];
-  const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')]];
+  const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')], ['catalogue', L('Danh mục', 'Catalogue')]];
   // Slips waiting for storage's confirmation (Axel, 2026-10-09), shown as a badge on Stock picking.
   const [pendingCount, setPendingCount] = useState(0);
   useEffect(() => {
@@ -784,8 +784,13 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     if (r.error) { setMsg(r.error); load(); }
   }
   const all = items ?? [];
+  // Names in the screen's language (Axel, 2026-10-12): Vietnamese name when the app is in VI, Odoo name
+  // kept underneath; the search matches both names and the SKU, accents ignored.
+  const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const nq = fold(q.trim());
   const rows = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
-    && (type === 'all' || m.type === type) && (!q.trim() || `${m.name} ${m.sku ?? ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+    && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))))
+    .sort((a, b) => rawName(a, lang).localeCompare(rawName(b, lang), lang === 'vi' ? 'vi' : 'en'));
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -820,13 +825,13 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         <div className="bg-white rounded-2xl overflow-x-auto" style={{ border: `1px solid ${BORDER}` }}>
           <table className="w-full text-[12.5px]" style={{ minWidth: 860 }}>
             <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
-              <th className="text-left px-3 py-2">{L('Nguyên liệu (tên Odoo)', 'Raw material (Odoo name)')}</th><th className="text-left px-3 py-2">{L('Đơn vị', 'Unit')}</th>
+              <th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material (Odoo name)')}</th><th className="text-left px-3 py-2">{L('Đơn vị', 'Unit')}</th>
               <th className="text-left px-3 py-2">{L('Loại', 'Type')}</th><th className="text-left px-3 py-2">{L('Nhóm', 'Group')}</th>
               <th className="text-left px-3 py-2">{L('Quy cách', 'Packs')}</th><th className="text-center px-3 py-2">{L('Công thức', 'Recipes')}</th><th className="text-center px-3 py-2">{L('Chef thấy', 'Chefs see')}</th><th></th></tr></thead>
             <tbody>
               {rows.slice(0, 400).map(m => (
                 <tr key={m.tmplId} style={{ borderTop: `1px solid ${HAIR}` }}>
-                  <td className="px-3 py-2"><b>{m.name}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></td>
+                  <td className="px-3 py-2"><b>{rawName(m, lang)}</b>{lang === 'vi' && m.nameVi && m.nameVi !== m.name && <div className="text-[11px]" style={{ color: '#6B7280' }}>{m.name}</div>}<div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></td>
                   <td className="px-3 py-2">{m.uom}</td>
                   <td className="px-3 py-2"><select value={m.type} onChange={e => { const t = e.target.value as RawType; patch(m, { type: t, sub: Object.keys(RAW_TYPES[t].subs)[0] }); }} className="rounded-md px-1.5 py-1 text-xs bg-white" style={{ border: `1px solid ${HAIR}` }}>
                     {(Object.keys(RAW_TYPES) as RawType[]).map(t => <option key={t} value={t}>{typeLabel(t, lang)}</option>)}</select></td>
