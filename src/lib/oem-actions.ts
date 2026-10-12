@@ -16,14 +16,16 @@ import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
 type Kind = 'packed' | 'scrap_bulk' | 'scrap_finished' | 'found';
 const STAFF = ['admin', 'lab_manager', 'assistant'];
 const MANAGERS = ['admin', 'lab_manager'];
+// 'purchasing' (Hiền) may receive Hưng's batches, nothing else (Axel, 2026-10-12).
+const RECEIVERS = [...STAFF, 'purchasing'];
 
-async function me() {
+async function me(allowed: string[] = STAFF) {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' as const };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   const role = profile?.role ?? '';
-  if (!STAFF.includes(role)) return { error: 'Forbidden' as const };
+  if (!allowed.includes(role)) return { error: 'Forbidden' as const };
   return { supabase, id: session.user.id, name: profile?.full_name ?? '', role };
 }
 
@@ -222,7 +224,7 @@ function service() {
 // (never more) with a reason. From then on the batch is theirs: packable, and locked for Hung.
 // Written with the service key because assistants have no UPDATE right on the production log.
 export async function receiveProductionAction(id: string, receivedKg: number | null, note: string | null): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await me();
+  const auth = await me(RECEIVERS);
   if ('error' in auth) return { error: auth.error };
   const svc = service();
   if (!svc) return { error: 'Server not configured' };

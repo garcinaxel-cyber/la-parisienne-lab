@@ -33,6 +33,8 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const supabase = useMemo(() => createClient(), []);
   const canManage = MANAGERS.includes(role);
   const canPack = STAFF.includes(role);
+  // purchasing (Hiền) can receive Hưng's batches but not pack or edit (Axel, 2026-10-12).
+  const canReceive = canPack || role === 'purchasing';
   // Production (kg) log + Settings (Odoo switch, order quantities): admin only (Axel, 2026-09-25).
   // lab_manager keeps the right to correct any packaging line (canManage) inside the normal tabs.
   const isAdmin = role === 'admin';
@@ -206,7 +208,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       </div>
 
       {!client ? null : tab === 'today' ? (
-        <Packaging client={client} items={cItems} d={d} pack={cPack} prod={cProd} canPack={canPack} canManage={canManage} odooOn={odooOn} userId={userId} reload={load} L={L} />
+        <Packaging client={client} items={cItems} d={d} pack={cPack} prod={cProd} canPack={canPack} canReceive={canReceive} canManage={canManage} odooOn={odooOn} userId={userId} reload={load} L={L} />
       ) : tab === 'progress' ? (
         <Overview client={client} d={d} prod={cProd} pack={cPack} L={L} />
       ) : tab === 'deliveries' ? (
