@@ -1,8 +1,8 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store } from 'lucide-react';
-import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopDailyReportSummary, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState } from './actions';
+import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store, Lock } from 'lucide-react';
+import type { ShopDeliveryOrder, ShopCake, ShopLoss, ShopLossReason, ShopStaffName, ShopLossDailyRecap, ShopStockCountLine, ShopStockSearchProduct, ShopStockCountSession, ShopDailyReport, ShopDailyReportSummary, ShopManager, ShopManagerCatalogProduct, ShopManagerOrderDraft, ShopTransfer, ShopStockLevel, EventAccessState, ReceptionPendingOrder } from './actions';
 import { getEventAccessStateAction, enterEventAction, exitEventAction } from './actions';
 import ShopTransfersTab from './ShopTransfersTab';
 import EventCaisseTab from './EventCaisseTab';
@@ -309,7 +309,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // account (confirming a receipt before the delivery has actually happened doesn't mean
   // anything). todayDate/tomorrowDate come from the server (Asia/Ho_Chi_Minh) so "today" can't
   // drift from a client clock in a different timezone.
-  const [day, setDay] = useState<'today' | 'tomorrow'>('today');
+  // 'late' (2026-10-12): earlier days' deliveries not yet fully confirmed — they lock that
+  // day's report (reception gate), so they stay confirmable here until done.
+  const [day, setDay] = useState<'late' | 'today' | 'tomorrow'>('today');
   const [todayDate, setTodayDate] = useState<string | null>(null);
   const [tomorrowDate, setTomorrowDate] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -396,6 +398,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [reportEvent, setReportEvent] = useState<{ start: string; end: string } | null>(null);
   const [selectedReportDate, setSelectedReportDate] = useState<string | null>(null);
   const [dailyReport, setDailyReport] = useState<ShopDailyReport | null>(null);
+  // Reception gate (2026-10-12): the day's report is locked until these orders are confirmed.
+  const [reportBlocked, setReportBlocked] = useState<ReceptionPendingOrder[] | null>(null);
   const [reportDayLoading, setReportDayLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportExporting, setReportExporting] = useState(false);
@@ -1024,11 +1028,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   async function openReportDay(date: string) {
     setSelectedReportDate(date);
     setDailyReport(null);
+    setReportBlocked(null);
     setReportMsg(null);
     setReportDayLoading(true);
     const actions = await import('./actions');
-    const res = readOnly ? await actions.getDailyReportDayForStaffAction(shopName, date) : await actions.getMyDailyReportDayAction(date);
+    const res: { report?: ShopDailyReport; blocked?: ReceptionPendingOrder[]; error?: string } = readOnly
+      ? await actions.getDailyReportDayForStaffAction(shopName, date) : await actions.getMyDailyReportDayAction(date);
     setReportDayLoading(false);
+    if (res.blocked?.length) { setReportBlocked(res.blocked); return; }
     if (res.error || !res.report) { setReportMsg(L(`Lỗi: ${res.error ?? 'không tải được'}`, `Error: ${res.error ?? 'could not load'}`)); return; }
     setDailyReport(res.report);
   }
@@ -1159,13 +1166,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     router.push('/login');
   }
 
-  const dayDate = day === 'today' ? todayDate : tomorrowDate;
-  const filteredOrders = orders?.filter(o => o.header.delivery_date === dayDate) ?? null;
+  const dayDate = day === 'today' ? todayDate : day === 'tomorrow' ? tomorrowDate : null;
+  const lateOrders = todayDate ? (orders?.filter(o => o.header.delivery_date < todayDate) ?? []) : [];
+  const filteredOrders = day === 'late' ? lateOrders : (orders?.filter(o => o.header.delivery_date === dayDate) ?? null);
   // Only today's deliveries are confirmable — a tomorrow order hasn't been delivered yet, so
   // "received" wouldn't mean anything. Since the list is already filtered to one day at a time,
   // this only needs to check which tab is active. Staff-test access (readOnly=true) is now just
   // as interactive as the shop's own login (Axel, 2026-08-25) — the only remaining gate is the day.
-  const canConfirm = day === 'today';
+  const canConfirm = day !== 'tomorrow';
 
   // Every not-yet-confirmed line across TODAY's orders regardless of which day tab is active
   // (Axel, 2026-09-12: "un pop up permanent en haut" — the reminder shouldn't disappear just
@@ -1173,7 +1181,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // fallback: a line the shop never typed into still shows the lab-checked qty as a default, so
   // "untouched" means draft[l.id] was never created, not that the displayed value is empty.
   const todaysPendingLines = (() => {
-    const todays = orders?.filter(o => o.header.delivery_date === todayDate) ?? [];
+    // Late orders (earlier days, still unconfirmed) count too — they lock a report.
+    const todays = todayDate ? (orders?.filter(o => o.header.delivery_date <= todayDate) ?? []) : [];
     const out: { order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qtyNum: number | null; note: string; touched: boolean }[] = [];
     for (const o of todays) {
       for (const l of o.lines) {
@@ -1426,7 +1435,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   </div>
                   <div className="text-[11px]" style={{ color: todaysPendingLines.length ? '#8A6D14' : GREEN, opacity: 0.9 }}>
                     {todaysPendingLines.length
-                      ? L(`Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng hôm nay`, `${todaysPendingLines.length} products delivered today are still to be confirmed`)
+                      ? L(`Còn ${todaysPendingLines.length} sản phẩm chưa xác nhận nhận hàng — báo cáo cuối ngày sẽ bị khoá cho đến khi xác nhận xong`, `${todaysPendingLines.length} products still to be confirmed — the end-of-day report stays locked until they are`)
                       : L('Tất cả sản phẩm giao hôm nay đã được xác nhận nhận hàng', 'Every product delivered today has been confirmed as received')}
                   </div>
                 </div>
@@ -1441,6 +1450,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             )}
 
             <div className="flex gap-1.5">
+              {lateOrders.length > 0 && (
+                <button onClick={() => setDay('late')}
+                  className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
+                  style={{ backgroundColor: day === 'late' ? '#FDECEA' : 'white', color: RED, border: `1px solid ${day === 'late' ? '#EFC3BE' : BORDER}` }}>
+                  {L('Chưa nhận', 'Late')} · {lateOrders.length}
+                </button>
+              )}
               <button onClick={() => setDay('today')}
                 className="flex-1 text-xs font-bold rounded-lg px-3 py-2"
                 style={{ backgroundColor: day === 'today' ? GOLD_PALE : 'white', color: INK, border: `1px solid ${BORDER}` }}>
@@ -1454,11 +1470,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
             {!filteredOrders?.length ? (
               <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>
-                {day === 'today' ? L('Không có đơn giao hôm nay', 'No delivery today') : L('Không có đơn giao ngày mai', 'No delivery tomorrow')}
+                {day === 'today' ? L('Không có đơn giao hôm nay', 'No delivery today') : day === 'late' ? L('Không còn đơn nào chưa xác nhận', 'Nothing left to confirm') : L('Không có đơn giao ngày mai', 'No delivery tomorrow')}
               </div>
             ) : (
               <>
-              {day === 'today' && (
+              {day !== 'tomorrow' && (
                 <div className="bg-white rounded-2xl px-4 py-2.5 flex items-center gap-2" style={{ border: `1px solid ${BORDER}` }}>
                   <span className="text-xs font-semibold shrink-0" style={{ color: '#6B7280' }}>{L('Xác nhận bởi', 'Confirmed by')}</span>
                   <NamePicker value={name} onChange={setName} names={staffNames} onManage={() => setShowStaffModal(true)} />
@@ -2073,6 +2089,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             : r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${L('đã kiểm', 'counted')}${r.stockSource === 'official' ? L(' · Kiểm kê chính thức', ' · Official inventory') : ''}`
                             : L('Chưa kiểm kho', 'Not counted yet')}
                           {r.lossesReportCount ? ` · ${r.lossesReportCount} ${L('báo cáo hao hụt', r.lossesReportCount === 1 ? 'loss report' : 'loss reports')}` : ''}
+                          {r.receptionPending?.length ? (
+                            <span className="font-semibold inline-flex items-center gap-1" style={{ color: RED }}>
+                              {' · '}<Lock size={11} />{L(`Chưa xác nhận nhận hàng (${r.receptionPending.length} đơn)`, `Reception not confirmed (${r.receptionPending.length} ${r.receptionPending.length === 1 ? 'order' : 'orders'})`)}
+                            </span>
+                          ) : null}
                           {r.stockCounted && r.stockGapCount != null && (
                             <span className="font-semibold" style={{ color: r.stockGapCount ? RED : GREEN }}>
                               {r.stockGapCount ? ` · ${r.stockGapCount} ${L('SP lệch', r.stockGapCount === 1 ? 'gap' : 'gaps')}` : ` · ${L('khớp lý thuyết', 'matches expected')}`}
@@ -2091,7 +2112,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             </div>
           ) : (
             <div className="space-y-3">
-              <button onClick={() => { setSelectedReportDate(null); setDailyReport(null); setReportMsg(null); }}
+              <button onClick={() => { setSelectedReportDate(null); setDailyReport(null); setReportBlocked(null); setReportMsg(null); }}
                 className="inline-flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#6B7280' }}>
                 <ArrowLeft size={15} /> {reportEvent ? L('Danh sách', 'All days') : reportMonth ? fmtReportMonth(reportMonth, lang) : L('Danh sách', 'All days')}
               </button>
@@ -2104,7 +2125,40 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <div className="text-sm font-bold text-navy mt-0.5">{eventState?.inEvent ? eventState.eventName : shopName}</div>
                 </div>
 
-                {reportDayLoading ? (
+                {dailyReport?.receptionPending?.length ? (
+                  <div className="rounded-2xl px-3.5 py-2.5 text-xs font-semibold flex items-center gap-2" style={{ backgroundColor: '#FDECEA', color: RED, border: '1px solid #EFC3BE' }}>
+                    <Lock size={14} className="shrink-0" />
+                    {L(`Shop chưa xác nhận nhận hàng: ${dailyReport.receptionPending.map(p => p.orderRef).join(', ')} — báo cáo đang khoá phía shop`, `Shop has not confirmed reception: ${dailyReport.receptionPending.map(p => p.orderRef).join(', ')} — report locked on the shop side`)}
+                  </div>
+                ) : null}
+
+                {!reportDayLoading && reportBlocked?.length ? (
+                  // Reception gate (Axel, 2026-10-12): the shop must confirm what it received
+                  // before the day's report opens. Kiểm kho itself is never blocked.
+                  <div className="bg-white rounded-2xl p-4 space-y-3" style={{ border: '1px solid #EFC3BE' }}>
+                    <div className="flex items-start gap-2.5">
+                      <Lock size={18} className="shrink-0 mt-0.5" style={{ color: RED }} />
+                      <div>
+                        <div className="text-sm font-bold" style={{ color: RED }}>{L('Báo cáo đang bị khoá', 'Report locked')}</div>
+                        <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
+                          {L('Cần xác nhận nhận hàng cho các đơn dưới đây trước khi xem báo cáo cuối ngày.', 'Confirm the reception of the orders below before opening the end-of-day report.')}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="divide-y rounded-xl overflow-hidden" style={{ border: `1px solid ${BORDER}`, borderColor: BORDER }}>
+                      {reportBlocked.map(p => (
+                        <div key={p.deliveryDate + p.orderRef} className="px-3 py-2 flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-navy">{p.orderRef}</span>
+                          <span className="text-xs font-bold" style={{ color: RED }}>{p.confirmedLines}/{p.totalLines} {L('đã xác nhận', 'confirmed')}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={() => { setTab('deliveries'); setDay(reportBlocked.some(p => todayDate && p.deliveryDate < todayDate) ? 'late' : 'today'); }}
+                      className="w-full text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: NAVY }}>
+                      {L('Đi đến Nhận hàng', 'Go to Deliveries')}
+                    </button>
+                  </div>
+                ) : reportDayLoading ? (
                   <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
                 ) : !dailyReport ? null : !dailyReport.stockCounted ? (
                   <div className="bg-white rounded-2xl p-8 text-center text-sm" style={{ color: '#6B7280', border: `1px solid ${BORDER}` }}>

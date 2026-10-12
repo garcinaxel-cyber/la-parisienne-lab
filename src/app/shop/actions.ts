@@ -253,6 +253,65 @@ export type ShopDeliveryOrder = {
   lines: (CheckLine & { receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string } | null; image_url: string | null })[];
 };
 
+// ── Reception gate for the daily report (Axel, 2026-10-12) ─────────────────────────────────
+// "il faut que les commandes qu'ils sont censés recevoir soient validées avant validation du
+// rapport ... s'ils veulent faire un inventaire avant réception pour avoir le stock initial il
+// faut pas bloquer ça". So: the Báo cáo of day D is locked for the shop's own session while an
+// order delivered to it on D is not fully confirmed in the Deliveries tab; Kiểm kho is NEVER
+// gated. Only orders the Lab actually sent count — header status 'validated' (locked at
+// departure) and not marked "not delivered". Days before RECEPTION_GATE_FROM are never gated, so
+// the existing history is not suddenly flagged. A shop that missed a day can still confirm it
+// late: fetchDeliveries also returns the last RECEPTION_LATE_DAYS days' unfinished orders.
+const RECEPTION_GATE_FROM = '2026-10-13';
+const RECEPTION_LATE_DAYS = 7;
+
+export type ReceptionPendingOrder = { orderRef: string; deliveryDate: string; confirmedLines: number; totalLines: number };
+
+function addVnDays(date: string, days: number): string {
+  return new Date(new Date(`${date}T00:00:00Z`).getTime() + days * 86400000).toISOString().slice(0, 10);
+}
+
+// Unfinished receptions per VN day for one shop, over [minDate, maxDate] — one header query,
+// then one lines + one receipts query for the matching headers (paged: a month across every
+// shop is well over PostgREST's 1 000-row cap). Shop names are compared with normalizeShopName,
+// same reason as fetchDeliveries.
+async function fetchPendingReceptions(
+  supabase: NonNullable<ReturnType<typeof service>>, shopName: string, minDate: string, maxDate: string,
+): Promise<Map<string, (ReceptionPendingOrder & { headerId: string })[]>> {
+  const out = new Map<string, (ReceptionPendingOrder & { headerId: string })[]>();
+  const from = minDate < RECEPTION_GATE_FROM ? RECEPTION_GATE_FROM : minDate;
+  if (from > maxDate) return out;
+  const target = normalizeShopName(shopName);
+  const headers = (await fetchAllPages<{ id: string; delivery_date: string; order_ref: string; shop_name: string | null; marked_not_delivered: boolean | null }>((f, t) =>
+    supabase.from('lab_delivery_orders').select('id, delivery_date, order_ref, shop_name, marked_not_delivered')
+      .eq('status', 'validated').gte('delivery_date', from).lte('delivery_date', maxDate).order('id').range(f, t)))
+    .filter(h => !h.marked_not_delivered && normalizeShopName(h.shop_name) === target);
+  if (!headers.length) return out;
+  const ids = headers.map(h => h.id);
+  const lineCount = new Map<string, number>();
+  const recCount = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const [lines, recs] = await Promise.all([
+      fetchAllPages<{ delivery_order_id: string }>((f, t) =>
+        supabase.from('lab_delivery_check_lines').select('delivery_order_id').in('delivery_order_id', chunk).order('id').range(f, t)),
+      fetchAllPages<{ delivery_order_id: string }>((f, t) =>
+        supabase.from('lab_shop_receipt_lines').select('delivery_order_id').in('delivery_order_id', chunk).order('check_line_id').range(f, t)),
+    ]);
+    for (const l of lines) lineCount.set(l.delivery_order_id, (lineCount.get(l.delivery_order_id) ?? 0) + 1);
+    for (const r of recs) recCount.set(r.delivery_order_id, (recCount.get(r.delivery_order_id) ?? 0) + 1);
+  }
+  for (const h of headers) {
+    const total = lineCount.get(h.id) ?? 0;
+    const done = Math.min(recCount.get(h.id) ?? 0, total);
+    if (total === 0 || done >= total) continue;
+    const arr = out.get(h.delivery_date) ?? [];
+    arr.push({ headerId: h.id, orderRef: h.order_ref, deliveryDate: h.delivery_date, confirmedLines: done, totalLines: total });
+    out.set(h.delivery_date, arr);
+  }
+  return out;
+}
+
 async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   const supabase = service();
   if (!supabase) return [];
@@ -280,6 +339,13 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   for (const l of [...(orderLines ?? []), ...(packagingLines ?? []), ...(ownHeaders ?? [])]) {
     if (normalizeShopName(l.shop_name) !== target) continue;
     pairs.set(`${l.delivery_date}||${l.order_ref}`, { date: l.delivery_date, orderRef: l.order_ref });
+  }
+
+  // Late receptions (2026-10-12): orders of the previous days the Lab sent but the shop never
+  // finished confirming — shown in their own "late" tab so the day's report can be unlocked.
+  const late = await fetchPendingReceptions(supabase, shopName, addVnDays(today, -RECEPTION_LATE_DAYS), addVnDays(today, -1));
+  for (const list of Array.from(late.values())) {
+    for (const p of list) pairs.set(`${p.deliveryDate}||${p.orderRef}`, { date: p.deliveryDate, orderRef: p.orderRef });
   }
 
   const orders: ShopDeliveryOrder[] = [];
@@ -1448,6 +1514,10 @@ export type ShopDailyReport = {
   losses: ShopLossDailyRecapProduct[];
   lossesTotalQty: number;
   lossesReportCount: number;
+  /** Orders the Lab sent that day which the shop has not finished confirming (2026-10-12). While
+   *  non-empty, the shop's own session cannot open the day's report; staff/managers see it with a
+   *  warning. Empty before RECEPTION_GATE_FROM. */
+  receptionPending: ReceptionPendingOrder[];
 };
 
 // Axel, 2026-09-11: "je voudrais que dans l'onglet report des shops qu il y ait l historique sur
@@ -1484,7 +1554,7 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
   // at 1 000 — so the OLDEST days filled the page and the most recent day(s) came back partial
   // (17/09: 51/226) or empty (18/09: "Chưa kiểm kho") while the rows were in fact saved. Same
   // bug as delivery-check 08-20 / station History 09-01 — hence fetchAllPages here.
-  const [countRows, pricesRes, lossRecap] = await Promise.all([
+  const [countRows, pricesRes, lossRecap, pendingByDate] = await Promise.all([
     supabase
       ? fetchAllPages<{ sku: string; qty: number; count_date: string; session_seq: number }>((f, t) =>
           supabase.from('lab_shop_stock_counts').select('sku, qty, count_date, session_seq')
@@ -1494,6 +1564,7 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
       ? supabase.from('product_variants').select('sku, price_b2c').in('sku', skus)
       : Promise.resolve({ data: [] as any[] }),
     fetchDailyLossRecap(shopName, windowStartIso),
+    supabase ? fetchPendingReceptions(supabase, shopName, minDate, maxDate) : Promise.resolve(new Map<string, (ReceptionPendingOrder & { headerId: string })[]>()),
   ]);
 
   const priceBySku = new Map<string, number>();
@@ -1568,6 +1639,7 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
       losses: dayLoss?.products ?? [],
       lossesTotalQty: dayLoss?.totalQty ?? 0,
       lossesReportCount: dayLoss?.reportCount ?? 0,
+      receptionPending: (pendingByDate.get(date) ?? []).map(({ headerId: _h, ...p }) => p),
     };
   });
 }
@@ -1575,7 +1647,8 @@ async function fetchDailyReportRange(shopName: string, dates: string[] = last7Vn
 export async function getMyDailyReportRangeAction(): Promise<{ reports?: ShopDailyReport[]; error?: string }> {
   const auth = await requireShopSession();
   if ('error' in auth) return { error: auth.error };
-  return { reports: await fetchDailyReportRange(auth.shopName) };
+  // Legacy 7-day action (older bundles only): days still locked by the reception gate are left out.
+  return { reports: (await fetchDailyReportRange(auth.shopName)).filter(r => !r.receptionPending.length) };
 }
 
 export async function getDailyReportRangeForStaffAction(shopName: string): Promise<{ reports?: ShopDailyReport[]; error?: string }> {
@@ -1657,13 +1730,18 @@ async function fetchDailyReportMonth(shopName: string, month?: string): Promise<
   return { months, month: chosen, today: vnDateStr(), days };
 }
 
-async function fetchDailyReportDay(shopName: string, date: string): Promise<{ report: ShopDailyReport } | { error: string }> {
+// `enforce` = the shop's own session: a day with unfinished receptions returns `blocked` (the
+// list of orders to confirm) instead of the report. Staff/managers always get the report, with
+// report.receptionPending for a warning banner.
+async function fetchDailyReportDay(shopName: string, date: string, enforce = false): Promise<{ report: ShopDailyReport } | { blocked: ReceptionPendingOrder[] } | { error: string }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) return { error: 'Ngày không hợp lệ' };
   const evDates = eventReportDates(await getActiveEventByName(shopName));
   if (evDates ? !evDates.includes(date) : !reportMonthWindow().includes(date.slice(0, 7))) return { error: 'Ngoài khoảng thời gian cho phép' };
   if (date > vnDateStr()) return { error: 'Ngoài khoảng thời gian cho phép' };
   const [report] = await fetchDailyReportRange(shopName, [date]);
-  return report ? { report } : { error: 'Không có dữ liệu' };
+  if (!report) return { error: 'Không có dữ liệu' };
+  if (enforce && report.receptionPending.length) return { blocked: report.receptionPending };
+  return { report };
 }
 
 export async function getMyDailyReportMonthAction(month?: string): Promise<{ data?: ShopDailyReportMonth; error?: string }> {
@@ -1680,18 +1758,18 @@ export async function getDailyReportMonthForStaffAction(shopName: string, month?
   return 'error' in r ? { error: r.error } : { data: r };
 }
 
-export async function getMyDailyReportDayAction(date: string): Promise<{ report?: ShopDailyReport; error?: string }> {
+export async function getMyDailyReportDayAction(date: string): Promise<{ report?: ShopDailyReport; blocked?: ReceptionPendingOrder[]; error?: string }> {
   const auth = await requireShopSession();
   if ('error' in auth) return { error: auth.error };
-  const r = await fetchDailyReportDay(auth.shopName, date);
-  return 'error' in r ? { error: r.error } : { report: r.report };
+  const r = await fetchDailyReportDay(auth.shopName, date, true);
+  return 'error' in r ? { error: r.error } : 'blocked' in r ? { blocked: r.blocked } : { report: r.report };
 }
 
 export async function getDailyReportDayForStaffAction(shopName: string, date: string): Promise<{ report?: ShopDailyReport; error?: string }> {
   const auth = await requireStaffOrManagerSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const r = await fetchDailyReportDay(auth.shopName, date);
-  return 'error' in r ? { error: r.error } : { report: r.report };
+  return 'error' in r ? { error: r.error } : 'blocked' in r ? { error: 'blocked' } : { report: r.report };
 }
 
 // ── Live inventory reference (Order tab) ────────────────────────────────────────────────────
