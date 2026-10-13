@@ -21,6 +21,7 @@ export type GapStatus = 'open' | 'waiting_shop' | 'waiting_return' | 'closed';
 export const GAP_DEADLINE_HOURS = 48;
 export const DAMAGED_RETURN_MAX_DELIVERIES = 2;
 const WINDOW_DAYS = 14;
+const GAPS_FROM = '2026-10-13';
 
 export type DeliveryGap = {
   id: string | null; // lab_delivery_gaps row id once persisted
@@ -78,7 +79,10 @@ export async function listDeliveryGaps(
 ): Promise<{ gaps: DeliveryGap[]; schemaReady: boolean }> {
   const schemaReady = await gapsSchemaReady(sb);
   const today = vnToday();
-  const from = addDays(today, -(opts.days ?? WINDOW_DAYS));
+  // Backlog up to 12/10 was cleaned up by hand in Odoo (claude/shop-in-backlog-check-2026-10-12.md),
+  // so gaps start on 13/10 — older ones would show as "to decide" although already settled.
+  const rolling = addDays(today, -(opts.days ?? WINDOW_DAYS));
+  const from = rolling > GAPS_FROM ? rolling : GAPS_FROM;
   const target = opts.shopName ? normShopName(opts.shopName) : null;
 
   const headers = (await fetchAllPages<{ id: string; delivery_date: string; order_ref: string; shop_name: string | null; marked_not_delivered: boolean | null }>((f, t) =>
