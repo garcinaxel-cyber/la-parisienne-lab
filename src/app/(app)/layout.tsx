@@ -78,12 +78,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Purchasing badge (Axel, 2026-10-12: "un voyant rouge ... comme l'OEM"): purchase request lines
   // still to order + storage slips waiting for confirmation. Only for who can open /purchasing;
   // counted with the service key, same as the purchasing screen itself (purchasing/actions.ts guard).
+  // Axel, 2026-10-13: lines already put in a draft Odoo PO (po_odoo_id set, status still 'pending'
+  // until the PO is confirmed) are not counted -- same as the 'Lines waiting' card on the screen.
   let pendingPurchasing = 0;
   if (profile.role === 'purchasing' || profile.role === 'admin' || (profile as any).can_purchase) {
     const db = rawService();
     if (db) {
       const [{ count: toOrder }, { count: toConfirm }] = await Promise.all([
-        db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+        db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('po_odoo_id', null),
         db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm'),
       ]);
       pendingPurchasing = (toOrder ?? 0) + (toConfirm ?? 0);
