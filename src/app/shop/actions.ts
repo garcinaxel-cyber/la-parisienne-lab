@@ -617,10 +617,13 @@ const TEST_REASON_KEYWORDS = ['test', 'hang thu'];
 // The Odoo tag is id 24 "Sự cố tủ lạnh" (normalised: "su co tu lanh"); matched by keyword like
 // the other families, so renaming it in Odoo to any "tủ lạnh" / "tủ mát" wording keeps it listed.
 const FRIDGE_REASON_KEYWORDS = ['tu lanh', 'tu mat', 'fridge'];
+// Axel, 2026-10-13: "rajoute la scrap reason Marketing pour les app des shops" — shops only.
+// The Odoo tag already exists: id 4 "MARKETING"; matched by keyword like the other families.
+const MARKETING_REASON_KEYWORDS = ['marketing'];
 function reduceLossReasons(all: ShopLossReason[]): ShopLossReason[] {
   const filtered = all.filter(r => {
     const n = normalizeReasonName(r.name);
-    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k)) || TEST_REASON_KEYWORDS.some(k => n.includes(k)) || FRIDGE_REASON_KEYWORDS.some(k => n.includes(k));
+    return BROKEN_REASON_KEYWORDS.some(k => n.includes(k)) || EXPIRED_REASON_KEYWORDS.some(k => n.includes(k)) || TEST_REASON_KEYWORDS.some(k => n.includes(k)) || FRIDGE_REASON_KEYWORDS.some(k => n.includes(k)) || MARKETING_REASON_KEYWORDS.some(k => n.includes(k));
   });
   return filtered.length > 0 ? filtered : all;
 }
