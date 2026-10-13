@@ -106,6 +106,17 @@ export async function ensureDeliveryOrderChecklist(
   const { data: existingLines } = await supabase.from('lab_delivery_check_lines')
     .select('id, sku, category, product_category, note, qty_expected, product_name_vi').eq('delivery_order_id', header.id);
   const existingKeys = new Set((existingLines ?? []).map((l: any) => `${l.category}||${l.sku}`));
+  // A REP split over two delivery days (Axel, 2026-10-09, REP/2026/01910: the part the shop got
+  // as 0 moved to the next day under the SAME ref, as a second header) — a line already held by
+  // the other day's header must not be re-seeded here from lab_order_lines, or it counts twice.
+  const { data: siblingHeaders } = await supabase.from('lab_delivery_orders')
+    .select('id').eq('order_ref', orderRef).neq('id', header.id);
+  const elsewhereKeys = new Set<string>();
+  if (siblingHeaders?.length) {
+    const { data: siblingLines } = await supabase.from('lab_delivery_check_lines')
+      .select('category, sku').in('delivery_order_id', siblingHeaders.map((h: any) => h.id));
+    for (const l of siblingLines ?? []) elsewhereKeys.add(`${(l as any).category}||${(l as any).sku}`);
+  }
 
   // Aggregate producible lines by SKU — a client's bon can carry the same SKU across two
   // variant rows (e.g. size), and the check is per SKU, not per variant, for now. Odoo notes
@@ -231,7 +242,7 @@ export async function ensureDeliveryOrderChecklist(
   for (const [sku, e] of Object.entries(bySku)) {
     if (excludedSkuSet.has(sku)) continue; // routed entirely through the packaging bucket below
     const key = `production||${sku}`;
-    if (existingKeys.has(key)) continue;
+    if (existingKeys.has(key) || elsewhereKeys.has(key)) continue;
     toInsert.push({
       delivery_order_id: header.id, delivery_date: date, sku,
       product_name_vi: e.name_vi, product_name_en: e.name_en,
@@ -252,7 +263,7 @@ export async function ensureDeliveryOrderChecklist(
   ]));
   for (const sku of packagingSkus) {
     const key = `packaging||${sku}`;
-    if (existingKeys.has(key)) continue;
+    if (existingKeys.has(key) || elsewhereKeys.has(key)) continue;
     const pkgRow = packaging.find(p => p.sku === sku);
     const prodRow = bySku[sku];
     const name = pkgRow?.name ?? prodRow?.name_vi ?? sku;
@@ -356,6 +367,22 @@ export async function ensureDeliveryOrderChecklistsBatch(
         .select('id, delivery_order_id, sku, category, product_category, note, qty_expected, product_name_vi')
         .in('delivery_order_id', headerIds)
     : { data: [] as any[] };
+  // Lines held by another day's header of the same ref (split REP, see ensureDeliveryOrderChecklist).
+  const elsewhereByRef = new Map<string, Set<string>>();
+  {
+    const { data: refHeaders } = await supabase.from('lab_delivery_orders').select('id, order_ref').in('order_ref', refs);
+    const pageIds = new Set(headerIds);
+    const siblings = (refHeaders ?? []).filter((h: any) => !pageIds.has(h.id));
+    if (siblings.length) {
+      const refBySibling = new Map(siblings.map((h: any) => [h.id, h.order_ref]));
+      const { data: sibLines } = await supabase.from('lab_delivery_check_lines')
+        .select('delivery_order_id, category, sku').in('delivery_order_id', siblings.map((h: any) => h.id));
+      for (const l of sibLines ?? []) {
+        const ref = refBySibling.get((l as any).delivery_order_id) as string;
+        (elsewhereByRef.get(ref) ?? elsewhereByRef.set(ref, new Set()).get(ref)!).add(`${(l as any).category}||${(l as any).sku}`);
+      }
+    }
+  }
   const existingLinesByHeader = new Map<string, any[]>();
   for (const l of allExistingLines ?? []) {
     const arr = existingLinesByHeader.get((l as any).delivery_order_id) ?? existingLinesByHeader.set((l as any).delivery_order_id, []).get((l as any).delivery_order_id)!;
@@ -393,6 +420,7 @@ export async function ensureDeliveryOrderChecklistsBatch(
     const packaging = packagingByRef.get(ref) ?? [];
     const existingLines = existingLinesByHeader.get(header.id) ?? [];
     const existingKeys = new Set(existingLines.map((l: any) => `${l.category}||${l.sku}`));
+    for (const k of Array.from(elsewhereByRef.get(ref) ?? [])) existingKeys.add(k);
 
     const bySku: Record<string, { name_vi: string; name_en: string | null; team: string | null; ficheId: string | null; qty: number; notes: Set<string> }> = {};
     for (const l of orderLines) {

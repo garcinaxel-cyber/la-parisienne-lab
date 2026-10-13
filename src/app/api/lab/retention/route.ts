@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { cleanupRawRequestPhotos } from '@/lib/raw-photo-cleanup';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -61,13 +62,16 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── 1b. Photos « nouveau produit » des demandes d'achat que plus aucune ligne n'utilise ──
+  const rawPhotos = await cleanupRawRequestPhotos(supabase, { dry, minAgeMin: 24 * 60 }).catch((e: any) => ({ error: String(e?.message ?? e) }));
+
   // ── 2. Purge SQL glissante ──
   const { data: deleted, error } = await supabase.rpc('lab_purge_rolling', { p_dry_run: dry });
   if (error) {
     console.error('[retention] lab_purge_rolling failed', error.message);
     return NextResponse.json({ ok: false, dry, photos, error: error.message }, { status: 502 });
   }
-  const res = { ok: true, dry, photos, deleted, ms: Date.now() - startedAt };
+  const res = { ok: true, dry, photos, rawPhotos, deleted, ms: Date.now() - startedAt };
   console.log('[retention]', JSON.stringify(res));
   return NextResponse.json(res);
 }

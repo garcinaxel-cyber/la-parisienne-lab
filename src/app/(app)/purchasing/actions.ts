@@ -5,6 +5,7 @@
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecute } from '@/lib/odoo';
+import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
 async function guard() {
   const a = await rawActor();
@@ -15,20 +16,68 @@ async function guard() {
 }
 const ids = (v: unknown) => (Array.isArray(v) ? v : []).map(String).filter(Boolean).slice(0, 500);
 
-export type Board = { lines: PurchaseLine[]; vendors: { id: number; name: string }[]; catalogue: { tmplId: number; name: string; sku: string | null; uom: string }[] };
+export type DraftPo = { id: number; name: string; vendorId: number | null; vendorName: string | null; state: string; amountTotal: number };
+export type Board = {
+  lines: PurchaseLine[]; vendors: { id: number; name: string }[];
+  catalogue: { tmplId: number; name: string; nameVi: string | null; visible: boolean; sku: string | null; uom: string; vendorIds: number[] }[];
+  drafts: DraftPo[];
+};
+
+// Phase 2 (Axel, 2026-10-09): follow the draft POs created from the app. Confirmed in Odoo ->
+// the lines become 'ordered'; cancelled -> back to the queue; still a draft -> vendor/amount refreshed.
+// Best effort: if Odoo cannot be read, the board simply shows what it knew.
+async function refreshDraftPos(db: NonNullable<ReturnType<typeof rawService>>): Promise<DraftPo[]> {
+  // 'ordered' lines too (Axel, 2026-10-09: "j'ai supprimé la PO validée et ça montre toujours que c'est
+  // confirmé"): a confirmed PO later cancelled or deleted in Odoo sends its lines back to the queue.
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const { data: rows } = await db.from('lab_purchase_request_lines').select('id, po_odoo_id, status')
+    .in('status', ['pending', 'ordered']).not('po_odoo_id', 'is', null).gte('created_at', since).limit(2000);
+  const poIds = Array.from(new Set((rows ?? []).map(r => Number(r.po_odoo_id))));
+  if (!poIds.length) return [];
+  let pos: any[] = [];
+  try {
+    pos = await odooExecute<any[]>('purchase.order', 'search_read', [[['id', 'in', poIds]]],
+      { fields: ['id', 'name', 'state', 'partner_id', 'amount_total', 'date_approve'], context: { active_test: false } });
+  } catch { return []; }
+  const byId = new Map(pos.map(p => [p.id, p]));
+  const drafts: DraftPo[] = [];
+  for (const id of poIds) {
+    const p = byId.get(id);
+    if (!p || p.state === 'cancel') {
+      // Gone or cancelled in Odoo: the lines go back to the purchasing queue.
+      await db.from('lab_purchase_request_lines').update({ status: 'pending', po_odoo_id: null, po_ref: null, po_created_at: null, po_created_by_name: null,
+        ordered_at: null, ordered_by_name: null }).eq('po_odoo_id', id).in('status', ['pending', 'ordered']);
+      continue;
+    }
+    if (p.state === 'purchase' || p.state === 'done') {
+      await db.from('lab_purchase_request_lines').update({
+        status: 'ordered', po_ref: p.name, ordered_at: p.date_approve || new Date().toISOString(), ordered_by_name: 'Odoo',
+        ...(p.partner_id ? { vendor_id: p.partner_id[0], vendor_name: p.partner_id[1] } : {}),
+      }).eq('po_odoo_id', id).eq('status', 'pending');
+      continue;
+    }
+    // Back to draft in Odoo (reset after confirmation): the lines wait again with this draft.
+    await db.from('lab_purchase_request_lines').update({ status: 'pending', ordered_at: null, ordered_by_name: null })
+      .eq('po_odoo_id', id).eq('status', 'ordered');
+    drafts.push({ id, name: p.name, vendorId: p.partner_id ? p.partner_id[0] : null, vendorName: p.partner_id ? p.partner_id[1] : null, state: p.state, amountTotal: Number(p.amount_total) || 0 });
+  }
+  return drafts;
+}
 
 export async function getPurchasingBoardAction(): Promise<{ data?: Board; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   try {
+    const drafts = await refreshDraftPos(g.db);
     const lines = await loadLines(g.db, q => q.eq('status', 'pending').order('created_at', { ascending: true }));
-    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, sku, uom, vendors').eq('active', true).order('name').limit(3000);
+    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, name_vi, sku, uom, vendors, visible').eq('active', true).order('name').limit(3000);
     const vend = new Map<number, string>();
     for (const m of mats ?? []) for (const v of (m.vendors as any[]) ?? []) if (v?.id && !vend.has(v.id)) vend.set(v.id, v.name);
     return { data: {
       lines,
       vendors: Array.from(vend.entries()).map(([id, name]) => ({ id, name })).sort((x, y) => x.name.localeCompare(y.name)),
-      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, sku: m.sku, uom: m.uom })),
+      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, nameVi: (m as any).name_vi ?? null, visible: !!(m as any).visible, sku: m.sku, uom: m.uom, vendorIds: ((m.vendors as any[]) ?? []).map(v => Number(v?.id)).filter(Boolean) })),
+      drafts,
     } };
   } catch (e: any) { return { error: e.message }; }
 }
@@ -116,6 +165,74 @@ export async function correctWithdrawalLineAction(lineId: string, qty: number | 
   return error ? { error: error.message } : { ok: true };
 }
 
+// Slips waiting for storage to confirm, any day (Axel, 2026-10-09: "hien confirm d'abord").
+export async function getPendingWithdrawalsAction(): Promise<{ items?: Withdrawal[]; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  try {
+    return { items: await loadWithdrawals(g.db, q => q.eq('status', 'to_confirm').order('created_at', { ascending: true })) };
+  } catch (e: any) { return { error: e.message }; }
+}
+
+// Storage confirms a slip, with the real quantities given out (null = as asked). The chef's team
+// is pushed so they know they can take the goods.
+export async function confirmWithdrawalAction(withdrawalId: string, qtys: { lineId: string; qty: number | null }[]): Promise<{ ok?: boolean; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status').eq('id', withdrawalId).maybeSingle();
+  if (!w) return { error: 'Not found' };
+  if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  const { data: lines } = await g.db.from('lab_raw_withdrawal_lines').select('id, qty').eq('withdrawal_id', w.id);
+  const byId = new Map((lines ?? []).map(l => [l.id as string, Number(l.qty)]));
+  const now = new Date().toISOString();
+  let changed = 0;
+  for (const x of (qtys ?? []).slice(0, 200)) {
+    if (!byId.has(x.lineId)) continue;
+    const v = x.qty == null || isNaN(Number(x.qty)) ? null : Math.max(0, Math.round(Number(x.qty) * 1000) / 1000);
+    const differs = v != null && Math.abs(v - byId.get(x.lineId)!) > 1e-9;
+    const { error } = await g.db.from('lab_raw_withdrawal_lines').update(differs
+      ? { corrected_qty: v, corrected_by_name: g.a.name || null, corrected_at: now }
+      : { corrected_qty: null, corrected_by_name: null, corrected_at: null }).eq('id', x.lineId);
+    if (error) return { error: error.message };
+    if (differs) changed++;
+  }
+  const { data: upd, error } = await g.db.from('lab_raw_withdrawals')
+    .update({ status: 'confirmed', confirmed_at: now, confirmed_by_name: g.a.name || null })
+    .eq('id', w.id).eq('status', 'to_confirm').select('id');
+  if (error) return { error: error.message };
+  if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  const extra = changed ? ` · ${changed} dòng đã sửa số lượng` : '';
+  const extraEn = changed ? ` · ${changed} line(s) corrected` : '';
+  await awaitPush(sendTeamPush(g.db, w.team,
+    { title: 'La Parisienne Lab', body: `✅ Kho đã xác nhận phiếu #${w.no}${extra} — có thể lấy hàng`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
+    { title: 'La Parisienne Lab', body: `✅ Storage confirmed slip #${w.no} (${w.team})${extraEn}`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
+  return { ok: true };
+}
+
+// Storage's own needs (Axel, 2026-10-09: Hien adds requests straight from the purchasing screen).
+// Team 'kho', no approval: the lines land in the queue directly.
+export async function addStorageRequestAction(lines: { tmplId: number; qty: number; note?: string | null }[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const clean = (lines ?? []).filter(l => l.tmplId && Number(l.qty) > 0).slice(0, 80);
+  if (!clean.length) return { error: 'Empty' };
+  const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId));
+  const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
+  if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  const { data: r, error } = await g.db.from('lab_purchase_requests')
+    .insert({ team: 'kho', requested_by: g.a.name || null, created_by: g.a.userId }).select('id, no').single();
+  if (error || !r) return { error: error?.message ?? 'Insert failed' };
+  const rows = clean.map(l => {
+    const m: any = byId.get(l.tmplId);
+    const note = String(l.note ?? '').trim().slice(0, 300) || null;
+    return { request_id: r.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: Math.round(Number(l.qty) * 1000) / 1000,
+      note, vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status: 'pending' };
+  });
+  const { error: lErr } = await g.db.from('lab_purchase_request_lines').insert(rows);
+  if (lErr) { await g.db.from('lab_purchase_requests').delete().eq('id', r.id); return { error: lErr.message }; }
+  return { ok: true, no: Number(r.no) };
+}
+
 // History: every line created in the given lab-local month ('YYYY-MM'), all statuses.
 export async function getHistoryAction(month: string): Promise<{ items?: PurchaseLine[]; error?: string }> {
   const g = await guard();
@@ -125,6 +242,7 @@ export async function getHistoryAction(month: string): Promise<{ items?: Purchas
   const start = labDayUtcRange(`${month}-01`).start;
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
   const end = labDayUtcRange(next).start;
+  await refreshDraftPos(g.db).catch(() => []); // PO cancelled/deleted in Odoo -> history shows it right away
   try {
     // Lines still waiting for the team lead, or turned down by him, never reached purchasing.
     return { items: await loadLines(g.db, q => q.gte('created_at', start).lt('created_at', end).neq('status', 'to_approve').eq('rejected_by_lead', false).order('created_at', { ascending: false })) };
@@ -237,4 +355,67 @@ export async function checkMaterialsAction(tmplIds: number[]) {
   const list = (Array.isArray(tmplIds) ? tmplIds : []).map(Number).filter(Boolean).slice(0, 3000);
   const { error } = await g.db.from('lab_raw_materials').update({ checked: true, updated_at: new Date().toISOString(), updated_by_name: g.a.name || null }).in('tmpl_id', list);
   return error ? { error: error.message } : { ok: true };
+}
+
+
+// Phase 2 (Axel, 2026-10-09): one draft purchase order in Odoo for the lines the assistant ticked —
+// any lines, whatever vendor the app suggested ("le deuxième produit peut s'acheter chez le même
+// fournisseur"). The vendor is optional: Odoo saves a PO without one; it just must not be confirmed
+// without one (the assistant confirms in Odoo). Same product twice -> one PO line, quantities summed.
+// Price, taxes and planned date are left to Odoo (vendor price list). Never confirms anything.
+export async function createDraftPoAction(lineIds: string[], vendorId: number | null): Promise<{ ok?: boolean; poName?: string; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const want = ids(lineIds);
+  if (!want.length) return { error: 'Empty' };
+  const { data: ls, error } = await g.db.from('lab_purchase_request_lines')
+    .select('id, request_id, tmpl_id, name, uom, qty, brand, brand_strict, note, status, po_odoo_id').in('id', want);
+  if (error) return { error: error.message };
+  const lines = (ls ?? []).filter(l => l.status === 'pending' && !l.po_odoo_id && l.tmpl_id);
+  if (!lines.length) return { error: 'Không có dòng hợp lệ (đã có PO hoặc sản phẩm chưa có trong Odoo)' };
+  const tmplIds = Array.from(new Set(lines.map(l => l.tmpl_id)));
+  const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, product_id').in('tmpl_id', tmplIds);
+  const productOf = new Map((mats ?? []).map(m => [m.tmpl_id, m.product_id as number | null]));
+  if (lines.some(l => !productOf.get(l.tmpl_id))) return { error: 'Sản phẩm chưa đồng bộ với Odoo — bấm "Đồng bộ" trong Danh mục' };
+  const reqIds = Array.from(new Set(lines.map(l => l.request_id)));
+  const { data: reqs } = await g.db.from('lab_purchase_requests').select('id, no, team').in('id', reqIds);
+  const reqNo = new Map((reqs ?? []).map(r => [r.id, r]));
+  try {
+    const productIds = Array.from(new Set(lines.map(l => productOf.get(l.tmpl_id)!)));
+    const prods = await odooExecute<any[]>('product.product', 'read', [productIds, ['display_name', 'uom_id']], { context: { lang: 'vi_VN' } });
+    const prodById = new Map(prods.map(p => [p.id, p]));
+    // One PO line per product.
+    const byProduct = new Map<number, { qty: number; notes: string[] }>();
+    for (const l of lines) {
+      const pid = productOf.get(l.tmpl_id)!;
+      const e = byProduct.get(pid) ?? { qty: 0, notes: [] };
+      e.qty += Number(l.qty);
+      const r: any = reqNo.get(l.request_id);
+      const bits = [l.brand ? `${l.brand}${l.brand_strict ? ' (bắt buộc)' : ' (nếu có)'}` : '', l.note ?? ''].filter(Boolean).join(' · ');
+      e.notes.push(`#${r?.no ?? '?'}${r?.team ? ` ${r.team}` : ''}: ${Number(l.qty)} ${l.uom}${bits ? ` — ${bits}` : ''}`);
+      byProduct.set(pid, e);
+    }
+    const orderLines = Array.from(byProduct.entries()).map(([pid, e]) => {
+      const p = prodById.get(pid);
+      return [0, 0, {
+        product_id: pid, product_qty: Math.round(e.qty * 1000) / 1000,
+        ...(p?.uom_id ? { product_uom: p.uom_id[0] } : {}),
+        name: [p?.display_name ?? '', ...e.notes].filter(Boolean).join('\n'),
+      }];
+    });
+    const origin = 'App ' + Array.from(new Set((reqs ?? []).map(r => `#${r.no}`))).join(' ');
+    const poId = await odooExecute<number>('purchase.order', 'create', [{
+      ...(vendorId ? { partner_id: vendorId } : {}), origin: origin.slice(0, 120), order_line: orderLines,
+    }]);
+    const [po] = await odooExecute<any[]>('purchase.order', 'read', [[poId], ['name', 'partner_id']]);
+    const now = new Date().toISOString();
+    const { error: uErr } = await g.db.from('lab_purchase_request_lines').update({
+      po_odoo_id: poId, po_ref: po?.name ?? null, po_created_at: now, po_created_by_name: g.a.name || null,
+      ...(po?.partner_id ? { vendor_id: po.partner_id[0], vendor_name: po.partner_id[1] } : {}),
+    }).in('id', lines.map(l => l.id)).eq('status', 'pending');
+    if (uErr) return { error: `PO ${po?.name ?? poId} đã tạo trên Odoo nhưng chưa lưu được vào app: ${uErr.message}` };
+    return { ok: true, poName: po?.name ?? String(poId) };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Odoo error' };
+  }
 }

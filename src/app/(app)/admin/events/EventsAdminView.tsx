@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarDays, Loader2, AlertCircle, QrCode, X, Store } from 'lucide-react';
-import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, setEventDatesAction, type CreateEventFormResult } from './actions';
+import { createEventAction, listEventsAction, closeEventAction, uploadEventQrAction, removeEventQrAction, enterEventAsStaffAction, regenerateEventPinAction, setEventDatesAction, setEventTargetAction, type CreateEventFormResult } from './actions';
 import type { EventShop } from '@/lib/event-shops';
 
 // Same downsize-before-upload as the online-orders payment-proof upload (OnlineOrdersView.tsx) —
@@ -63,6 +63,37 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
     setDateBusyId(null);
     if (res.error) { setOpenError(res.error); return; }
     setDateDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
+    load();
+  }
+  // Sales target per day + opening hours (2026-10-10) — shown on the event's Sales screen only.
+  // One field per event day; a day left empty has no target.
+  const [targetDraft, setTargetDraft] = useState<Record<string, { days: Record<string, string>; open: string; close: string }>>({});
+  const [targetBusyId, setTargetBusyId] = useState<string | null>(null);
+  const eventDayList = (e: EventShop): string[] => {
+    if (!e.startDate || !e.endDate || e.endDate < e.startDate) return [];
+    const out: string[] = []; const d = new Date(e.startDate + 'T00:00:00Z');
+    for (let i = 0; i < 31; i++) { const k = d.toISOString().slice(0, 10); if (k > e.endDate) break; out.push(k); d.setUTCDate(d.getUTCDate() + 1); }
+    return out;
+  };
+  const targetOf = (e: EventShop) => targetDraft[e.id] ?? {
+    days: Object.fromEntries(Object.entries(e.dailyTargets ?? {}).map(([k, v]) => [k, String(Math.round(v / 1e6 * 10) / 10)])),
+    open: e.openTime || '10:00', close: e.closeTime || '22:00',
+  };
+  async function saveTarget(e: EventShop) {
+    const d = targetOf(e);
+    const targets: Record<string, number> = {};
+    for (const [day, raw] of Object.entries(d.days)) {
+      if (!raw.trim()) continue;
+      const m = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(m) || m <= 0) { setOpenError(`Target ${fmtDay(day)}: a number of millions, e.g. 50`); return; }
+      targets[day] = Math.round(m * 1e6);
+    }
+    setTargetBusyId(e.id);
+    setOpenError(null);
+    const res = await setEventTargetAction(e.id, targets, d.open, d.close);
+    setTargetBusyId(null);
+    if (res.error) { setOpenError(res.error); return; }
+    setTargetDraft(prev => { const next = { ...prev }; delete next[e.id]; return next; });
     load();
   }
   const [creating, setCreating] = useState(false);
@@ -251,6 +282,41 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
               <span>{e.startDate && e.endDate ? `${fmtDay(e.startDate)} to ${fmtDay(e.endDate)}` : 'not set'}</span>
             )}
             <span className="text-gray-400">Reports in the event show these days only.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-xs text-gray-500">
+            <span className="font-semibold">Daily target</span>
+            {canManage ? (
+              eventDayList(e).length === 0 ? <span className="text-gray-400">set the event days first</span> : (
+              <>
+                {eventDayList(e).map(day => (
+                  <label key={day} className="inline-flex items-center gap-1">
+                    <span>{fmtDay(day)}</span>
+                    <input type="text" inputMode="decimal" value={targetOf(e).days[day] ?? ''} placeholder="—" aria-label={`Sales target ${day} in millions`}
+                      onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), days: { ...targetOf(e).days, [day]: ev.target.value } } }))}
+                      className="rounded-lg px-2 py-1 text-xs w-12 text-right" style={{ border: '1px solid #E5E7EB' }} />
+                  </label>
+                ))}
+                <span>M ₫ · open</span>
+                <input type="time" value={targetOf(e).open} aria-label="Opening time"
+                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), open: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                <span>close</span>
+                <input type="time" value={targetOf(e).close} aria-label="Closing time"
+                  onChange={ev => setTargetDraft(prev => ({ ...prev, [e.id]: { ...targetOf(e), close: ev.target.value } }))}
+                  className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
+                {targetDraft[e.id] && (
+                  <button onClick={() => saveTarget(e)} disabled={targetBusyId === e.id}
+                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                    {targetBusyId === e.id ? '…' : 'Save'}
+                  </button>
+                )}
+              </>)
+            ) : (
+              <span>{Object.keys(e.dailyTargets ?? {}).length
+                ? Object.entries(e.dailyTargets).sort().map(([k, v]) => `${fmtDay(k)} ${Math.round(v / 1e6 * 10) / 10}M`).join(' · ') + ` · ${e.openTime}–${e.closeTime}`
+                : 'none'}</span>
+            )}
+            <span className="text-gray-400">Shown on the event's Sales screen for that day only (ring + pace). Empty = no target.</span>
           </div>
           </div>
         ))}

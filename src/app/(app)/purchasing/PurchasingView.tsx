@@ -1,16 +1,18 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw } from 'lucide-react';
+import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTriangle, Loader2, Factory, Pencil, Plus, RotateCcw, Bell, Clock, ListFilter, ArrowUpDown } from 'lucide-react';
+import PushBell from '@/components/PushBell';
 import { useI18n } from '@/lib/i18n';
 import {
-  RAW_TYPES, subLabel, typeLabel, shortVendor, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
+  RAW_TYPES, subLabel, typeLabel, shortVendor, rawName, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
   type PurchaseLine, type RawMaterial, type Withdrawal, type RawType,
 } from '@/lib/raw-materials';
 import {
   getPurchasingBoardAction, setVendorAction, markOrderedAction, cancelLinesAction, undoLineStepAction,
   linkNewProductAction, markNewToCreateAction, getWithdrawalsDayAction, correctWithdrawalLineAction, getHistoryAction,
-  getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, type Board,
+  getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, createDraftPoAction, type Board,
+  getPendingWithdrawalsAction, confirmWithdrawalAction, addStorageRequestAction,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
 
@@ -29,14 +31,23 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
   // Axel, 2026-10-09: "le stock picking et purchase est un peu trop mélangé" — three clearly separate
   // spaces: Purchasing (requests + purchase history), Stock picking (the chefs' storage slips, any
   // day), Catalogue. Same tab ids as before, so ?tab= links keep working.
-  type Section = 'purchase' | 'picking' | 'catalogue';
-  const section: Section = tab === 'storage' ? 'picking' : tab === 'catalogue' ? 'catalogue' : 'purchase';
+  // Axel, 2026-10-12: Catalogue moved inside Purchasing (3rd sub-tab next to Requests / history).
+  type Section = 'purchase' | 'picking';
+  const section: Section = tab === 'storage' ? 'picking' : 'purchase';
   const sections: [Section, string, Tab][] = [
     ['purchase', L('Mua hàng', 'Purchasing'), 'requests'],
     ['picking', L('Lấy kho', 'Stock picking'), 'storage'],
-    ['catalogue', L('Danh mục', 'Catalogue'), 'catalogue'],
   ];
-  const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')]];
+  const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')], ['catalogue', L('Danh mục', 'Catalogue')]];
+  // Slips waiting for storage's confirmation (Axel, 2026-10-09), shown as a badge on Stock picking.
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => getPendingWithdrawalsAction().then(r => { if (alive && r.items) setPendingCount(r.items.length); });
+    tick();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') tick(); }, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [tab]);
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -44,12 +55,16 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2"><Truck size={24} className="text-gold" /> {L('Mua hàng', 'Purchasing')}</h1>
           <p className="text-ink-light text-sm mt-0.5">{L('Mua hàng: yêu cầu mua của các chef. Lấy kho: phiếu lấy nguyên liệu từ kho. Giai đoạn thử: không ghi gì vào Odoo.', 'Purchasing: the chefs\' purchase requests. Stock picking: what they take from storage. Test phase: nothing is written to Odoo.')}</p>
         </div>
-        <Link href="/oem-orders" className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2 bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Factory size={15} /> {L('Đơn hàng OEM', 'OEM orders')}</Link>
+        <div className="flex items-center gap-2">
+          <PushBell L={L} />
+          <Link href="/oem-orders" className="inline-flex items-center gap-1.5 text-sm font-bold rounded-xl px-3 py-2 bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Factory size={15} /> {L('Đơn hàng OEM', 'OEM orders')}</Link>
+        </div>
       </div>
       <div className="flex gap-1 overflow-x-auto rounded-xl p-1 bg-white" style={{ border: `1px solid ${BORDER}` }}>
         {sections.map(([k, label, first]) => (
           <button key={k} onClick={() => setTab(section === k ? tab : first)} className="flex-1 min-w-[110px] rounded-lg py-2 text-[13px] font-extrabold whitespace-nowrap"
-            style={{ backgroundColor: section === k ? NAVY : 'transparent', color: section === k ? '#fff' : '#6B7280' }}>{label}</button>
+            style={{ backgroundColor: section === k ? NAVY : 'transparent', color: section === k ? '#fff' : '#6B7280' }}>{label}
+            {k === 'picking' && pendingCount > 0 && <span className="ml-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-extrabold px-1.5 min-w-[20px]" style={{ backgroundColor: LATE, color: '#fff' }}>{pendingCount}</span>}</button>
         ))}
       </div>
       {section === 'purchase' && (
@@ -61,7 +76,7 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
         </div>
       )}
       {tab === 'requests' && <RequestsTab L={L} lang={lang as any} />}
-      {tab === 'storage' && <StorageTab L={L} lang={lang as any} />}
+      {tab === 'storage' && <StorageTab L={L} lang={lang as any} onPending={setPendingCount} />}
       {tab === 'history' && <HistoryTab L={L} lang={lang as any} />}
       {tab === 'catalogue' && <CatalogueTab L={L} lang={lang as any} />}
     </div>
@@ -76,6 +91,12 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [po, setPo] = useState<Record<string, string>>({});
+  // Phase 2 (Axel, 2026-10-09): tick any lines, whatever vendor, -> one draft PO in Odoo.
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [poOpen, setPoOpen] = useState(false);
+  const [poVendor, setPoVendor] = useState<string>('');
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const load = useCallback(async () => {
     const r = await getPurchasingBoardAction();
     if (r.error) setErr(r.error); else { setErr(null); setBoard(r.data!); }
@@ -87,7 +108,28 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   }
   if (!board) return <div className="text-sm text-center py-10" style={{ color: '#6B7280' }}>{err ?? L('Đang tải…', 'Loading…')}</div>;
 
-  const pending = board.lines.filter(l => l.status === 'pending' && !(l.isNew && l.newState !== 'linked'));
+  const inPo = board.lines.filter(l => l.status === 'pending' && l.poOdooId);
+  const pending = board.lines.filter(l => l.status === 'pending' && !l.poOdooId && !(l.isNew && l.newState !== 'linked'));
+  const toggle = (idsArr: string[], on: boolean) => setSel(prev => { const n = new Set(prev); idsArr.forEach(i => on ? n.add(i) : n.delete(i)); return n; });
+  const selLines = pending.filter(l => sel.has(l.id));
+  const suggested = (() => {
+    const m = new Map<number, string>();
+    const vname = (id: number) => board.vendors.find(v => v.id === id)?.name ?? String(id);
+    for (const l of selLines) {
+      if (l.vendorId) m.set(l.vendorId, l.vendorName ?? vname(l.vendorId));
+      for (const id of board.catalogue.find(c => c.tmplId === l.tmplId)?.vendorIds ?? []) if (!m.has(id)) m.set(id, vname(id));
+    }
+    return Array.from(m.entries()).map(([id, name]) => ({ id, name }));
+  })();
+  async function createPo() {
+    setBusy(true); setErr(null);
+    const r = await createDraftPoAction(selLines.map(l => l.id), Number(poVendor) || null);
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setPoOpen(false); setSel(new Set()); setPoVendor('');
+    setOkMsg(L(`✓ Đã tạo PO nháp ${r.poName} trên Odoo — kiểm tra giá rồi xác nhận trên Odoo.`, `✓ Draft PO ${r.poName} created in Odoo — check prices, then confirm it in Odoo.`));
+    await load();
+  }
   const news = board.lines.filter(l => l.status === 'pending' && l.isNew && l.newState !== 'linked');
   // Pending lines by vendor, then merged by product.
   const byVendor = new Map<string, PurchaseLine[]>();
@@ -103,14 +145,60 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{err}</div>}
+      <div className="flex justify-end">
+        <button onClick={() => setAddOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>
+          <Plus size={15} /> {L('Thêm nhu cầu của kho', 'Add a storage need')}</button>
+      </div>
+      {addOpen && <AddNeedDialog L={L} lang={lang} catalogue={board.catalogue} onClose={() => setAddOpen(false)}
+        onDone={no => { setAddOpen(false); setOkMsg(L(`✓ Đã thêm yêu cầu #${no} (Kho) vào danh sách chờ.`, `✓ Request #${no} (Storage) added to the queue.`)); load(); }} />}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Kpi label={L('Dòng đang chờ', 'Lines waiting')} value={String(pending.length)} sub={L('chưa đặt hàng', 'not ordered yet')} />
         <Kpi label={L('Nhà cung cấp', 'Vendors')} value={String(vendorKeys.filter(k => k !== 'none').length)} sub={L('theo NCC trong Odoo', 'from Odoo vendors')} />
         <Kpi label={L('Chưa có NCC', 'No vendor')} value={String(byVendor.get('none')?.length ?? 0)} sub={L('cần chọn', 'to assign')} warn={(byVendor.get('none')?.length ?? 0) > 0} />
         <Kpi label={L('Sản phẩm mới', 'New products')} value={String(news.length)} sub={L('cần gắn hoặc tạo', 'to link or create')} />
       </div>
-      {!pending.length && !news.length && (
+      {okMsg && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{okMsg}</div>}
+      {!pending.length && !news.length && !inPo.length && (
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có yêu cầu nào.', 'No request yet.')}</div>
+      )}
+      {board.drafts.length > 0 && (
+        <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="px-4 py-2.5 text-sm font-bold" style={{ borderBottom: `1px solid ${HAIR}` }}>{L('PO nháp trên Odoo — chờ xác nhận', 'Draft POs in Odoo — waiting for confirmation')} · {board.drafts.length}</div>
+          {board.drafts.map(d => { const dl = inPo.filter(l => l.poOdooId === d.id); return (
+            <div key={d.id} className="px-4 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <b className="text-[13px]">{d.name}</b>
+                {d.vendorId ? <span className="text-xs" style={{ color: '#344054' }}>{shortVendor(d.vendorName)}</span>
+                  : <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FBEAE8', color: LATE }}>⚠ {L('Chưa có NCC — chưa được xác nhận', 'No vendor — do not confirm yet')}</span>}
+                <span className="ml-auto text-xs tabular-nums" style={{ color: '#6B7280' }}>{d.amountTotal ? `${Math.round(d.amountTotal).toLocaleString('vi-VN')} ₫` : L('chưa có giá', 'no price yet')}</span>
+              </div>
+              <div className="text-[11.5px] mt-1" style={{ color: '#6B7280' }}>{dl.map(l => `${l.name} ${fmtQty(l.qty)} ${l.uom}`).join(' · ')}</div>
+            </div>); })}
+          <div className="px-4 py-2 text-[11px]" style={{ backgroundColor: PALE, color: '#6B7280' }}>{L('Xác nhận PO trên Odoo. App tự cập nhật “Đã đặt” khi PO được xác nhận, hoặc trả dòng về hàng chờ nếu PO bị huỷ.', 'Confirm the PO in Odoo. The app switches to “Ordered” once confirmed, or puts the lines back in the queue if the PO is cancelled.')}</div>
+        </div>
+      )}
+      {sel.size > 0 && (
+        <div className="sticky top-2 z-20 flex items-center gap-2 rounded-xl px-3 py-2.5 flex-wrap shadow-md" style={{ backgroundColor: NAVY, color: '#fff' }}>
+          <b className="text-[13px] flex-1">{L(`Đã chọn ${selLines.length} dòng`, `${selLines.length} lines selected`)}</b>
+          <button onClick={() => setSel(new Set())} className="text-xs font-bold px-2" style={{ color: '#F0D98A' }}>{L('Bỏ chọn', 'Clear')}</button>
+          <button disabled={busy || !selLines.length} onClick={() => { setPoVendor(suggested.length === 1 ? String(suggested[0].id) : ''); setPoOpen(true); }} className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ backgroundColor: '#F0D98A', color: NAVY }}>{L('Tạo PO nháp trên Odoo', 'Create draft PO in Odoo')} ›</button>
+        </div>
+      )}
+      {poOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={() => !busy && setPoOpen(false)}>
+          <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="text-[15px] font-extrabold">{L('Tạo PO nháp trên Odoo', 'Create a draft PO in Odoo')}</div>
+            <div className="text-[12px] rounded-lg p-2 max-h-40 overflow-y-auto" style={{ backgroundColor: PALE }}>{selLines.map(l => <div key={l.id}>{l.name} · <b>{fmtQty(l.qty)} {l.uom}</b> <span style={{ color: '#9CA3AF' }}>#{l.requestNo}</span></div>)}</div>
+            <div><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Nhà cung cấp của PO', 'Vendor for this PO')}</span>
+              <VendorPicker L={L} value={poVendor} onChange={setPoVendor} suggested={suggested} vendors={board.vendors} /></div>
+            {!poVendor && <div className="text-[11.5px] rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>{L('PO được lưu không có NCC. Chọn NCC trên Odoo trước khi xác nhận.', 'The PO is saved without a vendor. Set the vendor in Odoo before confirming.')}</div>}
+            <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{L('Giá lấy theo bảng giá NCC trên Odoo. App không xác nhận PO — bạn xác nhận trên Odoo.', 'Prices come from the vendor price list in Odoo. The app never confirms the PO — you confirm it in Odoo.')}</div>
+            <div className="flex gap-2 justify-end">
+              <button disabled={busy} onClick={() => setPoOpen(false)} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Huỷ', 'Cancel')}</button>
+              <button disabled={busy} onClick={createPo} className="rounded-lg px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={14} className="animate-spin inline" /> : L('Tạo PO nháp', 'Create draft PO')}</button>
+            </div>
+          </div>
+        </div>
       )}
       {vendorKeys.map(k => {
         const ls = byVendor.get(k)!; const none = k === 'none';
@@ -123,14 +211,15 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]" style={{ minWidth: 720 }}>
                 <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
-                  <th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material')}</th><th className="text-right px-3 py-2">{L('Tổng', 'Total')}</th>
+                  <th className="w-8 px-2 py-2"></th><th className="text-left px-3 py-2">{L('Nguyên liệu', 'Raw material')}</th><th className="text-right px-3 py-2">{L('Tổng', 'Total')}</th>
                   <th className="text-left px-3 py-2">{L('Từ', 'From')}</th><th className="text-left px-3 py-2">{L('Ghi chú / thương hiệu', 'Note / brand')}</th>
                   <th className="text-left px-3 py-2">{L('Nhà cung cấp', 'Vendor')}</th><th></th></tr></thead>
                 <tbody>
                   {merge(ls).map(group => {
                     const f = group[0]; const total = group.reduce((s, l) => s + l.qty, 0);
                     return (
-                      <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}`, backgroundColor: group.every(l => sel.has(l.id)) ? '#FFFBEF' : undefined }}>
+                        <td className="px-2 py-2 text-center">{f.tmplId != null && <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={group.every(l => sel.has(l.id))} onChange={e => toggle(group.map(l => l.id), e.target.checked)} aria-label="select" />}</td>
                         <td className="px-3 py-2"><b>{f.name}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.sku}</div></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}</td>
                         <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>)}</td>
@@ -151,7 +240,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             </div>
             {!none && (
               <div className="flex items-center gap-2 px-4 py-2.5 flex-wrap" style={{ backgroundColor: PALE }}>
-                <span className="text-[11.5px] flex-1 min-w-[220px]" style={{ color: '#6B7280' }}>{L('Giai đoạn thử: tạo PO trong Odoo như hiện nay, rồi nhập số PO để chef thấy “Đã đặt”.', 'Test phase: create the PO in Odoo as today, then enter its number so chefs see “Ordered”.')}</span>
+                <span className="text-[11.5px] flex-1 min-w-[220px]" style={{ color: '#6B7280' }}>{L('Hoặc PO đã tạo tay trong Odoo: nhập số PO để chef thấy “Đã đặt”.', 'Or a PO made by hand in Odoo: enter its number so chefs see “Ordered”.')}</span>
                 <input value={po[k] ?? ''} onChange={e => setPo(p => ({ ...p, [k]: e.target.value }))} placeholder={L('Số PO, vd P00412', 'PO no., e.g. P00412')}
                   className="rounded-lg px-2.5 py-1.5 text-xs bg-white w-36" style={{ border: `1px solid ${BORDER}` }} />
                 <button disabled={busy} onClick={() => run(markOrderedAction(ls.map(l => l.id), po[k] ?? ''))} className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-extrabold text-white" style={{ backgroundColor: NAVY }}>
@@ -192,6 +281,119 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   );
 }
 
+// Axel, 2026-10-09: quick search in the vendor list (accent-insensitive, "dai tan" finds ĐẠI TÂN VIỆT).
+function normVendor(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+}
+function VendorPicker({ L, value, onChange, suggested, vendors }: {
+  L: LFn; value: string; onChange: (v: string) => void;
+  suggested: { id: number; name: string }[]; vendors: { id: number; name: string }[];
+}) {
+  const [q, setQ] = useState('');
+  const nq = normVendor(q.trim());
+  const match = (n: string) => !nq || nq.split(/\s+/).every(w => normVendor(n).includes(w));
+  const sug = suggested.filter(v => match(v.name));
+  const rest = vendors.filter(v => !suggested.some(x => x.id === v.id) && match(v.name));
+  const current = value ? (vendors.find(v => String(v.id) === value) ?? suggested.find(v => String(v.id) === value)) : null;
+  const row = (id: string, label: string) => {
+    const on = value === id;
+    return (
+      <button key={id || 'none'} type="button" onClick={() => onChange(id)}
+        className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md"
+        style={{ backgroundColor: on ? '#EAF3EE' : undefined, color: on ? NAVY : '#1F2937', fontWeight: on ? 800 : 500 }}>
+        <span className="w-3.5 shrink-0">{on && <Check size={13} />}</span><span className="truncate">{label}</span>
+      </button>
+    );
+  };
+  const head = (t: string) => <div className="px-2.5 pt-2 pb-1 text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{t}</div>;
+  return (
+    <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+      <div className="flex items-center gap-2 px-2.5 py-2" style={{ borderBottom: `1px solid ${HAIR}` }}>
+        <Search size={14} style={{ color: '#9CA3AF' }} />
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nhà cung cấp…', 'Search vendors…')}
+          className="flex-1 text-[13px] outline-none bg-transparent" />
+        {q && <button type="button" onClick={() => setQ('')} aria-label="clear"><X size={14} style={{ color: '#9CA3AF' }} /></button>}
+      </div>
+      <div className="text-[12px] px-2.5 py-1.5" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>
+        {L('Đã chọn: ', 'Selected: ')}<b>{current ? shortVendor(current.name) : L('Chưa chọn NCC', 'No vendor yet')}</b>
+      </div>
+      <div className="max-h-56 overflow-y-auto p-1">
+        {!nq && row('', L('Chưa chọn NCC (chọn sau trên Odoo)', 'No vendor yet (choose later in Odoo)'))}
+        {sug.length > 0 && <>{head(L('Gợi ý cho các sản phẩm này', 'Suggested for these items'))}{sug.map(v => row(String(v.id), shortVendor(v.name)))}</>}
+        {rest.length > 0 && <>{head(L('Tất cả nhà cung cấp', 'All vendors'))}{rest.map(v => row(String(v.id), shortVendor(v.name)))}</>}
+        {nq && !sug.length && !rest.length && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy nhà cung cấp', 'No vendor found')}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Storage's own needs (Axel, 2026-10-09: Hien adds requests from this screen). Team 'kho', no approval.
+function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
+  L: LFn; lang: 'vi' | 'en'; catalogue: Board['catalogue']; onClose: () => void; onDone: (no: number) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [picks, setPicks] = useState<{ tmplId: number; qty: string; note: string }[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const label = (c: Board['catalogue'][number]) => (lang === 'vi' && c.nameVi) || c.name;
+  const byId = useMemo(() => new Map(catalogue.map(c => [c.tmplId, c])), [catalogue]);
+  const nq = normVendor(q.trim());
+  const results = !nq ? [] : catalogue.filter(c => c.visible && !picks.some(p => p.tmplId === c.tmplId)
+    && nq.split(/\s+/).every(w => normVendor(`${c.name} ${c.nameVi ?? ''} ${c.sku ?? ''}`).includes(w))).slice(0, 30);
+  const valid = picks.filter(p => parseFloat(p.qty.replace(',', '.')) > 0);
+  async function submit() {
+    setBusy(true); setErr(null);
+    const r = await addStorageRequestAction(valid.map(p => ({ tmplId: p.tmplId, qty: parseFloat(p.qty.replace(',', '.')), note: p.note })));
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    onDone(r.no!);
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={() => !busy && onClose()}>
+      <div className="bg-white rounded-2xl p-4 w-full max-w-lg space-y-3 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="text-[15px] font-extrabold">{L('Thêm nhu cầu của kho', 'Add a storage need')}</div>
+        <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+          <div className="flex items-center gap-2 px-2.5 py-2">
+            <Search size={14} style={{ color: '#9CA3AF' }} />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nguyên liệu…', 'Search raw materials…')} className="flex-1 text-[13px] outline-none bg-transparent" />
+            {q && <button type="button" onClick={() => setQ('')} aria-label="clear"><X size={14} style={{ color: '#9CA3AF' }} /></button>}
+          </div>
+          {nq && <div className="max-h-48 overflow-y-auto p-1" style={{ borderTop: `1px solid ${HAIR}` }}>
+            {results.map(c => (
+              <button key={c.tmplId} type="button" onClick={() => { setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '' }]); setQ(''); }}
+                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
+                <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{label(c)}</span><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
+              </button>
+            ))}
+            {!results.length && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy', 'Nothing found')}</div>}
+          </div>}
+        </div>
+        {picks.length > 0 && <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
+          {picks.map((p, i) => { const c = byId.get(p.tmplId); return (
+            <div key={p.tmplId} className="px-3 py-2 space-y-1.5" style={{ borderTop: i ? `1px solid ${HAIR}` : 'none' }}>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 text-[13px] font-bold leading-snug">{c ? label(c) : p.tmplId}</span>
+                <input inputMode="decimal" value={p.qty} placeholder="0" onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, qty: e.target.value } : x))}
+                  className="w-20 rounded-md px-2 py-1 text-right text-[14px] font-extrabold" style={{ border: `1px solid ${GOLD}` }} />
+                <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{c?.uom}</span>
+                <button type="button" onClick={() => setPicks(ps => ps.filter(x => x.tmplId !== p.tmplId))} aria-label="remove"><X size={15} style={{ color: '#9CA3AF' }} /></button>
+              </div>
+              <input value={p.note} onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, note: e.target.value } : x))}
+                placeholder={L('Ghi chú / thương hiệu (tuỳ chọn)', 'Note / brand (optional)')} className="w-full rounded-md px-2 py-1 text-[12.5px]" style={{ border: `1px solid ${HAIR}` }} />
+            </div>
+          ); })}
+        </div>}
+        {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{err}</div>}
+        <div className="flex gap-2 justify-end">
+          <button disabled={busy} onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Huỷ', 'Cancel')}</button>
+          <button disabled={busy || !valid.length} onClick={submit} className="rounded-lg px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: valid.length ? NAVY : '#9CA3AF' }}>
+            {busy ? <Loader2 size={14} className="animate-spin inline" /> : L(`Thêm ${valid.length || ''} dòng`, `Add ${valid.length || ''} line${valid.length > 1 ? 's' : ''}`)}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
     <div className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
@@ -204,7 +406,20 @@ function Kpi({ label, value, sub, warn }: { label: string; value: string; sub?: 
 
 /* ===================== Stock picking ===================== */
 function todayVN(): string { return vnDayTime(new Date().toISOString()).ymd; }
-function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
+function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPending?: (n: number) => void }) {
+  // Slips waiting for storage (Axel, 2026-10-09: "hien confirm d'abord"), any day, oldest first.
+  const [pending, setPending] = useState<Withdrawal[] | null>(null);
+  const [pv, setPv] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const loadPending = useCallback(async () => {
+    const r = await getPendingWithdrawalsAction();
+    if (r.items) { setPending(r.items); onPending?.(r.items.length); }
+  }, [onPending]);
+  useEffect(() => {
+    loadPending();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadPending(); }, 20000);
+    return () => clearInterval(t);
+  }, [loadPending]);
   const [date, setDate] = useState(todayVN());
   const [items, setItems] = useState<Withdrawal[] | null>(null);
   const [edit, setEdit] = useState<string | null>(null);
@@ -219,6 +434,19 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   useEffect(() => { setItems(null); load(); }, [load]);
   const lines = (items ?? []).reduce((s, w) => s + w.lines.length, 0);
   const corrected = (items ?? []).reduce((s, w) => s + w.lines.filter(l => l.correctedQty != null).length, 0);
+  async function confirmSlip(w: Withdrawal) {
+    setConfirming(w.id); setErr(null);
+    const qtys = w.lines.map(l => {
+      const raw = pv[l.id];
+      const v = raw == null || raw.trim() === '' ? null : parseFloat(raw.replace(',', '.'));
+      return { lineId: l.id, qty: v == null || isNaN(v) ? null : v };
+    });
+    const r = await confirmWithdrawalAction(w.id, qtys);
+    setConfirming(null);
+    if (r.error) setErr(r.error);
+    setPv(prev => { const n = { ...prev }; w.lines.forEach(l => delete n[l.id]); return n; });
+    loadPending(); load();
+  }
   async function save(w: Withdrawal) {
     for (const l of w.lines) {
       const raw = val[l.id]; if (raw == null) continue;
@@ -232,8 +460,47 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       <div className="rounded-xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
-        {L('Phiếu được ghi ngay khi chef xác nhận. Không cần duyệt. Chỉ sửa nếu số lượng thực tế khác.', 'Slips are recorded when the chef confirms. Nothing to approve. Only correct a quantity if the real one differs.')}
+        {L('Chef gửi phiếu, kho xác nhận trước khi chef lấy hàng. Sửa số lượng nếu thực tế khác (0 = không đưa).', 'The chef sends a slip; storage confirms it before the chef takes the goods. Change a quantity if the real one differs (0 = not given).')}
       </div>
+      {pending && pending.length > 0 && (
+        <div className="rounded-2xl overflow-hidden bg-white" style={{ border: `1.5px solid ${LATE}` }}>
+          <div className="px-4 py-2.5 flex items-center gap-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>
+            <Clock size={15} /><b className="text-sm flex-1">{L(`Chờ xác nhận · ${pending.length} phiếu`, `To confirm · ${pending.length} slip${pending.length > 1 ? 's' : ''}`)}</b>
+          </div>
+          {pending.map(w => {
+            const mins = Math.max(0, Math.round((Date.now() - new Date(w.createdAt).getTime()) / 60000));
+            const late = mins >= 10;
+            return (
+              <div key={w.id} className="px-4 py-3" style={{ borderTop: `1px solid ${HAIR}` }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <b className="text-[14px] tabular-nums">#{w.no}</b>
+                  <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
+                  <span className="text-[11px] font-extrabold rounded-md px-2 py-0.5" style={late ? { backgroundColor: LATE, color: '#fff' } : { backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
+                    {L(`chờ ${mins} phút`, `waiting ${mins} min`)}</span>
+                </div>
+                <div className="mt-1.5">
+                  {w.lines.map(l => (
+                    <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
+                        {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
+                        {l.offRecipe && <div className="text-[11px] font-bold" style={{ color: '#8A5A00' }}>⚠ {L('Ngoài công thức', 'Off recipe')}{l.usedFor ? ` · ${L('cho', 'for')}: ${l.usedFor}` : ''}</div>}
+                      </div>
+                      <input inputMode="decimal" value={pv[l.id] ?? fmtQty(l.qty)} onChange={e => setPv(v => ({ ...v, [l.id]: e.target.value }))}
+                        className="w-20 rounded-md px-2 py-1.5 text-right text-[14px] font-extrabold tabular-nums" style={{ border: `1px solid ${pv[l.id] != null && pv[l.id] !== fmtQty(l.qty) ? LATE : GOLD}` }} />
+                      <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button disabled={confirming === w.id} onClick={() => confirmSlip(w)} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: NAVY }}>
+                    {confirming === w.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />} {L('Xác nhận', 'Confirm')}</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         {([[todayVN(), L('Hôm nay', 'Today')], [addDays(todayVN(), -1), L('Hôm qua', 'Yesterday')]] as const).map(([d, lab]) => (
           <button key={d} onClick={() => setDate(d)} className="rounded-full px-3 py-1.5 text-[12.5px] font-extrabold"
@@ -278,9 +545,11 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <b className="text-[13px] tabular-nums">#{w.no}</b>
                 <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
-                {w.lines.some(l => l.correctedQty != null)
-                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
-                  : <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã ghi', 'Recorded')}</span>}
+                {w.status === 'to_confirm'
+                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ xác nhận', 'To confirm')}</span>
+                  : w.lines.some(l => l.correctedQty != null)
+                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}{w.confirmedBy ? ` · ${w.confirmedBy}` : ''}</span>
+                  : <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>{L('Đã xác nhận', 'Confirmed')}{w.confirmedBy ? ` · ${w.confirmedBy}` : ''}</span>}
               </div>
               {edit === w.id ? (
                 <div className="mt-2 space-y-1.5">
@@ -314,7 +583,7 @@ function StorageTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>
+                  {w.status !== 'to_confirm' && <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>}
                 </>
               )}
             </div>
@@ -500,6 +769,9 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [syncing, setSyncing] = useState(false);
   const [packFor, setPackFor] = useState<number | null>(null);
   const [packLabel, setPackLabel] = useState(''); const [packFactor, setPackFactor] = useState('');
+  const [cf, setCf] = useState<Partial<Record<ColKey, Set<string>>>>({});
+  const [sort, setSort] = useState<{ key: 'name' | 'bom'; dir: 1 | -1 }>({ key: 'name', dir: 1 });
+  const [openCol, setOpenCol] = useState<{ k: ColKey; rect: { left: number; bottom: number }; sorts?: ColSortOpt[] } | null>(null);
   const load = useCallback(async () => { const r = await getCatalogueAction(); if (r.error) setMsg(r.error); else { setItems(r.items!); setSyncedAt(r.syncedAt ?? null); } }, []);
   useEffect(() => { load(); }, [load]);
   async function sync() {
@@ -515,8 +787,66 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     if (r.error) { setMsg(r.error); load(); }
   }
   const all = items ?? [];
-  const rows = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
-    && (type === 'all' || m.type === type) && (!q.trim() || `${m.name} ${m.sku ?? ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+  // Names in the screen's language (Axel, 2026-10-12): Vietnamese name when the app is in VI, Odoo name
+  // kept underneath; the search matches both names and the SKU, accents ignored.
+  const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const nq = fold(q.trim());
+  const base = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
+    && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))));
+  // Excel-like column filters (Axel, 2026-10-12): each header opens a checklist of its values with
+  // counts; filters combine with each other and with the chips above. Sort on name / recipes.
+  const colVal = (m: RawMaterial, k: ColKey): string => {
+    switch (k) {
+      case 'vendor': return m.vendorName ?? '__none';
+      case 'uom': return m.uom || '—';
+      case 'type': return m.type;
+      case 'group': return `${m.type}|${m.sub}`;
+      case 'packs': return m.packs.length ? 'yes' : 'no';
+      case 'recipes': return m.bomCount != null && m.bomCount > 0 ? 'has' : m.noRecipeNeeded ? 'nr' : m.bomCount === 0 ? 'none' : 'unk';
+      case 'visible': return m.visible ? 'on' : 'off';
+      case 'status': return m.checked ? 'checked' : 'todo';
+    }
+  };
+  const colLabel = (k: ColKey, v: string): string => {
+    switch (k) {
+      case 'vendor': return v === '__none' ? L('Chưa có NCC', 'No vendor') : shortVendor(v);
+      case 'type': return typeLabel(v as RawType, lang);
+      case 'group': { const [t, sb] = v.split('|'); return `${subLabel(t as RawType, sb, lang)} · ${typeLabel(t as RawType, lang)}`; }
+      case 'packs': return v === 'yes' ? L('Có quy cách', 'Has packs') : L('Chưa có quy cách', 'No pack');
+      case 'recipes': return v === 'has' ? L('Có công thức', 'Used in recipes') : v === 'nr' ? L('Không cần công thức', 'No recipe needed') : v === 'none' ? L('⚠ Chưa có', '⚠ None') : L('Chưa rõ', 'Unknown');
+      case 'visible': return v === 'on' ? L('Chef thấy', 'Shown to chefs') : L('Ẩn', 'Hidden');
+      case 'status': return v === 'checked' ? L('Đã duyệt', 'Checked') : L('Gợi ý', 'Suggested');
+      default: return v;
+    }
+  };
+  const FIXED_ORDER: Partial<Record<ColKey, string[]>> = { recipes: ['has', 'none', 'nr', 'unk'], packs: ['yes', 'no'], visible: ['on', 'off'], status: ['todo', 'checked'], type: Object.keys(RAW_TYPES) };
+  const passCols = (m: RawMaterial, except: ColKey | null) =>
+    (Object.keys(cf) as ColKey[]).every(k => k === except || !cf[k] || cf[k]!.has(colVal(m, k)));
+  const optionsFor = (k: ColKey) => {
+    const cnt = new Map<string, number>();
+    for (const m of base) if (passCols(m, k)) { const v = colVal(m, k); cnt.set(v, (cnt.get(v) ?? 0) + 1); }
+    for (const v of Array.from(cf[k] ?? [])) if (!cnt.has(v)) cnt.set(v, 0);
+    const opts = Array.from(cnt.entries()).map(([key, count]) => ({ key, label: colLabel(k, key), count }));
+    const fo = FIXED_ORDER[k];
+    return fo ? opts.sort((a, b) => fo.indexOf(a.key) - fo.indexOf(b.key)) : opts.sort((a, b) => a.label.localeCompare(b.label, lang === 'vi' ? 'vi' : 'en'));
+  };
+  const coll = lang === 'vi' ? 'vi' : 'en';
+  const rows = base.filter(m => passCols(m, null)).sort((a, b) => sort.key === 'bom'
+    ? sort.dir * ((a.bomCount ?? -1) - (b.bomCount ?? -1)) || rawName(a, lang).localeCompare(rawName(b, lang), coll)
+    : sort.dir * rawName(a, lang).localeCompare(rawName(b, lang), coll));
+  const activeCols = (Object.keys(cf) as ColKey[]).filter(k => cf[k]);
+  const colTitle: Record<ColKey, string> = { vendor: L('Nhà cung cấp', 'Vendor'), uom: L('Đơn vị', 'Unit'), type: L('Loại', 'Type'), group: L('Nhóm', 'Group'), packs: L('Quy cách', 'Packs'), recipes: L('Công thức', 'Recipes'), visible: L('Chef thấy', 'Chefs see'), status: L('Trạng thái', 'Status') };
+  const Th = ({ k, label, align = 'left', sorts }: { k: ColKey; label: string; align?: 'left' | 'center' | 'right'; sorts?: ColSortOpt[] }) => {
+    const on = !!cf[k] || (!!sorts && sorts.some(o => o.key === sort.key && (o.key !== 'name' || sort.dir !== 1)));
+    return (
+      <th className={`px-3 py-2 whitespace-nowrap text-${align}`}>
+        <button onMouseDown={e => e.stopPropagation()} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setOpenCol(openCol?.k === k ? null : { k, rect: { left: r.left, bottom: r.bottom }, sorts }); }}
+          className="inline-flex items-center gap-1 uppercase tracking-wide font-bold rounded px-1 -mx-1 py-0.5 hover:bg-[#FFFAEE]" style={{ color: on ? GOLD_TEXT : '#9CA3AF' }}>
+          {label}<ListFilter size={12} strokeWidth={on ? 2.6 : 2} style={{ color: on ? GOLD : '#C0C4CC' }} />
+        </button>
+      </th>
+    );
+  };
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -545,19 +875,39 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             className="ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-extrabold" style={{ border: `1px solid ${NAVY}`, color: NAVY, backgroundColor: '#fff' }}><Check size={13} /> {L(`Duyệt ${rows.length} dòng đang hiện`, `Accept the ${rows.length} shown`)}</button>
         )}
       </div>
+      {(activeCols.length > 0 || sort.key !== 'name' || sort.dir !== 1) && (
+        <div className="flex items-center gap-1.5 flex-wrap text-xs">
+          <span className="font-bold" style={{ color: '#6B7280' }}>{L('Lọc theo cột:', 'Column filters:')}</span>
+          {activeCols.map(k => (
+            <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1.5 py-1 font-bold" style={{ backgroundColor: PALE, border: `1px solid ${GOLD}`, color: GOLD_TEXT }}>
+              {colTitle[k]} ({cf[k]!.size})
+              <button onClick={() => setCf(c => { const n = { ...c }; delete n[k]; return n; })} aria-label="clear"><X size={12} /></button>
+            </span>))}
+          {(sort.key !== 'name' || sort.dir !== 1) && <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-bold" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: NAVY }}><ArrowUpDown size={11} /> {sort.key === 'bom' ? L('Công thức', 'Recipes') : L('Tên Z → A', 'Name Z → A')}</span>}
+          <button onClick={() => { setCf({}); setSort({ key: 'name', dir: 1 }); }} className="font-extrabold underline ml-1" style={{ color: NAVY }}>{L('Bỏ tất cả', 'Clear all')}</button>
+          <span style={{ color: '#9CA3AF' }}>· {rows.length} {L('dòng', 'rows')}</span>
+        </div>
+      )}
+      {openCol && (
+        <ColFilterPop L={L} rect={openCol.rect} title={colTitle[openCol.k]} options={optionsFor(openCol.k)} selected={cf[openCol.k]}
+          onChange={sel => setCf(c => { const n = { ...c }; if (sel) n[openCol.k] = sel; else delete n[openCol.k]; return n; })}
+          sorts={openCol.sorts} sort={sort} onSort={(key, dir) => setSort({ key, dir })} onClose={() => setOpenCol(null)} />
+      )}
       {!items ? <div className="text-sm text-center py-6" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
         : !all.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#6B7280' }}>{L('Danh mục trống — bấm “Đồng bộ” để lấy nguyên liệu từ Odoo.', 'Empty catalogue — press “Sync” to load the raw materials from Odoo.')}</div>
         : (
         <div className="bg-white rounded-2xl overflow-x-auto" style={{ border: `1px solid ${BORDER}` }}>
           <table className="w-full text-[12.5px]" style={{ minWidth: 860 }}>
             <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
-              <th className="text-left px-3 py-2">{L('Nguyên liệu (tên Odoo)', 'Raw material (Odoo name)')}</th><th className="text-left px-3 py-2">{L('Đơn vị', 'Unit')}</th>
-              <th className="text-left px-3 py-2">{L('Loại', 'Type')}</th><th className="text-left px-3 py-2">{L('Nhóm', 'Group')}</th>
-              <th className="text-left px-3 py-2">{L('Quy cách', 'Packs')}</th><th className="text-center px-3 py-2">{L('Công thức', 'Recipes')}</th><th className="text-center px-3 py-2">{L('Chef thấy', 'Chefs see')}</th><th></th></tr></thead>
+              <Th k="vendor" label={L('Nguyên liệu', 'Raw material (Odoo name)')} sorts={[{ key: 'name', dir: 1, label: L('Tên A → Z', 'Name A → Z') }, { key: 'name', dir: -1, label: L('Tên Z → A', 'Name Z → A') }]} />
+              <Th k="uom" label={L('Đơn vị', 'Unit')} /><Th k="type" label={L('Loại', 'Type')} /><Th k="group" label={L('Nhóm', 'Group')} />
+              <Th k="packs" label={L('Quy cách', 'Packs')} />
+              <Th k="recipes" label={L('Công thức', 'Recipes')} align="center" sorts={[{ key: 'bom', dir: -1, label: L('Nhiều công thức nhất', 'Most recipes first') }, { key: 'bom', dir: 1, label: L('Ít công thức nhất', 'Fewest recipes first') }]} />
+              <Th k="visible" label={L('Chef thấy', 'Chefs see')} align="center" /><Th k="status" label={L('Trạng thái', 'Status')} align="right" /></tr></thead>
             <tbody>
               {rows.slice(0, 400).map(m => (
                 <tr key={m.tmplId} style={{ borderTop: `1px solid ${HAIR}` }}>
-                  <td className="px-3 py-2"><b>{m.name}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></td>
+                  <td className="px-3 py-2"><b>{rawName(m, lang)}</b>{lang === 'vi' && m.nameVi && m.nameVi !== m.name && <div className="text-[11px]" style={{ color: '#6B7280' }}>{m.name}</div>}<div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></td>
                   <td className="px-3 py-2">{m.uom}</td>
                   <td className="px-3 py-2"><select value={m.type} onChange={e => { const t = e.target.value as RawType; patch(m, { type: t, sub: Object.keys(RAW_TYPES[t].subs)[0] }); }} className="rounded-md px-1.5 py-1 text-xs bg-white" style={{ border: `1px solid ${HAIR}` }}>
                     {(Object.keys(RAW_TYPES) as RawType[]).map(t => <option key={t} value={t}>{typeLabel(t, lang)}</option>)}</select></td>
@@ -595,6 +945,84 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
           {rows.length > 400 && <div className="text-xs text-center py-2" style={{ color: '#6B7280' }}>{L(`Hiện 400 / ${rows.length} — dùng tìm kiếm`, `Showing 400 of ${rows.length} — use the search`)}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ===================== Excel-like column filter ===================== */
+type ColKey = 'vendor' | 'uom' | 'type' | 'group' | 'packs' | 'recipes' | 'visible' | 'status';
+type ColSortOpt = { key: 'name' | 'bom'; dir: 1 | -1; label: string };
+
+function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort, onSort, onClose }: {
+  L: LFn; rect: { left: number; bottom: number }; title: string;
+  options: { key: string; label: string; count: number }[];
+  selected: Set<string> | undefined; onChange: (sel: Set<string> | undefined) => void;
+  sorts?: ColSortOpt[]; sort: { key: 'name' | 'bom'; dir: 1 | -1 }; onSort: (key: 'name' | 'bom', dir: 1 | -1) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const scroll = (e: Event) => { if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return; onClose(); };
+    // deferred so the click that opened it does not close it
+    const t = setTimeout(() => { document.addEventListener('mousedown', down); document.addEventListener('keydown', key); window.addEventListener('scroll', scroll, true); window.addEventListener('resize', onClose); }, 0);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); window.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', onClose); };
+  }, [onClose]);
+  const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const nq = fold(q.trim());
+  const shown = nq ? options.filter(o => fold(o.label).includes(nq)) : options;
+  const allKeys = options.map(o => o.key);
+  const isOn = (k: string) => !selected || selected.has(k);
+  const normalize = (set: Set<string>) => (allKeys.every(k => set.has(k)) ? undefined : set);
+  const toggle = (k: string) => { const n = new Set(selected ?? allKeys); if (n.has(k)) n.delete(k); else n.add(k); onChange(normalize(n)); };
+  const allShownOn = shown.length > 0 && shown.every(o => isOn(o.key));
+  const toggleAll = () => { const n = new Set(selected ?? allKeys); for (const o of shown) { if (allShownOn) n.delete(o.key); else n.add(o.key); } onChange(normalize(n)); };
+  const only = (k: string) => onChange(normalize(new Set([k])));
+  const W = 290;
+  const left = typeof window !== 'undefined' ? Math.max(8, Math.min(rect.left, window.innerWidth - W - 8)) : rect.left;
+  const maxH = typeof window !== 'undefined' ? Math.max(220, window.innerHeight - rect.bottom - 16) : 400;
+  return (
+    <div ref={ref} className="fixed z-50 bg-white rounded-xl shadow-xl flex flex-col text-[12.5px] normal-case tracking-normal"
+      style={{ top: rect.bottom + 4, left, width: W, maxHeight: Math.min(maxH, 460), border: `1px solid ${BORDER}` }}>
+      <div className="px-3 pt-2.5 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{title}</div>
+      {sorts && sorts.length > 0 && (
+        <div className="px-1.5 pb-1.5" style={{ borderBottom: `1px solid ${HAIR}` }}>
+          {sorts.map(o => { const act = sort.key === o.key && sort.dir === o.dir; return (
+            <button key={`${o.key}${o.dir}`} onClick={() => onSort(o.key, o.dir)} className="w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left font-bold hover:bg-[#FFFAEE]"
+              style={{ color: act ? GOLD_TEXT : NAVY }}><ArrowUpDown size={12} />{o.label}{act && <Check size={12} className="ml-auto" />}</button>); })}
+        </div>
+      )}
+      <div className="px-2.5 pt-2">
+        <label className="flex items-center gap-1.5 rounded-lg px-2" style={{ border: `1px solid ${BORDER}` }}>
+          <Search size={12} style={{ color: '#9CA3AF' }} />
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm…', 'Search…')} className="flex-1 py-1.5 text-[12.5px] outline-none bg-transparent" />
+        </label>
+      </div>
+      <div className="px-1.5 pt-1.5">
+        <label className="flex items-center gap-2 rounded-md px-1.5 py-1 cursor-pointer font-extrabold hover:bg-[#FFFAEE]" style={{ color: NAVY }}>
+          <input type="checkbox" checked={allShownOn} onChange={toggleAll} style={{ accentColor: NAVY }} />
+          {nq ? L('Chọn tất cả kết quả', 'Select all results') : L('Chọn tất cả', 'Select all')}
+        </label>
+      </div>
+      <div className="flex-1 overflow-y-auto px-1.5 pb-1.5" style={{ minHeight: 60 }}>
+        {shown.length === 0 && <div className="px-1.5 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không có giá trị', 'No values')}</div>}
+        {shown.map(o => (
+          <div key={o.key} className="group flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-[#FFFAEE]">
+            <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+              <input type="checkbox" checked={isOn(o.key)} onChange={() => toggle(o.key)} style={{ accentColor: NAVY }} />
+              <span className="truncate" style={{ color: o.count ? '#1F2937' : '#9CA3AF' }}>{o.label}</span>
+            </label>
+            <button onClick={() => only(o.key)} className="hidden group-hover:inline text-[10.5px] font-extrabold" style={{ color: GOLD_TEXT }}>{L('chỉ', 'only')}</button>
+            <span className="text-[11px] tabular-nums" style={{ color: '#9CA3AF' }}>{o.count}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+        <button onClick={() => onChange(undefined)} disabled={!selected} className="text-xs font-extrabold disabled:opacity-40" style={{ color: NAVY }}>{L('Bỏ lọc cột này', 'Clear this filter')}</button>
+        <button onClick={onClose} className="text-xs font-extrabold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: NAVY }}>OK</button>
+      </div>
     </div>
   );
 }

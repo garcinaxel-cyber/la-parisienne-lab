@@ -128,8 +128,14 @@ export type TeamAnalytics = {
 // [team], which scopes each team to only its own SKUs within the shared category.
 const TEAM_STOCK_CATEGORIES: Record<string, string[]> = {
   baby_mama: ['Tiramisu', 'Biscuit Voyage'],
-  hung: ['Macaron', 'Biscuit Voyage'],
+  // 'Chocolate' (the 6 Choc Tablets) added for hung — Axel, 2026-10-13.
+  hung: ['Macaron', 'Biscuit Voyage', 'Chocolate'],
 };
+// OEM products (Maison Mooncake 'MM-…', Tianhe 'OEM-…') sit in the same fiche categories but are
+// not the team's daily products (Axel, 2026-10-13: "on voit les OEM mixés avec les produits du
+// quotidien") — they get their own group at the bottom instead of being mixed in.
+const OEM_GROUP = 'OEM';
+const isOemSku = (sku: string) => /^(MM-|OEM-)/i.test(sku);
 
 export async function getTeamAnalyticsAction(team: string): Promise<{ data?: TeamAnalytics; error?: string }> {
   const supabase = createClient();
@@ -203,11 +209,15 @@ export async function getTeamAnalyticsAction(team: string): Promise<{ data?: Tea
         for (const t of thresholdRows ?? []) thresholdBySku[t.sku] = Number(t.threshold);
         const byCategory: Record<string, StockLevel[]> = {};
         for (const l of levels) {
+          // A SKU with no active Odoo product (archived or never created, e.g. MCS200, old MM-…)
+          // only ever showed "—": leave it out (Axel, 2026-10-13 clean-up).
+          if (!l.found) continue;
           const withThreshold: StockLevel = { ...l, threshold: thresholdBySku[l.sku] ?? null };
-          (byCategory[categoryBySku[l.sku] || ''] ??= []).push(withThreshold);
+          const group = isOemSku(l.sku) ? OEM_GROUP : (categoryBySku[l.sku] || '');
+          (byCategory[group] ??= []).push(withThreshold);
         }
-        for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name));
-        stock = categories.filter(c => byCategory[c]?.length).map(c => ({ category: c, items: byCategory[c] }));
+        for (const cat of Object.keys(byCategory)) byCategory[cat].sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+        stock = [...categories, OEM_GROUP].filter(c => byCategory[c]?.length).map(c => ({ category: c, items: byCategory[c] }));
       } catch {
         stock = [];
       }

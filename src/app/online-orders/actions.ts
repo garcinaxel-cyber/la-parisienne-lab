@@ -172,7 +172,44 @@ export type OnlineOrderItem = {
   // Free per-line note (any product, Axel review 2026-09-06) — lands in lab_manual_cakes.notes
   // of that line, shown on /exceptional-orders and the chef card like any other note.
   lineNote?: string | null;
+  // Per-line discount in % (Axel, 2026-10-09) — unitPrice stays the gross price typed in the
+  // cart; the server stores the NET price in unit_price (see netUnitPrice) so every revenue
+  // reader stays correct untouched, and keeps the gross + % in list_unit_price / discount_pct.
+  discountPct?: number | null;
 };
+
+// ── Discounts (Axel, 2026-10-09: "tu peux lui permettre de mettre une remise ?") ──
+// Two kinds, both optional, a short reason mandatory as soon as either is used:
+//  · per product line, in % → net unit price = round(gross × (100 − %) / 100);
+//  · on the whole order, in % or ₫ → ONE extra lab_online_sale_lines row, qty 1, NEGATIVE
+//    unit_price, is_fee=false + is_discount=true, sku NULL: it lowers merchandise revenue and the
+//    grand total everywhere (stats, customers, export, payment alert, archive) and never touches
+//    stock, production or Odoo. Base of an order-level % = products after their line discounts
+//    (extra fees and the delivery fee are never discounted).
+export type OrderDiscountInput = { kind: 'pct' | 'amount'; value: number } | null;
+function cleanPct(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(100, Math.round(n * 100) / 100);
+}
+function netUnitPrice(gross: number, pct: number): number {
+  return pct > 0 ? Math.round(gross * (100 - pct) / 100) : gross;
+}
+function orderDiscountAmount(d: OrderDiscountInput | undefined, base: number): number {
+  if (!d || base <= 0) return 0;
+  const v = Number(d.value);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  const amt = d.kind === 'pct' ? Math.round(base * Math.min(100, v) / 100) : Math.round(v);
+  return Math.max(0, Math.min(base, amt));
+}
+function discountLineRow(d: OrderDiscountInput | undefined, amount: number, reason: string) {
+  const pctLabel = d?.kind === 'pct' ? ` ${Math.min(100, Number(d.value))}%` : '';
+  return {
+    fiche_id: null, variant_id: null, sku: null,
+    product_name_vi: `🏷️ Giảm giá${pctLabel} — ${reason}`.slice(0, 200), category: 'Giảm giá',
+    qty: 1, unit_price: -amount, line_note: reason, is_fee: false, is_discount: true,
+  };
+}
 
 // Extra fee (nến sinh nhật, nón sinh nhật...) added on top of the cart — never a catalogue
 // product, so it never touches lab_fiche_meta/production/Odoo (Axel, 2026-09-07: "ca prend
@@ -206,6 +243,7 @@ export async function submitOnlineOrderAction(input: {
   // 2026-09-09 — replaces inferring this from whether deliveryAddress is filled.
   deliveryMode?: 'shop' | 'direct';
   items: OnlineOrderItem[]; fees?: ExtraFeeLineInput[];
+  orderDiscount?: OrderDiscountInput; discountReason?: string | null;
 }): Promise<{ ok?: boolean; orderRef?: string | null; warning?: string; error?: string }> {
   const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
@@ -213,8 +251,16 @@ export async function submitOnlineOrderAction(input: {
   if (!supabase) return { error: 'Server not configured' };
 
   if (!SHOPS.includes(input.shop)) return { error: 'Invalid shop' };
-  // Axel review 2026-09-06: online orders are always fulfilled by a shop, never by the Lab itself.
-  if (input.shop === 'Lab') return { error: 'Lab cannot handle online orders' };
+  // Lab as the handling shop (Axel, 2026-10-10, reverses the 2026-09-06 rule): same process as a
+  // manual order delivered by the Lab -- a quotation on the LAB partner (the assistants rename the
+  // customer in Odoo afterwards, so no duplicate partner is ever created from here), the Lab
+  // delivers straight to the customer. Same requirements as the shop-link form's direct delivery.
+  const isLabDirect = input.shop === 'Lab';
+  if (isLabDirect) {
+    if (!clean(input.customerName, 120) || !clean(input.customerPhone, 40)) return { error: 'Lab giao trực tiếp cần tên + SĐT khách' };
+    if (!clean(input.deliveryAddress, 300)) return { error: 'Lab giao trực tiếp cần địa chỉ giao' };
+    if (!clean(input.readyTime, 8)) return { error: 'Lab giao trực tiếp cần giờ cần xong' };
+  }
   const channel = clean(input.channel, 60);
   if (!channel) return { error: 'Missing channel' };
   const items = Array.isArray(input.items) ? input.items : [];
@@ -222,19 +268,22 @@ export async function submitOnlineOrderAction(input: {
   const today = new Date().toISOString().split('T')[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate ?? '') || input.deliveryDate < today) return { error: 'Invalid delivery date' };
   if (!['paid', 'unpaid', 'partial'].includes(input.paymentStatus)) return { error: 'Invalid payment status' };
-  const deliveryMode: 'shop' | 'direct' = input.deliveryMode === 'direct' ? 'direct' : 'shop';
+  const deliveryMode: 'shop' | 'direct' = isLabDirect || input.deliveryMode === 'direct' ? 'direct' : 'shop';
 
   type Resolved = {
     ficheId: string; variantId: string | null; sku: string | null; team: string;
     nameVi: string; nameEn: string; imageUrl: string | null; variantLabel: string;
     qty: number; unitPrice: number; message: string | null; isCake: boolean;
     designNotes: string | null; designPhotoUrl: string | null; lineNote: string | null;
+    grossPrice: number; discountPct: number;
   };
   const resolved: Resolved[] = [];
   for (const item of items) {
     const qty = Math.round(Number(item.qty));
     if (!qty || qty < 1 || qty > 500) return { error: 'Invalid quantity' };
-    const unitPrice = Math.max(0, Number(item.unitPrice) || 0);
+    const grossPrice = Math.max(0, Number(item.unitPrice) || 0);
+    const discountPct = cleanPct(item.discountPct);
+    const unitPrice = netUnitPrice(grossPrice, discountPct);
     const { data: fiche } = await supabase.from('lab_fiche_meta')
       .select('id, name_vi, name_en, teams, image_url, category').eq('id', item.ficheId).eq('is_active', true).maybeSingle();
     if (!fiche) return { error: 'Product not found' };
@@ -265,8 +314,13 @@ export async function submitOnlineOrderAction(input: {
       designNotes: isCake ? clean(item.designNotes, 400) : null,
       designPhotoUrl: isCake ? photoUrl : null,
       lineNote: clean(item.lineNote, 300),
+      grossPrice, discountPct,
     });
   }
+  const discountReason = clean(input.discountReason, 120);
+  const productsNet = resolved.reduce((s, r) => s + r.qty * r.unitPrice, 0);
+  const orderDisc = orderDiscountAmount(input.orderDiscount, productsNet);
+  if ((orderDisc > 0 || resolved.some(r => r.discountPct > 0)) && !discountReason) return { error: 'Vui lòng nhập lý do giảm giá' };
 
   // ── Per-day manual container (same one every manual-cake creation path reuses) ──
   let importId: string;
@@ -312,6 +366,7 @@ export async function submitOnlineOrderAction(input: {
       fiche_id: r.ficheId, variant_id: r.variantId, product_sku: r.sku,
       product_name_vi: r.nameVi, product_name_en: r.nameEn, image_url: r.imageUrl,
       team: r.team, qty: r.qty, unit_price: r.unitPrice, delivery_date: input.deliveryDate,
+      list_unit_price: r.discountPct > 0 ? r.grossPrice : null, discount_pct: r.discountPct > 0 ? r.discountPct : null,
       ready_time: readyTime, delivered_by: input.shop, delivery_address: deliveryAddress, district,
       message: r.message, design_notes: r.designNotes, design_photo_url: r.designPhotoUrl,
       customer_name: customerName, customer_phone: customerPhone,
@@ -347,6 +402,7 @@ export async function submitOnlineOrderAction(input: {
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
     delivery_mode: deliveryMode,
+    discount_reason: discountReason,
     created_by: auth.userId,
   });
   if (ooErr) {
@@ -356,11 +412,12 @@ export async function submitOnlineOrderAction(input: {
 
   // Extra fees (nến, nón...): never touch Odoo/production — a plain revenue line alongside the
   // real order. Failure here is non-fatal (the order itself already succeeded).
-  const feeRows = buildFeeLineRows(input.fees);
+  const feeRows: any[] = [...buildFeeLineRows(input.fees).map(r => ({ ...r, is_discount: false }))];
+  if (orderDisc > 0) feeRows.push(discountLineRow(input.orderDiscount, orderDisc, discountReason as string));
   let feeWarning: string | null = null;
   if (feeRows.length) {
     const { error: feeErr } = await supabase.from('lab_online_sale_lines').insert(feeRows.map(r => ({ ...r, order_batch_id: orderBatchId })));
-    if (feeErr) feeWarning = `Đơn đã lưu nhưng lỗi ghi phụ phí: ${feeErr.message}`;
+    if (feeErr) feeWarning = `Đơn đã lưu nhưng lỗi ghi phụ phí / giảm giá: ${feeErr.message}`;
   }
 
   revalidatePath('/online-orders');
@@ -381,12 +438,14 @@ export async function submitOnlineOrderAction(input: {
 // revenue analysis stays on Odoo SOs — this is an attribution view only.
 export type ShopStockSaleItem = {
   ficheId: string; variantId: string | null; qty: number; unitPrice: number; lineNote?: string | null;
+  discountPct?: number | null;
 };
 export async function submitShopStockSaleAction(input: {
   shop: string; channel: string; saleDate: string;
   customerName: string | null; customerPhone: string | null; deliveryAddress: string | null; district?: string | null; notes: string | null;
   deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   items: ShopStockSaleItem[]; fees?: ExtraFeeLineInput[];
+  orderDiscount?: OrderDiscountInput; discountReason?: string | null;
 }): Promise<{ ok?: boolean; orderBatchId?: string; warning?: string; error?: string }> {
   const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
@@ -420,16 +479,25 @@ export async function submitShopStockSaleAction(input: {
     const v = it.variantId ? variantById.get(it.variantId) : null;
     if (it.variantId && (!v || v.fiche_id !== f.id)) return { error: 'Product variant not found' };
     const label = v?.label && v.label !== 'Standard' ? ` · ${v.label}` : '';
+    const grossPrice = Math.max(0, Number(it.unitPrice) || 0);
+    const discountPct = cleanPct(it.discountPct);
     rows.push({
       fiche_id: f.id, variant_id: v?.id ?? null, sku: v?.sku ?? null,
       product_name_vi: `${f.name_vi ?? v?.sku ?? 'Sản phẩm'}${label}`, category: f.category ?? null,
-      qty, unit_price: Math.max(0, Number(it.unitPrice) || 0), line_note: clean(it.lineNote, 300),
+      qty, unit_price: netUnitPrice(grossPrice, discountPct), line_note: clean(it.lineNote, 300),
+      list_unit_price: discountPct > 0 ? grossPrice : null, discount_pct: discountPct > 0 ? discountPct : null,
+      is_discount: false,
       // Explicit false, not omitted: a single insert() call mixing this row shape with
       // buildFeeLineRows' is_fee:true rows makes PostgREST fill any row missing the key with a
       // literal NULL instead of the column default, which trips the NOT NULL constraint.
       is_fee: false,
     });
   }
+
+  const discountReason = clean(input.discountReason, 120);
+  const productsNet = rows.reduce((s, r) => s + r.qty * r.unit_price, 0);
+  const orderDisc = orderDiscountAmount(input.orderDiscount, productsNet);
+  if ((orderDisc > 0 || rows.some(r => r.discount_pct)) && !discountReason) return { error: 'Vui lòng nhập lý do giảm giá' };
 
   const orderBatchId = crypto.randomUUID();
   const customerName = clean(input.customerName, 80);
@@ -443,10 +511,12 @@ export async function submitShopStockSaleAction(input: {
     delivery_fee: Math.max(0, Number(input.deliveryFee) || 0),
     payment_status: input.paymentStatus,
     amount_paid: Math.max(0, Number(input.amountPaid) || 0),
+    discount_reason: discountReason,
     created_by: auth.userId,
   });
   if (ooErr) return { error: ooErr.message };
-  const allRows = [...rows, ...buildFeeLineRows(input.fees)];
+  const allRows: any[] = [...rows, ...buildFeeLineRows(input.fees).map(r => ({ ...r, is_discount: false }))];
+  if (orderDisc > 0) allRows.push(discountLineRow(input.orderDiscount, orderDisc, discountReason as string));
   const { error: lErr } = await supabase.from('lab_online_sale_lines').insert(allRows.map(r => ({ ...r, order_batch_id: orderBatchId })));
   if (lErr) {
     await supabase.from('lab_online_orders').delete().eq('order_batch_id', orderBatchId);
@@ -505,7 +575,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // caisse sale (source='event_stock') is a point-of-sale transaction already handed over in
   // person; it has no lab/shop delivery to track and refunding it here made no sense. Events get
   // their own revenue summary (getEventSalesSummaryAction, EventCaisseTab), so excluded here.
-  let oq = supabase.from('lab_online_orders').select('*').neq('source', 'event_stock');
+  let oq = supabase.from('lab_online_orders').select('*').not('source', 'in', '(event_stock,event_void)');
   if (opts?.deliveryDate) {
     oq = oq.eq('delivery_date', opts.deliveryDate).order('created_at', { ascending: false });
   } else {
@@ -647,7 +717,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
     // event sale isn't a shop customer relationship, it has its own tracking in the event tab.
     supabase.from('lab_online_orders')
       .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, district, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
-      .neq('source', 'event_stock'),
+      .not('source', 'in', '(event_stock,event_void)'),
     supabase.from('lab_manual_cake_ledger')
       .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
       .not('shop_name', 'is', null),
@@ -1138,7 +1208,7 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
   // grand total) ends up netted to exactly 0, the same as the old full exclusion.
   // Axel, 2026-09-14: event_stock excluded — event sales have their own revenue summary
   // (getEventSalesSummaryAction) and shouldn't be mixed into the online-sales channel's figures.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').neq('source', 'event_stock').gte('created_at', since).limit(5000);
+  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').not('source', 'in', '(event_stock,event_void)').gte('created_at', since).limit(5000);
   void auth.isAdmin;
   const { data: orders } = await oq;
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
@@ -1394,7 +1464,7 @@ export async function getChannelProductDetailsAction(channel: string, from: stri
     const since = new Date(new Date(from + 'T00:00:00Z').getTime() - 60 * 86400000).toISOString();
     const { data: orders, error } = await supabase.from('lab_online_orders')
       .select('order_batch_id, delivery_date, created_at, source, channel')
-      .neq('source', 'event_stock').gte('created_at', since).limit(5000);
+      .not('source', 'in', '(event_stock,event_void)').gte('created_at', since).limit(5000);
     if (error) return { error: error.message };
     const matched = (orders ?? []).filter((o: any) => {
       const day = (o.delivery_date ?? o.created_at ?? '').slice(0, 10);

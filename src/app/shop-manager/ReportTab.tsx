@@ -25,6 +25,8 @@ const L = {
     lossesTitle: 'Hao hụt ngày này', lossReportsSuffix: 'báo cáo', noLosses: 'Không có hao hụt ngày này',
     exportPdf: 'Xuất PDF', exportError: 'Lỗi khi xuất PDF, vui lòng thử lại.',
     empty: 'Chưa có dữ liệu.',
+    receptionPending: 'Chưa xác nhận nhận hàng',
+    receptionPendingDetail: 'Shop chưa xác nhận nhận hàng — báo cáo đang khoá phía shop:',
   },
   en: {
     title: 'End-of-day report', month: 'Month', today: 'Today',
@@ -35,6 +37,8 @@ const L = {
     lossesTitle: 'Losses this day', lossReportsSuffix: 'reports', noLosses: 'No losses this day',
     exportPdf: 'Export PDF', exportError: 'Error exporting PDF, please try again.',
     empty: 'No data yet.',
+    receptionPending: 'Reception not confirmed',
+    receptionPendingDetail: 'Shop has not confirmed reception — report locked on the shop side:',
   },
 } as const;
 type LKey = keyof typeof L.vi;
@@ -142,6 +146,7 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
                   <div className="text-xs mt-0.5" style={{ color: r.stockCounted ? INK_LIGHT : '#9CA3AF' }}>
                     {r.stockCounted ? `${r.stockCountedCount}/${r.stockTotalCount} ${tr('countedSuffix')}${r.stockSource === 'official' ? ' · Kiểm kê chính thức / Official inventory' : ''}` : tr('notCounted')}
                     {r.lossesReportCount ? ` · ${r.lossesReportCount} ${tr('lossReports')}` : ''}
+                    {r.receptionPending?.length ? <span className="font-semibold" style={{ color: '#DC2626' }}>{` · 🔒 ${tr('receptionPending')} (${r.receptionPending.length})`}</span> : null}
                   </div>
                 </div>
                 {r.stockCounted && <div className="text-sm font-bold shrink-0" style={{ color: '#1D4ED8' }}>{fmtVnd(r.stockValuationTotal)}</div>}
@@ -166,6 +171,12 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
         </div>
         <div className="text-sm font-bold mt-0.5" style={{ color: NAVY }}>{activeShop}</div>
       </div>
+
+      {selected?.receptionPending?.length ? (
+        <div className="rounded-2xl px-3.5 py-2.5 text-xs font-semibold" style={{ backgroundColor: '#FDECEA', color: '#DC2626', border: '1px solid #F5C2C0' }}>
+          🔒 {tr('receptionPendingDetail')} {selected.receptionPending.map(p => `${p.orderRef} (${p.confirmedLines}/${p.totalLines})`).join(', ')}
+        </div>
+      ) : null}
 
       {dayLoading ? (
         <div className="text-center py-10"><Loader2 className="animate-spin inline" style={{ color: INK_LIGHT }} /></div>

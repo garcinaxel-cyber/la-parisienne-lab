@@ -471,3 +471,191 @@ export async function getLabStockLevels(skus: string[]): Promise<LabStockLevel[]
     return { sku, name: prod.name, qty: qtyByProductId[prod.id] ?? 0, found: true };
   });
 }
+
+// ── LAB count session → ONE consolidated Odoo adjustment (Axel, 2026-10-12) ─────────────────────
+//
+// Before: one small stock.inventory per SKU ("Kiểm kê LAB — BTGVX — 2026-10-12"), each with its
+// own cut-off = the moment that SKU was typed. Two problems Axel hit on 12/10: the Odoo list was
+// one adjustment per product instead of one per count, and a count entered for a PAST date (anh
+// Lân's 30/09 count, typed on 12/10) got a cut-off of 12/10 — so the difference was computed
+// against the wrong day's stock.
+//
+// Now: one stock.inventory per app session ("Kiểm kê LAB — 2026-09-30"), whose `date` (the
+// module's T0, "moment the warehouse was physically counted") is:
+//   - today's session  → the moment the first line is entered (same behaviour as before);
+//   - a past date      → that day at 15:00 VN (same convention as the 30/09 official count).
+// The first SKU opens it and `action_state_to_in_progress` lets the module freeze theoretical_qty
+// rolled back to T0. Every later SKU is added to the SAME adjustment: product added to product_ids
+// (writable while in progress, verified live 12/10), count line created on its quant, and its
+// theoretical_qty written by us with the module's own rule — on hand now minus the moves done
+// after T0 at LAB/Stock — because a manually added line gets 0 (verified live 12/10). That rule
+// was checked against the module on 7 tiramisus with T0 = 30/09 15:00: identical to the unit.
+
+const VN_OFFSET_MS = 7 * 3600 * 1000;
+const toOdooDatetime = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+
+/** T0 for a LAB session: now for today's (or a future) date, 15:00 VN for a past date. */
+export function labCutoffFor(inventoryDate: string, now: Date = new Date()): Date {
+  const todayVN = new Date(now.getTime() + VN_OFFSET_MS).toISOString().slice(0, 10);
+  if (!inventoryDate || inventoryDate >= todayVN) return now;
+  return new Date(`${inventoryDate}T15:00:00+07:00`);
+}
+
+/** On hand at `locationId` rolled back to `cutoff`: current quants − (in − out) of done moves after it. */
+export async function theoreticalAtCutoff(productIds: number[], locationId: number, cutoff: Date): Promise<Record<number, number>> {
+  const out: Record<number, number> = {};
+  if (!productIds.length) return out;
+  for (const pid of productIds) out[pid] = 0;
+  const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read',
+    [[['product_id', 'in', productIds], ['location_id', '=', locationId]]], { fields: ['product_id', 'quantity'], limit: 5000 });
+  for (const q of quants) {
+    const pid = Array.isArray(q.product_id) ? q.product_id[0] : q.product_id;
+    out[pid] = (out[pid] ?? 0) + Number(q.quantity ?? 0);
+  }
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const mls = await odooExecuteWrite<any[]>('stock.move.line', 'search_read',
+      [[['product_id', 'in', productIds], ['state', '=', 'done'], ['date', '>', toOdooDatetime(cutoff)],
+        '|', ['location_id', '=', locationId], ['location_dest_id', '=', locationId]]],
+      { fields: ['product_id', 'quantity', 'location_id', 'location_dest_id'], limit: PAGE, offset, order: 'id asc' });
+    for (const ml of mls) {
+      const pid = Array.isArray(ml.product_id) ? ml.product_id[0] : ml.product_id;
+      const from = Array.isArray(ml.location_id) ? ml.location_id[0] : ml.location_id;
+      const to = Array.isArray(ml.location_dest_id) ? ml.location_dest_id[0] : ml.location_dest_id;
+      const qty = Number(ml.quantity ?? 0);
+      if (to === locationId && from !== locationId) out[pid] -= qty;   // came in after T0
+      if (from === locationId && to !== locationId) out[pid] += qty;   // went out after T0
+    }
+    if (mls.length < PAGE) break;
+  }
+  return out;
+}
+
+export interface SessionLineResult extends StartLineResult { createdInventory?: boolean; cutoffIso?: string; }
+
+/**
+ * Adds one SKU to the session's consolidated LAB adjustment — opening it first if the session
+ * has none yet (`sessionInventoryId` null). Never creates a second adjustment for a session.
+ */
+export async function ensureSessionCountLine(args: {
+  sku: string;
+  sessionInventoryId: number | null;
+  inventoryDate: string;
+  cutoff: Date;
+}): Promise<SessionLineResult> {
+  if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
+  const { sku, sessionInventoryId, inventoryDate, cutoff } = args;
+  try {
+    const locationId = await getLabStockLocationId();
+    const productBySku = await resolveProductsBySku([sku]);
+    const prod = productBySku[sku];
+    if (!prod) return { ok: false, error: 'SKU introuvable sur Odoo (default_code)' };
+
+    // The same product must not sit in another OPEN adjustment at LAB (Odoo refuses it on Begin,
+    // and a second open count of the same product would apply its difference twice).
+    const others = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
+      [[['state', '=', 'in_progress'], ['product_ids', 'in', [prod.id]], ['location_ids', 'in', [locationId]],
+        ...(sessionInventoryId ? [['id', '!=', sessionInventoryId]] : [])]],
+      { fields: ['id', 'name'], limit: 1 });
+    if (others.length) {
+      return { ok: false, error: `Sản phẩm này đang nằm trong một kiểm kê khác chưa hoàn tất trên Odoo / Already in another open Odoo adjustment: ${others[0].name}` };
+    }
+
+    const lineFor = async (invId: number) => {
+      const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
+        [[['inventory_id', '=', invId], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 });
+      return rows[0] ?? null;
+    };
+
+    // ── first SKU of the session: open the consolidated adjustment, T0 = cutoff ──
+    if (!sessionInventoryId) {
+      const invId = await odooExecuteWrite<number>('stock.inventory', 'create', [{
+        name: `Kiểm kê LAB — ${inventoryDate}`,
+        product_selection: 'manual',
+        product_ids: [[6, 0, [prod.id]]],
+        location_ids: [[6, 0, [locationId]]],
+        date: toOdooDatetime(cutoff),
+        accounting_date: inventoryDate,
+      }], { context: NO_MAIL_CONTEXT });
+      try {
+        await odooExecuteWrite('stock.inventory', 'action_state_to_in_progress', [[invId]], { context: NO_MAIL_CONTEXT });
+      } catch (e: any) {
+        try { await odooExecuteWrite('stock.inventory', 'unlink', [[invId]], {}); } catch { /* best-effort */ }
+        throw e;
+      }
+      let line = await lineFor(invId);
+      if (!line) {
+        // no quant at LAB now → the module made no line; add it and roll its theoretical back to T0
+        // ourselves (a product at 0 today may still have had stock at a past cut-off)
+        await addMissingCountLines(invId, locationId, [prod.id]);
+        line = await lineFor(invId);
+        if (line) {
+          const theo = (await theoreticalAtCutoff([prod.id], locationId, cutoff))[prod.id] ?? 0;
+          await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[line.id], { theoretical_qty: theo }], { context: NO_MAIL_CONTEXT });
+          line = { ...line, theoretical_qty: theo };
+        }
+      }
+      if (!line) {
+        await tryCancelInventoryLine(invId);
+        return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
+      }
+      return { ok: true, odooInventoryId: invId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0), createdInventory: true, cutoffIso: cutoff.toISOString() };
+    }
+
+    // ── later SKUs: add to the same adjustment ──
+    const [inv] = await odooExecuteWrite<any[]>('stock.inventory', 'search_read',
+      [[['id', '=', sessionInventoryId]]], { fields: ['state'] });
+    if (!inv || inv.state !== 'in_progress') {
+      return { ok: false, error: `Kiểm kê trên Odoo không còn mở (${inv?.state ?? 'introuvable'}) / Odoo adjustment is no longer open` };
+    }
+    let line = await lineFor(sessionInventoryId);
+    if (!line) {
+      try {
+        await odooExecuteWrite('stock.inventory', 'write', [[sessionInventoryId], { product_ids: [[4, prod.id]] }], { context: NO_MAIL_CONTEXT });
+      } catch { /* scope list is informative; the count line is what gets applied */ }
+      await addMissingCountLines(sessionInventoryId, locationId, [prod.id]);
+      line = await lineFor(sessionInventoryId);
+      if (!line) return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
+      const theo = (await theoreticalAtCutoff([prod.id], locationId, cutoff))[prod.id] ?? 0;
+      await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[line.id], { theoretical_qty: theo }], { context: NO_MAIL_CONTEXT });
+      line = { ...line, theoretical_qty: theo };
+    }
+    return { ok: true, odooInventoryId: sessionInventoryId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0), createdInventory: false, cutoffIso: cutoff.toISOString() };
+  } catch (e: any) {
+    console.error('[inventory] ensureSessionCountLine failed', { sku, error: String(e?.message ?? e) });
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+/** Removes one count line from a consolidated adjustment (a line deleted in the app before submit). */
+export async function tryRemoveCountLine(odooCountLineId: number): Promise<void> {
+  if (!odooWriteConfigured()) return;
+  try {
+    await odooExecuteWrite('lpr.stock.inventory.line', 'unlink', [[odooCountLineId]], { context: NO_MAIL_CONTEXT });
+  } catch (e: any) {
+    // fallback: leave it in the sheet but "not counted" — Apply skips unticked lines
+    try { await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[odooCountLineId], { counted_set: false }], { context: NO_MAIL_CONTEXT }); } catch { /* best-effort */ }
+    console.error('[inventory] could not remove count line', { odooCountLineId, error: String(e?.message ?? e) });
+  }
+}
+
+/**
+ * Moves a session's T0 (the date was changed before submit): writes the adjustment's `date` and
+ * recomputes theoretical_qty on every line with the same rollback rule. Returns the new values.
+ */
+export async function moveSessionCutoff(odooInventoryId: number, inventoryDate: string, cutoff: Date): Promise<Record<number, number>> {
+  const locationId = await getLabStockLocationId();
+  await odooExecuteWrite('stock.inventory', 'write', [[odooInventoryId], { date: toOdooDatetime(cutoff), accounting_date: inventoryDate, name: `Kiểm kê LAB — ${inventoryDate}` }], { context: NO_MAIL_CONTEXT });
+  const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
+    [[['inventory_id', '=', odooInventoryId]]], { fields: ['id', 'product_id'], limit: 5000 });
+  const pids = Array.from(new Set(rows.map(r => (Array.isArray(r.product_id) ? r.product_id[0] : r.product_id) as number)));
+  const theo = await theoreticalAtCutoff(pids, locationId, cutoff);
+  const byLine: Record<number, number> = {};
+  for (const r of rows) {
+    const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
+    const v = theo[pid] ?? 0;
+    await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[r.id], { theoretical_qty: v }], { context: NO_MAIL_CONTEXT });
+    byLine[r.id] = v;
+  }
+  return byLine;
+}

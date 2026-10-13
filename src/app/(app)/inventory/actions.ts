@@ -1,7 +1,7 @@
 'use server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
-import { ensureInventoryLineStarted, tryCancelInventoryLine, applyInventoryLines, type InventoryLineResult } from '@/lib/odoo-inventory';
+import { ensureSessionCountLine, tryCancelInventoryLine, tryRemoveCountLine, moveSessionCutoff, labCutoffFor, applyInventoryLines, type InventoryLineResult } from '@/lib/odoo-inventory';
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
@@ -42,16 +42,37 @@ export async function saveLineAction(
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
 
-  // First time this SKU is entered in this session → open (or reuse) its Odoo cut-off NOW,
-  // not at final submit (see odoo-inventory.ts doc comment). A later correction of the same
-  // line (typo fix) must NEVER re-freeze the cut-off, so this only runs once per (session, sku).
+  // First time this SKU is entered in this session → add it to the session's ONE consolidated
+  // Odoo adjustment (opened by the first SKU, T0 = labCutoffFor(inventory_date) — see
+  // odoo-inventory.ts, Axel 2026-10-12). A later correction of the same line (typo fix) never
+  // touches Odoo's cut-off, so this only runs once per (session, sku).
   const { data: existing } = await supabase.from('lab_inventory_lines')
     .select('id, odoo_inventory_id, odoo_count_line_id, qty_theoretical')
     .eq('session_id', sessionId).eq('sku', line.sku).maybeSingle();
 
   let odooFields: { odoo_inventory_id?: number | null; odoo_count_line_id?: number | null; qty_theoretical?: number | null } = {};
   if (!existing?.odoo_count_line_id) {
-    const started = await ensureInventoryLineStarted(line.sku);
+    const { data: sess } = await supabase.from('lab_inventory_sessions')
+      .select('inventory_date, status, odoo_inventory_id, odoo_cutoff_at').eq('id', sessionId).maybeSingle();
+    if (!sess) return { error: 'Session introuvable' };
+    if (sess.status !== 'draft') return { error: 'Phiên kiểm kê đã gửi / Session already submitted' };
+    const cutoff = sess.odoo_cutoff_at ? new Date(sess.odoo_cutoff_at) : labCutoffFor(sess.inventory_date);
+    let started = await ensureSessionCountLine({ sku: line.sku, sessionInventoryId: sess.odoo_inventory_id ?? null, inventoryDate: sess.inventory_date, cutoff });
+    if (started.ok && started.createdInventory) {
+      // claim the adjustment for this session; if another line won the race, drop ours and join theirs
+      const { data: claimed } = await supabase.from('lab_inventory_sessions')
+        .update({ odoo_inventory_id: started.odooInventoryId, odoo_cutoff_at: started.cutoffIso, updated_at: new Date().toISOString() })
+        .eq('id', sessionId).is('odoo_inventory_id', null).select('id');
+      if (!claimed?.length) {
+        if (started.odooInventoryId) await tryCancelInventoryLine(started.odooInventoryId);
+        const { data: won } = await supabase.from('lab_inventory_sessions')
+          .select('odoo_inventory_id, odoo_cutoff_at').eq('id', sessionId).maybeSingle();
+        started = await ensureSessionCountLine({
+          sku: line.sku, sessionInventoryId: won?.odoo_inventory_id ?? null, inventoryDate: sess.inventory_date,
+          cutoff: won?.odoo_cutoff_at ? new Date(won.odoo_cutoff_at) : cutoff,
+        });
+      }
+    }
     if (!started.ok) return { error: started.error ?? 'Impossible d\'ouvrir le comptage sur Odoo' };
     odooFields = {
       odoo_inventory_id: started.odooInventoryId, odoo_count_line_id: started.odooCountLineId,
@@ -79,11 +100,18 @@ export async function deleteLineAction(lineId: string): Promise<{ ok?: boolean; 
   const supabase = createClient();
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
-  const { data: line } = await supabase.from('lab_inventory_lines').select('odoo_inventory_id').eq('id', lineId).maybeSingle();
+  const { data: line } = await supabase.from('lab_inventory_lines').select('session_id, odoo_inventory_id, odoo_count_line_id').eq('id', lineId).maybeSingle();
+  const { data: sess } = line ? await supabase.from('lab_inventory_sessions').select('odoo_inventory_id').eq('id', line.session_id).maybeSingle() : { data: null as any };
   const { error } = await supabase.from('lab_inventory_lines').delete().eq('id', lineId);
   if (error) return { error: error.message };
-  // Best-effort — never blocks the delete on this (see tryCancelInventoryLine's doc comment).
-  if (line?.odoo_inventory_id) await tryCancelInventoryLine(line.odoo_inventory_id);
+  // Best-effort — never blocks the delete on this.
+  if (line?.odoo_inventory_id && sess?.odoo_inventory_id === line.odoo_inventory_id) {
+    // consolidated session adjustment (2026-10-12): remove only this product's line
+    if (line.odoo_count_line_id) await tryRemoveCountLine(line.odoo_count_line_id);
+  } else if (line?.odoo_inventory_id) {
+    // legacy per-SKU adjustment (sessions started before 2026-10-12)
+    await tryCancelInventoryLine(line.odoo_inventory_id);
+  }
   return { ok: true };
 }
 
@@ -130,6 +158,22 @@ export async function confirmSubmitAction(sessionId: string, inventoryDate: stri
 
   const withLine = lines.filter(l => l.odoo_count_line_id);
   const missing = lines.filter(l => !l.odoo_count_line_id);
+
+  // Date changed on the recap after counting started → move the consolidated adjustment's T0 to
+  // the new date and recompute every line's system quantity at that cut-off before applying.
+  const { data: sess } = await supabase.from('lab_inventory_sessions')
+    .select('inventory_date, odoo_inventory_id').eq('id', sessionId).maybeSingle();
+  if (sess?.odoo_inventory_id && inventoryDate && inventoryDate !== sess.inventory_date) {
+    try {
+      const cutoff = labCutoffFor(inventoryDate);
+      const theoByLine = await moveSessionCutoff(sess.odoo_inventory_id, inventoryDate, cutoff);
+      await supabase.from('lab_inventory_sessions').update({ inventory_date: inventoryDate, odoo_cutoff_at: cutoff.toISOString(), updated_at: new Date().toISOString() }).eq('id', sessionId);
+      await Promise.all(withLine.filter(l => l.odoo_count_line_id && theoByLine[l.odoo_count_line_id as number] !== undefined).map(l =>
+        supabase.from('lab_inventory_lines').update({ qty_theoretical: theoByLine[l.odoo_count_line_id as number] }).eq('id', l.id)));
+    } catch (e: any) {
+      return { error: `Không đổi được ngày cut-off trên Odoo / Could not move the cut-off: ${String(e?.message ?? e)}` };
+    }
+  }
 
   const res = withLine.length
     ? await applyInventoryLines(withLine.map(l => ({ odooCountLineId: l.odoo_count_line_id as number, qtyCounted: Number(l.qty_counted) })))

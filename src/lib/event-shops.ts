@@ -30,13 +30,28 @@ export type EventShop = {
   // whose dates were never set: nothing is restricted then (reports keep the shops' usual
   // current month + previous month window).
   startDate: string | null; endDate: string | null;
+  // Sales target per day (Axel, 2026-10-10: "l'objectif de 50 M est pour aujourd'hui pas les autres
+  // jours") — { 'YYYY-MM-DD': amount }, a day without a key shows nothing. Opening hours (HH:mm,
+  // Vietnam time) drive the pace and the time left. Shown on the event's Sales screen only.
+  dailyTargets: Record<string, number>; openTime: string; closeTime: string;
 };
+
+export function parseDailyTargets(v: any): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (v && typeof v === 'object') for (const [k, n] of Object.entries(v)) {
+    const x = Number(n);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Number.isFinite(x) && x > 0) out[k] = x;
+  }
+  return out;
+}
 
 function fromRow(r: any): EventShop {
   return {
     id: r.id, name: r.name, warehouseCode: r.warehouse_code, odooWarehouseId: r.odoo_warehouse_id,
     active: r.active, createdAt: r.created_at, closedAt: r.closed_at, qrCodeUrl: r.qr_code_url ?? null,
     startDate: r.start_date ?? null, endDate: r.end_date ?? null,
+    dailyTargets: parseDailyTargets(r.daily_targets),
+    openTime: r.open_time ?? '10:00', closeTime: r.close_time ?? '22:00',
   };
 }
 
@@ -167,6 +182,26 @@ export async function setEventDates(id: string, startDate: string | null, endDat
   if ((startDate === null) !== (endDate === null)) return { error: 'Set both dates, or neither' };
   if (startDate && endDate && endDate < startDate) return { error: 'The end date is before the start date' };
   const { error } = await supabase.from('lab_event_shops').update({ start_date: startDate, end_date: endDate }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// Sales target per day + opening hours (Axel, 2026-10-10). A day left out has no target.
+export async function setEventTarget(id: string, targets: Record<string, number>, openTime: string, closeTime: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!hm.test(openTime) || !hm.test(closeTime)) return { error: 'Invalid time (HH:mm)' };
+  if (closeTime <= openTime) return { error: 'Closing time must be after opening time' };
+  const clean: Record<string, number> = {};
+  for (const [day, v] of Object.entries(targets ?? {})) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: 'Invalid day' };
+    const x = Number(v);
+    if (!Number.isFinite(x) || x <= 0 || x > 10_000_000_000) return { error: 'Invalid target' };
+    clean[day] = Math.round(x);
+  }
+  const { error } = await supabase.from('lab_event_shops')
+    .update({ daily_targets: clean, open_time: openTime, close_time: closeTime }).eq('id', id);
   if (error) return { error: error.message };
   return { ok: true };
 }

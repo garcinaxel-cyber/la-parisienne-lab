@@ -13,8 +13,8 @@ const isBad = (s: string | undefined) => Number.isNaN(evalQty(s) as number);
 // "Today" — the assistants' daily screen (Axel, 2026-09-25 redesign): only products with baked
 // bulk are open, −/+ and quick amounts for phones, a loss button per product, a sticky save bar
 // with a summary and a confirmation step, then the log grouped by day.
-export default function Packaging({ client, items, d, pack, prod, canPack, canManage, odooOn, userId, reload, L }: {
-  client: Client; items: Item[]; d: Derived; pack: PackLog[]; prod: ProdLog[]; canPack: boolean; canManage: boolean; odooOn: boolean;
+export default function Packaging({ client, items, d, pack, prod, canPack, canReceive, canManage, odooOn, userId, reload, L }: {
+  client: Client; items: Item[]; d: Derived; pack: PackLog[]; prod: ProdLog[]; canPack: boolean; canReceive?: boolean; canManage: boolean; odooOn: boolean;
   userId: string | null; reload: () => Promise<void>; L: LFn;
 }) {
   const bySku = useMemo(() => Object.fromEntries(items.map(i => [i.sku, i])) as Record<string, Item>, [items]);
@@ -157,7 +157,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canMa
 
   return (
     <div className="space-y-4">
-      {canPack && <Reception client={client} prod={prod} reload={reload} L={L} />}
+      {(canReceive ?? canPack) && <Reception client={client} prod={prod} reload={reload} L={L} />}
       {canPack && (
         <>
           <div className="flex items-center justify-between gap-2">

@@ -12,6 +12,7 @@ import RawMaterials from './RawMaterials';
 import { ProductionLog, OrderSettings } from './Admin';
 import { buildBatches, planOf, PLAN_COLS, splitPlan, type PlanRow } from './plan';
 import { MM_CLIENT } from './model';
+import PushBell from '@/components/PushBell';
 
 // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake biscuits (MM- SKUs) + Tianhe Food
 // cashews (OEM- SKUs). Purely additive: reads/writes the lab_mm_* tables only (+ the read-only
@@ -23,7 +24,8 @@ import { MM_CLIENT } from './model';
 //   + for admin/lab_manager: Production (kg) log and Settings.
 
 type Tab = 'today' | 'progress' | 'deliveries' | 'inventory' | 'production' | 'settings';
-const STAFF = ['admin', 'lab_manager', 'assistant'];
+// 'purchasing' (Hiền) works on OEM like an assistant (Axel, 2026-10-12).
+const STAFF = ['admin', 'lab_manager', 'assistant', 'purchasing'];
 const MANAGERS = ['admin', 'lab_manager'];
 
 export default function OemOrdersView({ role, userId, userName }: { role: string; userId: string | null; userName: string | null }) {
@@ -33,6 +35,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const supabase = useMemo(() => createClient(), []);
   const canManage = MANAGERS.includes(role);
   const canPack = STAFF.includes(role);
+  const canReceive = canPack;
   // Production (kg) log + Settings (Odoo switch, order quantities): admin only (Axel, 2026-09-25).
   // lab_manager keeps the right to correct any packaging line (canManage) inside the normal tabs.
   const isAdmin = role === 'admin';
@@ -173,6 +176,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
             );
           })}
         </div>
+        {role === 'purchasing' && <PushBell L={L} compact />}
         <button onClick={load} className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center" style={{ border: `1px solid ${LINE}`, backgroundColor: '#fff', color: MUTED }} aria-label="refresh">
           <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
         </button>
@@ -206,7 +210,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       </div>
 
       {!client ? null : tab === 'today' ? (
-        <Packaging client={client} items={cItems} d={d} pack={cPack} prod={cProd} canPack={canPack} canManage={canManage} odooOn={odooOn} userId={userId} reload={load} L={L} />
+        <Packaging client={client} items={cItems} d={d} pack={cPack} prod={cProd} canPack={canPack} canReceive={canReceive} canManage={canManage} odooOn={odooOn} userId={userId} reload={load} L={L} />
       ) : tab === 'progress' ? (
         <Overview client={client} d={d} prod={cProd} pack={cPack} L={L} />
       ) : tab === 'deliveries' ? (

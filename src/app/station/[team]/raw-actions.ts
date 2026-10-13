@@ -31,7 +31,8 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
   const byId = new Map((mats ?? []).map(m => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
   const { data: w, error } = await db.from('lab_raw_withdrawals')
-    .insert({ team, taken_by: String(takenBy ?? '').trim().slice(0, 80) || a.name || null, created_by: a.userId }).select('id, no').single();
+    // Waits for storage to confirm before the chef takes the goods (Axel, 2026-10-09: "hien confirm d'abord").
+    .insert({ team, taken_by: String(takenBy ?? '').trim().slice(0, 80) || a.name || null, created_by: a.userId, status: 'to_confirm' }).select('id, no').single();
   if (error || !w) return { error: error?.message ?? 'Insert failed' };
   const rows = clean.map(l => {
     const m = byId.get(l.tmplId)!;
@@ -43,7 +44,38 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
   });
   const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
   if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }
+  await notifyStorage(db, team, Number(w.no), rows.length, String(takenBy ?? '').trim() || a.name || '', false);
   return { ok: true, no: Number(w.no) };
+}
+
+// Storage (purchasing role) is told a slip waits for its confirmation. Vietnamese only, like the
+// purchase pushes. Opens the Stock picking tab.
+async function notifyStorage(db: NonNullable<ReturnType<typeof rawService>>, team: string, no: number, count: number, who: string, reminder: boolean) {
+  const ids = await purchasingUserIds(db);
+  if (!ids.length) return;
+  const teamVi = TEAM_SHORT[team]?.vi ?? team;
+  const body = reminder
+    ? `⏰ ${who || 'Chef'} đang chờ: phiếu lấy kho #${no} · Team ${teamVi} · ${count} dòng — cần xác nhận`
+    : `📦 Phiếu lấy kho #${no} · Team ${teamVi} · ${who || '—'} · ${count} dòng — chờ bạn xác nhận`;
+  const p = { title: 'La Parisienne Lab', body, url: '/purchasing?tab=storage', tag: `raw-pick-${no}` };
+  await awaitPush(sendUsersPush(db, ids, p, p));
+}
+
+// "Nhắc kho" on the chef's waiting slip: pushes storage again, at most once every 3 minutes.
+export async function remindStorageAction(team: string, withdrawalId: string): Promise<{ ok?: boolean; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: w } = await db.from('lab_raw_withdrawals').select('id, no, team, taken_by, status, reminded_at').eq('id', withdrawalId).maybeSingle();
+  if (!w || w.team !== team) return { error: 'Not found' };
+  if (w.status !== 'to_confirm') return { ok: true };
+  if (w.reminded_at && Date.now() - new Date(w.reminded_at).getTime() < 3 * 60 * 1000) return { ok: true };
+  const { count } = await db.from('lab_raw_withdrawal_lines').select('id', { count: 'exact', head: true }).eq('withdrawal_id', w.id);
+  await db.from('lab_raw_withdrawals').update({ reminded_at: new Date().toISOString() }).eq('id', w.id);
+  await notifyStorage(db, team, Number(w.no), count ?? 0, w.taken_by || a.name || '', true);
+  return { ok: true };
 }
 
 export async function getTeamWithdrawalsTodayAction(team: string): Promise<{ items?: Withdrawal[]; error?: string }> {

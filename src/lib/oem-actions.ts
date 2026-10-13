@@ -14,16 +14,18 @@ import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
 //   scrap_bulk      → nothing in Odoo (the bulk was never an Odoo stock item on its own)
 
 type Kind = 'packed' | 'scrap_bulk' | 'scrap_finished' | 'found';
-const STAFF = ['admin', 'lab_manager', 'assistant'];
+// 'purchasing' (Hiền) works on OEM exactly like an assistant (Axel, 2026-10-12, lab_v119).
+const STAFF = ['admin', 'lab_manager', 'assistant', 'purchasing'];
 const MANAGERS = ['admin', 'lab_manager'];
+const RECEIVERS = STAFF;
 
-async function me() {
+async function me(allowed: string[] = STAFF) {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' as const };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   const role = profile?.role ?? '';
-  if (!STAFF.includes(role)) return { error: 'Forbidden' as const };
+  if (!allowed.includes(role)) return { error: 'Forbidden' as const };
   return { supabase, id: session.user.id, name: profile?.full_name ?? '', role };
 }
 
@@ -222,7 +224,7 @@ function service() {
 // (never more) with a reason. From then on the batch is theirs: packable, and locked for Hung.
 // Written with the service key because assistants have no UPDATE right on the production log.
 export async function receiveProductionAction(id: string, receivedKg: number | null, note: string | null): Promise<{ ok?: boolean; error?: string }> {
-  const auth = await me();
+  const auth = await me(RECEIVERS);
   if ('error' in auth) return { error: auth.error };
   const svc = service();
   if (!svc) return { error: 'Server not configured' };
@@ -297,7 +299,7 @@ export async function setProductionOrderAction(id: string, seq: number | null): 
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
-  if (!['admin', 'lab_manager', 'assistant', 'chef'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
+  if (!['admin', 'lab_manager', 'assistant', 'purchasing', 'chef'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
   const svc = service();
   if (!svc) return { error: 'Server not configured' };
   const { data: row } = await svc.from('lab_mm_production_log').select('id, group_key').eq('id', id).single();
