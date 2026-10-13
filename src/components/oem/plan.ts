@@ -9,8 +9,10 @@ import { itemKg, type Item } from './model';
 // otherwise the delivery is `pct` % of every product. delivery_date may be null (date not given yet).
 // cancelled_at: an order the client cancelled (Tianhe's 710 kg, 2026-10-07). Kept for the record;
 // the views load it apart (splitPlan) so it never enters a calculation.
-export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string | null; pct: number; label: string | null; qty?: Record<string, number> | null; cancelled_at?: string | null; cancelled_note?: string | null };
-export const PLAN_COLS = 'id, client_name, seq, delivery_date, pct, label, qty, cancelled_at, cancelled_note';
+export type PlanRow = { id: string; client_name: string | null; seq: number; delivery_date: string | null; pct: number; label: string | null; qty?: Record<string, number> | null; cancelled_at?: string | null; cancelled_note?: string | null; order_no?: number | null; shipped?: boolean | null; shipped_date?: string | null };
+// order_no: rows sharing one order_no are DELIVERIES of one order (Tianhe 1 t → Đ1 150 kg, Đ2 414 kg…, Axel 2026-10-13):
+// baked kg fill them in sequence, no order to choose. null = each qty row is its own order. shipped: already delivered.
+export const PLAN_COLS = 'id, client_name, seq, delivery_date, pct, label, qty, cancelled_at, cancelled_note, order_no, shipped, shipped_date';
 export function splitPlan(data: unknown[] | null | undefined): { active: PlanRow[]; cancelled: PlanRow[] } {
   const all = ((data ?? []) as any[]).map(r => ({ ...r, pct: Number(r.pct) })) as PlanRow[];
   return { active: all.filter(r => !r.cancelled_at), cancelled: all.filter(r => !!r.cancelled_at) };
