@@ -303,7 +303,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             <div key={x.key}>
               <div className="flex items-baseline justify-between gap-3 text-sm">
                 <span className="font-semibold min-w-0 truncate">{x.name}</span>
-                <span className="whitespace-nowrap" style={{ color: '#4A3A2C' }}><b>{pctTxt(q)}%</b> · {fmt1(x.baked)} / {fmt1(x.T)} kg</span>
+                <span className="whitespace-nowrap" style={{ color: '#4A3A2C' }}><b>{pctTxt(q)}%</b> · {fmt1(x.baked)} / {fmt1(x.T)} kg{x.baked > x.T + 0.05 && <b style={{ color: '#B45309' }}> · {vi ? 'dư' : 'over'} {fmt1(x.baked - x.T)} kg</b>}</span>
               </div>
               <span className="block h-2 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#F1E4D0' }}><span className="block h-full rounded-full" style={{ width: `${q}%`, backgroundColor: '#9C5F2A' }} /></span>
             </div>); })}
