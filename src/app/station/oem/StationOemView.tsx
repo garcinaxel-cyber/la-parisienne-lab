@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { allocateBaked, buildBatches, dOr, NOTE_KEY, noteText, PLAN_COLS, planKg, splitPlan, type PlanRow } from '@/components/oem/plan';
+import { allocateBaked, buildBatches, dOr, MORE_KEY, NOTE_KEY, noteText, PLAN_COLS, planKg, splitPlan, type PlanRow } from '@/components/oem/plan';
 import { setProductionOrderAction, fixProductionAction } from '@/lib/oem-actions';
 import { MM_CLIENT, type Item } from '@/components/oem/model';
 
@@ -34,6 +34,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   const [today, setToday] = useState<Entry[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({}); // contract requirements per client
+  const [more, setMore] = useState<Record<string, string>>({}); // 'more orders to come' per client (Tianhe, 2026-10-13)
   const [ord, setOrd] = useState<number | null>(null); // order chosen in the entry sheet
   const [tagging, setTagging] = useState<string | null>(null);
   // team lead only (canFix): edit the kg of a batch or cancel it while it waits for reception
@@ -58,9 +59,11 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
       supabase.from('lab_mm_delivery_plan').select(PLAN_COLS).order('seq'),
       supabase.rpc('lab_mm_deliveries'),
-      supabase.from('lab_mm_settings').select('key, value').like('key', `${NOTE_KEY}%`),
+      supabase.from('lab_mm_settings').select('key, value').or(`key.like.${NOTE_KEY}%,key.like.${MORE_KEY}%`),
     ]);
-    setNotes(Object.fromEntries(((nt.data ?? []) as any[]).map(r => [String(r.key).slice(NOTE_KEY.length), r.value ?? ''])));
+    const st = (nt.data ?? []) as any[];
+    setNotes(Object.fromEntries(st.filter(r => String(r.key).startsWith(NOTE_KEY)).map(r => [String(r.key).slice(NOTE_KEY.length), r.value ?? ''])));
+    setMore(Object.fromEntries(st.filter(r => String(r.key).startsWith(MORE_KEY)).map(r => [String(r.key).slice(MORE_KEY.length), r.value ?? ''])));
     const dq: Record<string, number> = {};
     for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
     setDelivered(dq);
@@ -110,7 +113,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
     const clients = Array.from(new Set(plan.map(p => p.client_name || MM_CLIENT)));
     return clients.map(client => {
       const items = allItems.filter(i => (i.client_name || MM_CLIENT) === client);
-      const rowsOfClient = plan.filter(p => (p.client_name || MM_CLIENT) === client);
+      const rowsOfClient = plan.filter(p => (p.client_name || MM_CLIENT) === client && !(p.qty && planKg(p) <= 0));
       const batches = buildBatches(items, rowsOfClient);
       // Separate orders (explicit kg per order — Tianhe): each one is followed on its own and, when there
       // are several, the chef says which one he bakes for. A % schedule (Maison Mooncake) stays cumulative.
@@ -378,6 +381,11 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                     style={on ? { backgroundColor: GREEN, color: '#fff' } : { color: '#6B7280' }}>
                     {v === 'd' ? (vi ? 'Theo đợt giao' : 'Per delivery') : (vi ? 'Toàn bộ đơn hàng' : 'Whole order')}
                   </button>); })}
+              </div>
+            )}
+            {noteText(more[p.client], vi) && (
+              <div className="mx-4 mb-3 rounded-lg px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#FBF6EC', color: '#8A6A2F', border: '1px dashed #E8D9B5' }}>
+                {vi ? `% tính trên ${fmt1(p.whole.reduce((s, x) => s + x.T, 0))} kg đã đặt. ` : `% of the ${fmt1(p.whole.reduce((s, x) => s + x.T, 0))} kg ordered. `}{noteText(more[p.client], vi)}
               </div>
             )}
             {p.perOrder ? (

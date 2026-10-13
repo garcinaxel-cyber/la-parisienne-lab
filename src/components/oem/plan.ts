@@ -85,6 +85,8 @@ export function allocateBaked(own: number[], seqs: number[], bySeq: Record<numbe
 export const PROD_EDITORS_KEY = 'prod_editors';
 export const editorIds = (raw: string | null | undefined) => String(raw ?? '').split(',').map(x => x.trim()).filter(Boolean);
 export const NOTE_KEY = 'client_note:';
+// "more orders to come" banner per client (same vi --- en format), lab_mm_settings key more_to_come:<client> (Axel 2026-10-13)
+export const MORE_KEY = 'more_to_come:';
 export const noteText = (raw: string | null | undefined, vi: boolean) => {
   const [v, e] = (raw ?? '').split(/\n\s*---\s*\n/);
   return ((vi ? v : e || v) ?? '').trim();
