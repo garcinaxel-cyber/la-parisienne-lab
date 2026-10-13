@@ -104,6 +104,35 @@ export function fmtVnd(v: number) {
 // Falls back to showing the current value as its own option if it isn't in the list yet (e.g. a
 // name remembered from localStorage from before this picker existed) so nothing gets silently
 // blanked out for someone who already had a name saved.
+// Reception gaps (preview 2026-10-13): what the shop sees under a confirmed line with a gap.
+type ShopLineGapView = NonNullable<ShopDeliveryOrder['lines'][number]['gaps']>[number];
+function GapBadge({ gap, L, onRecount }: { gap: ShopLineGapView; L: (vi: string, en: string) => string; onRecount?: () => void }) {
+  let text: string; let color = '#6B7280'; let bg = '#F3F4F6';
+  if (gap.kind === 'damaged') {
+    text = L(`${gap.qty} hỏng · đưa lại tài xế (lỗi Lab)`, `${gap.qty} damaged · give back to the driver (Lab fault)`);
+    color = '#92400E'; bg = '#FEF3C7';
+  } else if (gap.status === 'waiting_shop') {
+    text = L('Lab yêu cầu: đếm lại dòng này', 'The Lab asks: recount this line');
+    color = '#FFFFFF'; bg = '#B42318';
+  } else if (gap.status === 'waiting_return') {
+    text = L(`${gap.qty} hỏng · đưa lại tài xế`, `${gap.qty} damaged · give back to the driver`);
+    color = '#92400E'; bg = '#FEF3C7';
+  } else {
+    text = gap.kind === 'missing'
+      ? L(`Thiếu ${gap.qty} · Lab đang kiểm tra`, `${gap.qty} short · the Lab is checking`)
+      : L(`Thừa ${gap.qty} · Lab đang kiểm tra`, `${gap.qty} extra · the Lab is checking`);
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+      <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ color, backgroundColor: bg }}>{text}</span>
+      {gap.status === 'waiting_shop' && onRecount && (
+        <button type="button" onClick={onRecount} className="text-[11px] font-bold underline" style={{ color: '#B42318' }}>{L('Đếm lại', 'Recount')}</button>
+      )}
+      {gap.labMessage && <span className="text-[11px]" style={{ color: '#6B7280' }}>“{gap.labMessage}”</span>}
+    </div>
+  );
+}
+
 export function NamePicker({ value, onChange, names, onManage }: {
   value: string; onChange: (v: string) => void; names: ShopStaffName[] | null; onManage: () => void;
 }) {
@@ -281,6 +310,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // read-only staff previews and the deliveries/cakes tabs never pay for it.
   const [losses, setLosses] = useState<ShopLoss[] | null>(null);
   const [dailyRecap, setDailyRecap] = useState<ShopLossDailyRecap[] | null>(null);
+  const [labLosses, setLabLosses] = useState<{ enabled: boolean; items: { key: string; product: string; qty: number; deliveryDate: string; orderRef: string; returned: boolean }[] } | null>(null);
   const [lossReasons, setLossReasons] = useState<ShopLossReason[] | null>(null);
   const [lossesLoading, setLossesLoading] = useState(false);
   const [lossQuery, setLossQuery] = useState('');
@@ -324,7 +354,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // immediately (Axel, 2026-08-25: "je voudrais une double verification par securite pour qu ils
   // envoient pas sur odoo n importe quoi"). Snapshotting order/line/qty/note here means the
   // confirm step shows exactly what will be sent even if the draft input keeps changing behind it.
-  const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string } | null>(null);
+  const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string; cause: 'missing' | 'wrong_product' | null; damaged: number } | null>(null);
   const [pendingLoss, setPendingLoss] = useState(false);
 
   // "Xác nhận tất cả" recap (Axel, 2026-09-12: "un bouton on peut confirmer tout d un coup avec
@@ -707,6 +737,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (reasonsRes.reasons) setLossReasons(reasonsRes.reasons);
     const recapRes = readOnly ? await actions.getShopLossesDailyRecapForStaffAction(shopName) : await actions.getMyShopLossesDailyRecapAction();
     if (recapRes.recap) setDailyRecap(recapRes.recap);
+    const labRes = await actions.getShopLabLossesAction(readOnly ? shopName : undefined);
+    if (labRes.losses) setLabLosses({
+      enabled: !!labRes.enabled,
+      items: labRes.losses.map(g => ({ key: g.key, product: g.product, qty: g.qty, deliveryDate: g.deliveryDate, orderRef: g.orderRef, returned: g.status === 'closed' })),
+    });
   }
 
   useEffect(() => {
@@ -859,11 +894,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const d = draft[l.id] ?? { qty: String(l.receipt?.qty_received ?? refQty(l)), note: l.receipt?.note ?? '' };
     if (!name.trim()) return;
     const qtyNum = d.qty.trim() === '' ? null : Number(d.qty);
-    setPendingReceipt({ order, line: l, qty: qtyNum, note: d.note });
+    setPendingReceipt({
+      order, line: l, qty: qtyNum, note: d.note,
+      cause: (l.receipt?.gap_cause as 'missing' | 'wrong_product' | null | undefined) ?? null,
+      damaged: Number(l.receipt?.qty_damaged ?? 0),
+    });
   }
 
   // The actual write — only ever called from the confirm sheet's "Xác nhận" button.
-  async function doSubmitLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number], qtyNum: number | null, note: string) {
+  async function doSubmitLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number], qtyNum: number | null, note: string, gap?: { cause: 'missing' | 'wrong_product' | null; damaged: number }) {
     const trimmedName = name.trim();
     if (!trimmedName) return;
     try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
@@ -875,6 +914,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       qtyReceived: qtyNum, status, note: note.trim() || null,
       confirmedByName: trimmedName,
       ...(readOnly ? { shopName } : {}),
+      gapCause: qtyNum != null && qtyNum < refQty(l) ? (gap?.cause ?? null) : null,
+      qtyDamaged: gap?.damaged ?? 0,
     });
     setSaving(null);
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
@@ -1578,6 +1619,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             {l.receipt.confirmed_by_name}{l.receipt.note ? ` · ${l.receipt.note}` : ''}
                           </div>
                         )}
+                        {l.receipt && !isEditing && (l.gaps ?? []).filter(g => g.status !== 'closed').map(g => (
+                          <GapBadge key={g.kind} gap={g} L={L} onRecount={canConfirm ? () => startEdit(l) : undefined} />
+                        ))}
                       </div>
                     );
                   })}
@@ -1718,7 +1762,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 {dailyRecap && dailyRecap.length > 0 && (
             <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
               <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Tổng hao hụt 7 ngày qua', 'Total losses over the last 7 days')}</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Hao hụt shop · 7 ngày qua', 'Shop losses · last 7 days')}</div>
               </div>
               <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {dailyRecap.map(r => (
@@ -1754,6 +1798,31 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               </div>
             </div>
           )}
+            {labLosses && (
+              <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+                <div className="px-4 py-2.5 flex items-center justify-between gap-2" style={{ backgroundColor: '#FEF3C7' }}>
+                  <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#92400E' }}>{L('Hao hụt Lab · 7 ngày qua', 'Lab losses · last 7 days')}</div>
+                  <div className="text-[11px]" style={{ color: '#92400E' }}>{L('Hỏng khi nhận — không tính cho shop', 'Damaged on arrival — not on the shop')}</div>
+                </div>
+                {!labLosses.items.length ? (
+                  <div className="px-4 py-3 text-xs" style={{ color: '#9CA3AF' }}>
+                    {labLosses.enabled ? L('Không có', 'None') : L('Bản thử: chưa có dữ liệu (chưa kích hoạt lưu).', 'Preview: no data yet (saving not enabled).')}
+                  </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
+                    {labLosses.items.map(it => (
+                      <div key={it.key} className="px-4 py-2.5 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-navy overflow-x-auto whitespace-nowrap no-scrollbar">{it.product}</div>
+                          <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtDate(it.deliveryDate)} · {it.orderRef} · {it.returned ? L('Lab đã nhận lại', 'Back at the Lab') : L('Chờ đưa lại tài xế', 'Waiting to go back with the driver')}</div>
+                        </div>
+                        <span className="text-sm font-bold shrink-0" style={{ color: '#92400E' }}>×{it.qty}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {lossesLoading && losses === null ? (
               <div className="text-center py-6 text-sm" style={{ color: '#6B7280' }}>{L('Đang tải…', 'Loading…')}</div>
             ) : !losses?.length ? (
@@ -2621,14 +2690,57 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <div className="text-xs pt-1" style={{ color: '#6B7280' }}>{L('Ghi chú:', 'Note:')} {pendingReceipt.note.trim()}</div>
               )}
             </div>
+            {pendingReceipt.qty != null && pendingReceipt.qty < refQty(pendingReceipt.line) && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold" style={{ color: INK }}>
+                  {L(`Thiếu ${refQty(pendingReceipt.line) - pendingReceipt.qty} — chuyện gì xảy ra?`, `${refQty(pendingReceipt.line) - pendingReceipt.qty} short — what happened?`)}
+                </div>
+                <div className="flex gap-2">
+                  {([['missing', L('Thiếu hàng', 'Not in the box')], ['wrong_product', L('Sai sản phẩm', 'Wrong product')]] as const).map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => setPendingReceipt(p => p ? { ...p, cause: k } : p)}
+                      className="flex-1 text-sm font-bold rounded-lg px-3 py-2"
+                      style={{ border: `1.5px solid ${pendingReceipt.cause === k ? NAVY : BORDER}`, backgroundColor: pendingReceipt.cause === k ? GOLD_PALE : 'white', color: INK }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {pendingReceipt.cause === 'wrong_product' && (
+                  <div className="text-[11px]" style={{ color: '#6B7280' }}>{L('Ghi tên sản phẩm bạn nhận được vào ghi chú.', 'Write the product you got instead in the note.')}</div>
+                )}
+              </div>
+            )}
+            {pendingReceipt.qty != null && pendingReceipt.qty > 0 && (
+              <div className="rounded-xl p-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold" style={{ color: INK }}>{L('Trong đó hỏng', 'Of which damaged')}</span>
+                  <div className="flex items-center gap-2">
+                    <button type="button" aria-label="-" onClick={() => setPendingReceipt(p => p ? { ...p, damaged: Math.max(0, p.damaged - 1) } : p)}
+                      className="w-8 h-8 rounded-lg text-lg font-bold" style={{ border: `1px solid ${BORDER}` }}>−</button>
+                    <span className="w-6 text-center font-bold" style={{ color: pendingReceipt.damaged > 0 ? RED : INK }}>{pendingReceipt.damaged}</span>
+                    <button type="button" aria-label="+" onClick={() => setPendingReceipt(p => p ? { ...p, damaged: Math.min(p.qty ?? 0, p.damaged + 1) } : p)}
+                      className="w-8 h-8 rounded-lg text-lg font-bold" style={{ border: `1px solid ${BORDER}` }}>+</button>
+                  </div>
+                </div>
+                {pendingReceipt.damaged > 0 && (
+                  <div className="text-[11px] leading-snug" style={{ color: '#6B7280' }}>
+                    {L(`Lỗi Lab: chỉ ${pendingReceipt.qty - pendingReceipt.damaged} cái tốt vào kho shop. Không bán cái hỏng — đưa lại tài xế (hôm nay hoặc chuyến sau).`,
+                       `Lab fault: only ${pendingReceipt.qty - pendingReceipt.damaged} good ones go into the shop stock. Don't sell the damaged ones — give them back to the driver (today or next delivery).`)}
+                  </div>
+                )}
+              </div>
+            )}
+            {pendingReceipt.order.gapsEnabled === false && (pendingReceipt.damaged > 0 || pendingReceipt.cause) && (
+              <div className="text-[11px]" style={{ color: '#B45309' }}>{L('Bản thử: lý do và số hỏng chưa được lưu.', 'Preview: the reason and damaged count are not saved yet.')}</div>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setPendingReceipt(null)}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5" style={{ border: `1px solid ${BORDER}`, color: INK }}>
                 {L('Huỷ', 'Cancel')}
               </button>
               <button
-                onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note); }}
-                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
+                onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note, { cause: p.cause, damaged: p.damaged }); }}
+                disabled={pendingReceipt.qty != null && pendingReceipt.qty < refQty(pendingReceipt.line) && !pendingReceipt.cause}
+                className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {L('Xác nhận', 'Confirm')}
               </button>
             </div>

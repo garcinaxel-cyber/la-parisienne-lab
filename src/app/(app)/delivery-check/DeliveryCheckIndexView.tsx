@@ -45,8 +45,8 @@ const GAP_REASON_LABEL: Record<string, { vi: string; fr: string }> = {
   unmatched_sku_or_zero_qty: { vi: 'SKU không khớp hoặc số lượng = 0', fr: 'SKU non reconnu ou quantité = 0' },
 };
 
-export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps, dateAlerts }: {
-  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[]; dateAlerts: DateAlert[];
+export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps, dateAlerts, deliveryGapsCount = 0 }: {
+  today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[]; dateAlerts: DateAlert[]; deliveryGapsCount?: number;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -136,7 +136,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
         <Link href="/delivery-check/category"
           className="flex items-center gap-3 rounded-xl px-4 py-3.5"
           style={{ backgroundColor: '#1f2937' }}>
@@ -178,6 +178,21 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             </div>
           </div>
           <ChevronRight size={18} className="shrink-0" style={{ color: pendingCakesCount > 0 ? '#FECACA' : '#9CA3AF' }} />
+        </Link>
+
+        <Link href="/delivery-check/gaps"
+          className="flex items-center gap-3 rounded-xl px-4 py-3.5"
+          style={{ backgroundColor: deliveryGapsCount > 0 ? '#DC2626' : '#F3F4F6' }}>
+          <ArrowRightLeft size={20} className="shrink-0" style={{ color: deliveryGapsCount > 0 ? 'white' : '#9CA3AF' }} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold" style={{ color: deliveryGapsCount > 0 ? 'white' : '#6B7280' }}>
+              {vi ? 'Lệch giao hàng' : 'Écarts de livraison'}{deliveryGapsCount > 0 ? ` · ${deliveryGapsCount}` : ''}
+            </div>
+            <div className="text-xs" style={{ color: deliveryGapsCount > 0 ? '#FECACA' : '#9CA3AF' }}>
+              {vi ? 'Shop nhận khác số Bếp' : 'Reçu par le shop ≠ check Lab'}
+            </div>
+          </div>
+          <ChevronRight size={18} className="shrink-0" style={{ color: deliveryGapsCount > 0 ? '#FECACA' : '#9CA3AF' }} />
         </Link>
       </div>
 
