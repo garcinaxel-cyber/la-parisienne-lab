@@ -1,7 +1,7 @@
 'use client';
 // Delivery gaps — Lab side (preview 2026-10-13). Layout follows the validated mockup
 // (Lab 1 / Lab 2): list on the left (closest to its 48h deadline first), decision on the right.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
@@ -9,7 +9,7 @@ import { ArrowLeft, AlertTriangle, Loader2, FlaskConical } from 'lucide-react';
 import type { DeliveryGap, LabCause } from '@/lib/reception-gaps';
 import type { ReceptionPlan, PlannedStep, InValidationResult } from '@/lib/reception-odoo';
 
-type Tab = 'decide' | 'shop' | 'return' | 'closed';
+type Tab = 'decide' | 'shop' | 'return' | 'send' | 'closed';
 
 // Sales orders (Moon Flower): no shop IN — effects are a return / extra delivery + draft invoice change.
 const SO_EFFECT: Partial<Record<LabCause, { vi: string; fr: string }>> = {
@@ -107,6 +107,67 @@ function InBox({ data, vi, busy, onValidate }: { data: { result: InValidationRes
   );
 }
 
+const ACTION_LABEL: Record<string, { vi: string; fr: string }> = {
+  return: { vi: 'trả về Lab', fr: 'retour Lab' },
+  return_scrap: { vi: 'trả về + hao hụt Lab', fr: 'retour + perte Lab' },
+  extra: { vi: 'giao thêm', fr: 'livraison en plus' },
+};
+function SoSendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi: boolean; onDone: () => void }) {
+  const [st, setSt] = useState<import('@/lib/reception-gaps').OrderSendState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  async function load() {
+    const { getOrderSendStateAction } = await import('./actions');
+    const r = await getOrderSendStateAction(deliveryOrderId);
+    if (r.state) setSt(r.state);
+  }
+  useEffect(() => { load(); }, [deliveryOrderId]);
+  async function send() {
+    setBusy(true); setMsg(null); setConfirming(false);
+    const { sendOrderToOdooAction } = await import('./actions');
+    const r = await sendOrderToOdooAction(deliveryOrderId);
+    setBusy(false);
+    if (r.error) { setMsg({ ok: false, text: r.error }); return; }
+    const res = r.result!;
+    setMsg({ ok: res.ok, text: res.ok ? `${res.live ? '' : (vi ? '[Bản thử] ' : '[Preview] ')}${res.done.join(' · ')}` : `${res.error}${res.done.length ? ' — ' + res.done.join(' · ') : ''}` });
+    await load(); onDone();
+  }
+  if (!st) return <div className="text-xs text-gray-400">…</div>;
+  return (
+    <div className="w-full rounded-xl p-3 space-y-2 text-xs" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}>
+      <div className="font-bold text-sm">{vi ? `Đơn bán ${st.orderRef} — xác nhận cuối trên Odoo` : `Vente ${st.orderRef} — validation finale Odoo`}</div>
+      <div className="space-y-1">
+        {st.lines.map(l => (
+          <div key={l.key} className="flex justify-between gap-2">
+            <span className="truncate">{l.product} · {l.kind === 'extra' ? '+' : '−'}{l.qty}</span>
+            <span className="shrink-0 font-semibold" style={{ color: l.sent ? '#15803D' : l.status === 'closed' ? '#1A4731' : '#B45309' }}>
+              {l.sent ? (vi ? '✓ đã gửi' : '✓ envoyé') : l.status !== 'closed' ? (vi ? 'chưa xử lý xong' : 'pas encore réglé') : l.action ? (vi ? ACTION_LABEL[l.action].vi : ACTION_LABEL[l.action].fr) : (vi ? 'không cần Odoo' : 'rien sur Odoo')}
+            </span>
+          </div>
+        ))}
+      </div>
+      {msg && <div className="font-semibold" style={{ color: msg.ok ? '#15803D' : '#B42318' }}>{msg.text}</div>}
+      {st.sent ? (
+        <div className="font-semibold" style={{ color: '#15803D' }}>{vi ? '✓ Đã gửi Odoo.' : '✓ Envoyé à Odoo.'}</div>
+      ) : confirming ? (
+        <div className="flex gap-2 items-center">
+          <span className="font-semibold">{vi ? 'Gửi tất cả các dòng lên Odoo?' : 'Envoyer toutes les lignes à Odoo ?'}</span>
+          <button onClick={send} disabled={busy} className="font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#1A4731' }}>{busy ? '…' : (vi ? 'Gửi' : 'Envoyer')}</button>
+          <button onClick={() => setConfirming(false)} className="font-semibold underline">{vi ? 'Huỷ' : 'Annuler'}</button>
+        </div>
+      ) : (
+        <button onClick={() => setConfirming(true)} disabled={!st.ready || busy}
+          className="text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+          {vi ? 'Gửi Odoo xác nhận cuối' : 'Envoyer à Odoo (validation finale)'}
+        </button>
+      )}
+      {!st.ready && !st.sent && <div style={{ color: '#6B7280' }}>{vi ? 'Xử lý xong từng dòng trước (nguyên nhân, hàng hỏng đã về Lab).' : 'Régler chaque ligne d’abord (cause, retour des abîmés confirmé).'}</div>}
+      <div style={{ color: '#6B7280' }}>{vi ? 'Odoo: 1 phiếu trả hàng cho cả đơn + scrap Lab + hoá đơn/hoá đơn điều chỉnh nháp.' : 'Odoo : 1 retour pour toute la commande + scrap Lab + facture/avoir en brouillon.'}</div>
+    </div>
+  );
+}
+
 export default function GapsView({ initialGaps, schemaReady, odooMode }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live' }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -125,6 +186,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
     decide: initialGaps.filter(g => g.kind !== 'damaged' && g.status === 'open'),
     shop: initialGaps.filter(g => g.status === 'waiting_shop'),
     return: initialGaps.filter(g => g.status === 'waiting_return'),
+    send: initialGaps.filter(g => g.status === 'closed' && g.sourceType === 'sales_order' && g.odooMode !== 'sent' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra') && !(g.kind === 'missing' && g.labCause === 'shop_miscount')),
     closed: initialGaps.filter(g => g.status === 'closed'),
   }), [initialGaps]);
   const list = byTab[tab];
@@ -167,6 +229,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
     { key: 'decide', vi: 'Cần xử lý', fr: 'À décider' },
     { key: 'shop', vi: 'Chờ shop', fr: 'Attente shop' },
     { key: 'return', vi: 'Chờ hàng về', fr: 'Attente retour' },
+    { key: 'send', vi: 'Chờ gửi Odoo', fr: 'À envoyer à Odoo' },
     { key: 'closed', vi: 'Đã đóng', fr: 'Clôturés' },
   ];
 
@@ -302,7 +365,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
 
             <div className="flex justify-between items-center gap-2 flex-wrap">
               {current.sourceType === 'sales_order' ? (
-                <span className="text-xs text-gray-500">{vi ? 'Đơn bán (SO): không có phiếu nhập shop.' : 'Vente (SO) : pas de réception shop.'}</span>
+                <SoSendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} />
               ) : (
               <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
                 {vi ? 'Nhập kho shop trên Odoo' : 'Réception shop sur Odoo'}

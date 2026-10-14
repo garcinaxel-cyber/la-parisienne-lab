@@ -13,7 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { normShopName } from '@/lib/delivery-check';
-import { planGapResolution, executeReceptionPlan, receptionOdooMode, type GapKind, type LabCause, type ReceptionPlan } from '@/lib/reception-odoo';
+import { planGapResolution, executeReceptionPlan, receptionOdooMode, finalizeSalesOrderGaps, type GapKind, type LabCause, type ReceptionPlan, type SoGapLine, type SoFinalizeResult } from '@/lib/reception-odoo';
 
 export type { GapKind, LabCause };
 export type GapStatus = 'open' | 'waiting_shop' | 'waiting_return' | 'closed';
@@ -33,7 +33,7 @@ export type DeliveryGap = {
   status: GapStatus; labCause: LabCause | null; labMessage: string | null; decidedBy: string | null; decidedAt: string | null;
   returnConfirmedAt: string | null; returnConfirmedBy: string | null;
   deadlineAt: string | null; overdue: boolean; deliveriesSince: number; returnOverdue: boolean;
-  persisted: boolean; odooLog: any[];
+  persisted: boolean; odooLog: any[]; odooMode: string | null;
 };
 
 // ── Schema detection (cached per lambda for a minute) ──────────────────────────────────────
@@ -154,7 +154,7 @@ export async function listDeliveryGaps(
         returnConfirmedAt: p?.return_confirmed_at ?? null, returnConfirmedBy: p?.return_confirmed_by_name ?? null,
         deadlineAt, overdue: status === 'open' && !!deadlineAt && now > new Date(deadlineAt).getTime(),
         deliveriesSince, returnOverdue: awaitingReturn && deliveriesSince >= DAMAGED_RETURN_MAX_DELIVERIES,
-        persisted: !!p, odooLog: p?.odoo_log ?? [],
+        persisted: !!p, odooLog: p?.odoo_log ?? [], odooMode: p?.odoo_mode ?? null,
       });
     }
   }
@@ -258,3 +258,56 @@ export async function confirmDamagedReturn(sb: SupabaseClient, input: { gapId: s
 }
 
 export { receptionOdooMode };
+
+// ── Sales orders: second validation, "Envoyer à Odoo" per order (Axel, 2026-10-14) ─────────
+// Step 1 = the assistants settle every gap of the order line by line (cause, return confirmed).
+// Step 2 = one button sends the whole order to Odoo (return + Lab scrap + extra delivery +
+// invoice/credit note). Ready only when every gap line of the order is settled ('closed').
+function soAction(g: DeliveryGap): SoGapLine['action'] | null {
+  if (g.kind === 'damaged') return 'return_scrap';
+  if (g.kind === 'extra') return g.labCause === 'lab_sent_extra' ? 'extra' : null;
+  if (g.labCause === 'found_at_lab') return 'return';
+  if (g.labCause === 'damaged_returned' || g.labCause === 'lost_transport') return 'return_scrap';
+  return null;
+}
+
+export type OrderSendState = {
+  orderRef: string; sourceType: string; ready: boolean; sent: boolean;
+  lines: { key: string; product: string; sku: string | null; kind: GapKind; qty: number; status: GapStatus; labCause: string | null; action: SoGapLine['action'] | null; sent: boolean }[];
+};
+
+export async function orderSendState(sb: SupabaseClient, deliveryOrderId: string): Promise<OrderSendState | { error: string }> {
+  const { data: h } = await sb.from('lab_delivery_orders').select('order_ref, source_type').eq('id', deliveryOrderId).maybeSingle();
+  if (!h) return { error: 'Order not found' };
+  const { gaps } = await listDeliveryGaps(sb);
+  const mine = gaps.filter(g => g.deliveryOrderId === deliveryOrderId);
+  const lines = mine.map(g => ({ key: g.key, product: g.product, sku: g.sku, kind: g.kind, qty: g.qty, status: g.status, labCause: g.labCause, action: soAction(g), sent: g.odooMode === 'sent' }));
+  const toSend = lines.filter(l => l.action && !l.sent);
+  return {
+    orderRef: h.order_ref, sourceType: h.source_type,
+    ready: lines.length > 0 && lines.every(l => l.status === 'closed') && toSend.length > 0,
+    sent: lines.length > 0 && toSend.length === 0 && lines.every(l => l.status === 'closed'),
+    lines,
+  };
+}
+
+export async function sendOrderToOdoo(sb: SupabaseClient, deliveryOrderId: string, byName: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
+  const st = await orderSendState(sb, deliveryOrderId);
+  if ('error' in st) return { error: st.error };
+  if (st.sourceType !== 'sales_order') return { error: 'Only sales orders are sent this way' };
+  if (!st.ready) return { error: 'Every gap line must be settled first' };
+  const toSend = st.lines.filter(l => l.action && !l.sent && l.sku);
+  const result = await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action! })));
+  const now = new Date().toISOString();
+  await sb.from('lab_reception_odoo_runs').insert({
+    delivery_order_id: deliveryOrderId, order_ref: st.orderRef, action: 'so_finalize', mode: result.live ? 'live' : 'simulated',
+    ok: result.ok, plan: { lines: toSend, done: result.done }, error: result.error ?? null, created_by_name: byName,
+  });
+  if (result.ok && result.live) {
+    for (const l of toSend) {
+      const [checkLineId, kind] = l.key.split(':');
+      await sb.from('lab_delivery_gaps').update({ odoo_mode: 'sent', updated_at: now }).eq('check_line_id', checkLineId).eq('kind', kind);
+    }
+  }
+  return { result };
+}

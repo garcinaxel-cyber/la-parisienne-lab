@@ -4,7 +4,8 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
-import { listDeliveryGaps, decideGap, confirmDamagedReturn, type DeliveryGap, type GapKind, type LabCause } from '@/lib/reception-gaps';
+import { listDeliveryGaps, decideGap, confirmDamagedReturn, orderSendState, sendOrderToOdoo, type DeliveryGap, type GapKind, type LabCause, type OrderSendState } from '@/lib/reception-gaps';
+import type { SoFinalizeResult } from '@/lib/reception-odoo';
 import { validateShopIn, inValidationLive, type ReceptionPlan, type InValidationResult } from '@/lib/reception-odoo';
 
 function service() {
@@ -95,4 +96,23 @@ export async function validateInAction(deliveryOrderId: string): Promise<{ resul
     error: result.error ?? result.skipped ?? null, created_by_name: auth.name,
   });
   return { result };
+}
+
+export async function getOrderSendStateAction(deliveryOrderId: string): Promise<{ state?: OrderSendState; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const st = await orderSendState(sb as any, deliveryOrderId);
+  return 'error' in st ? { error: st.error } : { state: st };
+}
+
+export async function sendOrderToOdooAction(deliveryOrderId: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const res = await sendOrderToOdoo(sb as any, deliveryOrderId, auth.name);
+  revalidatePath('/delivery-check/gaps');
+  return res;
 }

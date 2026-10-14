@@ -7,7 +7,7 @@
 //
 // Odoo flow reminder: REP → LAB/OUT (LAB/Stock 8 → transit 13) → SHOP/IN (transit 13 → shop).
 // The SHOP/IN picking is found by origin = REP ref and source location = transit.
-import { odooConfigured, odooExecute, odooWriteConfigured } from '@/lib/odoo';
+import { odooConfigured, odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 import { writeQuantitiesAndValidatePicking, type PlannedWrite } from '@/lib/odoo-delivery-validate';
 
 export const LAB_STOCK_LOCATION_ID = 8;
@@ -220,5 +220,134 @@ export async function validateShopIn(
     return { ok: true, live, pickingId: picking.id, pickingName: picking.name, plan };
   } catch (e: any) {
     return { ok: false, live, error: e?.message ?? String(e), plan };
+  }
+}
+
+// ── 4. LIVE: sales orders (Moon Flower) — final "Envoyer à Odoo" (Axel, 2026-10-14) ──────────
+// Double validation: the assistants settle every gap line by line in the app, then ONE click per
+// order sends everything to Odoo at once:
+//   1. one return (stock.return.picking, to_refund) of the delivery for every unit that is not at
+//      the customer: found at the Lab, damaged (returned) or lost;
+//   2. a LAB/Stock scrap for the damaged / lost units (Lab loss);
+//   3. one extra delivery (LAB/Stock → customer, linked to the SO line) for units the Lab sent
+//      too many;
+//   4. "Create invoice" (delivered) — Odoo then makes the draft credit note / extra invoice itself
+//      from the delivered quantities. Left in draft for accounting, never posted by us.
+// Production only (inValidationLive); anything unexpected stops before writing.
+export type SoGapLine = { sku: string; qty: number; action: 'return' | 'return_scrap' | 'extra' };
+export type SoFinalizeResult = { ok: boolean; live: boolean; error?: string; done: string[] };
+
+const NO_MAIL = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
+
+export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[]): Promise<SoFinalizeResult> {
+  const live = inValidationLive();
+  const done: string[] = [];
+  if (!odooWriteConfigured()) return { ok: false, live, error: 'Odoo write account not configured', done };
+  if (!lines.length) return { ok: true, live, done: ['nothing to send'] };
+  try {
+    const sos = await odooExecute<any[]>('sale.order', 'search_read', [[['name', '=', orderRef]]], { fields: ['id', 'name', 'partner_id', 'picking_ids', 'order_line', 'invoice_ids'] });
+    const so = sos[0];
+    if (!so) return { ok: false, live, error: `${orderRef} not found in Odoo`, done };
+    const pickings = so.picking_ids?.length ? await odooExecute<any[]>('stock.picking', 'read', [so.picking_ids], { fields: ['id', 'name', 'state', 'location_id', 'location_dest_id', 'picking_type_id'] }) : [];
+    const delivery = pickings.find(p => p.state === 'done' && p.location_id?.[0] === LAB_STOCK_LOCATION_ID);
+    if (!delivery) return { ok: false, live, error: 'No validated Lab delivery for this order (validate the delivery first)', done };
+
+    const skus = Array.from(new Set(lines.map(l => l.sku)));
+    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'] });
+    const prodBySku = new Map(prods.map(p => [p.default_code as string, p]));
+    for (const s of skus) if (!prodBySku.has(s)) return { ok: false, live, error: `Product ${s} not found in Odoo`, done };
+
+    const toReturn = new Map<number, number>(); // product id → qty
+    const toScrap = new Map<number, number>();
+    const extra = new Map<number, number>();
+    for (const l of lines) {
+      const pid = prodBySku.get(l.sku)!.id;
+      if (l.action === 'extra') extra.set(pid, (extra.get(pid) ?? 0) + l.qty);
+      else {
+        toReturn.set(pid, (toReturn.get(pid) ?? 0) + l.qty);
+        if (l.action === 'return_scrap') toScrap.set(pid, (toScrap.get(pid) ?? 0) + l.qty);
+      }
+    }
+
+    // Check before writing: every returned product must be on the delivery with enough qty.
+    const dMoves = await odooExecute<any[]>('stock.move', 'search_read', [[['picking_id', '=', delivery.id], ['state', '=', 'done']]], { fields: ['id', 'product_id', 'quantity', 'sale_line_id'] });
+    for (const [pid, q] of Array.from(toReturn.entries())) {
+      const deliv = dMoves.filter(m => m.product_id?.[0] === pid).reduce((t, m) => t + Number(m.quantity), 0);
+      if (deliv < q) return { ok: false, live, error: `Return ${q} > delivered ${deliv} for product ${pid}`, done };
+    }
+    const soLines = so.order_line?.length ? await odooExecute<any[]>('sale.order.line', 'read', [so.order_line], { fields: ['id', 'product_id'] }) : [];
+    for (const pid of Array.from(extra.keys())) if (!soLines.some(l => l.product_id?.[0] === pid)) return { ok: false, live, error: `Extra product ${pid} is not on the order`, done };
+
+    if (!live) return { ok: true, live, done: [`return ${toReturn.size} product(s)`, `scrap ${toScrap.size}`, `extra ${extra.size}`, 'create invoice/credit note (draft)'] };
+
+    // 1. Return
+    if (toReturn.size) {
+      const wizId = await odooExecuteWrite<number>('stock.return.picking', 'create', [{ picking_id: delivery.id }], { context: { active_id: delivery.id, active_ids: [delivery.id], active_model: 'stock.picking', ...NO_MAIL } });
+      const wiz = await odooExecuteWrite<any[]>('stock.return.picking', 'read', [[wizId]], { fields: ['product_return_moves'] });
+      const rLines = wiz[0]?.product_return_moves?.length ? await odooExecuteWrite<any[]>('stock.return.picking.line', 'read', [wiz[0].product_return_moves], { fields: ['id', 'product_id', 'move_id'] }) : [];
+      const remaining = new Map(toReturn);
+      const cmds: any[] = [];
+      for (const rl of rLines) {
+        const pid = rl.product_id?.[0];
+        const want = remaining.get(pid) ?? 0;
+        const mv = dMoves.find(m => m.id === rl.move_id?.[0]);
+        const q = Math.min(want, Number(mv?.quantity ?? want));
+        remaining.set(pid, want - q);
+        cmds.push([1, rl.id, { quantity: q, to_refund: q > 0 }]);
+      }
+      await odooExecuteWrite('stock.return.picking', 'write', [[wizId], { product_return_moves: cmds }], { context: NO_MAIL });
+      let res: any;
+      try { res = await odooExecuteWrite<any>('stock.return.picking', 'action_create_returns', [[wizId]], { context: NO_MAIL }); }
+      catch { res = await odooExecuteWrite<any>('stock.return.picking', 'create_returns', [[wizId]], { context: NO_MAIL }); }
+      const retId: number | undefined = res?.res_id;
+      if (!retId) return { ok: false, live, error: `Return not created: ${JSON.stringify(res)}`, done };
+      const rMoves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', retId]]], { fields: ['id', 'product_uom_qty'] });
+      for (const m of rMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
+      const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[retId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
+      if (v !== true) return { ok: false, live, error: `Return created (id ${retId}) but not validated: ${JSON.stringify(v)}`, done };
+      const [ret] = await odooExecuteWrite<any[]>('stock.picking', 'read', [[retId]], { fields: ['name'] });
+      done.push(`return ${ret?.name ?? retId}`);
+    }
+    // 2. Scrap (Lab loss)
+    if (toScrap.size) {
+      const { createScrapAtLocation } = await import('@/lib/odoo-scrap');
+      for (const [pid, q] of Array.from(toScrap.entries())) {
+        const p = prods.find(x => x.id === pid);
+        const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: pid, uomId: p.uom_id?.[0], qty: q, reasonTagIds: [], origin: `${orderRef} — hỏng/mất khi giao (lỗi Lab)` });
+        if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
+        done.push(`scrap ${p.default_code} ×${q}`);
+      }
+    }
+    // 3. Extra delivery
+    if (extra.size) {
+      const pickId = await odooExecuteWrite<number>('stock.picking', 'create', [{
+        picking_type_id: delivery.picking_type_id?.[0], location_id: LAB_STOCK_LOCATION_ID, location_dest_id: delivery.location_dest_id?.[0],
+        partner_id: so.partner_id?.[0], origin: so.name,
+        move_ids: Array.from(extra.entries()).map(([pid, q]) => {
+          const p = prods.find(x => x.id === pid);
+          const sl = soLines.find(l => l.product_id?.[0] === pid);
+          return [0, 0, { name: p.default_code, product_id: pid, product_uom: p.uom_id?.[0], product_uom_qty: q, sale_line_id: sl.id, location_id: LAB_STOCK_LOCATION_ID, location_dest_id: delivery.location_dest_id?.[0] }];
+        }),
+      }], { context: NO_MAIL });
+      await odooExecuteWrite('stock.picking', 'action_confirm', [[pickId]], { context: NO_MAIL });
+      const eMoves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', pickId]]], { fields: ['id', 'product_uom_qty'] });
+      for (const m of eMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
+      const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[pickId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
+      if (v !== true) return { ok: false, live, error: `Extra delivery created (id ${pickId}) but not validated: ${JSON.stringify(v)}`, done };
+      done.push(`extra delivery ${pickId}`);
+    }
+    // 4. Invoice / credit note from delivered quantities (draft)
+    const before: number[] = so.invoice_ids ?? [];
+    const w = await odooExecuteWrite<number>('sale.advance.payment.inv', 'create', [{ advance_payment_method: 'delivered', sale_order_ids: [[6, 0, [so.id]]] }], { context: { active_ids: [so.id], active_model: 'sale.order', ...NO_MAIL } });
+    await odooExecuteWrite('sale.advance.payment.inv', 'create_invoices', [[w]], { context: { active_ids: [so.id], active_model: 'sale.order', ...NO_MAIL } });
+    const after = await odooExecute<any[]>('sale.order', 'read', [[so.id]], { fields: ['invoice_ids'] });
+    const created = ((after[0]?.invoice_ids ?? []) as number[]).filter(id => !before.includes(id));
+    if (created.length) {
+      const inv = await odooExecute<any[]>('account.move', 'read', [created], { fields: ['name', 'move_type', 'state'] });
+      done.push(...inv.map(i => `${i.move_type === 'out_refund' ? 'credit note' : 'invoice'} ${i.name || i.id} (${i.state})`));
+    } else done.push('no invoice change needed');
+    return { ok: true, live, done };
+  } catch (e: any) {
+    return { ok: false, live, error: e?.message ?? String(e), done };
   }
 }
