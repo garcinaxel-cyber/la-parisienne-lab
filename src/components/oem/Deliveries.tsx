@@ -5,11 +5,14 @@ import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 import { Card, Chip, Banner, Empty, Title } from './ui';
 import { fmt, dmy, itemKg, localToday, unitLabel, MUTED, FAINT, GOLD, MM_CLIENT, type Delivery, type Derived, type Item, type LFn } from './model';
 import { dOr, type Batch } from './plan';
+import OrderCartons, { type Note, type Carton, type CartonFormat } from './Cartons';
+import type { ProdLog } from './model';
 
 // Daily operations → Deliveries. Nothing is entered here: one Odoo sales order per delivery goes
 // through the usual Delivery check; this tab reads the result (lab_mm_deliveries()).
 // "Ready" allocates the current finished-goods stock to the upcoming deliveries by date.
-export default function Deliveries({ deliveries, items, d, batches, showCheckLink, L }: { deliveries: Delivery[]; items: Item[]; d: Derived; batches: Batch[]; showCheckLink: boolean; L: LFn }) {
+export default function Deliveries({ deliveries, items, d, batches, showCheckLink, L, prod = [], notes = [], cartons = [], formats = [], canManage = false, reload }: { deliveries: Delivery[]; items: Item[]; d: Derived; batches: Batch[]; showCheckLink: boolean; L: LFn;
+  prod?: ProdLog[]; notes?: Note[]; cartons?: Carton[]; formats?: CartonFormat[]; canManage?: boolean; reload?: () => Promise<void> }) {
   const bySku = useMemo(() => Object.fromEntries(items.map(i => [i.sku, i])) as Record<string, Item>, [items]);
   const [open, setOpen] = useState<string | null>(null);
   const [openPlan, setOpenPlan] = useState<number | null>(null);
@@ -175,6 +178,7 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
                         );
                       })}
                     </div>
+                    {reload && !nd && <OrderCartons orderRef={o.ref} deliveryDate={o.date} lines={o.lines} items={items} prod={prod} notes={notes} cartons={cartons} formats={formats} canPack={showCheckLink} canManage={canManage} reload={reload} L={L} />}
                   </div>
                 )}
               </div>

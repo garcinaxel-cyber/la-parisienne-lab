@@ -12,6 +12,7 @@ import RawMaterials from './RawMaterials';
 import { ProductionLog, OrderSettings } from './Admin';
 import { buildBatches, planOf, PLAN_COLS, splitPlan, type PlanRow } from './plan';
 import { MM_CLIENT } from './model';
+import { NOTE_COLS, type Note, type Carton, type CartonFormat } from './Cartons';
 import PushBell from '@/components/PushBell';
 
 // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake biscuits (MM- SKUs) + Tianhe Food
@@ -55,12 +56,15 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<PlanRow[]>([]);
   const [cancelledPlan, setCancelledPlan] = useState<PlanRow[]>([]); // orders the client cancelled: listed in Settings only
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [cartons, setCartons] = useState<Carton[]>([]);
+  const [formats, setFormats] = useState<CartonFormat[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
-    const [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp] = await Promise.all([
+    const [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp, nt, ct, cf] = await Promise.all([
       supabase.from('lab_mm_order_items').select('sku, product_name, group_key, group_name, unit, unit_weight_g, qty_ordered, sort_order, is_active, client_name, updated_at, updated_by_name, sack_kg').eq('is_active', true).order('sort_order'),
       supabase.from('lab_mm_production_log').select('id, prod_date, group_key, sku, weight_kg, note, created_at, created_by_name, status, received_kg, received_at, received_by_name, receive_note, plan_seq').order('prod_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
       supabase.from('lab_mm_packaging_log').select('*').order('pack_date', { ascending: false }).order('created_at', { ascending: false }).limit(5000),
@@ -72,6 +76,10 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       supabase.from('lab_mm_rm_inventory').select('id, week_start, ingredient_code, qty, created_at, created_by_name').order('week_start', { ascending: false }).limit(2000),
       supabase.from('lab_mm_settings').select('key, value'),
       supabase.from('lab_mm_delivery_plan').select(PLAN_COLS).order('seq'),
+      // carton labels + delivery notes (Axel 2026-10-14)
+      supabase.from('lab_mm_delivery_notes').select(NOTE_COLS).order('created_at', { ascending: false }).limit(500),
+      supabase.from('lab_mm_cartons').select('id, note_id, serial, line_no, sku, group_key, lot_no, prod_date, bags, bag_kg, net_kg').order('line_no').limit(10000),
+      supabase.from('lab_mm_carton_formats').select('client_name, sku, bags_per_carton, bag_kg'),
     ]);
     const e = [it, pl, pk, hs, dl, fc, ing, us, rc, st, dp].find(r => r.error)?.error;
     if (e) setErr(e.message);
@@ -86,6 +94,9 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     setRm((rc.data ?? []).map((r: any) => ({ ...r, qty: Number(r.qty) })));
     setSettings(Object.fromEntries((st.data ?? []).map((r: any) => [r.key, r.value])));
     const sp = splitPlan(dp.data); setPlan(sp.active); setCancelledPlan(sp.cancelled);
+    setNotes((nt.data ?? []) as Note[]);
+    setCartons(((ct.data ?? []) as any[]).map(c => ({ ...c, bag_kg: Number(c.bag_kg), net_kg: Number(c.net_kg) })));
+    setFormats(((cf.data ?? []) as any[]).map(f => ({ ...f, bag_kg: Number(f.bag_kg) })));
     setLoading(false);
   }, [supabase]);
 
@@ -214,7 +225,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       ) : tab === 'progress' ? (
         <Overview client={client} d={d} prod={cProd} pack={cPack} L={L} />
       ) : tab === 'deliveries' ? (
-        <Deliveries deliveries={cDeliv} items={cItems} d={d} batches={batches} showCheckLink={canPack} L={L} />
+        <Deliveries deliveries={cDeliv} items={cItems} d={d} batches={batches} showCheckLink={canPack} L={L} prod={cProd} notes={notes} cartons={cartons} formats={formats} canManage={canManage} reload={load} />
       ) : tab === 'inventory' ? (
         <div className="space-y-3">
           <div className="inline-flex rounded-xl p-1 gap-1" style={{ backgroundColor: '#EFE9DC' }}>

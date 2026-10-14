@@ -416,3 +416,126 @@ export async function decideFgCountAction(id: string, decision: 'approve' | 'rej
   }).eq('id', id);
   return error ? { error: error.message } : { ok: true };
 }
+
+// ── Carton labels + delivery notes (Axel, 2026-10-14) ─────────────────────────────────────────
+// One delivery note (phiếu giao hàng) per Odoo delivery order, one carton row (tem thùng) per box
+// with an automatic serial: <client>-<product>-<yymmdd delivery>-<nnn>. Rules from Axel: packing
+// date = delivery − 1 day, production date = delivery − 2 days, best-before = delivery + 120 days.
+// The production date printed is always a date on which the product was really baked (it must
+// exist in the production log); a date older than the rule needs an admin / lab-manager OK.
+const ymd = (iso: string) => iso.slice(2, 4) + iso.slice(5, 7) + iso.slice(8, 10);
+const addDaysIso = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const prodCode = (sku: string) => sku.replace(/^(MM|OEM)-/, '').replace(/-KG$/, '');
+export type NoteLineInput = { sku: string; kg: number; bagsPerCarton: number; bagKg: number; prodDate: string };
+
+export async function createDeliveryNoteAction(input: {
+  clientName: string; orderRef: string; deliveryDate: string; lines: NoteLineInput[]; overrideNote?: string | null;
+}): Promise<{ ok?: boolean; id?: string; error?: string }> {
+  const auth = await me(STAFF);
+  if ('error' in auth) return { error: auth.error };
+  const svc = service();
+  if (!svc) return { error: 'Server not configured' };
+  const { clientName, orderRef, deliveryDate } = input;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) || !orderRef) return { error: 'bad-input' };
+  const lines = (input.lines ?? []).filter(l => Number(l.kg) > 0);
+  if (!lines.length) return { error: 'no-lines' };
+
+  const { data: info } = await svc.from('lab_mm_settings').select('value').eq('key', `client_info:${clientName}`).maybeSingle();
+  let ci: any = null; try { ci = JSON.parse(info?.value ?? 'null'); } catch { ci = null; }
+  if (!ci?.code) return { error: 'no-client-info' };
+  const { data: items } = await svc.from('lab_mm_order_items').select('sku, group_key, client_name').in('sku', lines.map(l => l.sku));
+  const bySku = Object.fromEntries((items ?? []).map(i => [i.sku, i]));
+  const MM = 'Maison Mooncake';
+  for (const l of lines) {
+    const it = bySku[l.sku];
+    if (!it || (it.client_name || MM) !== clientName) return { error: `unknown-sku:${l.sku}` };
+    if (!(Number(l.bagsPerCarton) >= 1) || !(Number(l.bagKg) > 0)) return { error: `bad-format:${l.sku}` };
+  }
+  // production dates: real dates from the log; older than the rule → manager OK
+  const ruleProd = addDaysIso(deliveryDate, -2);
+  const { data: logs } = await svc.from('lab_mm_production_log').select('group_key, prod_date').in('group_key', Array.from(new Set(lines.map(l => bySku[l.sku].group_key))));
+  const realDates = new Set((logs ?? []).map(r => `${r.group_key}|${r.prod_date}`));
+  for (const l of lines) if (!realDates.has(`${bySku[l.sku].group_key}|${l.prodDate}`)) return { error: `not-a-production-date:${l.sku}` };
+  const old = lines.filter(l => l.prodDate < ruleProd);
+  const override = (input.overrideNote ?? '').trim().slice(0, 300);
+  if (old.length) {
+    if (!MANAGERS.includes(auth.role)) return { error: 'needs-manager' };
+    if (!override) return { error: 'needs-reason' };
+  }
+
+  // cartons: full ones, then one part carton for the rest
+  type C = { sku: string; group_key: string; bags: number; bag_kg: number; net_kg: number; prod_date: string };
+  const cartons: C[] = [];
+  for (const l of lines) {
+    const per = Math.round(Number(l.bagsPerCarton)); const bk = Number(l.bagKg); const full = per * bk;
+    let left = Math.round(Number(l.kg) * 1000) / 1000;
+    while (left > 0.0005) {
+      const net = Math.min(full, left);
+      cartons.push({ sku: l.sku, group_key: bySku[l.sku].group_key, bags: Math.ceil(net / bk - 1e-6), bag_kg: bk, net_kg: Math.round(net * 1000) / 1000, prod_date: l.prodDate });
+      left = Math.round((left - net) * 1000) / 1000;
+    }
+  }
+  if (cartons.length > 500) return { error: 'too-many-cartons' };
+
+  // numbers (atomic counters, never reused)
+  const notePrefix = `PGH-${ci.code}-${ymd(deliveryDate)}`;
+  const { data: nStart, error: nErr } = await svc.rpc('lab_mm_take_numbers', { p_prefix: notePrefix, p_n: 1 });
+  if (nErr) return { error: nErr.message };
+  const noteNo = `${notePrefix}-${String(nStart).padStart(2, '0')}`;
+  const serials: string[] = [];
+  for (const sku of Array.from(new Set(cartons.map(c => c.sku)))) {
+    const mine = cartons.filter(c => c.sku === sku);
+    const prefix = `${ci.code}-${prodCode(sku)}-${ymd(deliveryDate)}`;
+    const { data: start, error } = await svc.rpc('lab_mm_take_numbers', { p_prefix: prefix, p_n: mine.length });
+    if (error) return { error: error.message };
+    mine.forEach((c, k) => { (c as any).serial = `${prefix}-${String(Number(start) + k).padStart(3, '0')}`; });
+  }
+
+  const { data: note, error: e1 } = await svc.from('lab_mm_delivery_notes').insert({
+    note_no: noteNo, client_name: clientName, order_ref: orderRef, delivery_date: deliveryDate,
+    pack_date: addDaysIso(deliveryDate, -1), best_before: addDaysIso(deliveryDate, Number(ci.shelf_days) || 120),
+    override_by_name: old.length ? auth.name : null, override_note: old.length ? override : null,
+    created_by: auth.id, created_by_name: auth.name,
+  }).select('id').single();
+  if (e1 || !note) return { error: e1?.message ?? 'insert failed' };
+  const { error: e2 } = await svc.from('lab_mm_cartons').insert(cartons.map((c, k) => ({
+    note_id: note.id, serial: (c as any).serial, line_no: k + 1, sku: c.sku, group_key: c.group_key,
+    lot_no: `${prodCode(c.sku)}-${ymd(c.prod_date)}`, prod_date: c.prod_date, bags: c.bags, bag_kg: c.bag_kg, net_kg: c.net_kg,
+  })));
+  if (e2) { await svc.from('lab_mm_delivery_notes').delete().eq('id', note.id); return { error: e2.message }; }
+  await svc.from('lab_mm_carton_formats').upsert(lines.map(l => ({ client_name: clientName, sku: l.sku, bags_per_carton: Math.round(Number(l.bagsPerCarton)), bag_kg: Number(l.bagKg), updated_at: new Date().toISOString() })));
+  return { ok: true, id: note.id };
+}
+
+// Cancel a note that was not signed yet (wrong format, wrong date…). Kept with status 'void' so
+// its serials are never reused; a new note gets new numbers.
+export async function voidDeliveryNoteAction(id: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await me(STAFF);
+  if ('error' in auth) return { error: auth.error };
+  const svc = service();
+  if (!svc) return { error: 'Server not configured' };
+  const { data, error } = await svc.from('lab_mm_delivery_notes').update({ status: 'void' }).eq('id', id).eq('status', 'ready').select('id');
+  if (error) return { error: error.message };
+  return data?.length ? { ok: true } : { error: 'already-signed' };
+}
+
+// Photo of the note signed by the client → status 'signed' (proof that the risk passed to them).
+export async function signDeliveryNoteAction(formData: FormData): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await me(STAFF);
+  if ('error' in auth) return { error: auth.error };
+  const svc = service();
+  if (!svc) return { error: 'Server not configured' };
+  const id = String(formData.get('id') ?? '');
+  const file = formData.get('file');
+  if (!id || !(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only images' };
+  if (file.size > 8 * 1024 * 1024) return { error: 'Image too large (max 8MB)' };
+  const path = `oem-delivery-notes/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+  const { error: up } = await svc.storage.from('lab-design-photos').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (up) return { error: up.message };
+  const url = svc.storage.from('lab-design-photos').getPublicUrl(path).data.publicUrl;
+  const { data, error } = await svc.from('lab_mm_delivery_notes').update({ status: 'signed', signed_photo_url: url, signed_at: new Date().toISOString(), signed_by_name: auth.name })
+    .eq('id', id).neq('status', 'void').select('id');
+  if (error) return { error: error.message };
+  return data?.length ? { ok: true } : { error: 'Note not found' };
+}
