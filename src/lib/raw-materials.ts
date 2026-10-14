@@ -121,6 +121,17 @@ export function parsePacks(rawName: string, uom: string): RawPack[] {
   return out;
 }
 
+// Products the chefs count by the piece (Axel, 2026-10-14: "pour l'oeuf une conversion automatique en kg,
+// un oeuf = 50 g, dans Odoo ca reste en kg"). The request is typed in pieces; what is stored and sent on to
+// Odoo is always the quantity in the product's own unit (kg). Keyed by the Odoo SKU.
+export type PieceUnit = { vi: string; en: string; kg: number; step: number };
+export const PIECE_UNITS: Record<string, PieceUnit> = {
+  '152-MH.188': { vi: 'quả', en: 'egg', kg: 0.05, step: 10 }, // "eggs" (fresh), 1 egg = 50 g
+};
+export function pieceUnit(sku: string | null | undefined): PieceUnit | null { return sku ? PIECE_UNITS[sku] ?? null : null; }
+export const kgFromPieces = (pieces: number, pu: PieceUnit) => Math.round(pieces * pu.kg * 1000) / 1000;
+export const piecesFromKg = (kg: number, pu: PieceUnit) => Math.round(kg / pu.kg);
+
 export function fmtQty(v: number): string {
   return (Math.round(v * 1000) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
 }

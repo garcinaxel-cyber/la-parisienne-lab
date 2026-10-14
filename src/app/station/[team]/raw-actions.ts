@@ -3,7 +3,7 @@
 // are recorded in the app only; nothing goes to Odoo. Test phase: team Hưng only (see RAW_TEAMS).
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
-import { TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { TEAM_SHORT, pieceUnit, piecesFromKg, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { labDayUtcRange, vnTodayStr } from '@/lib/odoo';
 
 export async function getRawCatalogForChefAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
@@ -157,7 +157,10 @@ export async function submitPurchaseRequestAction(team: string, requestedBy: str
     ...clean.map(l => {
       const m: any = byId.get(l.tmplId);
       return { request_id: r.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: Math.round(Number(l.qty) * 1000) / 1000,
-        brand: txt(l.brand, 80), brand_strict: !!l.brandStrict && !!txt(l.brand, 80), note: txt(l.note, 300),
+        brand: txt(l.brand, 80), brand_strict: !!l.brandStrict && !!txt(l.brand, 80),
+        // Counted by the piece (eggs): purchasing sees the piece count in the note; the quantity itself stays in kg.
+        note: (() => { const pu = pieceUnit(m.sku); const base = txt(l.note, 300);
+          if (!pu) return base; const pc = `${piecesFromKg(Number(l.qty), pu)} ${pu.vi} (${Math.round(pu.kg * 1000)} g/${pu.vi})`; return base ? `${pc} · ${base}`.slice(0, 300) : pc; })(),
         vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status };
     }),
     ...news.map(n => ({ request_id: r.id, tmpl_id: null, sku: null, name: txt(n.name, 120)!, uom: ['kg', 'L', 'Unit'].includes(n.uom) ? n.uom : 'kg',

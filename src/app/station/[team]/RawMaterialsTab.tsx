@@ -7,7 +7,7 @@
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
-import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
@@ -281,7 +281,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     <div className="text-[10px] mt-0.5" style={{ color: '#9CA3AF' }}>{unitLabel(m)}</div>
                   </div>
                 ) : (
-                  <button onClick={() => setCart(c => inCart(m.tmplId) ? c.filter(x => x.tmplId !== m.tmplId) : [...c, { tmplId: m.tmplId, qty: 1, brand: '', strict: false, note: '' }])}
+                  <button onClick={() => setCart(c => inCart(m.tmplId) ? c.filter(x => x.tmplId !== m.tmplId) : [...c, { tmplId: m.tmplId, qty: (() => { const pu = pieceUnit(m.sku); return pu ? kgFromPieces(pu.step, pu) : 1; })(), brand: '', strict: false, note: '' }])}
                     className="flex-none inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[12.5px] font-extrabold" style={inCart(m.tmplId) ? { backgroundColor: NAVY, color: '#fff' } : { border: `1px solid ${NAVY}`, color: NAVY }}>
                     {inCart(m.tmplId) ? <><Check size={13} /> {L('Đã thêm', 'Added')}</> : <><Plus size={13} /> {L('Thêm', 'Add')}</>}
                   </button>
@@ -485,15 +485,18 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
             {sheet === 'cart' && (<>
               <div className="text-[15px] font-extrabold">{L('Yêu cầu mua', 'Purchase request')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('không hiển thị giá', 'prices are not shown')}</div>
-              {cart.map((c, i) => { const m = byId.get(c.tmplId); if (!m) return null; const upd = (p: Partial<CartLine>) => setCart(xs => xs.map((x, j) => j === i ? { ...x, ...p } : x)); return (
+              {cart.map((c, i) => { const m = byId.get(c.tmplId); if (!m) return null; const upd = (p: Partial<CartLine>) => setCart(xs => xs.map((x, j) => j === i ? { ...x, ...p } : x));
+                // Counted by the piece (eggs): typed in pieces, converted to kg for the request and for Odoo.
+                const pu = pieceUnit(m.sku); const shown = pu ? piecesFromKg(c.qty, pu) : c.qty; return (
                 <div key={c.tmplId} className="py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
                   <div className="flex items-center gap-2"><b className="flex-1 text-[13px]">{rawName(m, lang)}</b>
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                      <button onClick={() => upd({ qty: Math.max(0, c.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
-                      <input inputMode="decimal" value={fmtQty(c.qty)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); upd({ qty: isNaN(v) ? 0 : Math.max(0, v) }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
-                      <button onClick={() => upd({ qty: c.qty + 1 })} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
-                    </div><span className="text-[11.5px] w-6" style={{ color: '#6B7280' }}>{m.uom}</span>
+                      <button onClick={() => upd({ qty: pu ? kgFromPieces(Math.max(0, shown - pu.step), pu) : Math.max(0, c.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
+                      <input inputMode={pu ? 'numeric' : 'decimal'} value={fmtQty(shown)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); const n = isNaN(v) ? 0 : Math.max(0, v); upd({ qty: pu ? kgFromPieces(Math.round(n), pu) : n }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
+                      <button onClick={() => upd({ qty: pu ? kgFromPieces(shown + pu.step, pu) : c.qty + 1 })} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
+                    </div><span className="text-[11.5px] w-6" style={{ color: '#6B7280' }}>{pu ? L(pu.vi, pu.en) : m.uom}</span>
                     <button onClick={() => setCart(xs => xs.filter((_, j) => j !== i))} style={{ color: '#9CA3AF' }}><X size={14} /></button></div>
+                  {pu && <div className="text-[11px] mt-1 text-right font-semibold" style={{ color: GOLD_TEXT }}>{fmtQty(shown)} {L(pu.vi, pu.en)} × {Math.round(pu.kg * 1000)} g = {fmtQty(c.qty)} {m.uom}</div>}
                   <div className="flex gap-1.5 items-center mt-1.5 flex-wrap">
                     <input value={c.brand} onChange={e => upd({ brand: e.target.value })} placeholder={L('Thương hiệu mong muốn (tuỳ chọn)', 'Preferred brand (optional)')} className="flex-1 min-w-[150px] rounded-lg px-2 py-1.5 text-xs outline-none" style={{ border: `1px solid ${HAIR}` }} />
                     <div className="flex rounded-lg overflow-hidden text-[11px] font-bold" style={{ border: `1px solid ${HAIR}` }}>
