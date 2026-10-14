@@ -11,6 +11,14 @@ import type { ReceptionPlan, PlannedStep, InValidationResult } from '@/lib/recep
 
 type Tab = 'decide' | 'shop' | 'return' | 'closed';
 
+// Sales orders (Moon Flower): no shop IN — effects are a return / extra delivery + draft invoice change.
+const SO_EFFECT: Partial<Record<LabCause, { vi: string; fr: string }>> = {
+  found_at_lab: { vi: '→ trả về kho Lab, giảm hoá đơn', fr: '→ retour stock Lab, facture −' },
+  damaged_returned: { vi: '→ trả về + hao hụt Lab, giảm hoá đơn', fr: '→ retour + perte Lab, facture −' },
+  lost_transport: { vi: '→ trả về + hao hụt Lab, giảm hoá đơn', fr: '→ retour + perte Lab, facture −' },
+  lab_sent_extra: { vi: '→ thêm vào giao hàng + hoá đơn', fr: '→ ajout livraison + facture' },
+};
+
 const CAUSES: Record<'missing' | 'extra', { key: LabCause; vi: string; fr: string; effVi: string; effFr: string }[]> = {
   missing: [
     { key: 'found_at_lab', vi: 'Còn ở Lab, chưa gửi đi', fr: 'Retrouvé au Lab, jamais parti', effVi: '→ về lại kho Lab', effFr: '→ retour stock Lab' },
@@ -268,7 +276,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
                       style={{ border: cause === c.key ? '1.5px solid #1A4731' : '1px solid #E5E7EB', backgroundColor: cause === c.key ? '#EAF2ED' : 'white' }}>
                       <input type="radio" name="cause" checked={cause === c.key} onChange={() => setCause(c.key)} style={{ accentColor: '#1A4731' }} />
                       <span className="flex-1 text-sm font-semibold">{vi ? c.vi : c.fr}</span>
-                      <span className="text-xs text-gray-500">{vi ? c.effVi : c.effFr}</span>
+                      <span className="text-xs text-gray-500">{current.sourceType === 'sales_order' && SO_EFFECT[c.key] ? (vi ? SO_EFFECT[c.key]!.vi : SO_EFFECT[c.key]!.fr) : (vi ? c.effVi : c.effFr)}</span>
                     </label>
                   ))}
                 </fieldset>
@@ -293,9 +301,13 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
             {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} />}
 
             <div className="flex justify-between items-center gap-2 flex-wrap">
+              {current.sourceType === 'sales_order' ? (
+                <span className="text-xs text-gray-500">{vi ? 'Đơn bán (SO): không có phiếu nhập shop.' : 'Vente (SO) : pas de réception shop.'}</span>
+              ) : (
               <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
                 {vi ? 'Nhập kho shop trên Odoo' : 'Réception shop sur Odoo'}
               </button>
+              )}
               {current.kind !== 'damaged' && current.status === 'open' && (
                 <button onClick={submit} disabled={!cause || busy}
                   className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#1A4731' }}>

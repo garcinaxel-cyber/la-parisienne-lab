@@ -25,7 +25,7 @@ const GAPS_FROM = '2026-10-13';
 
 export type DeliveryGap = {
   id: string | null; // lab_delivery_gaps row id once persisted
-  key: string; checkLineId: string; deliveryOrderId: string; orderRef: string; deliveryDate: string; shopName: string;
+  key: string; sourceType: 'replenishment' | 'sales_order'; checkLineId: string; deliveryOrderId: string; orderRef: string; deliveryDate: string; shopName: string;
   sku: string | null; product: string; kind: GapKind; qty: number;
   sent: number; received: number; damaged: number;
   shopCause: string | null; shopNote: string | null; confirmedBy: string | null; confirmedAt: string | null;
@@ -85,8 +85,8 @@ export async function listDeliveryGaps(
   const from = rolling > GAPS_FROM ? rolling : GAPS_FROM;
   const target = opts.shopName ? normShopName(opts.shopName) : null;
 
-  const headers = (await fetchAllPages<{ id: string; delivery_date: string; order_ref: string; shop_name: string | null; marked_not_delivered: boolean | null }>((f, t) =>
-    sb.from('lab_delivery_orders').select('id, delivery_date, order_ref, shop_name, marked_not_delivered')
+  const headers = (await fetchAllPages<{ id: string; delivery_date: string; order_ref: string; shop_name: string | null; marked_not_delivered: boolean | null; source_type: string | null }>((f, t) =>
+    sb.from('lab_delivery_orders').select('id, delivery_date, order_ref, shop_name, marked_not_delivered, source_type')
       .eq('status', 'validated').gte('delivery_date', from).order('id').range(f, t)))
     .filter(h => !h.marked_not_delivered && h.shop_name && (!target || normShopName(h.shop_name) === target));
   if (!headers.length) return { gaps: [], schemaReady };
@@ -146,7 +146,7 @@ export async function listDeliveryGaps(
       const deliveriesSince = (datesByShop.get(normShopName(h.shop_name)) ?? []).filter(d => d > h.delivery_date).length;
       const awaitingReturn = status === 'waiting_return';
       gaps.push({
-        id: p?.id ?? null, key, checkLineId: l.id, deliveryOrderId: h.id, orderRef: h.order_ref, deliveryDate: h.delivery_date, shopName: h.shop_name!,
+        id: p?.id ?? null, key, sourceType: h.source_type === 'sales_order' ? 'sales_order' : 'replenishment', checkLineId: l.id, deliveryOrderId: h.id, orderRef: h.order_ref, deliveryDate: h.delivery_date, shopName: h.shop_name!,
         sku: l.sku, product: l.product_name_vi, kind: g.kind, qty: g.qty, sent, received, damaged,
         shopCause: r.gap_cause ?? null, shopNote: r.note ?? null, confirmedBy: r.confirmed_by_name ?? null, confirmedAt: r.confirmed_at ?? null,
         checkedBy: l.checked_by_name ?? null, checkedAt: l.checked_at ?? null,
@@ -223,7 +223,8 @@ export async function decideGap(sb: SupabaseClient, input: {
   await syncGapsForLine(sb, input.checkLineId); // make sure the row exists and is current
   const { data: g } = await sb.from('lab_delivery_gaps').select('*').eq('check_line_id', input.checkLineId).eq('kind', input.kind).maybeSingle();
   if (!g || g.status === 'closed') return { error: 'Gap not found or already closed' };
-  const plan = await executeReceptionPlan(planGapResolution({ kind: input.kind, qty: Number(g.qty), sku: g.sku, product: g.product_name, shop: g.shop_name }, input.cause));
+  const { data: hdr } = await sb.from('lab_delivery_orders').select('source_type').eq('id', g.delivery_order_id).maybeSingle();
+  const plan = await executeReceptionPlan(planGapResolution({ kind: input.kind, qty: Number(g.qty), sku: g.sku, product: g.product_name, shop: g.shop_name, sourceType: hdr?.source_type }, input.cause));
   const now = new Date().toISOString();
   const status = STATUS_AFTER[input.cause];
   const { error } = await sb.from('lab_delivery_gaps').update({
@@ -243,7 +244,8 @@ export async function confirmDamagedReturn(sb: SupabaseClient, input: { gapId: s
   const { data: g } = await sb.from('lab_delivery_gaps').select('*').eq('id', input.gapId).maybeSingle();
   if (!g || g.status !== 'waiting_return') return { error: 'Nothing to confirm' };
   const qty = Math.max(0, Math.min(input.qty, Number(g.qty)));
-  const plan = await executeReceptionPlan(planGapResolution({ kind: g.kind, qty, sku: g.sku, product: g.product_name, shop: g.shop_name }, 'returned_to_lab'));
+  const { data: hdr } = await sb.from('lab_delivery_orders').select('source_type').eq('id', g.delivery_order_id).maybeSingle();
+  const plan = await executeReceptionPlan(planGapResolution({ kind: g.kind, qty, sku: g.sku, product: g.product_name, shop: g.shop_name, sourceType: hdr?.source_type }, 'returned_to_lab'));
   const now = new Date().toISOString();
   const { error } = await sb.from('lab_delivery_gaps').update({
     status: 'closed', closed_at: now, return_confirmed_qty: qty, return_confirmed_by_name: input.byName, return_confirmed_at: now,

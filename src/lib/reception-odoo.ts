@@ -80,11 +80,29 @@ const LAB = 'LAB/Stock';
 const TRANSIT = 'Transit';
 
 export function planGapResolution(
-  gap: { kind: GapKind; qty: number; sku: string | null; product: string; shop: string },
+  gap: { kind: GapKind; qty: number; sku: string | null; product: string; shop: string; sourceType?: string | null },
   cause: LabCause | 'returned_to_lab',
 ): ReceptionPlan {
   const mode = receptionOdooMode();
   const base = { sku: gap.sku, product: gap.product, qty: gap.qty };
+  // Sales orders (Moon Flower, Axel 2026-10-14): no transit / shop IN — the delivery goes straight
+  // from LAB/Stock to the customer and a draft invoice is created at validation, so every fix
+  // is a return / extra delivery plus the matching change on the draft invoice.
+  if (gap.sourceType === 'sales_order') {
+    const CUSTOMER = 'Customer';
+    const inv = (sign: string): PlannedStep => ({ op: 'note', text: `Draft invoice: ${sign}${gap.qty} ${gap.sku || gap.product}` });
+    let so: PlannedStep[];
+    switch (cause) {
+      case 'found_at_lab': so = [{ op: 'move', ...base, from: CUSTOMER, to: LAB }, inv('−')]; break;
+      case 'damaged_returned':
+      case 'returned_to_lab':
+      case 'lost_transport':
+        so = [{ op: 'move', ...base, from: CUSTOMER, to: LAB }, { op: 'scrap', ...base, location: LAB, reason: 'Hỏng / mất khi giao (lỗi Lab)' }, inv('−')]; break;
+      case 'lab_sent_extra': so = [{ op: 'move', ...base, from: LAB, to: CUSTOMER }, inv('+')]; break;
+      default: so = [{ op: 'note', text: 'No Odoo action: the shop recounts the line' }];
+    }
+    return { mode, ok: true, steps: so };
+  }
   const shopStock = `${gap.shop}/Stock`;
   let steps: PlannedStep[];
   switch (cause) {
