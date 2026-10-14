@@ -237,6 +237,11 @@ export async function validateShopIn(
 export type SoGapLine = { sku: string; qty: number; action: 'return' | 'return_scrap' | 'extra' };
 export type SoFinalizeResult = { ok: boolean; live: boolean; error?: string; done: string[] };
 
+async function recordName(model: string, id: number | undefined): Promise<string> {
+  if (!id) return '?';
+  try { const [r] = await odooExecute<any[]>(model, 'read', [[id]], { fields: ['name'] }); return r?.name || String(id); } catch { return String(id); }
+}
+
 const NO_MAIL = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
 
 export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[]): Promise<SoFinalizeResult> {
@@ -316,7 +321,7 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
         const p = prods.find(x => x.id === pid);
         const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: pid, uomId: p.uom_id?.[0], qty: q, reasonTagIds: [], origin: `${orderRef} — hỏng/mất khi giao (lỗi Lab)` });
         if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
-        done.push(`scrap ${p.default_code} ×${q}`);
+        done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} · ${p.default_code} ×${q}`);
       }
     }
     // 3. Extra delivery
@@ -335,7 +340,7 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
       for (const m of eMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
       const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[pickId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
       if (v !== true) return { ok: false, live, error: `Extra delivery created (id ${pickId}) but not validated: ${JSON.stringify(v)}`, done };
-      done.push(`extra delivery ${pickId}`);
+      done.push(`extra delivery ${await recordName('stock.picking', pickId)}`);
     }
     // 4. Invoice (Axel 2026-10-14: "pas d'avoir, faut passer la facture en draft et ajuster").
     // The existing customer invoice goes back to draft and its lines follow the quantities:
@@ -452,12 +457,12 @@ export async function finalizeReplenishmentGaps(
     for (const i of scrapLab) {
       const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — hỏng khi giao (lỗi Lab)` });
       if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
-      done.push(`scrap LAB ${i.code} ×${i.qty}`);
+      done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} · ${i.code} ×${i.qty}`);
     }
     for (const i of scrapTransit) {
       const r = await createScrapAtLocation(TRANSIT_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — mất khi vận chuyển` });
       if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
-      done.push(`scrap transit ${i.code} ×${i.qty}`);
+      done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} (transit) · ${i.code} ×${i.qty}`);
     }
     if (toShop.length) {
       if (!shopStock) return { ok: false, live, error: 'Shop stock location unknown', done };

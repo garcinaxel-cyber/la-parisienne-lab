@@ -157,6 +157,17 @@ function SendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi:
         ))}
       </div>
       {msg && <div className="font-semibold" style={{ color: msg.ok ? '#15803D' : '#B42318' }}>{msg.text}</div>}
+      {st.odooRefs.length > 0 && (
+        <div className="rounded-lg px-2.5 py-2 space-y-0.5" style={{ backgroundColor: '#EAF2ED', color: '#1A4731' }}>
+          <div className="font-bold">{vi ? 'Phiếu trên Odoo' : 'Pièces Odoo'}</div>
+          {st.odooRefs.map(r => (
+            <div key={r.at}>
+              <div className="text-[11px] text-gray-500">{new Date(r.at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}{r.by ? ` · ${r.by}` : ''}</div>
+              {r.done.map((d, i) => <div key={i} className="font-mono">{d}</div>)}
+            </div>
+          ))}
+        </div>
+      )}
       {st.sent ? (
         <div className="font-semibold" style={{ color: '#15803D' }}>{vi ? '✓ Đã gửi Odoo.' : '✓ Envoyé à Odoo.'}</div>
       ) : confirming ? (

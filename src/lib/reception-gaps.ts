@@ -297,6 +297,7 @@ function repAction(g: DeliveryGap): RepGapLine['action'] | null {
 
 export type OrderSendState = {
   orderRef: string; sourceType: string; ready: boolean; sent: boolean;
+  odooRefs: { at: string; by: string | null; done: string[] }[]; // what each live send did in Odoo
   lines: { key: string; product: string; sku: string | null; kind: GapKind; qty: number; status: GapStatus; labCause: string | null; action: SendAction | null; sent: boolean; photoUrls: string[] }[];
 };
 
@@ -308,8 +309,11 @@ export async function orderSendState(sb: SupabaseClient, deliveryOrderId: string
   const mine = gaps.filter(g => g.deliveryOrderId === deliveryOrderId);
   const lines = mine.map(g => ({ key: g.key, product: g.product, sku: g.sku, kind: g.kind, qty: g.qty, status: g.status, labCause: g.labCause, action: isSo ? soAction(g) : repAction(g), sent: g.odooMode === 'sent', photoUrls: g.photoUrls }));
   const toSend = lines.filter(l => l.action && !l.sent);
+  const { data: runs } = await sb.from('lab_reception_odoo_runs').select('created_at, created_by_name, plan')
+    .eq('delivery_order_id', deliveryOrderId).in('action', ['rep_finalize', 'so_finalize']).eq('mode', 'live').eq('ok', true).order('created_at');
   return {
     orderRef: h.order_ref, sourceType: h.source_type,
+    odooRefs: (runs ?? []).map((r: any) => ({ at: r.created_at, by: r.created_by_name ?? null, done: (r.plan?.done ?? []) as string[] })),
     ready: lines.length > 0 && lines.every(l => l.status === 'closed') && toSend.length > 0,
     sent: lines.length > 0 && toSend.length === 0 && lines.every(l => l.status === 'closed'),
     lines,
