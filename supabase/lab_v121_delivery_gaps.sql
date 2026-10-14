@@ -1,4 +1,5 @@
 -- v121 — Shop reception gaps (Axel, 2026-10-13, PREVIEW branch reception-gaps-preview).
+-- Applied live 2026-10-14 (without DROP POLICY: destructive statements need a confirmation the remote session cannot show).
 -- "pour le moment je veux pas que ça impacte l'opérationnel": purely ADDITIVE. Two nullable
 -- columns on lab_shop_receipt_lines that the production code never selects, plus two new tables.
 -- Nothing existing is altered, renamed or backfilled.
@@ -54,7 +55,6 @@ CREATE INDEX IF NOT EXISTS idx_lab_delivery_gaps_status ON lab_delivery_gaps(sta
 CREATE INDEX IF NOT EXISTS idx_lab_delivery_gaps_shop ON lab_delivery_gaps(shop_name, delivery_date);
 
 ALTER TABLE lab_delivery_gaps ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "lab_delivery_gaps_manager" ON lab_delivery_gaps;
 CREATE POLICY "lab_delivery_gaps_manager" ON lab_delivery_gaps FOR ALL TO authenticated
   USING (current_role_of() IN ('admin','lab_manager','assistant'))
   WITH CHECK (current_role_of() IN ('admin','lab_manager','assistant'));
@@ -76,7 +76,6 @@ CREATE TABLE IF NOT EXISTS lab_reception_odoo_runs (
 CREATE INDEX IF NOT EXISTS idx_lab_reception_odoo_runs_order ON lab_reception_odoo_runs(delivery_order_id);
 
 ALTER TABLE lab_reception_odoo_runs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "lab_reception_odoo_runs_manager" ON lab_reception_odoo_runs;
 CREATE POLICY "lab_reception_odoo_runs_manager" ON lab_reception_odoo_runs FOR ALL TO authenticated
   USING (current_role_of() IN ('admin','lab_manager','assistant'))
   WITH CHECK (current_role_of() IN ('admin','lab_manager','assistant'));
