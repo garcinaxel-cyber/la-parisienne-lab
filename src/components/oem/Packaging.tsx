@@ -60,7 +60,9 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canRe
   const [ackAll, setAckAll] = useState(false);
   const canSave = !saving && !over.length && !anyBad && !noSacks.length && (packed.length > 0 || scraps.length > 0);
 
-  const setQ = (sku: string, v: number) => setQty(q => ({ ...q, [sku]: v > 0 ? String(Math.round(v * 1000) / 1000) : '' }));
+  // kg ↔ sacks kept in step both ways (Axel 2026-10-14): kg typed → sacks = kg ÷ kg per sack, rounded up
+  const syncSacks = (sku: string, kgVal: number) => { const k = sackKg(sku); if (k != null && bySku[sku]?.unit === 'kg') setSacks(s => ({ ...s, [sku]: kgVal > 0 ? String(Math.ceil(kgVal / k - 1e-6)) : '' })); };
+  const setQ = (sku: string, v: number) => { setQty(q => ({ ...q, [sku]: v > 0 ? String(Math.round(v * 1000) / 1000) : '' })); syncSacks(sku, v); };
   const maxFor = (g: Group, i: Item) => {
     const rem = Math.max(0, avail(g.key) - usedKg(g, i.sku));
     return i.unit === 'kg' ? Math.floor(rem * 10) / 10 : Math.floor((rem * 1000) / i.unit_weight_g);
@@ -112,7 +114,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canRe
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold w-14 shrink-0" style={{ color: '#374151' }}>{i.unit === 'kg' ? 'kg' : `${fmt(i.unit_weight_g, 0)} g`}</span>
                 <button onClick={() => setQ(i.sku, Math.max(0, v - step))} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="minus"><Minus size={16} /></button>
-                <ExprInput big integer={i.unit === 'bag'} className="flex-1 min-w-0" value={qty[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => setQty(q => ({ ...q, [i.sku]: v }))} />
+                <ExprInput big integer={i.unit === 'bag'} className="flex-1 min-w-0" value={qty[i.sku] ?? ''} unit={unitLabel(i, L)} onChange={v => { setQty(q => ({ ...q, [i.sku]: v })); syncSacks(i.sku, num(v)); }} />
                 <button onClick={() => setQ(i.sku, v + step)} className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3F4F6' }} aria-label="plus"><Plus size={16} /></button>
                 <span className="text-xs w-9 shrink-0" style={{ color: MUTED }}>{unitLabel(i, L)}</span>
               </div>
@@ -125,7 +127,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canRe
                 </button>
                 {i.unit === 'kg' && (
                   <span className="flex items-center gap-1 text-[11px]" style={{ color: MUTED }}>
-                    <input inputMode="numeric" placeholder="0" value={sacks[i.sku] ?? ''} onChange={e => { const n = e.target.value.replace(/[^0-9]/g, ''); setSacks(s => ({ ...s, [i.sku]: n })); const k = sackKg(i.sku); if (k != null) setQ(i.sku, num(n) * k); }}
+                    <input inputMode="numeric" placeholder="0" value={sacks[i.sku] ?? ''} onChange={e => { const n = e.target.value.replace(/[^0-9]/g, ''); setSacks(s => ({ ...s, [i.sku]: n })); const k = sackKg(i.sku); if (k != null) setQty(q => ({ ...q, [i.sku]: num(n) > 0 ? String(Math.round(num(n) * k * 1000) / 1000) : '' })); }}
                       className="w-12 h-7 rounded-lg px-2 text-sm text-center" style={inputStyle} /> {L('bao', 'sacks')}{sackKg(i.sku) != null ? ` × ${sackKg(i.sku)} kg` : ''}
                   </span>
                 )}
