@@ -78,7 +78,7 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
                 {F('Ngày sản xuất', 'Production date', dmy(c.prod_date))}{F('Ngày đóng gói', 'Packing date', dmy(note.pack_date))}
                 {F('Hạn sử dụng', 'Best before', dmy(note.best_before))}{F('Ngày giao hàng', 'Delivery date', dmy(note.delivery_date))}
                 {F('Số túi × quy cách', 'Bags × size', `${c.bags} × ${n1(Number(c.bag_kg))} kg`)}{F('KL tịnh', 'Net weight', `${n1(Number(c.net_kg))} kg`)}
-                {F('Người đóng gói / KCS', 'Packed & checked by', '', true)}
+                {F('Người đóng gói / KCS', 'Packed & checked by', note.prepared_by ?? '', true)}
               </div>
               <div className="note"><b>Bảo quản:</b> nơi khô ráo, thoáng mát (&lt; 25 °C), tránh ánh nắng và côn trùng. <span className="en">Store dry &amp; cool, away from sunlight and pests.</span></div>
               <div className="resp">Thùng được dán kín. Sau khi mở bao, bên nhận chịu trách nhiệm bảo quản và đóng gói lại.<br /><span className="en">Carton taped closed. Once opened, storage and repacking are the receiver&apos;s responsibility.</span></div>
@@ -123,7 +123,7 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
             • Khiếu nại chỉ được chấp nhận trong vòng 48 giờ, đối với thùng chưa mở, kèm số serial. La Parisienne lưu mẫu của từng lô. <span className="en">Claims within 48 h, unopened cartons only, quoting the S/N. La Parisienne keeps a retained sample of every lot.</span>
           </div>
           <div className="sig">
-            <div><div className="t">BÊN GIAO HÀNG <span className="en">/ Delivered by</span></div><div className="s" /><div className="l">Họ tên / Name: ……………………………<br />KCS đóng thùng / Packed by: ……………………</div></div>
+            <div><div className="t">BÊN GIAO HÀNG <span className="en">/ Delivered by</span></div><div className="s" /><div className="l">Họ tên / Name: ……………………………<br />KCS đóng thùng / Packed by: {note.prepared_by || '……………………'}</div></div>
             <div><div className="t">BÊN NHẬN HÀNG <span className="en">/ Received by</span></div><div className="s" /><div className="l">Họ tên / Name: ……………………………<br />Ngày, giờ nhận / Date &amp; time: ……………………</div></div>
           </div>
         </div>

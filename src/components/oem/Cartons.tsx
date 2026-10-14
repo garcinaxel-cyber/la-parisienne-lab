@@ -13,21 +13,22 @@ import { createDeliveryNoteAction, voidDeliveryNoteAction, signDeliveryNoteActio
 export type Note = {
   id: string; note_no: string; client_name: string; order_ref: string; delivery_date: string; pack_date: string; best_before: string;
   status: 'ready' | 'signed' | 'void'; override_by_name: string | null; override_note: string | null;
-  signed_photo_url: string | null; signed_at: string | null; signed_by_name: string | null; created_at: string; created_by_name: string | null;
+  signed_photo_url: string | null; signed_at: string | null; signed_by_name: string | null; created_at: string; created_by_name: string | null; prepared_by: string | null;
 };
 export type Carton = { id: string; note_id: string; serial: string; line_no: number; sku: string; group_key: string; lot_no: string; prod_date: string; bags: number; bag_kg: number; net_kg: number };
 export type CartonFormat = { client_name: string; sku: string; bags_per_carton: number; bag_kg: number };
-export const NOTE_COLS = 'id, note_no, client_name, order_ref, delivery_date, pack_date, best_before, status, override_by_name, override_note, signed_photo_url, signed_at, signed_by_name, created_at, created_by_name';
+export const NOTE_COLS = 'id, note_no, client_name, order_ref, delivery_date, pack_date, best_before, status, override_by_name, override_note, signed_photo_url, signed_at, signed_by_name, created_at, created_by_name, prepared_by';
 
 const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const ERR: Record<string, [string, string]> = {
-  'needs-manager': ['Ngày sản xuất cũ hơn quy tắc — cần Axel / Trish xác nhận.', 'Production date older than the rule — Axel / Trish must confirm.'],
+  'needs-manager': ['Ngày sản xuất cũ hơn quy tắc — cần xác nhận.', 'Production date older than the rule — confirmation required.'],
+  'needs-prepared-by': ['Nhập họ tên người chuẩn bị thùng.', 'Enter the name of who prepared the cartons.'],
   'needs-reason': ['Ghi lý do để xác nhận.', 'Write a reason to confirm.'],
   'no-client-info': ['Chưa có thông tin khách hàng (cài đặt).', 'Client details missing (settings).'],
   'already-signed': ['Phiếu đã ký — không huỷ được.', 'Note already signed — cannot be cancelled.'],
 };
 
-export default function OrderCartons({ orderRef, deliveryDate, lines, items, prod, notes, cartons, formats, canPack, canManage, reload, L }: {
+export default function OrderCartons({ orderRef, deliveryDate, lines, items, prod, notes, cartons, formats, canPack, reload, L }: {
   orderRef: string; deliveryDate: string; lines: Delivery[]; items: Item[]; prod: ProdLog[]; notes: Note[]; cartons: Carton[]; formats: CartonFormat[];
   canPack: boolean; canManage: boolean; reload: () => Promise<void>; L: LFn;
 }) {
@@ -46,14 +47,14 @@ export default function OrderCartons({ orderRef, deliveryDate, lines, items, pro
     const it = bySku[l.sku]; const q = Number(l.qty_planned ?? l.qty_expected ?? 0);
     return it ? { sku: l.sku, it, kg: itemKg(it, q) } : null;
   }).filter((x): x is { sku: string; it: Item; kg: number } => !!x && x.kg > 0), [lines, bySku]);
-  const prodDates = (g: string) => Array.from(new Set(prod.filter(p => p.group_key === g).map(p => p.prod_date))).sort().reverse();
+  // the rule date (delivery − 2 days) is always offered and is the default, even if the baking is not logged yet
+  const prodDates = (g: string) => Array.from(new Set([ruleProd, ...prod.filter(p => p.group_key === g).map(p => p.prod_date)])).sort().reverse();
 
   const [cfg, setCfg] = useState<Record<string, { per: string; bag: string; date: string }>>({});
   const cfgOf = (sku: string, it: Item) => {
     if (cfg[sku]) return cfg[sku];
     const f = formats.find(x => x.client_name === clientName && x.sku === sku);
-    const ds = prodDates(it.group_key);
-    return { per: String(f?.bags_per_carton ?? 2), bag: String(f?.bag_kg ?? (Number(it.sack_kg) || 5)), date: ds.includes(ruleProd) ? ruleProd : ds[0] ?? '' };
+    return { per: String(f?.bags_per_carton ?? 2), bag: String(f?.bag_kg ?? (Number(it.sack_kg) || 5)), date: ruleProd };
   };
   const setC = (sku: string, it: Item, k: 'per' | 'bag' | 'date', v: string) => setCfg(s => ({ ...s, [sku]: { ...cfgOf(sku, it), [k]: v } }));
   const preview = orderLines.map(x => {
@@ -63,14 +64,17 @@ export default function OrderCartons({ orderRef, deliveryDate, lines, items, pro
   });
   const anyOld = preview.some(p => p.old);
   const [why, setWhy] = useState('');
-  const valid = preview.length > 0 && preview.every(p => p.per >= 1 && p.bag > 0 && p.c.date) && (!anyOld || (canManage && why.trim()));
+  // who prepared the cartons: typed by the person (app names are nicknames); remembered on this device
+  const [by, setBy] = useState(() => { try { return localStorage.getItem('oem_prepared_by') ?? ''; } catch { return ''; } });
+  const valid = preview.length > 0 && preview.every(p => p.per >= 1 && p.bag > 0 && p.c.date) && !!by.trim() && (!anyOld || !!why.trim());
 
   async function create() {
     setBusy('create'); setErr(null);
-    const r = await createDeliveryNoteAction({ clientName, orderRef, deliveryDate, overrideNote: anyOld ? why : null,
+    const r = await createDeliveryNoteAction({ clientName, orderRef, deliveryDate, overrideNote: anyOld ? why : null, preparedBy: by.trim(),
       lines: preview.map(p => ({ sku: p.sku, kg: p.kg, bagsPerCarton: p.per, bagKg: p.bag, prodDate: p.c.date })) });
     setBusy(null);
     if (r.error) return showErr(r.error);
+    try { localStorage.setItem('oem_prepared_by', by.trim()); } catch { /* ignore */ }
     setOpen(false); setWhy(''); await reload();
   }
   async function voidNote(id: string) {
@@ -107,7 +111,7 @@ export default function OrderCartons({ orderRef, deliveryDate, lines, items, pro
               {n.override_by_name && <Chip tone="red">{L('Ngày SX cũ — xác nhận bởi', 'Old prod. date — OK by')} {n.override_by_name}</Chip>}
             </div>
             <div className="text-[11px]" style={{ color: FAINT }}>
-              {L('Đóng gói', 'Packed')} {dmy(n.pack_date)} · HSD {dmy(n.best_before)} · {Array.from(new Set(cs.map(c => c.lot_no))).join(', ')}
+              {L('Đóng gói', 'Packed')} {dmy(n.pack_date)} · HSD {dmy(n.best_before)} · {Array.from(new Set(cs.map(c => c.lot_no))).join(', ')}{n.prepared_by ? ` · ${L('Chuẩn bị', 'Prepared by')} ${n.prepared_by}` : ''}
             </div>
             <div className="flex flex-wrap gap-1.5">
               <a href={`/oem-print?id=${n.id}&doc=labels`} target="_blank" rel="noreferrer"><Btn><Printer size={13} />{L('In tem thùng', 'Print labels')}</Btn></a>
@@ -150,13 +154,14 @@ export default function OrderCartons({ orderRef, deliveryDate, lines, items, pro
                     {ds.map(d => <option key={d} value={d}>{dmy(d)}{d === ruleProd ? ' ✓' : ''}</option>)}
                   </select>
                 </div>
-                {p.old && <div className="text-xs font-semibold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FFF7E6', color: '#B45309' }}>⚠ {L(`Lô ${dmy(p.c.date)} cũ hơn quy tắc (${dmy(ruleProd)}). Cần Axel / Trish xác nhận.`, `Lot ${dmy(p.c.date)} is older than the rule (${dmy(ruleProd)}). Axel / Trish must confirm.`)}</div>}
+                {p.old && <div className="text-xs font-semibold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FFF7E6', color: '#B45309' }}>⚠ {L(`Lô ${dmy(p.c.date)} cũ hơn quy tắc (${dmy(ruleProd)}). Cần xác nhận — tên của bạn sẽ được ghi lại.`, `Lot ${dmy(p.c.date)} is older than the rule (${dmy(ruleProd)}). Confirmation required — your name will be recorded.`)}</div>}
               </div>
             );
           })}
-          {anyOld && (canManage
-            ? <input value={why} onChange={e => setWhy(e.target.value)} maxLength={300} placeholder={L('Lý do xác nhận ngày sản xuất cũ (bắt buộc)', 'Reason for the older production date (required)')} className="w-full h-9 rounded-lg px-3 text-sm" style={{ border: '1px solid #D9CDB8' }} />
-            : <div className="text-xs" style={{ color: '#B45309' }}>{L('Chỉ Axel / Trish mới tạo được phiếu này.', 'Only Axel / Trish can create this note.')}</div>)}
+          {anyOld && (
+            <input value={why} onChange={e => setWhy(e.target.value)} maxLength={300} placeholder={L('Lý do xác nhận ngày sản xuất cũ (bắt buộc)', 'Reason for the older production date (required)')} className="w-full h-9 rounded-lg px-3 text-sm" style={{ border: '1px solid #D9CDB8' }} />
+          )}
+          <input value={by} onChange={e => setBy(e.target.value)} maxLength={80} placeholder={L('Người chuẩn bị — nhập họ tên (bắt buộc)', 'Prepared by — enter your full name (required)')} className="w-full h-9 rounded-lg px-3 text-sm" style={{ border: '1px solid #D9CDB8' }} />
           <div className="flex items-center justify-between gap-2 pt-1">
             <span className="text-xs" style={{ color: MUTED }}>{L('Tổng', 'Total')}: <b style={{ color: '#111827' }}>{preview.reduce((s, p) => s + p.n, 0)} {L('thùng', 'cartons')} · {fmt(preview.reduce((s, p) => s + p.kg, 0), 1)} kg</b></span>
             <span className="flex gap-1.5">

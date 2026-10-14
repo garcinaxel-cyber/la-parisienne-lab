@@ -429,7 +429,7 @@ const prodCode = (sku: string) => sku.replace(/^(MM|OEM)-/, '').replace(/-KG$/, 
 export type NoteLineInput = { sku: string; kg: number; bagsPerCarton: number; bagKg: number; prodDate: string };
 
 export async function createDeliveryNoteAction(input: {
-  clientName: string; orderRef: string; deliveryDate: string; lines: NoteLineInput[]; overrideNote?: string | null;
+  clientName: string; orderRef: string; deliveryDate: string; lines: NoteLineInput[]; overrideNote?: string | null; preparedBy: string;
 }): Promise<{ ok?: boolean; id?: string; error?: string }> {
   const auth = await me(STAFF);
   if ('error' in auth) return { error: auth.error };
@@ -455,13 +455,13 @@ export async function createDeliveryNoteAction(input: {
   const ruleProd = addDaysIso(deliveryDate, -2);
   const { data: logs } = await svc.from('lab_mm_production_log').select('group_key, prod_date').in('group_key', Array.from(new Set(lines.map(l => bySku[l.sku].group_key))));
   const realDates = new Set((logs ?? []).map(r => `${r.group_key}|${r.prod_date}`));
-  for (const l of lines) if (!realDates.has(`${bySku[l.sku].group_key}|${l.prodDate}`)) return { error: `not-a-production-date:${l.sku}` };
+  for (const l of lines) if (l.prodDate !== ruleProd && !realDates.has(`${bySku[l.sku].group_key}|${l.prodDate}`)) return { error: `not-a-production-date:${l.sku}` };
   const old = lines.filter(l => l.prodDate < ruleProd);
   const override = (input.overrideNote ?? '').trim().slice(0, 300);
-  if (old.length) {
-    if (!MANAGERS.includes(auth.role)) return { error: 'needs-manager' };
-    if (!override) return { error: 'needs-reason' };
-  }
+  // any staff member with access may confirm an older date: their own (nickname) name is recorded
+  if (old.length && !override) return { error: 'needs-reason' };
+  const preparedBy = (input.preparedBy ?? '').trim().slice(0, 80);
+  if (!preparedBy) return { error: 'needs-prepared-by' };
 
   // cartons: full ones, then one part carton for the rest
   type C = { sku: string; group_key: string; bags: number; bag_kg: number; net_kg: number; prod_date: string };
@@ -495,7 +495,7 @@ export async function createDeliveryNoteAction(input: {
     note_no: noteNo, client_name: clientName, order_ref: orderRef, delivery_date: deliveryDate,
     pack_date: addDaysIso(deliveryDate, -1), best_before: addDaysIso(deliveryDate, Number(ci.shelf_days) || 120),
     override_by_name: old.length ? auth.name : null, override_note: old.length ? override : null,
-    created_by: auth.id, created_by_name: auth.name,
+    created_by: auth.id, created_by_name: auth.name, prepared_by: preparedBy,
   }).select('id').single();
   if (e1 || !note) return { error: e1?.message ?? 'insert failed' };
   const { error: e2 } = await svc.from('lab_mm_cartons').insert(cartons.map((c, k) => ({
