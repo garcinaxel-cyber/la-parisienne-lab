@@ -33,7 +33,7 @@ export type DeliveryGap = {
   status: GapStatus; labCause: LabCause | null; labMessage: string | null; decidedBy: string | null; decidedAt: string | null;
   returnConfirmedAt: string | null; returnConfirmedBy: string | null;
   deadlineAt: string | null; overdue: boolean; deliveriesSince: number; returnOverdue: boolean;
-  persisted: boolean; odooLog: any[]; odooMode: string | null;
+  persisted: boolean; odooLog: any[]; odooMode: string | null; photoUrls: string[];
 };
 
 // ── Schema detection (cached per lambda for a minute) ──────────────────────────────────────
@@ -154,7 +154,7 @@ export async function listDeliveryGaps(
         returnConfirmedAt: p?.return_confirmed_at ?? null, returnConfirmedBy: p?.return_confirmed_by_name ?? null,
         deadlineAt, overdue: status === 'open' && !!deadlineAt && now > new Date(deadlineAt).getTime(),
         deliveriesSince, returnOverdue: awaitingReturn && deliveriesSince >= DAMAGED_RETURN_MAX_DELIVERIES,
-        persisted: !!p, odooLog: p?.odoo_log ?? [], odooMode: p?.odoo_mode ?? null,
+        persisted: !!p, odooLog: p?.odoo_log ?? [], odooMode: p?.odoo_mode ?? null, photoUrls: r.photo_urls ?? [],
       });
     }
   }

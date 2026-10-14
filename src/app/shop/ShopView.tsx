@@ -104,6 +104,20 @@ export function fmtVnd(v: number) {
 // Falls back to showing the current value as its own option if it isn't in the list yet (e.g. a
 // name remembered from localStorage from before this picker existed) so nothing gets silently
 // blanked out for someone who already had a name saved.
+// Proof photo for a reception gap — downsized before upload (1-3 MB phone photo → ~150 KB).
+async function compressReceiptPhoto(file: File, maxSide = 1280, quality = 0.8): Promise<File> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); if (!ctx) return file;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+    return blob ? new File([blob], 'receipt.jpg', { type: 'image/jpeg' }) : file;
+  } catch { return file; }
+}
+
 // Reception gaps (preview 2026-10-13): what the shop sees under a confirmed line with a gap.
 type ShopLineGapView = NonNullable<ShopDeliveryOrder['lines'][number]['gaps']>[number];
 function GapBadge({ gap, L, onRecount }: { gap: ShopLineGapView; L: (vi: string, en: string) => string; onRecount?: () => void }) {
@@ -356,7 +370,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // immediately (Axel, 2026-08-25: "je voudrais une double verification par securite pour qu ils
   // envoient pas sur odoo n importe quoi"). Snapshotting order/line/qty/note here means the
   // confirm step shows exactly what will be sent even if the draft input keeps changing behind it.
-  const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string; cause: 'missing' | 'wrong_product' | null; damaged: number } | null>(null);
+  const [pendingReceipt, setPendingReceipt] = useState<{ order: ShopDeliveryOrder; line: ShopDeliveryOrder['lines'][number]; qty: number | null; note: string; cause: 'missing' | 'wrong_product' | null; damaged: number; photos: string[] } | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [pendingLoss, setPendingLoss] = useState(false);
 
   // "Xác nhận tất cả" recap (Axel, 2026-09-12: "un bouton on peut confirmer tout d un coup avec
@@ -900,11 +915,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       order, line: l, qty: qtyNum, note: d.note,
       cause: (l.receipt?.gap_cause as 'missing' | 'wrong_product' | null | undefined) ?? null,
       damaged: Number(l.receipt?.qty_damaged ?? 0),
+      photos: l.receipt?.photo_urls ?? [],
     });
   }
 
   // The actual write — only ever called from the confirm sheet's "Xác nhận" button.
-  async function doSubmitLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number], qtyNum: number | null, note: string, gap?: { cause: 'missing' | 'wrong_product' | null; damaged: number }) {
+  async function doSubmitLine(order: ShopDeliveryOrder, l: ShopDeliveryOrder['lines'][number], qtyNum: number | null, note: string, gap?: { cause: 'missing' | 'wrong_product' | null; damaged: number; photos?: string[] }) {
     const trimmedName = name.trim();
     if (!trimmedName) return;
     try { localStorage.setItem(NAME_STORAGE_KEY, trimmedName); } catch {}
@@ -918,6 +934,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       ...(readOnly ? { shopName } : {}),
       gapCause: qtyNum != null && qtyNum < refQty(l) ? (gap?.cause ?? null) : null,
       qtyDamaged: gap?.damaged ?? 0,
+      photoUrls: gap?.photos ?? [],
     });
     setSaving(null);
     if (res.ok) { setEditing(p => { const n = new Set(p); n.delete(l.id); return n; }); load({ silent: true }); }
@@ -2756,6 +2773,42 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 )}
               </div>
             )}
+            {((pendingReceipt.qty != null && pendingReceipt.qty !== refQty(pendingReceipt.line)) || pendingReceipt.damaged > 0) && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold" style={{ color: INK }}>
+                  {pendingReceipt.damaged > 0 ? L('Chụp ảnh hàng hỏng (bắt buộc)*', 'Photo of the damage (required)*') : L('Chụp ảnh (nên có)*', 'Photo (recommended)*')}
+                </div>
+                <div className="flex gap-2 flex-wrap items-center">
+                  {pendingReceipt.photos.map(u => (
+                    <div key={u} className="relative">
+                      <img src={thumb(u, 128)} alt="" className="w-14 h-14 rounded-lg object-cover" style={{ border: `1px solid ${BORDER}` }} />
+                      <button type="button" onClick={() => setPendingReceipt(p => p ? { ...p, photos: p.photos.filter(x => x !== u) } : p)}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-white text-xs flex items-center justify-center" style={{ backgroundColor: RED }} aria-label="x">×</button>
+                    </div>
+                  ))}
+                  {pendingReceipt.photos.length < 4 && (
+                    <label className="w-14 h-14 rounded-lg flex items-center justify-center text-xl cursor-pointer" style={{ border: `1.5px dashed ${GOLD}`, color: NAVY }}>
+                      {photoUploading ? <Loader2 size={16} className="animate-spin" /> : '📷'}
+                      <input type="file" accept="image/*" capture="environment" className="hidden" disabled={photoUploading}
+                        onChange={async e => {
+                          const f = e.target.files?.[0]; e.target.value = '';
+                          if (!f) return;
+                          setPhotoUploading(true);
+                          try {
+                            const fd = new FormData(); fd.append('file', await compressReceiptPhoto(f));
+                            const { uploadReceiptPhotoAction } = await import('./actions');
+                            const r = await uploadReceiptPhotoAction(fd, readOnly ? shopName : undefined);
+                            if (r.url) setPendingReceipt(p => p ? { ...p, photos: [...p.photos, r.url!] } : p);
+                          } finally { setPhotoUploading(false); }
+                        }} />
+                    </label>
+                  )}
+                </div>
+                <div className="text-[11px] leading-snug" style={{ color: '#6B7280' }}>
+                  * {L('Lab xem ảnh này để kiểm tra chênh lệch.', 'The Lab uses this photo to check the gap.')}
+                </div>
+              </div>
+            )}
             {pendingReceipt.order.gapsEnabled === false && (pendingReceipt.damaged > 0 || pendingReceipt.cause) && (
               <div className="text-[11px]" style={{ color: '#B45309' }}>{L('Bản thử: lý do và số hỏng chưa được lưu.', 'Preview: the reason and damaged count are not saved yet.')}</div>
             )}
@@ -2765,8 +2818,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 {L('Huỷ', 'Cancel')}
               </button>
               <button
-                onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note, { cause: p.cause, damaged: p.damaged }); }}
-                disabled={pendingReceipt.qty != null && pendingReceipt.qty < refQty(pendingReceipt.line) && !pendingReceipt.cause}
+                onClick={() => { const p = pendingReceipt; setPendingReceipt(null); if (p) doSubmitLine(p.order, p.line, p.qty, p.note, { cause: p.cause, damaged: p.damaged, photos: p.photos }); }}
+                disabled={photoUploading || (pendingReceipt.qty != null && pendingReceipt.qty < refQty(pendingReceipt.line) && !pendingReceipt.cause) || (pendingReceipt.damaged > 0 && pendingReceipt.photos.length === 0)}
                 className="flex-1 text-sm font-bold rounded-lg px-3 py-2.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
                 {L('Xác nhận', 'Confirm')}
               </button>

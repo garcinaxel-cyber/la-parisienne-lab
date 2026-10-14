@@ -246,7 +246,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
       <div className="rounded-xl px-4 py-2.5 text-xs flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#4C1D95' }}>
         <FlaskConical size={14} className="shrink-0 mt-0.5" />
         <span>
-          {odooMode === 'simulated' ? (vi ? 'Odoo chưa tự động: app chỉ hiện kế hoạch, thao tác Odoo vẫn làm tay. ' : 'Odoo pas encore automatique : l’app affiche le plan, l’action Odoo reste manuelle. ') : ''}
+          {vi ? 'Odoo: nhập kho shop (REP) tự xác nhận khi đủ số, hoặc bấm nút trong thẻ lệch. Đơn bán (SO): bấm « Gửi Odoo xác nhận cuối ». Lệch REP (transit → Lab, scrap, Lab → shop): tạm làm tay trên Odoo. '
+                : 'Odoo : réception shop (REP) validée seule si tout correspond, sinon bouton dans la fiche. Ventes (SO) : bouton « Envoyer à Odoo ». Écarts REP (transit → Lab, scrap, Lab → shop) : encore à la main dans Odoo. '}
           {schemaReady ? '' : (vi ? 'Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật) — các lệch được tính từ xác nhận của shop.' : 'Décisions pas encore enregistrables (ajout en base non appliqué) — écarts calculés depuis les réceptions shop.')}
         </span>
       </div>
@@ -324,6 +325,13 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
                 <div className="text-xs text-gray-500">{current.confirmedBy ?? '—'}{current.shopNote ? ` · “${current.shopNote}”` : ''}</div>
               </div>
             </div>
+            {current.photoUrls.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {current.photoUrls.map(u => (
+                  <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-20 h-20 rounded-lg object-cover border border-gray-200" /></a>
+                ))}
+              </div>
+            )}
             {current.shopCause && (
               <div className="text-xs text-gray-600">{vi ? 'Shop chọn:' : 'Le shop indique :'} <b>{current.shopCause === 'wrong_product' ? (vi ? 'Sai sản phẩm' : 'Mauvais produit') : (vi ? 'Thiếu hàng' : 'Manquant')}</b></div>
             )}

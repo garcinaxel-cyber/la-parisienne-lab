@@ -413,7 +413,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
       <div className="text-sm font-bold text-navy mb-2">{vi ? '💔 Hàng hỏng khi nhận, mang về Lab' : '💔 Abîmés à l’arrivée, ramenés au Lab'}</div>
       <div className="bg-white rounded-2xl p-4 space-y-3" style={{ border: '1px solid #E5E7EB' }}>
         <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F5F3FF', color: '#4C1D95' }}>
-          {vi ? 'Odoo chưa tự động: trả về + scrap Lab vẫn làm tay trên Odoo.' : 'Odoo pas encore automatique : retour + scrap Lab à faire à la main dans Odoo.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
+          {vi ? 'Đơn bán (SO): sau khi xác nhận, gửi Odoo bằng nút trong Lệch giao hàng. REP: trả về + scrap Lab tạm làm tay trên Odoo.' : 'Ventes (SO) : après confirmation, envoi Odoo par le bouton dans Écarts de livraison. REP : retour + scrap Lab encore à la main dans Odoo.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
         </div>
         {msg && <div className="text-xs font-semibold" style={{ color: '#4C1D95' }}>{msg}</div>}
         {!items ? (
@@ -428,6 +428,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
               <div className="text-xs text-gray-500">{shortShop(g.shopName)} · {g.orderRef} · {g.deliveryDate.slice(8, 10)}/{g.deliveryDate.slice(5, 7)}
                 {g.returnOverdue && <span className="font-bold ml-1" style={{ color: '#B42318' }}>· {vi ? `chưa về sau ${g.deliveriesSince} chuyến` : `pas revenu après ${g.deliveriesSince} livraisons`}</span>}
               </div>
+              {g.photoUrls.length > 0 && <div className="flex gap-1 mt-1">{g.photoUrls.map(u => <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-10 h-10 rounded object-cover" /></a>)}</div>}
             </div>
             <span className="text-xs text-gray-500">{vi ? 'Hỏng' : 'Abîmé'}: ×{g.qty}</span>
             <input type="number" min={0} max={g.qty} value={qtyDraft[g.key] ?? String(g.qty)} onChange={e => setQtyDraft(p => ({ ...p, [g.key]: e.target.value }))}

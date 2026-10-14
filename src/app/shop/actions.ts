@@ -254,7 +254,7 @@ export type ShopLineGap = { kind: GapKind; qty: number; status: GapStatus; labCa
 export type ShopDeliveryOrder = {
   header: Pick<DeliveryOrderHeader, 'id' | 'order_ref' | 'delivery_date' | 'shop_name'>;
   lines: (CheckLine & {
-    receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string; qty_damaged?: number | null; gap_cause?: string | null } | null;
+    receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string; qty_damaged?: number | null; gap_cause?: string | null; photo_urls?: string[] | null } | null;
     image_url: string | null;
     // Reception gaps (preview 2026-10-13) — always computed; Lab status only once lab_v121 exists.
     gaps?: ShopLineGap[];
@@ -375,7 +375,7 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
     const receiptByLine: Record<string, any> = {};
     for (const r of receipts ?? []) receiptByLine[r.check_line_id] = {
       check_line_id: r.check_line_id, qty_received: r.qty_received, status: r.status, note: r.note,
-      confirmed_by_name: r.confirmed_by_name, confirmed_at: r.confirmed_at, qty_damaged: r.qty_damaged ?? null, gap_cause: r.gap_cause ?? null,
+      confirmed_by_name: r.confirmed_by_name, confirmed_at: r.confirmed_at, qty_damaged: r.qty_damaged ?? null, gap_cause: r.gap_cause ?? null, photo_urls: r.photo_urls ?? null,
     };
     const persisted = new Map<string, any>();
     if (gapsEnabled && lineIds.length) {
@@ -485,6 +485,7 @@ export async function confirmReceiptAction(input: {
   // Reception gaps (preview 2026-10-13). Stored only once lab_v121 exists, ignored before.
   gapCause?: 'missing' | 'wrong_product' | null;
   qtyDamaged?: number | null;
+  photoUrls?: string[] | null; // proof photos (lab_v122), only kept when the line has a gap
 }): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
@@ -523,6 +524,7 @@ export async function confirmReceiptAction(input: {
       gap_cause: input.gapCause === 'missing' || input.gapCause === 'wrong_product' ? input.gapCause : null,
       qty_damaged: input.qtyDamaged != null && input.qtyDamaged > 0 && input.qtyReceived != null
         ? Math.min(Math.floor(input.qtyDamaged), input.qtyReceived) : null,
+      photo_urls: (input.photoUrls ?? []).filter(u => typeof u === 'string' && u.includes('/receipt-gaps/')).slice(0, 4),
     } : {}),
   }, { onConflict: 'check_line_id' });
   if (error) return { error: error.message };
@@ -592,6 +594,23 @@ export async function getShopLabLossesAction(shopName?: string): Promise<{ losse
   if (!supabase) return { error: 'Server not configured' };
   const { gaps, schemaReady } = await listDeliveryGaps(supabase as any, { shopName: auth.shopName, days: 7 });
   return { enabled: schemaReady, losses: gaps.filter(g => g.kind === 'damaged' || g.labCause === 'damaged_returned') };
+}
+
+// Proof photo for a reception with a gap (Axel, 2026-10-14) — compressed client-side, stored in
+// the public lab-design-photos bucket under receipt-gaps/<date>/, shown to the assistants.
+export async function uploadReceiptPhotoAction(formData: FormData, shopName?: string): Promise<{ url?: string; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only images' };
+  if (file.size > 5 * 1024 * 1024) return { error: 'Image too large (max 5MB)' };
+  const path = `receipt-gaps/${vnDateStr()}/${crypto.randomUUID()}.jpg`;
+  const { error } = await supabase.storage.from('lab-design-photos').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (error) return { error: error.message };
+  return { url: supabase.storage.from('lab-design-photos').getPublicUrl(path).data.publicUrl };
 }
 
 async function prefillReceivedQtyIfComplete(
