@@ -2726,6 +2726,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 </div>
               </div>
             )}
+            {pendingReceipt.qty != null && pendingReceipt.qty > refQty(pendingReceipt.line) && (
+              <div className="text-xs leading-snug" style={{ color: INK }}>
+                <b>{L(`Thừa ${pendingReceipt.qty - refQty(pendingReceipt.line)}`, `${pendingReceipt.qty - refQty(pendingReceipt.line)} extra`)}</b>
+                {L(' — cứ xác nhận số bạn đếm. Lab sẽ kiểm tra hàng thừa từ đâu ra.', ' — just confirm what you counted. The Lab will check where it comes from.')}
+              </div>
+            )}
             {pendingReceipt.qty != null && pendingReceipt.qty > 0 && (
               <div className="rounded-xl p-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="flex items-center justify-between gap-2">

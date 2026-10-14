@@ -117,8 +117,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
       <div className="rounded-xl px-4 py-2.5 text-xs flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#4C1D95' }}>
         <FlaskConical size={14} className="shrink-0 mt-0.5" />
         <span>
-          {vi ? 'BẢN THỬ (preview). ' : 'PREVIEW. '}
-          {odooMode === 'simulated' ? (vi ? 'Odoo chỉ mô phỏng, không ghi gì. ' : 'Odoo est simulé, aucune écriture. ') : ''}
+          {odooMode === 'simulated' ? (vi ? 'Odoo chưa tự động: app chỉ hiện kế hoạch, thao tác Odoo vẫn làm tay. ' : 'Odoo pas encore automatique : l’app affiche le plan, l’action Odoo reste manuelle. ') : ''}
           {schemaReady ? '' : (vi ? 'Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật) — các lệch được tính từ xác nhận của shop.' : 'Décisions pas encore enregistrables (ajout en base non appliqué) — écarts calculés depuis les réceptions shop.')}
         </span>
       </div>

@@ -404,7 +404,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
     const res = await actions.confirmDamagedReturnAction({ gapId: g.id ?? '', qty });
     setBusyId(null);
     if (res.error) { setMsg(res.error === 'not_enabled' || res.error === 'Nothing to confirm' ? (vi ? 'Bản thử: chưa kích hoạt lưu.' : 'Preview : enregistrement pas encore activé.') : res.error); return; }
-    setMsg(vi ? 'Đã nhận — Odoo mô phỏng: trả về Lab + scrap Lab.' : 'Reçu — Odoo simulé : retour Lab + scrap Lab.');
+    setMsg(vi ? 'Đã nhận — nhớ làm trả về + scrap Lab trên Odoo.' : 'Reçu — pense au retour + scrap Lab dans Odoo.');
     await load();
   }
 
@@ -413,7 +413,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
       <div className="text-sm font-bold text-navy mb-2">{vi ? '💔 Hàng hỏng khi nhận, mang về Lab' : '💔 Abîmés à l’arrivée, ramenés au Lab'}</div>
       <div className="bg-white rounded-2xl p-4 space-y-3" style={{ border: '1px solid #E5E7EB' }}>
         <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F5F3FF', color: '#4C1D95' }}>
-          {vi ? 'Bản thử: Odoo chỉ mô phỏng.' : 'Preview : Odoo simulé uniquement.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
+          {vi ? 'Odoo chưa tự động: trả về + scrap Lab vẫn làm tay trên Odoo.' : 'Odoo pas encore automatique : retour + scrap Lab à faire à la main dans Odoo.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
         </div>
         {msg && <div className="text-xs font-semibold" style={{ color: '#4C1D95' }}>{msg}</div>}
         {!items ? (
