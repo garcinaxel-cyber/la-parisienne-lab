@@ -15,13 +15,16 @@ function service() {
   return createServiceClient(url, key, { auth: { persistSession: false } });
 }
 
-async function requireLabStaff(): Promise<{ name: string } | { error: string }> {
+// Axel 2026-10-14: settling gaps = assistants too; anything that WRITES to Odoo = lab manager / admin only.
+const ODOO_SEND_ROLES = ['admin', 'lab_manager'];
+
+async function requireLabStaff(): Promise<{ name: string; role: string } | { error: string }> {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) return { error: 'Not authenticated' };
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Forbidden' };
-  return { name: profile?.full_name ?? session.user.email ?? 'Lab' };
+  return { name: profile?.full_name ?? session.user.email ?? 'Lab', role: profile?.role ?? '' };
 }
 
 export async function getDeliveryGapsAction(): Promise<{ gaps?: DeliveryGap[]; schemaReady?: boolean; error?: string }> {
@@ -82,6 +85,7 @@ export async function previewInValidationAction(deliveryOrderId: string): Promis
 export async function validateInAction(deliveryOrderId: string): Promise<{ result?: InValidationResult; error?: string }> {
   const auth = await requireLabStaff();
   if ('error' in auth) return { error: auth.error };
+  if (!ODOO_SEND_ROLES.includes(auth.role)) return { error: 'Only the Lab manager or an admin can validate on Odoo' };
   const sb = service();
   if (!sb) return { error: 'Server not configured' };
   const d = await inLines(sb, deliveryOrderId);
@@ -110,6 +114,7 @@ export async function getOrderSendStateAction(deliveryOrderId: string): Promise<
 export async function sendOrderToOdooAction(deliveryOrderId: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
   const auth = await requireLabStaff();
   if ('error' in auth) return { error: auth.error };
+  if (!ODOO_SEND_ROLES.includes(auth.role)) return { error: 'Only the Lab manager or an admin can send to Odoo' };
   const sb = service();
   if (!sb) return { error: 'Server not configured' };
   const res = await sendOrderToOdoo(sb as any, deliveryOrderId, auth.name);

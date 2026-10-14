@@ -80,7 +80,7 @@ function skipText(code: string, vi: boolean): string {
   return code;
 }
 
-function InBox({ data, vi, busy, onValidate }: { data: { result: InValidationResult; complete: boolean; done?: boolean }; vi: boolean; busy: boolean; onValidate: () => void }) {
+function InBox({ data, vi, busy, onValidate, canSend }: { data: { result: InValidationResult; complete: boolean; done?: boolean }; vi: boolean; busy: boolean; onValidate: () => void; canSend: boolean }) {
   const r = data.result;
   return (
     <div className="rounded-xl p-3 text-xs space-y-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}>
@@ -98,7 +98,9 @@ function InBox({ data, vi, busy, onValidate }: { data: { result: InValidationRes
         </div>
       )}
       {!r.alreadyDone && !data.done && !r.skipped && !r.error && (
-        data.complete ? (
+        data.complete && !canSend ? (
+          <div className="font-semibold" style={{ color: '#6B7280' }}>{vi ? 'Chỉ Lab manager / admin xác nhận trên Odoo.' : 'Seuls la Lab manager / un admin valident sur Odoo.'}</div>
+        ) : data.complete ? (
           <button onClick={onValidate} disabled={busy}
             className="mt-1 text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
             {vi ? 'Xác nhận nhập kho trên Odoo' : 'Valider la réception sur Odoo'}
@@ -121,7 +123,7 @@ const ACTION_LABEL: Record<string, { vi: string; fr: string }> = {
   scrap_transit: { vi: 'hao hụt vận chuyển', fr: 'perte transport' },
   lab_to_shop: { vi: 'kho Lab → kho shop', fr: 'stock Lab → stock shop' },
 };
-function SendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi: boolean; onDone: () => void }) {
+function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: string; vi: boolean; onDone: () => void; canSend: boolean }) {
   const [st, setSt] = useState<import('@/lib/reception-gaps').OrderSendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -170,6 +172,11 @@ function SendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi:
       )}
       {st.sent ? (
         <div className="font-semibold" style={{ color: '#15803D' }}>{vi ? '✓ Đã gửi Odoo.' : '✓ Envoyé à Odoo.'}</div>
+      ) : !canSend ? (
+        <div className="font-semibold" style={{ color: st.ready ? '#1A4731' : '#6B7280' }}>
+          {st.ready ? (vi ? '✓ Đã xử lý xong — chờ Lab manager / admin gửi Odoo.' : '✓ Tout est réglé — en attente d’envoi à Odoo par la Lab manager / un admin.')
+                    : (vi ? 'Lab manager / admin gửi Odoo khi mọi dòng đã xử lý.' : 'La Lab manager / un admin envoie à Odoo une fois toutes les lignes réglées.')}
+        </div>
       ) : confirming ? (
         <div className="flex gap-2 items-center">
           <span className="font-semibold">{vi ? 'Gửi tất cả các dòng lên Odoo?' : 'Envoyer toutes les lignes à Odoo ?'}</span>
@@ -190,7 +197,7 @@ function SendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi:
   );
 }
 
-export default function GapsView({ initialGaps, schemaReady, odooMode }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live' }) {
+export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -400,10 +407,10 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
 
             {err && <div className="text-sm font-semibold" style={{ color: '#B42318' }}>{err}</div>}
             {plan && <PlanBox plan={plan} vi={vi} />}
-            {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} />}
+            {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} canSend={canSendOdoo} />}
 
             <div className="flex justify-between items-center gap-2 flex-wrap">
-              <SendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} />
+              <SendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} canSend={canSendOdoo} />
               {current.sourceType !== 'sales_order' && (
                 <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
                   {vi ? 'Chỉ nhập kho shop trên Odoo' : 'Valider seulement la réception shop'}
