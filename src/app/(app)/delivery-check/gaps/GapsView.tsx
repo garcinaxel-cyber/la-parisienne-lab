@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, AlertTriangle, Loader2, FlaskConical } from 'lucide-react';
 import type { DeliveryGap, LabCause } from '@/lib/reception-gaps';
-import type { ReceptionPlan, PlannedStep } from '@/lib/reception-odoo';
+import type { ReceptionPlan, PlannedStep, InValidationResult } from '@/lib/reception-odoo';
 
 type Tab = 'decide' | 'shop' | 'return' | 'closed';
 
@@ -51,6 +51,54 @@ function PlanBox({ plan, vi }: { plan: ReceptionPlan; vi: boolean }) {
   );
 }
 
+const SKIP_LABEL: Record<string, { vi: string; fr: string }> = {
+  lab_out_not_validated: { vi: 'Phiếu xuất Lab chưa xác nhận trên Odoo — xác nhận giao hàng trước.', fr: 'Le OUT du Lab n’est pas validé sur Odoo — valider la livraison d’abord.' },
+  no_shop_in: { vi: 'Không tìm thấy phiếu nhập shop trên Odoo.', fr: 'Aucune réception shop trouvée sur Odoo.' },
+  several_shop_in: { vi: 'Có nhiều phiếu nhập shop — làm tay trên Odoo.', fr: 'Plusieurs réceptions shop — à faire à la main sur Odoo.' },
+  odoo_not_configured: { vi: 'Odoo chưa cấu hình.', fr: 'Odoo non configuré.' },
+};
+function skipText(code: string, vi: boolean): string {
+  const base = code.split(':')[0];
+  const sku = code.includes(':') ? code.split(':').slice(1).join(':') : '';
+  if (SKIP_LABEL[base]) return vi ? SKIP_LABEL[base].vi : SKIP_LABEL[base].fr;
+  if (base === 'unmatched_product') return vi ? `Sản phẩm ${sku} có trên Odoo nhưng không có trong app — làm tay.` : `Produit ${sku} sur Odoo mais pas dans l’app — à faire à la main.`;
+  if (base === 'missing_move') return vi ? `Sản phẩm ${sku} không có trên phiếu nhập — làm tay.` : `Produit ${sku} absent de la réception Odoo — à faire à la main.`;
+  if (base === 'ambiguous_split') return vi ? `${sku} có nhiều dòng trên Odoo — làm tay.` : `${sku} a plusieurs lignes sur Odoo — à faire à la main.`;
+  return code;
+}
+
+function InBox({ data, vi, busy, onValidate }: { data: { result: InValidationResult; complete: boolean; done?: boolean }; vi: boolean; busy: boolean; onValidate: () => void }) {
+  const r = data.result;
+  return (
+    <div className="rounded-xl p-3 text-xs space-y-1.5" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}>
+      <div className="font-bold text-sm">{vi ? 'Nhập kho shop' : 'Réception shop'} {r.pickingName ?? ''}</div>
+      {r.alreadyDone ? (
+        <div className="font-semibold" style={{ color: '#15803D' }}>{vi ? '✓ Đã xác nhận trên Odoo.' : '✓ Déjà validée sur Odoo.'}</div>
+      ) : data.done && r.ok ? (
+        <div className="font-semibold" style={{ color: '#15803D' }}>{r.live ? (vi ? '✓ Đã xác nhận trên Odoo.' : '✓ Validée sur Odoo.') : (vi ? 'Bản thử: không ghi Odoo.' : 'Preview : rien écrit sur Odoo.')}</div>
+      ) : r.skipped || r.error ? (
+        <div className="font-semibold" style={{ color: '#B42318' }}>{r.skipped ? skipText(r.skipped, vi) : r.error}</div>
+      ) : null}
+      {r.plan.length > 0 && !r.alreadyDone && (
+        <div className="font-mono space-y-0.5">
+          {r.plan.map(p => <div key={p.moveId}>{p.sku}: {p.expectedQty} → {p.deliverQty}</div>)}
+        </div>
+      )}
+      {!r.alreadyDone && !data.done && !r.skipped && !r.error && (
+        data.complete ? (
+          <button onClick={onValidate} disabled={busy}
+            className="mt-1 text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+            {vi ? 'Xác nhận nhập kho trên Odoo' : 'Valider la réception sur Odoo'}
+          </button>
+        ) : (
+          <div style={{ color: '#6B7280' }}>{vi ? 'Shop chưa xác nhận hết các dòng.' : 'Le shop n’a pas encore confirmé toutes les lignes.'}</div>
+        )
+      )}
+      <div style={{ color: '#6B7280' }}>{vi ? 'Số nhập = hàng tốt (nhận − hỏng), tối đa số Bếp gửi. Hàng thiếu/hỏng ở lại transit chờ xử lý.' : 'Quantité = bons (reçu − abîmés), au max l’envoyé. Manquants/abîmés restent en transit.'}</div>
+    </div>
+  );
+}
+
 export default function GapsView({ initialGaps, schemaReady, odooMode }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live' }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -62,7 +110,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [plan, setPlan] = useState<ReceptionPlan | null>(null);
-  const [inPlan, setInPlan] = useState<ReceptionPlan | null>(null);
+  const [inPlan, setInPlan] = useState<{ result: InValidationResult; complete: boolean; done?: boolean } | null>(null);
 
   // Damaged-on-arrival needs no decision: it is a Lab loss waiting for its physical return.
   const byTab = useMemo(() => ({
@@ -94,7 +142,17 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
     const { previewInValidationAction } = await import('./actions');
     const res = await previewInValidationAction(current.deliveryOrderId);
     setBusy(false);
-    if (res.error) setErr(res.error); else if (res.plan) setInPlan(res.plan);
+    if (res.error) setErr(res.error); else if (res.result) setInPlan({ result: res.result, complete: !!res.complete });
+  }
+
+  async function validateIn() {
+    if (!current) return;
+    setBusy(true); setErr(null);
+    const { validateInAction } = await import('./actions');
+    const res = await validateInAction(current.deliveryOrderId);
+    setBusy(false);
+    if (res.error) { setErr(res.error); return; }
+    if (res.result) setInPlan({ result: res.result, complete: true, done: true });
   }
 
   const tabs: { key: Tab; vi: string; fr: string }[] = [
@@ -232,11 +290,11 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
 
             {err && <div className="text-sm font-semibold" style={{ color: '#B42318' }}>{err}</div>}
             {plan && <PlanBox plan={plan} vi={vi} />}
-            {inPlan && <PlanBox plan={inPlan} vi={vi} />}
+            {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} />}
 
             <div className="flex justify-between items-center gap-2 flex-wrap">
               <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
-                {vi ? 'Xem kế hoạch nhập kho shop trên Odoo' : 'Voir le plan de réception shop sur Odoo'}
+                {vi ? 'Nhập kho shop trên Odoo' : 'Réception shop sur Odoo'}
               </button>
               {current.kind !== 'damaged' && current.status === 'open' && (
                 <button onClick={submit} disabled={!cause || busy}

@@ -17,7 +17,7 @@ import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie }
 import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, parseDailyTargets, type EventShop } from '@/lib/event-shops';
 import { isOemSku } from '@/lib/oem';
 import { computeLineGaps, gapsSchemaReady, listDeliveryGaps, syncGapsForLine, type DeliveryGap, type GapKind, type GapStatus } from '@/lib/reception-gaps';
-import { planInValidation } from '@/lib/reception-odoo';
+import { validateShopIn } from '@/lib/reception-odoo';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -537,9 +537,10 @@ export async function confirmReceiptAction(input: {
       const viPayload: PushPayload = { title: auth.shopName, body: `🚚 Đã nhận đủ hàng — đơn #${header.order_ref} (${name})` };
       const enPayload: PushPayload = { title: auth.shopName, body: `🚚 Delivery fully received — order #${header.order_ref} (${name})` };
       await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
-      // Shop IN validation at the good qty — SIMULATED (Odoo reads only), logged for the Lab.
+      // Shop IN auto-validation (Axel, 2026-10-14): conforming reception → validated on Odoo
+      // right away; any gap → left to the assistants (Lệch giao hàng page). Never blocks the shop.
       if (header.source_type === 'replenishment') {
-        try { await logInValidationPlan(supabase, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('logInValidationPlan failed:', e); }
+        try { await autoValidateShopIn(supabase, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('autoValidateShopIn failed:', e); }
       }
     }
   }
@@ -557,19 +558,28 @@ export async function confirmReceiptAction(input: {
   return { ok: true };
 }
 
-async function logInValidationPlan(supabase: ReturnType<typeof service>, deliveryOrderId: string, orderRef: string, byName: string): Promise<void> {
+async function autoValidateShopIn(supabase: ReturnType<typeof service>, deliveryOrderId: string, orderRef: string, byName: string): Promise<void> {
   if (!supabase || !(await gapsSchemaReady(supabase as any))) return;
   const { data: lines } = await supabase.from('lab_delivery_check_lines')
-    .select('id, sku, product_name_vi, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
+    .select('id, sku, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
   const { data: recs } = await supabase.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId);
   const recByLine = new Map((recs ?? []).map((r: any) => [r.check_line_id, r]));
-  const plan = await planInValidation(orderRef, (lines ?? []).map((l: any) => {
+  const rows = (lines ?? []).map((l: any) => {
     const r: any = recByLine.get(l.id);
-    return { sku: l.sku, product: l.product_name_vi, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? 0), damaged: Number(r?.qty_damaged ?? 0) };
-  }));
-  await supabase.from('lab_reception_odoo_runs').insert({
-    delivery_order_id: deliveryOrderId, order_ref: orderRef, action: 'validate_in', mode: plan.mode, ok: plan.ok,
-    plan: { steps: plan.steps }, error: plan.error ?? null, created_by_name: byName,
+    return { sku: l.sku as string | null, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? NaN), damaged: Number(r?.qty_damaged ?? 0) };
+  });
+  const conforming = rows.length > 0 && rows.every(r => r.received === r.sent && r.damaged === 0);
+  const log = (row: { mode: string; ok: boolean; plan: any; error: string | null }) =>
+    supabase.from('lab_reception_odoo_runs').insert({ delivery_order_id: deliveryOrderId, order_ref: orderRef, action: 'validate_in', created_by_name: byName, ...row });
+  if (!conforming) {
+    await log({ mode: 'skipped', ok: false, plan: {}, error: 'needs_lab_check' });
+    return;
+  }
+  const res = await validateShopIn(orderRef, rows);
+  await log({
+    mode: res.live ? 'live' : 'simulated', ok: res.ok,
+    plan: { picking: res.pickingName ?? null, alreadyDone: !!res.alreadyDone, writes: res.plan },
+    error: res.error ?? res.skipped ?? null,
   });
 }
 

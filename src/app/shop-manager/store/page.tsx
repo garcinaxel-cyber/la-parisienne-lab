@@ -4,6 +4,7 @@ import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { PORTAL_SHOP_NAMES } from '@/lib/shops';
 import ShopView from '@/app/shop/ShopView';
 
+export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 // A shop_manager's "Store interface" AND "Order" quick actions both land here — the exact same

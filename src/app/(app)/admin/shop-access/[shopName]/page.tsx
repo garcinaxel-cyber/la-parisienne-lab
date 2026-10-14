@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import ShopView from '@/app/shop/ShopView';
 import { PORTAL_SHOP_NAMES as SHOP_NAMES } from '@/lib/shops';
 
+export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 // Staff access to a shop's own portal (Axel, 2026-08-19: "je veux pouvoir accéder à leur

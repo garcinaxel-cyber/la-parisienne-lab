@@ -4,6 +4,7 @@ import ShopView from './ShopView';
 import { readEventIdFromCookie } from '@/lib/event-session';
 import { getActiveEventById } from '@/lib/event-shops';
 
+export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 // Shop-facing home — real shared account per shop (role='shop', lab_v45), one login shared by

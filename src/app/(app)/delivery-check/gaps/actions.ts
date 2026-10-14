@@ -5,7 +5,7 @@ import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import { listDeliveryGaps, decideGap, confirmDamagedReturn, type DeliveryGap, type GapKind, type LabCause } from '@/lib/reception-gaps';
-import { planInValidation, type ReceptionPlan } from '@/lib/reception-odoo';
+import { validateShopIn, inValidationLive, type ReceptionPlan, type InValidationResult } from '@/lib/reception-odoo';
 
 function service() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -51,20 +51,48 @@ export async function confirmDamagedReturnAction(input: { gapId: string; qty: nu
   return res;
 }
 
-// Read-only: what Odoo WOULD do to validate the shop IN of this order at the good quantity.
-export async function previewInValidationAction(deliveryOrderId: string): Promise<{ plan?: ReceptionPlan; error?: string }> {
+async function inLines(sb: any, deliveryOrderId: string) {
+  const { data: header } = await sb.from('lab_delivery_orders').select('id, order_ref, source_type').eq('id', deliveryOrderId).maybeSingle();
+  if (!header) return { error: 'Order not found' as const };
+  const { data: lines } = await sb.from('lab_delivery_check_lines').select('id, sku, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
+  const { data: recs } = await sb.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId);
+  const recByLine = new Map((recs ?? []).map((r: any) => [r.check_line_id, r]));
+  const complete = (lines ?? []).length > 0 && (lines ?? []).every((l: any) => recByLine.has(l.id));
+  const rows = (lines ?? []).map((l: any) => {
+    const r: any = recByLine.get(l.id);
+    return { sku: l.sku, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? 0), damaged: Number(r?.qty_damaged ?? 0) };
+  });
+  return { header, rows, complete };
+}
+
+// Read-only: what Odoo would do to validate the shop IN of this order at the good quantity.
+export async function previewInValidationAction(deliveryOrderId: string): Promise<{ result?: InValidationResult; complete?: boolean; live?: boolean; error?: string }> {
   const auth = await requireLabStaff();
   if ('error' in auth) return { error: auth.error };
   const sb = service();
   if (!sb) return { error: 'Server not configured' };
-  const { data: header } = await sb.from('lab_delivery_orders').select('id, order_ref').eq('id', deliveryOrderId).maybeSingle();
-  if (!header) return { error: 'Order not found' };
-  const { data: lines } = await sb.from('lab_delivery_check_lines').select('id, sku, product_name_vi, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
-  const { data: recs } = await sb.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId);
-  const recByLine = new Map((recs ?? []).map((r: any) => [r.check_line_id, r]));
-  const plan = await planInValidation(header.order_ref, (lines ?? []).map((l: any) => {
-    const r: any = recByLine.get(l.id);
-    return { sku: l.sku, product: l.product_name_vi, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? 0), damaged: Number(r?.qty_damaged ?? 0) };
-  }));
-  return { plan };
+  const d = await inLines(sb, deliveryOrderId);
+  if ('error' in d) return { error: d.error };
+  const result = await validateShopIn(d.header.order_ref, d.rows, { dryRun: true });
+  return { result, complete: d.complete, live: inValidationLive() };
+}
+
+// Assistants validate the shop IN of an order that needed a Lab check (Axel, 2026-10-14).
+export async function validateInAction(deliveryOrderId: string): Promise<{ result?: InValidationResult; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const d = await inLines(sb, deliveryOrderId);
+  if ('error' in d) return { error: d.error };
+  if (d.header.source_type !== 'replenishment') return { error: 'Only REP orders have a shop IN' };
+  if (!d.complete) return { error: 'The shop has not confirmed every line yet' };
+  const result = await validateShopIn(d.header.order_ref, d.rows);
+  await sb.from('lab_reception_odoo_runs').insert({
+    delivery_order_id: deliveryOrderId, order_ref: d.header.order_ref, action: 'validate_in',
+    mode: result.live ? 'live' : 'simulated', ok: result.ok,
+    plan: { picking: result.pickingName ?? null, alreadyDone: !!result.alreadyDone, writes: result.plan, by: 'lab' },
+    error: result.error ?? result.skipped ?? null, created_by_name: auth.name,
+  });
+  return { result };
 }
