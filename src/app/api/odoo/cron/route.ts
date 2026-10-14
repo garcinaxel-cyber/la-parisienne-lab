@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { odooConfigured } from '@/lib/odoo';
+import { odooConfigured, odooAuthHealth } from '@/lib/odoo';
+import { sendAdminPush } from '@/lib/push-notify';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
 
@@ -34,6 +35,23 @@ export async function GET(req: Request) {
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
+  // Odoo keys expire (90 days by default): check both accounts every run. On failure: error log
+  // every time, admin push at most 3 times a day (VN 8h, 13h, 18h runs) so it is seen, not spammed.
+  let auth: Awaited<ReturnType<typeof odooAuthHealth>> | null = null;
+  try {
+    auth = await odooAuthHealth();
+    if (!auth.read || !auth.write) {
+      const bad = [!auth.read ? 'readonly (ODOO_API_KEY)' : null, !auth.write ? 'API-PRODUCTION (ODOO_WRITE_API_KEY)' : null].filter(Boolean).join(' + ');
+      console.error(`[odoo-health] account rejected: ${bad} — read: ${auth.readError ?? 'ok'} · write: ${auth.writeError ?? 'ok'}`);
+      const vn = new Date(Date.now() + 7 * 3600_000);
+      if ([8, 13, 18].includes(vn.getUTCHours()) && vn.getUTCMinutes() < 15) {
+        await sendAdminPush(supabase as any,
+          { title: 'Odoo', body: `⚠ Khoá API Odoo bị từ chối: ${bad}. Cần tạo khoá mới.`, url: '/dashboard', tag: 'odoo-auth' },
+          { title: 'Odoo', body: `⚠ Odoo API key rejected: ${bad}. Renew it.`, url: '/dashboard', tag: 'odoo-auth' });
+      }
+    }
+  } catch { /* the health check must never block the sync */ }
+
   try {
     const result = await runAutoOdooSync(supabase as any);
     if (result.error) return NextResponse.json({ error: result.error }, { status: 502 });
@@ -43,7 +61,7 @@ export async function GET(req: Request) {
     try { packaging = await syncOrderPackagingLines(supabase as any, labUpcomingDates(2)); }
     catch (e: any) { packaging = { ok: false, error: String(e?.message ?? e) }; }
 
-    return NextResponse.json({ ...result, packaging });
+    return NextResponse.json({ ...result, packaging, odooAuth: auth ? { read: auth.read, write: auth.write } : null });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Cron sync failed' }, { status: 502 });
   }

@@ -87,6 +87,18 @@ async function authenticateWrite(): Promise<number> {
   cachedWriteUid = uid as number;
   return cachedWriteUid;
 }
+// Health check (Axel, 2026-10-14, after the read key expired on 06/10 unnoticed): plain
+// authenticate on BOTH accounts, never cached, no record touched. Called by the 15-min cron so
+// an expired / revoked key shows up in the logs and as an admin push before it hurts.
+export async function odooAuthHealth(): Promise<{ read: boolean; write: boolean; readError?: string; writeError?: string }> {
+  const check = async (login: string, key: string) => {
+    try { const uid = await rpc('common', 'authenticate', [ODOO_DB(), login, key, {}]); return uid ? { ok: true } : { ok: false, error: 'rejected' }; }
+    catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
+  };
+  const [r, w] = await Promise.all([check(ODOO_LOGIN(), ODOO_KEY()), odooWriteConfigured() ? check(ODOO_WRITE_LOGIN(), ODOO_WRITE_KEY()) : Promise.resolve({ ok: false, error: 'not configured' })]);
+  return { read: r.ok, write: w.ok, readError: (r as any).error, writeError: (w as any).error };
+}
+
 export async function odooExecuteWrite<T = any>(
   model: string,
   method: string,
