@@ -3,6 +3,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, CheckCircle2, Minus, Plus } from 'lucide-react';
 import { thumb } from '@/lib/img-thumb';
 import type { ShopTransfer, ShopLossForLabReception } from '@/app/shop/actions';
+import type { DeliveryGap } from '@/lib/reception-gaps';
+
+// Fault tags (preview 2026-10-13): LỖI LAB = damaged on arrival, a Lab loss (return + Lab scrap
+// in Odoo, simulated in preview); LỖI SHOP = the shop's own scrap, stays on the shop, no Odoo.
+function FaultTag({ lab, vi }: { lab: boolean; vi: boolean }) {
+  return (
+    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
+      style={lab ? { color: '#FFFFFF', backgroundColor: '#B42318' } : { color: '#374151', backgroundColor: '#E5E7EB' }}>
+      {lab ? (vi ? 'LỖI LAB' : 'FAUTE LAB') : (vi ? 'LỖI SHOP' : 'FAUTE SHOP')}
+    </span>
+  );
+}
 
 // "Chuyển kho Shop ↔ Lab" (Axel, 2026-09-16) — everything the Lab needs to receive back from the
 // shops, grouped by DAY then by SHOP (own custom layout, not the shop-facing ShopTransfersTab
@@ -59,6 +71,7 @@ export default function ShopLabReceptionTab({ vi }: { vi: boolean }) {
   return (
     <div className="space-y-6">
       <TransfersReception vi={vi} setZoomImage={setZoomImage} />
+      <DamagedReturns vi={vi} />
       <LossesReception vi={vi} setZoomImage={setZoomImage} />
 
       {zoomImage && (
@@ -292,7 +305,7 @@ function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url
                       return (
                         <div key={l.id} className="py-2.5 space-y-1.5">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="text-sm font-semibold text-navy">{l.productName} <span className="text-xs font-normal text-gray-500">· {l.reasonTagName}</span></div>
+                            <div className="text-sm font-semibold text-navy flex items-center gap-1.5 flex-wrap"><FaultTag lab={false} vi={vi} />{l.productName} <span className="text-xs font-normal text-gray-500">· {l.reasonTagName}</span></div>
                             <div className="text-xs text-gray-400">{l.reportedByName} · {fmtTime(l.reportedAt)}</div>
                           </div>
                           {l.note && <div className="text-xs text-gray-500">📝 {l.note}</div>}
@@ -363,6 +376,69 @@ function LossesReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (url
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Section 1b (preview 2026-10-13): damaged on arrival coming back — LỖI LAB ───────────────
+function DamagedReturns({ vi }: { vi: boolean }) {
+  const [items, setItems] = useState<DeliveryGap[] | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function load() {
+    const actions = await import('@/app/(app)/delivery-check/gaps/actions');
+    const res = await actions.getDeliveryGapsAction();
+    setEnabled(!!res.schemaReady);
+    setItems((res.gaps ?? []).filter(g => g.status === 'waiting_return'));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function confirm(g: DeliveryGap) {
+    const qty = Math.max(0, Math.floor(Number(qtyDraft[g.key] ?? g.qty) || 0));
+    setBusyId(g.key); setMsg(null);
+    const actions = await import('@/app/(app)/delivery-check/gaps/actions');
+    const res = await actions.confirmDamagedReturnAction({ gapId: g.id ?? '', qty });
+    setBusyId(null);
+    if (res.error) { setMsg(res.error === 'not_enabled' || res.error === 'Nothing to confirm' ? (vi ? 'Bản thử: chưa kích hoạt lưu.' : 'Preview : enregistrement pas encore activé.') : res.error); return; }
+    setMsg(vi ? 'Đã nhận — nhớ làm trả về + scrap Lab trên Odoo.' : 'Reçu — pense au retour + scrap Lab dans Odoo.');
+    await load();
+  }
+
+  return (
+    <div>
+      <div className="text-sm font-bold text-navy mb-2">{vi ? '💔 Hàng hỏng khi nhận, mang về Lab' : '💔 Abîmés à l’arrivée, ramenés au Lab'}</div>
+      <div className="bg-white rounded-2xl p-4 space-y-3" style={{ border: '1px solid #E5E7EB' }}>
+        <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F5F3FF', color: '#4C1D95' }}>
+          {vi ? 'Odoo chưa tự động: trả về + scrap Lab vẫn làm tay trên Odoo.' : 'Odoo pas encore automatique : retour + scrap Lab à faire à la main dans Odoo.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
+        </div>
+        {msg && <div className="text-xs font-semibold" style={{ color: '#4C1D95' }}>{msg}</div>}
+        {!items ? (
+          <div className="py-4 text-center"><Loader2 size={16} className="animate-spin inline text-gray-400" /></div>
+        ) : !items.length ? (
+          <div className="text-center text-xs py-4" style={{ color: '#9CA3AF' }}>{vi ? 'Không có hàng hỏng nào chờ về' : 'Aucun produit abîmé en attente de retour'}</div>
+        ) : items.map(g => (
+          <div key={g.key} className="py-2 flex items-center gap-2 flex-wrap border-b border-gray-100">
+            <FaultTag lab vi={vi} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-navy truncate">{g.product}</div>
+              <div className="text-xs text-gray-500">{shortShop(g.shopName)} · {g.orderRef} · {g.deliveryDate.slice(8, 10)}/{g.deliveryDate.slice(5, 7)}
+                {g.returnOverdue && <span className="font-bold ml-1" style={{ color: '#B42318' }}>· {vi ? `chưa về sau ${g.deliveriesSince} chuyến` : `pas revenu après ${g.deliveriesSince} livraisons`}</span>}
+              </div>
+            </div>
+            <span className="text-xs text-gray-500">{vi ? 'Hỏng' : 'Abîmé'}: ×{g.qty}</span>
+            <input type="number" min={0} max={g.qty} value={qtyDraft[g.key] ?? String(g.qty)} onChange={e => setQtyDraft(p => ({ ...p, [g.key]: e.target.value }))}
+              className="w-14 text-center rounded-lg px-2 py-1 text-sm font-bold" style={{ border: '1px solid #D1D5DB' }} />
+            <button onClick={() => confirm(g)} disabled={busyId === g.key}
+              className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: '#16A34A' }}>
+              {busyId === g.key ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+              {vi ? 'Xác nhận đã nhận' : 'Confirmer réception'}
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -16,6 +16,8 @@ import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
 import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, parseDailyTargets, type EventShop } from '@/lib/event-shops';
 import { isOemSku } from '@/lib/oem';
+import { computeLineGaps, gapsSchemaReady, listDeliveryGaps, syncGapsForLine, type DeliveryGap, type GapKind, type GapStatus } from '@/lib/reception-gaps';
+import { planInValidation } from '@/lib/reception-odoo';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -248,9 +250,16 @@ function vnYesterdayStartIso(): string {
   return `${yesterday}T00:00:00+07:00`;
 }
 
+export type ShopLineGap = { kind: GapKind; qty: number; status: GapStatus; labCause: string | null; labMessage: string | null };
 export type ShopDeliveryOrder = {
   header: Pick<DeliveryOrderHeader, 'id' | 'order_ref' | 'delivery_date' | 'shop_name'>;
-  lines: (CheckLine & { receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string } | null; image_url: string | null })[];
+  lines: (CheckLine & {
+    receipt: { qty_received: number | null; status: string; note: string | null; confirmed_by_name: string; confirmed_at: string; qty_damaged?: number | null; gap_cause?: string | null } | null;
+    image_url: string | null;
+    // Reception gaps (preview 2026-10-13) — always computed; Lab status only once lab_v121 exists.
+    gaps?: ShopLineGap[];
+  })[];
+  gapsEnabled?: boolean;
 };
 
 // ── Reception gate for the daily report (Axel, 2026-10-12) ─────────────────────────────────
@@ -355,18 +364,35 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
   }
 
   const orders: ShopDeliveryOrder[] = [];
+  const gapsEnabled = await gapsSchemaReady(supabase as any);
   for (const { date, orderRef } of Array.from(pairs.values())) {
     const { header, lines } = await ensureDeliveryOrderChecklist(supabase as any, date, orderRef);
     const lineIds = lines.map(l => l.id);
+    // select('*'): picks up qty_damaged / gap_cause once lab_v121 exists, still valid before.
     const { data: receipts } = lineIds.length
-      ? await supabase.from('lab_shop_receipt_lines')
-          .select('check_line_id, qty_received, status, note, confirmed_by_name, confirmed_at').in('check_line_id', lineIds)
+      ? await supabase.from('lab_shop_receipt_lines').select('*').in('check_line_id', lineIds)
       : { data: [] as any[] };
     const receiptByLine: Record<string, any> = {};
-    for (const r of receipts ?? []) receiptByLine[r.check_line_id] = r;
+    for (const r of receipts ?? []) receiptByLine[r.check_line_id] = {
+      check_line_id: r.check_line_id, qty_received: r.qty_received, status: r.status, note: r.note,
+      confirmed_by_name: r.confirmed_by_name, confirmed_at: r.confirmed_at, qty_damaged: r.qty_damaged ?? null, gap_cause: r.gap_cause ?? null,
+    };
+    const persisted = new Map<string, any>();
+    if (gapsEnabled && lineIds.length) {
+      const { data: gRows } = await supabase.from('lab_delivery_gaps').select('check_line_id, kind, status, lab_cause, lab_message').in('check_line_id', lineIds);
+      for (const g of gRows ?? []) persisted.set(`${g.check_line_id}:${g.kind}`, g);
+    }
     orders.push({
       header: { id: header.id, order_ref: header.order_ref, delivery_date: header.delivery_date, shop_name: header.shop_name },
-      lines: lines.map(l => ({ ...l, receipt: receiptByLine[l.id] ?? null, image_url: null as string | null })),
+      lines: lines.map(l => {
+        const receipt = receiptByLine[l.id] ?? null;
+        const gaps: ShopLineGap[] = computeLineGaps(l, receipt).map(g => {
+          const p = persisted.get(`${l.id}:${g.kind}`);
+          return { kind: g.kind, qty: g.qty, status: (p?.status ?? (g.kind === 'damaged' ? 'waiting_return' : 'open')) as GapStatus, labCause: p?.lab_cause ?? null, labMessage: p?.lab_message ?? null };
+        });
+        return { ...l, receipt, image_url: null as string | null, gaps };
+      }),
+      gapsEnabled,
     });
   }
 
@@ -456,6 +482,9 @@ export async function getMyShopCakesAction(): Promise<{ cakes?: ShopCake[]; erro
 export async function confirmReceiptAction(input: {
   checkLineId: string; deliveryOrderId: string; qtyReceived: number | null; status: 'ok' | 'issue'; note: string | null; confirmedByName: string;
   shopName?: string; // only used (and only trusted) when the caller is staff testing as this shop
+  // Reception gaps (preview 2026-10-13). Stored only once lab_v121 exists, ignored before.
+  gapCause?: 'missing' | 'wrong_product' | null;
+  qtyDamaged?: number | null;
 }): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireShopOrStaffSession(input.shopName);
   if ('error' in auth) return { error: auth.error };
@@ -490,8 +519,16 @@ export async function confirmReceiptAction(input: {
     check_line_id: input.checkLineId, delivery_order_id: input.deliveryOrderId, shop_name: auth.shopName,
     qty_received: input.qtyReceived, status: input.status, note: input.note ? input.note.slice(0, 300) : null,
     confirmed_by_name: name, confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    ...(await gapsSchemaReady(supabase as any) ? {
+      gap_cause: input.gapCause === 'missing' || input.gapCause === 'wrong_product' ? input.gapCause : null,
+      qty_damaged: input.qtyDamaged != null && input.qtyDamaged > 0 && input.qtyReceived != null
+        ? Math.min(Math.floor(input.qtyDamaged), input.qtyReceived) : null,
+    } : {}),
   }, { onConflict: 'check_line_id' });
   if (error) return { error: error.message };
+
+  // Reception gaps: keep lab_delivery_gaps in step with this (re)count. No-op before lab_v121.
+  try { await syncGapsForLine(supabase as any, input.checkLineId); } catch (e) { console.error('syncGapsForLine failed:', e); }
 
   if (!wasComplete) {
     receiptedIds.add(input.checkLineId);
@@ -500,6 +537,10 @@ export async function confirmReceiptAction(input: {
       const viPayload: PushPayload = { title: auth.shopName, body: `🚚 Đã nhận đủ hàng — đơn #${header.order_ref} (${name})` };
       const enPayload: PushPayload = { title: auth.shopName, body: `🚚 Delivery fully received — order #${header.order_ref} (${name})` };
       await awaitPush(Promise.all([sendShopPush(supabase, auth.shopName, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
+      // Shop IN validation at the good qty — SIMULATED (Odoo reads only), logged for the Lab.
+      if (header.source_type === 'replenishment') {
+        try { await logInValidationPlan(supabase, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('logInValidationPlan failed:', e); }
+      }
     }
   }
 
@@ -514,6 +555,33 @@ export async function confirmReceiptAction(input: {
   }
 
   return { ok: true };
+}
+
+async function logInValidationPlan(supabase: ReturnType<typeof service>, deliveryOrderId: string, orderRef: string, byName: string): Promise<void> {
+  if (!supabase || !(await gapsSchemaReady(supabase as any))) return;
+  const { data: lines } = await supabase.from('lab_delivery_check_lines')
+    .select('id, sku, product_name_vi, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
+  const { data: recs } = await supabase.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId);
+  const recByLine = new Map((recs ?? []).map((r: any) => [r.check_line_id, r]));
+  const plan = await planInValidation(orderRef, (lines ?? []).map((l: any) => {
+    const r: any = recByLine.get(l.id);
+    return { sku: l.sku, product: l.product_name_vi, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? 0), damaged: Number(r?.qty_damaged ?? 0) };
+  }));
+  await supabase.from('lab_reception_odoo_runs').insert({
+    delivery_order_id: deliveryOrderId, order_ref: orderRef, action: 'validate_in', mode: plan.mode, ok: plan.ok,
+    plan: { steps: plan.steps }, error: plan.error ?? null, created_by_name: byName,
+  });
+}
+
+// Shop Losses tab, "Lab losses" part: units that arrived damaged (or went back broken) over the
+// last 7 days — a Lab loss, not counted in the shop's own scrap.
+export async function getShopLabLossesAction(shopName?: string): Promise<{ losses?: DeliveryGap[]; enabled?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { gaps, schemaReady } = await listDeliveryGaps(supabase as any, { shopName: auth.shopName, days: 7 });
+  return { enabled: schemaReady, losses: gaps.filter(g => g.kind === 'damaged' || g.labCause === 'damaged_returned') };
 }
 
 async function prefillReceivedQtyIfComplete(

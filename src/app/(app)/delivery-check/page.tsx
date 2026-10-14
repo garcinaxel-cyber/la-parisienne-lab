@@ -4,6 +4,8 @@ import DeliveryCheckIndexView from './DeliveryCheckIndexView';
 import { isOrderDone } from '@/lib/delivery-order-status';
 import { getOdooDoneExternalMap } from '@/lib/late-delivery-odoo-cache';
 import { fetchOrderDeliveryDestinationsBatch, normShopName } from '@/lib/delivery-check';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { listDeliveryGaps } from '@/lib/reception-gaps';
 
 export const revalidate = 0;
 
@@ -200,8 +202,17 @@ export default async function DeliveryCheckPage() {
     odoo_done_external: odooDoneExternalMap[`${o.delivery_date}||${o.order_ref}`] ?? false,
   }));
 
+  // Reception gaps card (preview 2026-10-13) — read-only count, never blocks the page.
+  let deliveryGapsCount = 0;
+  try {
+    const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+    const { gaps } = await listDeliveryGaps(sb as any);
+    deliveryGapsCount = gaps.filter(g => (g.kind !== 'damaged' && g.status === 'open') || g.returnOverdue).length;
+  } catch (e) { console.error('delivery gaps count failed:', e); }
+
   return (
     <DeliveryCheckIndexView
+      deliveryGapsCount={deliveryGapsCount}
       today={today}
       tomorrow={tomorrow}
       orders={ordersFinal}
