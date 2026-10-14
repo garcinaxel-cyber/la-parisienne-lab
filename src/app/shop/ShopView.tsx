@@ -1540,10 +1540,20 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   <NamePicker value={name} onChange={setName} names={staffNames} onManage={() => setShowStaffModal(true)} />
                 </div>
               )}
-              {filteredOrders.map(o => (
-              <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
-                  <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
+              {filteredOrders.map(o => {
+                // Axel 2026-10-14: the order band turns red when a line had a problem (gap or damaged).
+                const issueLines = o.lines.filter(l => (l.gaps ?? []).length > 0 || Number(l.receipt?.qty_damaged ?? 0) > 0);
+                return (
+              <div key={o.header.id} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${issueLines.length ? '#EFC3BE' : BORDER}` }}>
+                <div className="px-4 py-2.5" style={issueLines.length ? { backgroundColor: '#FDECEA', borderLeft: `4px solid ${RED}` } : { backgroundColor: GOLD_PALE }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
+                    {issueLines.length > 0 && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-full px-2 py-0.5 text-white shrink-0" style={{ backgroundColor: RED }}>
+                        <AlertTriangle size={11} /> {L(`${issueLines.length} dòng có vấn đề`, `${issueLines.length} line${issueLines.length > 1 ? 's' : ''} with an issue`)}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs" style={{ color: '#6B7280' }}>{fmtDate(o.header.delivery_date)}</div>
                   {canConfirm && (
                     <div className="text-[11px] mt-0.5 font-semibold" style={{ color: '#8A6D14' }}>
@@ -1563,7 +1573,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     const isDiff = d.qty.trim() !== '' && qtyNum !== ref;
                     const savedDiff = l.receipt?.qty_received != null ? l.receipt.qty_received - ref : 0;
                     return (
-                      <div key={l.id} className="px-4 py-3">
+                      <div key={l.id} className="px-4 py-3"
+                        style={((l.gaps ?? []).length > 0 || Number(l.receipt?.qty_damaged ?? 0) > 0) ? { backgroundColor: '#FFF7F5', boxShadow: `inset 3px 0 0 ${RED}` } : undefined}>
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0 flex-1 flex items-center gap-2.5">
                             {l.image_url && (
@@ -1639,8 +1650,19 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                           </div>
                         )}
                         {l.receipt && (
-                          <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>
-                            {l.receipt.confirmed_by_name}{l.receipt.note ? ` · ${l.receipt.note}` : ''}
+                          <div className="text-[11px] mt-1 flex items-center gap-1.5 flex-wrap" style={{ color: '#9CA3AF' }}>
+                            <span>{l.receipt.confirmed_by_name}{l.receipt.note ? ` · ${l.receipt.note}` : ''}</span>
+                            {Number(l.receipt.qty_damaged ?? 0) > 0 && (
+                              <span className="font-bold rounded px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                                {L(`${l.receipt.qty_damaged} hỏng`, `${l.receipt.qty_damaged} damaged`)}
+                              </span>
+                            )}
+                            {(l.receipt.photo_urls ?? []).map(u => (
+                              <button key={u} type="button" onClick={() => setZoomImage(u)} className="w-7 h-7 rounded overflow-hidden shrink-0"
+                                style={{ border: `1px solid ${BORDER}` }} aria-label={L('Xem ảnh', 'View photo')}>
+                                <img src={thumb(u, 64)} alt="" className="w-full h-full object-cover" />
+                              </button>
+                            ))}
                           </div>
                         )}
                         {l.receipt && !isEditing && (l.gaps ?? []).filter(g => g.status !== 'closed').map(g => (
@@ -1651,7 +1673,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                   })}
                 </div>
               </div>
-              ))}
+                );
+              })}
               </>
             )}
           </div>
