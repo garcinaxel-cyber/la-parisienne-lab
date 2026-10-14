@@ -107,28 +107,30 @@ export function fmtVnd(v: number) {
 // Reception gaps (preview 2026-10-13): what the shop sees under a confirmed line with a gap.
 type ShopLineGapView = NonNullable<ShopDeliveryOrder['lines'][number]['gaps']>[number];
 function GapBadge({ gap, L, onRecount }: { gap: ShopLineGapView; L: (vi: string, en: string) => string; onRecount?: () => void }) {
-  let text: string; let color = '#6B7280'; let bg = '#F3F4F6';
-  if (gap.kind === 'damaged') {
-    text = L(`${gap.qty} hỏng · đưa lại tài xế (lỗi Lab)`, `${gap.qty} damaged · give back to the driver (Lab fault)`);
+  let text: string; let note: string; let color = '#6B7280'; let bg = '#F3F4F6';
+  const damagedNote = L('Để riêng, không bán. Tính là hao hụt của Lab, không phải của shop.', "Keep it aside, don't sell it. It counts as a Lab loss, not yours.");
+  if (gap.kind === 'damaged' || gap.status === 'waiting_return') {
+    text = L(`${gap.qty} hỏng · đưa lại tài xế`, `${gap.qty} damaged · give back to the driver`);
+    note = damagedNote;
     color = '#92400E'; bg = '#FEF3C7';
   } else if (gap.status === 'waiting_shop') {
     text = L('Lab yêu cầu: đếm lại dòng này', 'The Lab asks: recount this line');
+    note = L('Đếm lại sản phẩm này và sửa số bằng nút bút chì.', 'Count this product again and correct the number with the pencil.');
     color = '#FFFFFF'; bg = '#B42318';
-  } else if (gap.status === 'waiting_return') {
-    text = L(`${gap.qty} hỏng · đưa lại tài xế`, `${gap.qty} damaged · give back to the driver`);
-    color = '#92400E'; bg = '#FEF3C7';
   } else {
     text = gap.kind === 'missing'
       ? L(`Thiếu ${gap.qty} · Lab đang kiểm tra`, `${gap.qty} short · the Lab is checking`)
       : L(`Thừa ${gap.qty} · Lab đang kiểm tra`, `${gap.qty} extra · the Lab is checking`);
+    note = L('Không cần làm gì. Lab sẽ báo nếu bạn cần đếm lại.', 'Nothing to do. The Lab will tell you if you need to recount.');
   }
   return (
     <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-      <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ color, backgroundColor: bg }}>{text}</span>
+      <span className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ color, backgroundColor: bg }}>{text}*</span>
       {gap.status === 'waiting_shop' && onRecount && (
         <button type="button" onClick={onRecount} className="text-[11px] font-bold underline" style={{ color: '#B42318' }}>{L('Đếm lại', 'Recount')}</button>
       )}
       {gap.labMessage && <span className="text-[11px]" style={{ color: '#6B7280' }}>“{gap.labMessage}”</span>}
+      <div className="w-full text-[11px] leading-snug" style={{ color: '#6B7280' }}>* {note}</div>
     </div>
   );
 }
@@ -1526,6 +1528,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                 <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
                   <div className="text-sm font-bold text-navy">{o.header.order_ref}</div>
                   <div className="text-xs" style={{ color: '#6B7280' }}>{fmtDate(o.header.delivery_date)}</div>
+                  {canConfirm && (
+                    <div className="text-[11px] mt-0.5 font-semibold" style={{ color: '#8A6D14' }}>
+                      {L('Cột Nhận: đếm tất cả hàng nhận được, kể cả hàng hỏng.', 'Received column: count everything you received, broken ones included.')}
+                    </div>
+                  )}
                 </div>
                 <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                   {o.lines.map(l => {
@@ -1762,7 +1769,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 {dailyRecap && dailyRecap.length > 0 && (
             <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
               <div className="px-4 py-2.5" style={{ backgroundColor: GOLD_PALE }}>
-                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Hao hụt shop · 7 ngày qua', 'Shop losses · last 7 days')}</div>
+                <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#6B7280' }}>{L('Hao hụt shop* · 7 ngày qua', 'Shop losses* · last 7 days')}</div>
+                <div className="text-[11px] leading-snug mt-0.5" style={{ color: '#6B7280' }}>
+                  * {L('Hàng hỏng tại shop: hết hạn, rơi, vỡ tại shop. Tính là hao hụt shop. Vẫn mang về Lab.', 'Products lost at the shop: expired, dropped, broken at the shop. They count as a shop loss. Bring them back to the Lab anyway.')}
+                </div>
               </div>
               <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                 {dailyRecap.map(r => (
@@ -1800,9 +1810,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
           )}
             {labLosses && (
               <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                <div className="px-4 py-2.5 flex items-center justify-between gap-2" style={{ backgroundColor: '#FEF3C7' }}>
-                  <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#92400E' }}>{L('Hao hụt Lab · 7 ngày qua', 'Lab losses · last 7 days')}</div>
-                  <div className="text-[11px]" style={{ color: '#92400E' }}>{L('Hỏng khi nhận — không tính cho shop', 'Damaged on arrival — not on the shop')}</div>
+                <div className="px-4 py-2.5" style={{ backgroundColor: '#FEF3C7' }}>
+                  <div className="text-xs font-bold uppercase tracking-wide" style={{ color: '#92400E' }}>{L('Hao hụt Lab* · 7 ngày qua', 'Lab losses* · last 7 days')}</div>
+                  <div className="text-[11px] leading-snug mt-0.5" style={{ color: '#92400E' }}>
+                    * {L('Hàng bị hỏng khi nhận. Tính là hao hụt Lab, không phải của shop. Đưa lại tài xế.', 'Products that arrived damaged. They count as a Lab loss, not yours. Give them back to the driver.')}
+                  </div>
                 </div>
                 {!labLosses.items.length ? (
                   <div className="px-4 py-3 text-xs" style={{ color: '#9CA3AF' }}>
@@ -1821,6 +1833,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     ))}
                   </div>
                 )}
+                <div className="px-4 py-2.5 text-[11px] font-semibold leading-snug" style={{ color: RED, borderTop: `1px solid ${GOLD_PALE}` }}>
+                  {L('Không bao giờ bán hàng đã báo hao hụt. Nếu lỡ bán, báo quản lý để huỷ hao hụt.', 'A written-off product must never be sold. If one was sold by mistake, tell your manager so the loss can be cancelled.')}
+                </div>
               </div>
             )}
             {lossesLoading && losses === null ? (
@@ -2693,7 +2708,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             {pendingReceipt.qty != null && pendingReceipt.qty < refQty(pendingReceipt.line) && (
               <div className="space-y-1.5">
                 <div className="text-xs font-bold" style={{ color: INK }}>
-                  {L(`Thiếu ${refQty(pendingReceipt.line) - pendingReceipt.qty} — chuyện gì xảy ra?`, `${refQty(pendingReceipt.line) - pendingReceipt.qty} short — what happened?`)}
+                  {L(`Thiếu ${refQty(pendingReceipt.line) - pendingReceipt.qty} — chuyện gì xảy ra?*`, `${refQty(pendingReceipt.line) - pendingReceipt.qty} short — what happened?*`)}
                 </div>
                 <div className="flex gap-2">
                   {([['missing', L('Thiếu hàng', 'Not in the box')], ['wrong_product', L('Sai sản phẩm', 'Wrong product')]] as const).map(([k, label]) => (
@@ -2704,15 +2719,17 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </button>
                   ))}
                 </div>
-                {pendingReceipt.cause === 'wrong_product' && (
-                  <div className="text-[11px]" style={{ color: '#6B7280' }}>{L('Ghi tên sản phẩm bạn nhận được vào ghi chú.', 'Write the product you got instead in the note.')}</div>
-                )}
+                <div className="text-[11px] leading-snug" style={{ color: '#6B7280' }}>
+                  <div><b>{L('Thiếu hàng', 'Not in the box')}</b>: {L('trong thùng ít hơn số Lab gửi.', 'the box had fewer than the Lab sent.')}</div>
+                  <div><b>{L('Sai sản phẩm', 'Wrong product')}</b>: {L('bạn nhận sản phẩm khác. Ghi tên sản phẩm vào ghi chú.', 'you got another product instead. Write which one in the note.')}</div>
+                  <div className="mt-1">* {L('Nếu không chắc, hãy đếm lại trước khi xác nhận. Lab sẽ kiểm tra mọi chênh lệch trong 48h.', "If you're not sure, recount before confirming. The Lab will check every gap within 48h.")}</div>
+                </div>
               </div>
             )}
             {pendingReceipt.qty != null && pendingReceipt.qty > 0 && (
               <div className="rounded-xl p-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold" style={{ color: INK }}>{L('Trong đó hỏng', 'Of which damaged')}</span>
+                  <span className="text-sm font-semibold" style={{ color: INK }}>{L('Trong số này, bao nhiêu cái hỏng?*', 'How many of these are damaged?*')}</span>
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label="-" onClick={() => setPendingReceipt(p => p ? { ...p, damaged: Math.max(0, p.damaged - 1) } : p)}
                       className="w-8 h-8 rounded-lg text-lg font-bold" style={{ border: `1px solid ${BORDER}` }}>−</button>
@@ -2721,10 +2738,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       className="w-8 h-8 rounded-lg text-lg font-bold" style={{ border: `1px solid ${BORDER}` }}>+</button>
                   </div>
                 </div>
+                <div className="text-[11px] leading-snug" style={{ color: '#6B7280' }}>
+                  * {L('Hỏng khi nhận = lỗi Lab. Chỉ hàng tốt vào kho shop. Không bán hàng hỏng: để riêng và đưa lại tài xế (hôm nay hoặc chuyến sau).',
+                       "Damaged on arrival = Lab fault. Only the good ones go into your stock. Don't sell the damaged ones: put them aside and give them back to the driver (today or next delivery).")}
+                </div>
                 {pendingReceipt.damaged > 0 && (
-                  <div className="text-[11px] leading-snug" style={{ color: '#6B7280' }}>
-                    {L(`Lỗi Lab: chỉ ${pendingReceipt.qty - pendingReceipt.damaged} cái tốt vào kho shop. Không bán cái hỏng — đưa lại tài xế (hôm nay hoặc chuyến sau).`,
-                       `Lab fault: only ${pendingReceipt.qty - pendingReceipt.damaged} good ones go into the shop stock. Don't sell the damaged ones — give them back to the driver (today or next delivery).`)}
+                  <div className="text-[11px] font-semibold" style={{ color: RED }}>
+                    {L(`${pendingReceipt.qty - pendingReceipt.damaged} cái tốt vào kho shop · ${pendingReceipt.damaged} cái đưa lại tài xế`,
+                       `${pendingReceipt.qty - pendingReceipt.damaged} good into your stock · ${pendingReceipt.damaged} back to the driver`)}
                   </div>
                 )}
               </div>
