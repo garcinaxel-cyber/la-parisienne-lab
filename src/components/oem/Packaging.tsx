@@ -51,6 +51,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canRe
   // so a reception weight typed by mistake in packaging (57.5 kg on 29/09) cannot go through without
   // sacks. The weight per sack is per product (lab_mm_order_items.sack_kg: cashews 5 kg); when it is
   // not decided yet (Maison Mooncake bulk, 2026-10-03) only the count is asked, with no weight check.
+  // Typing the number of sacks fills the kg (sacks × kg per sack, Axel 2026-10-14); the kg stays editable.
   const sackKg = (s: string) => { const k = Number(bySku[s]?.sack_kg); return k > 0 ? k : null; };
   const noSacks = packed.filter(([s]) => bySku[s].unit === 'kg' && !(num(sacks[s]) > 0)).map(([s]) => s);
   const sackMismatch = packed.filter(([s, v]) => { const k = sackKg(s); return bySku[s].unit === 'kg' && k != null && num(sacks[s]) > 0 && Math.abs(num(v) - num(sacks[s]) * k) > k - 0.001; }).map(([s]) => s);
@@ -124,7 +125,7 @@ export default function Packaging({ client, items, d, pack, prod, canPack, canRe
                 </button>
                 {i.unit === 'kg' && (
                   <span className="flex items-center gap-1 text-[11px]" style={{ color: MUTED }}>
-                    <input inputMode="numeric" placeholder="0" value={sacks[i.sku] ?? ''} onChange={e => setSacks(s => ({ ...s, [i.sku]: e.target.value.replace(/[^0-9]/g, '') }))}
+                    <input inputMode="numeric" placeholder="0" value={sacks[i.sku] ?? ''} onChange={e => { const n = e.target.value.replace(/[^0-9]/g, ''); setSacks(s => ({ ...s, [i.sku]: n })); const k = sackKg(i.sku); if (k != null) setQ(i.sku, num(n) * k); }}
                       className="w-12 h-7 rounded-lg px-2 text-sm text-center" style={inputStyle} /> {L('bao', 'sacks')}{sackKg(i.sku) != null ? ` × ${sackKg(i.sku)} kg` : ''}
                   </span>
                 )}
