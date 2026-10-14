@@ -393,7 +393,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
     const actions = await import('@/app/(app)/delivery-check/gaps/actions');
     const res = await actions.getDeliveryGapsAction();
     setEnabled(!!res.schemaReady);
-    setItems((res.gaps ?? []).filter(g => g.status === 'waiting_return'));
+    setItems((res.gaps ?? []).filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt));
   }
   useEffect(() => { load(); }, []);
 
@@ -404,7 +404,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
     const res = await actions.confirmDamagedReturnAction({ gapId: g.id ?? '', qty });
     setBusyId(null);
     if (res.error) { setMsg(res.error === 'not_enabled' || res.error === 'Nothing to confirm' ? (vi ? 'Bản thử: chưa kích hoạt lưu.' : 'Preview : enregistrement pas encore activé.') : res.error); return; }
-    setMsg(vi ? 'Đã nhận — nhớ làm trả về + scrap Lab trên Odoo.' : 'Reçu — pense au retour + scrap Lab dans Odoo.');
+    setMsg(vi ? 'Đã ghi nhận hàng hỏng về Lab.' : 'Retour des abîmés enregistré.');
     await load();
   }
 
@@ -413,7 +413,7 @@ function DamagedReturns({ vi }: { vi: boolean }) {
       <div className="text-sm font-bold text-navy mb-2">{vi ? '💔 Hàng hỏng khi nhận, mang về Lab' : '💔 Abîmés à l’arrivée, ramenés au Lab'}</div>
       <div className="bg-white rounded-2xl p-4 space-y-3" style={{ border: '1px solid #E5E7EB' }}>
         <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#F5F3FF', color: '#4C1D95' }}>
-          {vi ? 'Đơn bán (SO): sau khi xác nhận, gửi Odoo bằng nút trong Lệch giao hàng. REP: trả về + scrap Lab tạm làm tay trên Odoo.' : 'Ventes (SO) : après confirmation, envoi Odoo par le bouton dans Écarts de livraison. REP : retour + scrap Lab encore à la main dans Odoo.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
+          {vi ? 'Tuỳ chọn: ghi nhận khi hàng hỏng về tới Lab. Odoo (trả về + scrap) đã làm bằng nút « Gửi Odoo » trong Lệch giao hàng — ảnh của shop là bằng chứng.' : 'Optionnel : noter quand les abîmés sont revenus au Lab. Odoo (retour + scrap) se fait par « Gửi Odoo » dans Écarts de livraison — la photo du shop fait foi.'}{!enabled ? (vi ? ' Chưa lưu được (cơ sở dữ liệu chưa cập nhật).' : ' Pas encore enregistrable (ajout en base non appliqué).') : ''}
         </div>
         {msg && <div className="text-xs font-semibold" style={{ color: '#4C1D95' }}>{msg}</div>}
         {!items ? (

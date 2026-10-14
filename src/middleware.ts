@@ -59,6 +59,7 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/lab/archive-monthly')) return NextResponse.next();
   // Off-recipe daily recap (2026-10-09): Vercel cron, CRON_SECRET-gated in the route itself.
   if (pathname.startsWith('/api/lab/off-recipe-recap')) return NextResponse.next();
+  if (pathname.startsWith('/api/lab/reception-gaps-alerts')) return NextResponse.next();
   // Withdrawal-slip reminder (2026-10-09): pg_cron every 10 min, CRON_SECRET-gated in the route.
   if (pathname.startsWith('/api/lab/raw-picking-reminder')) return NextResponse.next();
   if (pathname.startsWith('/api/lab/raw-photo-cleanup')) return NextResponse.next();

@@ -19,7 +19,7 @@ const SO_EFFECT: Partial<Record<LabCause, { vi: string; fr: string }>> = {
   lab_sent_extra: { vi: '→ thêm vào giao hàng + hoá đơn', fr: '→ ajout livraison + facture' },
 };
 
-const CAUSES: Record<'missing' | 'extra', { key: LabCause; vi: string; fr: string; effVi: string; effFr: string }[]> = {
+const CAUSES: Record<'missing' | 'extra' | 'damaged', { key: LabCause; vi: string; fr: string; effVi: string; effFr: string }[]> = {
   missing: [
     { key: 'found_at_lab', vi: 'Còn ở Lab, chưa gửi đi', fr: 'Retrouvé au Lab, jamais parti', effVi: '→ về lại kho Lab', effFr: '→ retour stock Lab' },
     { key: 'damaged_returned', vi: 'Hỏng, mang về Lab', fr: 'Abîmé, ramené au Lab', effVi: '→ hao hụt Lab', effFr: '→ perte Lab' },
@@ -29,6 +29,11 @@ const CAUSES: Record<'missing' | 'extra', { key: LabCause; vi: string; fr: strin
   extra: [
     { key: 'lab_sent_extra', vi: 'Lab gửi thừa', fr: 'Le Lab en a envoyé en trop', effVi: '→ kho Lab → kho shop', effFr: '→ stock Lab → stock shop' },
     { key: 'shop_miscount', vi: 'Shop đếm sai', fr: 'Le shop a mal compté', effVi: '→ shop đếm lại', effFr: '→ le shop recompte' },
+  ],
+  // Settled automatically from the shop's photo; the assistant only changes it to contest.
+  damaged: [
+    { key: 'damaged_returned', vi: 'Hỏng thật (ảnh)', fr: 'Bien abîmé (photo)', effVi: '→ trả về + hao hụt Lab', effFr: '→ retour + perte Lab' },
+    { key: 'shop_miscount', vi: 'Ảnh không cho thấy hỏng', fr: 'La photo ne montre pas de casse', effVi: '→ shop đếm lại', effFr: '→ le shop recompte' },
   ],
 };
 
@@ -111,8 +116,12 @@ const ACTION_LABEL: Record<string, { vi: string; fr: string }> = {
   return: { vi: 'trả về Lab', fr: 'retour Lab' },
   return_scrap: { vi: 'trả về + hao hụt Lab', fr: 'retour + perte Lab' },
   extra: { vi: 'giao thêm', fr: 'livraison en plus' },
+  transit_to_lab: { vi: 'transit → kho Lab', fr: 'transit → stock Lab' },
+  transit_to_lab_scrap: { vi: 'về Lab + hao hụt Lab', fr: 'retour Lab + perte Lab' },
+  scrap_transit: { vi: 'hao hụt vận chuyển', fr: 'perte transport' },
+  lab_to_shop: { vi: 'kho Lab → kho shop', fr: 'stock Lab → stock shop' },
 };
-function SoSendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi: boolean; onDone: () => void }) {
+function SendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; vi: boolean; onDone: () => void }) {
   const [st, setSt] = useState<import('@/lib/reception-gaps').OrderSendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -136,11 +145,11 @@ function SoSendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; v
   if (!st) return <div className="text-xs text-gray-400">…</div>;
   return (
     <div className="w-full rounded-xl p-3 space-y-2 text-xs" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}>
-      <div className="font-bold text-sm">{vi ? `Đơn bán ${st.orderRef} — xác nhận cuối trên Odoo` : `Vente ${st.orderRef} — validation finale Odoo`}</div>
+      <div className="font-bold text-sm">{vi ? `${st.sourceType === 'sales_order' ? 'Đơn bán' : 'Đơn'} ${st.orderRef} — xác nhận cuối trên Odoo` : `${st.sourceType === 'sales_order' ? 'Vente' : 'Commande'} ${st.orderRef} — validation finale Odoo`}</div>
       <div className="space-y-1">
         {st.lines.map(l => (
           <div key={l.key} className="flex justify-between gap-2">
-            <span className="truncate">{l.product} · {l.kind === 'extra' ? '+' : '−'}{l.qty}</span>
+            <span className="truncate">{l.product} · {l.kind === 'extra' ? '+' : '−'}{l.qty}{l.kind === 'damaged' ? (vi ? ' hỏng' : ' abîmé') : ''}{l.photoUrls.length ? ' 📷' : ''}</span>
             <span className="shrink-0 font-semibold" style={{ color: l.sent ? '#15803D' : l.status === 'closed' ? '#1A4731' : '#B45309' }}>
               {l.sent ? (vi ? '✓ đã gửi' : '✓ envoyé') : l.status !== 'closed' ? (vi ? 'chưa xử lý xong' : 'pas encore réglé') : l.action ? (vi ? ACTION_LABEL[l.action].vi : ACTION_LABEL[l.action].fr) : (vi ? 'không cần Odoo' : 'rien sur Odoo')}
             </span>
@@ -162,8 +171,10 @@ function SoSendBox({ deliveryOrderId, vi, onDone }: { deliveryOrderId: string; v
           {vi ? 'Gửi Odoo xác nhận cuối' : 'Envoyer à Odoo (validation finale)'}
         </button>
       )}
-      {!st.ready && !st.sent && <div style={{ color: '#6B7280' }}>{vi ? 'Xử lý xong từng dòng trước (nguyên nhân, hàng hỏng đã về Lab).' : 'Régler chaque ligne d’abord (cause, retour des abîmés confirmé).'}</div>}
-      <div style={{ color: '#6B7280' }}>{vi ? 'Odoo: 1 phiếu trả hàng cho cả đơn + scrap Lab + hoá đơn/hoá đơn điều chỉnh nháp.' : 'Odoo : 1 retour pour toute la commande + scrap Lab + facture/avoir en brouillon.'}</div>
+      {!st.ready && !st.sent && <div style={{ color: '#6B7280' }}>{vi ? 'Chọn nguyên nhân cho từng dòng trước.' : 'Choisir la cause de chaque ligne d’abord.'}</div>}
+      <div style={{ color: '#6B7280' }}>{st.sourceType === 'sales_order'
+        ? (vi ? 'Odoo: 1 phiếu trả hàng cho cả đơn + scrap Lab + giao thêm; hoá đơn về nháp, sửa số lượng (kế toán xác nhận lại).' : 'Odoo : 1 retour pour toute la commande + scrap Lab + livraison en plus ; facture repassée en brouillon, quantités ajustées (la compta revalide).')
+        : (vi ? 'Odoo: nhập kho shop số hàng tốt + chuyển transit → Lab / scrap / Lab → shop.' : 'Odoo : réception shop au bon nombre + transferts transit → Lab / scrap / Lab → shop.')}</div>
     </div>
   );
 }
@@ -180,29 +191,32 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
   const [err, setErr] = useState<string | null>(null);
   const [plan, setPlan] = useState<ReceptionPlan | null>(null);
   const [inPlan, setInPlan] = useState<{ result: InValidationResult; complete: boolean; done?: boolean } | null>(null);
+  const [editing, setEditing] = useState(false);
 
-  // Damaged-on-arrival needs no decision: it is a Lab loss waiting for its physical return.
+  // Damaged with a photo is settled automatically (Lab loss) and goes straight to "send".
+  // The physical return is optional: the "return" tab only lists what has not come back yet.
   const byTab = useMemo(() => ({
-    decide: initialGaps.filter(g => g.kind !== 'damaged' && g.status === 'open'),
+    decide: initialGaps.filter(g => g.status === 'open'),
     shop: initialGaps.filter(g => g.status === 'waiting_shop'),
-    return: initialGaps.filter(g => g.status === 'waiting_return'),
-    send: initialGaps.filter(g => g.status === 'closed' && g.sourceType === 'sales_order' && g.odooMode !== 'sent' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra') && !(g.kind === 'missing' && g.labCause === 'shop_miscount')),
+    return: initialGaps.filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt),
+    send: initialGaps.filter(g => g.status === 'closed' && g.odooMode !== 'sent' && g.labCause !== 'shop_miscount' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra')),
     closed: initialGaps.filter(g => g.status === 'closed'),
   }), [initialGaps]);
   const list = byTab[tab];
   const current = list.find(g => g.key === selected) ?? list[0] ?? null;
   const overdueCount = initialGaps.filter(g => g.overdue || g.returnOverdue).length;
 
-  function pick(g: DeliveryGap) { setSelected(g.key); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
+  function pick(g: DeliveryGap) { setSelected(g.key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
 
   async function submit() {
-    if (!current || !cause || current.kind === 'damaged') return;
+    if (!current || !cause) return;
     setBusy(true); setErr(null);
     const { decideGapAction } = await import('./actions');
     const res = await decideGapAction({ checkLineId: current.checkLineId, kind: current.kind, cause, message: message.trim() || null });
     setBusy(false);
     if (res.error) { setErr(res.error === 'not_enabled' ? (vi ? 'Bản thử: chưa kích hoạt lưu (cần cập nhật cơ sở dữ liệu).' : 'Preview : enregistrement pas encore activé (ajout en base à appliquer).') : res.error); return; }
     if (res.plan) setPlan(res.plan);
+    setEditing(false);
     router.refresh();
   }
 
@@ -228,7 +242,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
   const tabs: { key: Tab; vi: string; fr: string }[] = [
     { key: 'decide', vi: 'Cần xử lý', fr: 'À décider' },
     { key: 'shop', vi: 'Chờ shop', fr: 'Attente shop' },
-    { key: 'return', vi: 'Chờ hàng về', fr: 'Attente retour' },
+    { key: 'return', vi: 'Hỏng chưa về Lab', fr: 'Abîmés pas revenus' },
     { key: 'send', vi: 'Chờ gửi Odoo', fr: 'À envoyer à Odoo' },
     { key: 'closed', vi: 'Đã đóng', fr: 'Clôturés' },
   ];
@@ -246,8 +260,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
       <div className="rounded-xl px-4 py-2.5 text-xs flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#4C1D95' }}>
         <FlaskConical size={14} className="shrink-0 mt-0.5" />
         <span>
-          {vi ? 'Odoo: nhập kho shop (REP) tự xác nhận khi đủ số, hoặc bấm nút trong thẻ lệch. Đơn bán (SO): bấm « Gửi Odoo xác nhận cuối ». Lệch REP (transit → Lab, scrap, Lab → shop): tạm làm tay trên Odoo. '
-                : 'Odoo : réception shop (REP) validée seule si tout correspond, sinon bouton dans la fiche. Ventes (SO) : bouton « Envoyer à Odoo ». Écarts REP (transit → Lab, scrap, Lab → shop) : encore à la main dans Odoo. '}
+          {vi ? 'Odoo: nhập kho shop tự xác nhận khi đủ số. Có lệch: chọn nguyên nhân từng dòng (hàng hỏng có ảnh = tự xử lý), rồi bấm « Gửi Odoo xác nhận cuối » cho cả đơn — Odoo tự làm trả hàng, scrap, chuyển kho, hoá đơn. '
+                : 'Odoo : réception shop validée seule si tout correspond. Écart : cause ligne par ligne (abîmé avec photo = réglé automatiquement), puis « Gửi Odoo xác nhận cuối » pour toute la commande — retour, scrap, transferts, facture faits par l’app. '}
           {schemaReady ? '' : (vi ? 'Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật) — các lệch được tính từ xác nhận của shop.' : 'Décisions pas encore enregistrables (ajout en base non appliqué) — écarts calculés depuis les réceptions shop.')}
         </span>
       </div>
@@ -336,11 +350,11 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
               <div className="text-xs text-gray-600">{vi ? 'Shop chọn:' : 'Le shop indique :'} <b>{current.shopCause === 'wrong_product' ? (vi ? 'Sai sản phẩm' : 'Mauvais produit') : (vi ? 'Thiếu hàng' : 'Manquant')}</b></div>
             )}
 
-            {current.kind !== 'damaged' && current.status === 'open' && (
+            {(current.status === 'open' || editing) && (
               <>
                 <fieldset className="space-y-2">
                   <legend className="text-[11px] font-bold tracking-wide text-gray-500 mb-2">
-                    {current.kind === 'missing' ? (vi ? `${current.qty} CÁI THIẾU ĐI ĐÂU?` : `OÙ SONT LES ${current.qty} MANQUANTS ?`) : (vi ? 'CÁI THỪA TỪ ĐÂU RA?' : 'D’OÙ VIENT LE SURPLUS ?')}
+                    {current.kind === 'missing' ? (vi ? `${current.qty} CÁI THIẾU ĐI ĐÂU?` : `OÙ SONT LES ${current.qty} MANQUANTS ?`) : current.kind === 'damaged' ? (vi ? 'ẢNH CÓ CHO THẤY HỎNG?' : 'LA PHOTO MONTRE-T-ELLE LA CASSE ?') : (vi ? 'CÁI THỪA TỪ ĐÂU RA?' : 'D’OÙ VIENT LE SURPLUS ?')}
                   </legend>
                   {CAUSES[current.kind].map(c => (
                     <label key={c.key} className="flex items-center gap-3 rounded-lg px-3.5 py-2.5 cursor-pointer"
@@ -356,15 +370,21 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
                   className="w-full text-sm rounded-lg px-3 py-2.5 border border-gray-300" />
               </>
             )}
-            {current.kind === 'damaged' && current.status === 'waiting_return' && (
+            {current.kind === 'damaged' && current.labCause !== 'shop_miscount' && (
               <div className="rounded-lg bg-gray-50 px-3.5 py-2.5 text-sm text-gray-700">
-                {vi ? 'Hỏng khi nhận = hao hụt Lab. Xác nhận khi hàng về trong Nhập kho → Chuyển kho Shop ↔ Lab (tag LỖI LAB).'
-                    : 'Abîmé à l’arrivée = perte Lab. À confirmer au retour dans Réception stock → Transfert Shop ↔ Lab (tag LỖI LAB).'}
+                {vi ? 'Hỏng khi nhận, có ảnh = hao hụt Lab, tự xử lý: « Gửi Odoo » sẽ trả về + scrap. Nhận lại hàng hỏng trong Nhập kho (LỖI LAB) là tuỳ chọn.'
+                    : 'Abîmé à l’arrivée avec photo = perte Lab, réglé automatiquement : « Envoyer à Odoo » fait retour + scrap. Le retour physique en Nhập kho (LỖI LAB) est un plus.'}
+                {current.returnConfirmedAt && <div className="font-semibold mt-1" style={{ color: '#15803D' }}>{vi ? '✓ Hàng hỏng đã về Lab' : '✓ Abîmés revenus au Lab'}{current.returnConfirmedBy ? ` · ${current.returnConfirmedBy}` : ''}</div>}
                 {current.returnOverdue && <div className="font-bold mt-1" style={{ color: '#B42318' }}>{vi ? `Chưa về sau ${current.deliveriesSince} chuyến — báo Axel` : `Pas revenu après ${current.deliveriesSince} livraisons — alerte Axel`}</div>}
               </div>
             )}
-            {current.labCause && current.status !== 'open' && (
-              <div className="text-sm text-gray-700">{vi ? 'Đã chọn:' : 'Décidé :'} <b>{[...CAUSES.missing, ...CAUSES.extra].find(c => c.key === current.labCause)?.[vi ? 'vi' : 'fr']}</b>{current.decidedBy ? ` · ${current.decidedBy}` : ''}</div>
+            {current.labCause && current.status !== 'open' && !editing && (
+              <div className="text-sm text-gray-700 flex items-center gap-3 flex-wrap">
+                <span>{vi ? 'Đã chọn:' : 'Décidé :'} <b>{[...CAUSES.missing, ...CAUSES.extra, ...CAUSES.damaged].find(c => c.key === current.labCause)?.[vi ? 'vi' : 'fr']}</b>{current.decidedBy ? ` · ${current.decidedBy}` : ''}</span>
+                {current.odooMode !== 'sent' && (
+                  <button onClick={() => { setEditing(true); setCause(current.labCause); }} className="text-xs font-semibold underline text-gray-600">{vi ? 'Đổi' : 'Modifier'}</button>
+                )}
+              </div>
             )}
 
             {err && <div className="text-sm font-semibold" style={{ color: '#B42318' }}>{err}</div>}
@@ -372,14 +392,13 @@ export default function GapsView({ initialGaps, schemaReady, odooMode }: { initi
             {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} />}
 
             <div className="flex justify-between items-center gap-2 flex-wrap">
-              {current.sourceType === 'sales_order' ? (
-                <SoSendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} />
-              ) : (
-              <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
-                {vi ? 'Nhập kho shop trên Odoo' : 'Réception shop sur Odoo'}
-              </button>
+              <SendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} />
+              {current.sourceType !== 'sales_order' && (
+                <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
+                  {vi ? 'Chỉ nhập kho shop trên Odoo' : 'Valider seulement la réception shop'}
+                </button>
               )}
-              {current.kind !== 'damaged' && current.status === 'open' && (
+              {(current.status === 'open' || editing) && (
                 <button onClick={submit} disabled={!cause || busy}
                   className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#1A4731' }}>
                   {busy && <Loader2 size={14} className="animate-spin" />}{vi ? 'Xác nhận nguyên nhân' : 'Confirmer la cause'}

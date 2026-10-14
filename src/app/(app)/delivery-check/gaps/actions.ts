@@ -42,7 +42,7 @@ export async function decideGapAction(input: { checkLineId: string; kind: GapKin
   return res;
 }
 
-export async function confirmDamagedReturnAction(input: { gapId: string; qty: number }): Promise<{ ok?: boolean; plan?: ReceptionPlan; error?: string }> {
+export async function confirmDamagedReturnAction(input: { gapId: string; qty: number }): Promise<{ ok?: boolean; error?: string }> {
   const auth = await requireLabStaff();
   if ('error' in auth) return { error: auth.error };
   const sb = service();

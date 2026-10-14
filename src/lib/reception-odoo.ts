@@ -231,8 +231,8 @@ export async function validateShopIn(
 //   2. a LAB/Stock scrap for the damaged / lost units (Lab loss);
 //   3. one extra delivery (LAB/Stock → customer, linked to the SO line) for units the Lab sent
 //      too many;
-//   4. "Create invoice" (delivered) — Odoo then makes the draft credit note / extra invoice itself
-//      from the delivered quantities. Left in draft for accounting, never posted by us.
+//   4. the customer invoice goes back to DRAFT and its quantities are adjusted (no credit note,
+//      Axel 2026-10-14). Never re-posted by us: accounting validates it again.
 // Production only (inValidationLive); anything unexpected stops before writing.
 export type SoGapLine = { sku: string; qty: number; action: 'return' | 'return_scrap' | 'extra' };
 export type SoFinalizeResult = { ok: boolean; live: boolean; error?: string; done: string[] };
@@ -275,10 +275,11 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
       const deliv = dMoves.filter(m => m.product_id?.[0] === pid).reduce((t, m) => t + Number(m.quantity), 0);
       if (deliv < q) return { ok: false, live, error: `Return ${q} > delivered ${deliv} for product ${pid}`, done };
     }
-    const soLines = so.order_line?.length ? await odooExecute<any[]>('sale.order.line', 'read', [so.order_line], { fields: ['id', 'product_id'] }) : [];
+    const soLinesFull = so.order_line?.length ? await odooExecute<any[]>('sale.order.line', 'read', [so.order_line], { fields: ['id', 'product_id', 'price_unit', 'discount', 'tax_id'] }) : [];
+    const soLines = soLinesFull;
     for (const pid of Array.from(extra.keys())) if (!soLines.some(l => l.product_id?.[0] === pid)) return { ok: false, live, error: `Extra product ${pid} is not on the order`, done };
 
-    if (!live) return { ok: true, live, done: [`return ${toReturn.size} product(s)`, `scrap ${toScrap.size}`, `extra ${extra.size}`, 'create invoice/credit note (draft)'] };
+    if (!live) return { ok: true, live, done: [`return ${toReturn.size} product(s)`, `scrap ${toScrap.size}`, `extra ${extra.size}`, 'invoice back to draft, quantities adjusted'] };
 
     // 1. Return
     if (toReturn.size) {
@@ -336,16 +337,134 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
       if (v !== true) return { ok: false, live, error: `Extra delivery created (id ${pickId}) but not validated: ${JSON.stringify(v)}`, done };
       done.push(`extra delivery ${pickId}`);
     }
-    // 4. Invoice / credit note from delivered quantities (draft)
-    const before: number[] = so.invoice_ids ?? [];
-    const w = await odooExecuteWrite<number>('sale.advance.payment.inv', 'create', [{ advance_payment_method: 'delivered', sale_order_ids: [[6, 0, [so.id]]] }], { context: { active_ids: [so.id], active_model: 'sale.order', ...NO_MAIL } });
-    await odooExecuteWrite('sale.advance.payment.inv', 'create_invoices', [[w]], { context: { active_ids: [so.id], active_model: 'sale.order', ...NO_MAIL } });
-    const after = await odooExecute<any[]>('sale.order', 'read', [[so.id]], { fields: ['invoice_ids'] });
-    const created = ((after[0]?.invoice_ids ?? []) as number[]).filter(id => !before.includes(id));
-    if (created.length) {
-      const inv = await odooExecute<any[]>('account.move', 'read', [created], { fields: ['name', 'move_type', 'state'] });
-      done.push(...inv.map(i => `${i.move_type === 'out_refund' ? 'credit note' : 'invoice'} ${i.name || i.id} (${i.state})`));
-    } else done.push('no invoice change needed');
+    // 4. Invoice (Axel 2026-10-14: "pas d'avoir, faut passer la facture en draft et ajuster").
+    // The existing customer invoice goes back to draft and its lines follow the quantities:
+    // − returned / lost / damaged, + extra. Left in DRAFT: accounting re-posts it.
+    const invIds: number[] = so.invoice_ids ?? [];
+    const invs = invIds.length ? await odooExecute<any[]>('account.move', 'read', [invIds], { fields: ['id', 'name', 'state', 'move_type'] }) : [];
+    const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
+    if (!inv) { done.push('no invoice yet — nothing to adjust'); return { ok: true, live, done }; }
+    if (inv.state === 'posted') {
+      await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL });
+      done.push(`invoice ${inv.name} → draft`);
+    }
+    const iLines = await odooExecute<any[]>('account.move.line', 'search_read',
+      [[['move_id', '=', inv.id], ['display_type', '=', 'product']]], { fields: ['id', 'product_id', 'quantity'] });
+    const delta = new Map<number, number>();
+    for (const [pid, q] of Array.from(toReturn.entries())) delta.set(pid, (delta.get(pid) ?? 0) - q);
+    for (const [pid, q] of Array.from(extra.entries())) delta.set(pid, (delta.get(pid) ?? 0) + q);
+    const cmds: any[] = [];
+    for (const [pid, d] of Array.from(delta.entries())) {
+      if (!d) continue;
+      const code = prods.find(x => x.id === pid)?.default_code ?? pid;
+      const il = iLines.find(l => l.product_id?.[0] === pid);
+      if (il) {
+        const q = Math.max(0, Number(il.quantity) + d);
+        cmds.push([1, il.id, { quantity: q }]);
+        done.push(`invoice ${code}: ${il.quantity} → ${q}`);
+      } else if (d > 0) {
+        const sl = soLinesFull.find(l => l.product_id?.[0] === pid);
+        cmds.push([0, 0, { product_id: pid, quantity: d, price_unit: sl?.price_unit ?? 0, discount: sl?.discount ?? 0, tax_ids: [[6, 0, sl?.tax_id ?? []]], sale_line_ids: sl ? [[6, 0, [sl.id]]] : [] }]);
+        done.push(`invoice ${code}: +${d} (new line)`);
+      } else done.push(`invoice ${code}: no line to lower`);
+    }
+    if (cmds.length) await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
+    done.push(`invoice ${inv.name} left in DRAFT — accounting re-posts it`);
+    return { ok: true, live, done };
+  } catch (e: any) {
+    return { ok: false, live, error: e?.message ?? String(e), done };
+  }
+}
+
+// ── 5. LIVE: replenishments (REP) — same "Gửi Odoo" button per order (Axel, 2026-10-14) ──────
+// Prerequisite: the shop IN is validated at the GOOD quantity (done here if still open), so the
+// missing / damaged units are still sitting in the transit location. Then, per settled line:
+//   transit_to_lab        (found at the Lab)           → internal transfer transit → LAB/Stock
+//   transit_to_lab_scrap  (damaged, photo / returned)  → transit → LAB/Stock, then LAB scrap
+//   scrap_transit         (lost in transport)          → scrap from transit
+//   lab_to_shop           (Lab sent too many)          → internal transfer LAB/Stock → shop stock
+// One grouped transfer per direction, LAB "Transferts internes" type (id looked up, fallback 7).
+export type RepGapLine = { sku: string; qty: number; action: 'transit_to_lab' | 'transit_to_lab_scrap' | 'scrap_transit' | 'lab_to_shop' };
+
+async function internalTransfer(
+  typeId: number, from: number, to: number, origin: string,
+  items: { pid: number; uom: number; code: string; qty: number }[],
+): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  const pickId = await odooExecuteWrite<number>('stock.picking', 'create', [{
+    picking_type_id: typeId, location_id: from, location_dest_id: to, origin,
+    move_ids: items.map(i => [0, 0, { name: i.code, product_id: i.pid, product_uom: i.uom, product_uom_qty: i.qty, location_id: from, location_dest_id: to }]),
+  }], { context: NO_MAIL });
+  await odooExecuteWrite('stock.picking', 'action_confirm', [[pickId]], { context: NO_MAIL });
+  const ms = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', pickId]]], { fields: ['id', 'product_uom_qty'] });
+  for (const m of ms) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
+  const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[pickId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
+  const [p] = await odooExecuteWrite<any[]>('stock.picking', 'read', [[pickId]], { fields: ['name'] });
+  if (v !== true) return { ok: false, error: `Transfer ${p?.name ?? pickId} created but not validated: ${JSON.stringify(v)}` };
+  return { ok: true, name: p?.name ?? String(pickId) };
+}
+
+export async function finalizeReplenishmentGaps(
+  orderRef: string, lines: RepGapLine[],
+  receptionLines: { sku: string | null; sent: number; received: number; damaged: number }[],
+): Promise<SoFinalizeResult> {
+  const live = inValidationLive();
+  const done: string[] = [];
+  if (!odooWriteConfigured()) return { ok: false, live, error: 'Odoo write account not configured', done };
+  if (!lines.length) return { ok: true, live, done: ['nothing to send'] };
+  try {
+    // 1. Shop IN at the good quantity (no-op if already validated).
+    const vin = await validateShopIn(orderRef, receptionLines, { dryRun: !live });
+    if (!vin.ok && !vin.alreadyDone) return { ok: false, live, error: `Shop IN: ${vin.skipped ?? vin.error}`, done };
+    const ins = await odooExecute<any[]>('stock.picking', 'search_read',
+      [[['origin', '=', orderRef], ['location_id', '=', TRANSIT_LOCATION_ID], ['state', '!=', 'cancel']]], { fields: ['id', 'name', 'state', 'location_dest_id'] });
+    const shopIn = ins[0];
+    if (!shopIn) return { ok: false, live, error: 'No shop IN found', done };
+    done.push(vin.alreadyDone ? `IN ${shopIn.name} already validated` : `IN ${shopIn.name} validated at good qty`);
+    const shopStock: number = shopIn.location_dest_id?.[0];
+
+    const skus = Array.from(new Set(lines.map(l => l.sku)));
+    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'] });
+    const prodBySku = new Map(prods.map(p => [p.default_code as string, p]));
+    for (const s of skus) if (!prodBySku.has(s)) return { ok: false, live, error: `Product ${s} not found in Odoo`, done };
+    const agg = (acts: RepGapLine['action'][]) => {
+      const m = new Map<string, number>();
+      for (const l of lines) if (acts.includes(l.action)) m.set(l.sku, (m.get(l.sku) ?? 0) + l.qty);
+      return Array.from(m.entries()).filter(([, q]) => q > 0).map(([sku, qty]) => {
+        const p = prodBySku.get(sku)!; return { pid: p.id as number, uom: p.uom_id?.[0] as number, code: sku, qty };
+      });
+    };
+    const backToLab = agg(['transit_to_lab', 'transit_to_lab_scrap']);
+    const scrapLab = agg(['transit_to_lab_scrap']);
+    const scrapTransit = agg(['scrap_transit']);
+    const toShop = agg(['lab_to_shop']);
+    if (!live) return { ok: true, live, done: [...done,
+      ...backToLab.map(i => `transit → LAB ${i.code} ×${i.qty}`), ...scrapLab.map(i => `scrap LAB ${i.code} ×${i.qty}`),
+      ...scrapTransit.map(i => `scrap transit ${i.code} ×${i.qty}`), ...toShop.map(i => `LAB → shop ${i.code} ×${i.qty}`)] };
+
+    const types = await odooExecute<any[]>('stock.picking.type', 'search_read', [[['code', '=', 'internal'], ['default_location_src_id', '=', LAB_STOCK_LOCATION_ID]]], { fields: ['id'], limit: 1 });
+    const typeId: number = types[0]?.id ?? 7;
+    const { createScrapAtLocation } = await import('@/lib/odoo-scrap');
+    if (backToLab.length) {
+      const r = await internalTransfer(typeId, TRANSIT_LOCATION_ID, LAB_STOCK_LOCATION_ID, `${orderRef} — écart réception (retour Lab)`, backToLab);
+      if (!r.ok) return { ok: false, live, error: r.error, done };
+      done.push(`transit → LAB ${r.name}`);
+    }
+    for (const i of scrapLab) {
+      const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — hỏng khi giao (lỗi Lab)` });
+      if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
+      done.push(`scrap LAB ${i.code} ×${i.qty}`);
+    }
+    for (const i of scrapTransit) {
+      const r = await createScrapAtLocation(TRANSIT_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — mất khi vận chuyển` });
+      if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
+      done.push(`scrap transit ${i.code} ×${i.qty}`);
+    }
+    if (toShop.length) {
+      if (!shopStock) return { ok: false, live, error: 'Shop stock location unknown', done };
+      const r = await internalTransfer(typeId, LAB_STOCK_LOCATION_ID, shopStock, `${orderRef} — Lab gửi dư`, toShop);
+      if (!r.ok) return { ok: false, live, error: r.error, done };
+      done.push(`LAB → shop ${r.name}`);
+    }
     return { ok: true, live, done };
   } catch (e: any) {
     return { ok: false, live, error: e?.message ?? String(e), done };

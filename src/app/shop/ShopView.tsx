@@ -123,7 +123,7 @@ type ShopLineGapView = NonNullable<ShopDeliveryOrder['lines'][number]['gaps']>[n
 function GapBadge({ gap, L, onRecount }: { gap: ShopLineGapView; L: (vi: string, en: string) => string; onRecount?: () => void }) {
   let text: string; let note: string; let color = '#6B7280'; let bg = '#F3F4F6';
   const damagedNote = L('Để riêng, không bán. Tính là hao hụt của Lab, không phải của shop.', "Keep it aside, don't sell it. It counts as a Lab loss, not yours.");
-  if (gap.kind === 'damaged' || gap.status === 'waiting_return') {
+  if (gap.kind === 'damaged' && gap.status !== 'waiting_shop') {
     text = L(`${gap.qty} hỏng · đưa lại tài xế`, `${gap.qty} damaged · give back to the driver`);
     note = damagedNote;
     color = '#92400E'; bg = '#FEF3C7';

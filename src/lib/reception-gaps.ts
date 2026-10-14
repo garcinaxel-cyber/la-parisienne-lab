@@ -13,7 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { normShopName } from '@/lib/delivery-check';
-import { planGapResolution, executeReceptionPlan, receptionOdooMode, finalizeSalesOrderGaps, type GapKind, type LabCause, type ReceptionPlan, type SoGapLine, type SoFinalizeResult } from '@/lib/reception-odoo';
+import { planGapResolution, executeReceptionPlan, receptionOdooMode, finalizeSalesOrderGaps, finalizeReplenishmentGaps, type RepGapLine, type GapKind, type LabCause, type ReceptionPlan, type SoGapLine, type SoFinalizeResult } from '@/lib/reception-odoo';
 
 export type { GapKind, LabCause };
 export type GapStatus = 'open' | 'waiting_shop' | 'waiting_return' | 'closed';
@@ -68,8 +68,17 @@ export function computeLineGaps(
   return out;
 }
 
-function defaultStatus(kind: GapKind): GapStatus {
-  return kind === 'damaged' ? 'waiting_return' : 'open';
+// Axel 2026-10-14: "si ils mettent la photo en preuve de perte … rendre automatique le retour +
+// scrap". A damaged line always carries the shop's photo (required in the shop app), so it is
+// settled automatically as a Lab loss and goes straight to "Gửi Odoo". The assistant can still
+// contest it from the gaps tab (photo doesn't show damage → shop recounts). The physical return
+// in Nhập kho (LỖI LAB) is optional now — a bonus, tracked but no longer blocking.
+export const AUTO_DAMAGED_BY = 'Tự động (ảnh)';
+function defaultStatus(_kind: GapKind): GapStatus {
+  return 'open';
+}
+function autoSettled(kind: GapKind, receipt: any): boolean {
+  return kind === 'damaged' && Array.isArray(receipt?.photo_urls) && receipt.photo_urls.length > 0;
 }
 
 // ── Listing ────────────────────────────────────────────────────────────────────────────────
@@ -141,16 +150,18 @@ export async function listDeliveryGaps(
     for (const g of computeLineGaps(l, r)) {
       const key = `${l.id}:${g.kind}`;
       const p = persisted.get(key);
-      const status: GapStatus = p?.status ?? defaultStatus(g.kind);
+      const auto = !p && autoSettled(g.kind, r);
+      const status: GapStatus = p?.status ?? (auto ? 'closed' : defaultStatus(g.kind));
+      const labCause: LabCause | null = p?.lab_cause ?? (auto ? 'damaged_returned' : null);
       const deadlineAt = r.confirmed_at ? new Date(new Date(r.confirmed_at).getTime() + GAP_DEADLINE_HOURS * 3600_000).toISOString() : null;
       const deliveriesSince = (datesByShop.get(normShopName(h.shop_name)) ?? []).filter(d => d > h.delivery_date).length;
-      const awaitingReturn = status === 'waiting_return';
+      const awaitingReturn = (g.kind === 'damaged' || labCause === 'damaged_returned') && status !== 'waiting_shop' && !p?.return_confirmed_at;
       gaps.push({
         id: p?.id ?? null, key, sourceType: h.source_type === 'sales_order' ? 'sales_order' : 'replenishment', checkLineId: l.id, deliveryOrderId: h.id, orderRef: h.order_ref, deliveryDate: h.delivery_date, shopName: h.shop_name!,
         sku: l.sku, product: l.product_name_vi, kind: g.kind, qty: g.qty, sent, received, damaged,
         shopCause: r.gap_cause ?? null, shopNote: r.note ?? null, confirmedBy: r.confirmed_by_name ?? null, confirmedAt: r.confirmed_at ?? null,
         checkedBy: l.checked_by_name ?? null, checkedAt: l.checked_at ?? null,
-        status, labCause: p?.lab_cause ?? null, labMessage: p?.lab_message ?? null, decidedBy: p?.decided_by_name ?? null, decidedAt: p?.decided_at ?? null,
+        status, labCause, labMessage: p?.lab_message ?? null, decidedBy: p?.decided_by_name ?? (auto ? AUTO_DAMAGED_BY : null), decidedAt: p?.decided_at ?? null,
         returnConfirmedAt: p?.return_confirmed_at ?? null, returnConfirmedBy: p?.return_confirmed_by_name ?? null,
         deadlineAt, overdue: status === 'open' && !!deadlineAt && now > new Date(deadlineAt).getTime(),
         deliveriesSince, returnOverdue: awaitingReturn && deliveriesSince >= DAMAGED_RETURN_MAX_DELIVERIES,
@@ -196,7 +207,9 @@ export async function syncGapsForLine(sb: SupabaseClient, checkLineId: string): 
         shop_name: header.shop_name, sku: line.sku, product_name: line.product_name_vi, kind, qty: c.qty,
         ref_qty: line.qty_checked ?? line.qty_expected, received_qty: receipt?.qty_received ?? null,
         shop_cause: kind === 'damaged' ? null : (receipt?.gap_cause ?? null), shop_note: receipt?.note ?? null,
-        ...(unchanged ? {} : { status: defaultStatus(kind), lab_cause: null, decided_at: null, decided_by_name: null, closed_at: null }),
+        ...(unchanged ? {} : autoSettled(kind, receipt)
+          ? { status: 'closed', lab_cause: 'damaged_returned', decided_at: now, decided_by_name: AUTO_DAMAGED_BY, closed_at: now }
+          : { status: defaultStatus(kind), lab_cause: null, decided_at: null, decided_by_name: null, closed_at: null }),
         updated_at: now,
       }, { onConflict: 'check_line_id,kind' });
     } else if (prev && prev.status !== 'closed') {
@@ -206,13 +219,13 @@ export async function syncGapsForLine(sb: SupabaseClient, checkLineId: string): 
 }
 
 const STATUS_AFTER: Record<LabCause, GapStatus> = {
-  found_at_lab: 'closed', damaged_returned: 'waiting_return', lost_transport: 'closed',
+  found_at_lab: 'closed', damaged_returned: 'closed', lost_transport: 'closed',
   shop_miscount: 'waiting_shop', lab_sent_extra: 'closed',
 };
 const CAUSES_BY_KIND: Record<GapKind, LabCause[]> = {
   missing: ['found_at_lab', 'damaged_returned', 'lost_transport', 'shop_miscount'],
   extra: ['lab_sent_extra', 'shop_miscount'],
-  damaged: [],
+  damaged: ['damaged_returned', 'shop_miscount'],
 };
 
 export async function decideGap(sb: SupabaseClient, input: {
@@ -222,7 +235,8 @@ export async function decideGap(sb: SupabaseClient, input: {
   if (!(await gapsSchemaReady(sb))) return { error: 'not_enabled' };
   await syncGapsForLine(sb, input.checkLineId); // make sure the row exists and is current
   const { data: g } = await sb.from('lab_delivery_gaps').select('*').eq('check_line_id', input.checkLineId).eq('kind', input.kind).maybeSingle();
-  if (!g || g.status === 'closed') return { error: 'Gap not found or already closed' };
+  if (!g) return { error: 'Gap not found' };
+  if (g.odoo_mode === 'sent') return { error: 'Already sent to Odoo' };
   const { data: hdr } = await sb.from('lab_delivery_orders').select('source_type').eq('id', g.delivery_order_id).maybeSingle();
   const plan = await executeReceptionPlan(planGapResolution({ kind: input.kind, qty: Number(g.qty), sku: g.sku, product: g.product_name, shop: g.shop_name, sourceType: hdr?.source_type }, input.cause));
   const now = new Date().toISOString();
@@ -238,50 +252,61 @@ export async function decideGap(sb: SupabaseClient, input: {
   return { ok: true, plan };
 }
 
-// Lab confirms the broken units are physically back (Stock reception, LỖI LAB tag).
-export async function confirmDamagedReturn(sb: SupabaseClient, input: { gapId: string; qty: number; byName: string }): Promise<{ ok?: boolean; plan?: ReceptionPlan; error?: string }> {
+// Optional since 2026-10-14 (photo = proof): the Lab records that the broken units are
+// physically back (Stock reception, LỖI LAB tag). No Odoo effect and no status change — the
+// return + scrap are done by "Gửi Odoo"; this only clears the "not returned" reminder.
+export async function confirmDamagedReturn(sb: SupabaseClient, input: { gapId: string; qty: number; byName: string }): Promise<{ ok?: boolean; error?: string }> {
   if (!(await gapsSchemaReady(sb))) return { error: 'not_enabled' };
   const { data: g } = await sb.from('lab_delivery_gaps').select('*').eq('id', input.gapId).maybeSingle();
-  if (!g || g.status !== 'waiting_return') return { error: 'Nothing to confirm' };
+  if (!g || g.return_confirmed_at || !(g.kind === 'damaged' || g.lab_cause === 'damaged_returned')) return { error: 'Nothing to confirm' };
   const qty = Math.max(0, Math.min(input.qty, Number(g.qty)));
-  const { data: hdr } = await sb.from('lab_delivery_orders').select('source_type').eq('id', g.delivery_order_id).maybeSingle();
-  const plan = await executeReceptionPlan(planGapResolution({ kind: g.kind, qty, sku: g.sku, product: g.product_name, shop: g.shop_name, sourceType: hdr?.source_type }, 'returned_to_lab'));
   const now = new Date().toISOString();
   const { error } = await sb.from('lab_delivery_gaps').update({
-    status: 'closed', closed_at: now, return_confirmed_qty: qty, return_confirmed_by_name: input.byName, return_confirmed_at: now,
-    odoo_mode: plan.mode, odoo_log: [...(g.odoo_log ?? []), { at: now, by: input.byName, cause: 'returned_to_lab', mode: plan.mode, ok: plan.ok, steps: plan.steps }],
+    return_confirmed_qty: qty, return_confirmed_by_name: input.byName, return_confirmed_at: now,
+    odoo_log: [...(g.odoo_log ?? []), { at: now, by: input.byName, cause: 'returned_to_lab', note: 'physical return confirmed (no Odoo effect)' }],
     updated_at: now,
   }).eq('id', g.id);
   if (error) return { error: error.message };
-  await logRun(sb, { delivery_order_id: g.delivery_order_id, gap_id: g.id, order_ref: g.order_ref, action: 'damaged_return', plan, by: input.byName });
-  return { ok: true, plan };
+  return { ok: true };
 }
 
 export { receptionOdooMode };
 
-// ── Sales orders: second validation, "Envoyer à Odoo" per order (Axel, 2026-10-14) ─────────
-// Step 1 = the assistants settle every gap of the order line by line (cause, return confirmed).
-// Step 2 = one button sends the whole order to Odoo (return + Lab scrap + extra delivery +
-// invoice/credit note). Ready only when every gap line of the order is settled ('closed').
+// ── Second validation: one "Gửi Odoo xác nhận cuối" per order (Axel, 2026-10-14) ───────────
+// Step 1 = the assistants settle every gap of the order line by line (damaged lines with a photo
+// are settled automatically). Step 2 = one button sends the whole order to Odoo:
+//   sales order  → one return + Lab scrap + extra delivery + invoice back to draft, qty adjusted
+//   replenishment → shop IN at good qty + transit→LAB (+ scrap) / transit scrap / LAB→shop
+// Ready only when every gap line of the order is settled ('closed').
+type SendAction = SoGapLine['action'] | RepGapLine['action'];
 function soAction(g: DeliveryGap): SoGapLine['action'] | null {
-  if (g.kind === 'damaged') return 'return_scrap';
+  if (g.kind === 'damaged') return g.labCause === 'shop_miscount' ? null : 'return_scrap';
   if (g.kind === 'extra') return g.labCause === 'lab_sent_extra' ? 'extra' : null;
   if (g.labCause === 'found_at_lab') return 'return';
   if (g.labCause === 'damaged_returned' || g.labCause === 'lost_transport') return 'return_scrap';
   return null;
 }
+function repAction(g: DeliveryGap): RepGapLine['action'] | null {
+  if (g.kind === 'damaged') return g.labCause === 'shop_miscount' ? null : 'transit_to_lab_scrap';
+  if (g.kind === 'extra') return g.labCause === 'lab_sent_extra' ? 'lab_to_shop' : null;
+  if (g.labCause === 'found_at_lab') return 'transit_to_lab';
+  if (g.labCause === 'damaged_returned') return 'transit_to_lab_scrap';
+  if (g.labCause === 'lost_transport') return 'scrap_transit';
+  return null;
+}
 
 export type OrderSendState = {
   orderRef: string; sourceType: string; ready: boolean; sent: boolean;
-  lines: { key: string; product: string; sku: string | null; kind: GapKind; qty: number; status: GapStatus; labCause: string | null; action: SoGapLine['action'] | null; sent: boolean }[];
+  lines: { key: string; product: string; sku: string | null; kind: GapKind; qty: number; status: GapStatus; labCause: string | null; action: SendAction | null; sent: boolean; photoUrls: string[] }[];
 };
 
 export async function orderSendState(sb: SupabaseClient, deliveryOrderId: string): Promise<OrderSendState | { error: string }> {
   const { data: h } = await sb.from('lab_delivery_orders').select('order_ref, source_type').eq('id', deliveryOrderId).maybeSingle();
   if (!h) return { error: 'Order not found' };
+  const isSo = h.source_type === 'sales_order';
   const { gaps } = await listDeliveryGaps(sb);
   const mine = gaps.filter(g => g.deliveryOrderId === deliveryOrderId);
-  const lines = mine.map(g => ({ key: g.key, product: g.product, sku: g.sku, kind: g.kind, qty: g.qty, status: g.status, labCause: g.labCause, action: soAction(g), sent: g.odooMode === 'sent' }));
+  const lines = mine.map(g => ({ key: g.key, product: g.product, sku: g.sku, kind: g.kind, qty: g.qty, status: g.status, labCause: g.labCause, action: isSo ? soAction(g) : repAction(g), sent: g.odooMode === 'sent', photoUrls: g.photoUrls }));
   const toSend = lines.filter(l => l.action && !l.sent);
   return {
     orderRef: h.order_ref, sourceType: h.source_type,
@@ -291,16 +316,32 @@ export async function orderSendState(sb: SupabaseClient, deliveryOrderId: string
   };
 }
 
+async function receptionLinesOf(sb: SupabaseClient, deliveryOrderId: string) {
+  const [{ data: lines }, { data: receipts }] = await Promise.all([
+    sb.from('lab_delivery_check_lines').select('id, sku, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId),
+    sb.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId),
+  ]);
+  const rBy = new Map((receipts ?? []).map((r: any) => [r.check_line_id, r]));
+  return (lines ?? []).map((l: any) => {
+    const r: any = rBy.get(l.id);
+    const sent = Number(l.qty_checked ?? l.qty_expected);
+    const received = r?.qty_received == null ? sent : Number(r.qty_received);
+    return { sku: l.sku as string | null, sent, received, damaged: Math.max(0, Math.min(Number(r?.qty_damaged ?? 0), received)) };
+  });
+}
+
 export async function sendOrderToOdoo(sb: SupabaseClient, deliveryOrderId: string, byName: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
   const st = await orderSendState(sb, deliveryOrderId);
   if ('error' in st) return { error: st.error };
-  if (st.sourceType !== 'sales_order') return { error: 'Only sales orders are sent this way' };
   if (!st.ready) return { error: 'Every gap line must be settled first' };
   const toSend = st.lines.filter(l => l.action && !l.sent && l.sku);
-  const result = await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action! })));
+  const isSo = st.sourceType === 'sales_order';
+  const result = isSo
+    ? await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as SoGapLine['action'] })))
+    : await finalizeReplenishmentGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as RepGapLine['action'] })), await receptionLinesOf(sb, deliveryOrderId));
   const now = new Date().toISOString();
   await sb.from('lab_reception_odoo_runs').insert({
-    delivery_order_id: deliveryOrderId, order_ref: st.orderRef, action: 'so_finalize', mode: result.live ? 'live' : 'simulated',
+    delivery_order_id: deliveryOrderId, order_ref: st.orderRef, action: isSo ? 'so_finalize' : 'rep_finalize', mode: result.live ? 'live' : 'simulated',
     ok: result.ok, plan: { lines: toSend, done: result.done }, error: result.error ?? null, created_by_name: byName,
   });
   if (result.ok && result.live) {

@@ -388,7 +388,7 @@ async function fetchDeliveries(shopName: string): Promise<ShopDeliveryOrder[]> {
         const receipt = receiptByLine[l.id] ?? null;
         const gaps: ShopLineGap[] = computeLineGaps(l, receipt).map(g => {
           const p = persisted.get(`${l.id}:${g.kind}`);
-          return { kind: g.kind, qty: g.qty, status: (p?.status ?? (g.kind === 'damaged' ? 'waiting_return' : 'open')) as GapStatus, labCause: p?.lab_cause ?? null, labMessage: p?.lab_message ?? null };
+          return { kind: g.kind, qty: g.qty, status: (p?.status ?? (g.kind === 'damaged' && receipt?.photo_urls?.length ? 'closed' : 'open')) as GapStatus, labCause: p?.lab_cause ?? (g.kind === 'damaged' && receipt?.photo_urls?.length ? 'damaged_returned' : null), labMessage: p?.lab_message ?? null };
         });
         return { ...l, receipt, image_url: null as string | null, gaps };
       }),
