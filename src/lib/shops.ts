@@ -45,6 +45,10 @@ export const SHOP_CONFIG: Record<string, ShopConfig> = {
   // New shop, added 2026-09-16 (Axel). Odoo warehouse "La Paris Thăng Long - warehouse" (id 20),
   // code confirmed live via the Odoo connector — matches the Short Name field in its Odoo form.
   'La Paris Thăng Long': { docType: 'replenishment', warehouseCode: 'LPTL',      portalAccount: true },
+  // New shop, added 2026-10-15 (Axel). Odoo warehouse "La Paris Royal - warehouse" (id 26), code
+  // LPRC confirmed live. Opens end of week 42; Winmart Royal (WROYA, sale.order partner) stays open
+  // for now and is unaffected (not listed here, excluded from SO sync by the 'winmart' rule).
+  'La Paris Royal':      { docType: 'replenishment', warehouseCode: 'LPRC',      portalAccount: true },
 };
 
 // Every shop the order form / exceptional orders can address (Moon Flower first, then Lab,
