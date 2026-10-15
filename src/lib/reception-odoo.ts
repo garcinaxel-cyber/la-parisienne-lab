@@ -271,7 +271,8 @@ async function returnFromDelivery(deliveryId: number, qtyByProduct: Map<number, 
   const retId: number | undefined = res?.res_id;
   if (!retId) return { ok: false, error: `Return not created: ${JSON.stringify(res)}` };
   const rMoves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', retId]]], { fields: ['id', 'product_uom_qty'] });
-  for (const m of rMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
+  // Return moves of a chained delivery come back 'waiting': set the quantity AND picked (checked live 15/10).
+  for (const m of rMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty, picked: true }], { context: NO_MAIL });
   const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[retId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
   const [ret] = await odooExecuteWrite<any[]>('stock.picking', 'read', [[retId]], { fields: ['name'] });
   if (v !== true) return { ok: false, error: `Return ${ret?.name ?? retId} created but not validated: ${JSON.stringify(v)}` };
