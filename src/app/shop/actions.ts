@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
-import { ensureDeliveryOrderChecklist, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
+import { ensureDeliveryOrderChecklist, normShopName, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
 import {
   getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
@@ -3297,4 +3297,85 @@ export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSal
     .map(r => ({ sku: r.sku, name: r.name, qty: r.qty, revenue: r.revenue }))
     .sort((x, y) => y.revenue - x.revenue);
   return { summary: { totalRevenue: totals.totalRevenue, orderCount: totals.orderCount, cashRevenue: totals.cashRevenue, transferRevenue: totals.transferRevenue, byProduct } };
+}
+
+// ── Re-order suggestion (Axel, 2026-10-15) ──────────────────────────────────────────────────
+// "si un produit est cassé ou ils ont moins que prévu, une feature qui leur suggère de le
+// rajouter à leur commande" — suggestion to validate, LAST delivery only. Missing = sent (Bếp)
+// − received, plus the damaged units. Lines the Lab settled as "shop miscounted" are left out,
+// and a suggestion added to the cart or dismissed never comes back (reorder_status, lab_v123).
+export type ReorderSuggestion = {
+  checkLineId: string; sku: string; name: string; imageUrl: string | null; priceB2c: number | null; category: string;
+  qty: number; missing: number; damaged: number; orderRef: string; deliveryDate: string;
+};
+
+export async function getReorderSuggestionsAction(shopName?: string): Promise<{ suggestions?: ReorderSuggestion[]; deliveryDate?: string | null; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const target = normShopName(auth.shopName);
+  const today = vnDateStr();
+  const { data: hdrs } = await supabase.from('lab_delivery_orders').select('id, order_ref, delivery_date, shop_name, marked_not_delivered')
+    .eq('status', 'validated').lte('delivery_date', today).gte('delivery_date', '2026-10-14').order('delivery_date', { ascending: false }).limit(60);
+  const mine = (hdrs ?? []).filter((h: any) => !h.marked_not_delivered && h.shop_name && normShopName(h.shop_name) === target);
+  if (!mine.length) return { suggestions: [], deliveryDate: null };
+  // Last delivery = the most recent delivery date that the shop has actually confirmed.
+  const ids = mine.map((h: any) => h.id);
+  const { data: recs } = await supabase.from('lab_shop_receipt_lines').select('*').in('delivery_order_id', ids).not('qty_received', 'is', null);
+  if (!recs?.length) return { suggestions: [], deliveryDate: null };
+  const dateById = new Map(mine.map((h: any) => [h.id, h.delivery_date as string]));
+  const lastDate = recs.map((r: any) => dateById.get(r.delivery_order_id) ?? '').sort().pop()!;
+  const lastIds = mine.filter((h: any) => h.delivery_date === lastDate).map((h: any) => h.id);
+  const lastRecs = recs.filter((r: any) => lastIds.includes(r.delivery_order_id) && !r.reorder_status);
+  if (!lastRecs.length) return { suggestions: [], deliveryDate: lastDate };
+  const { data: lines } = await supabase.from('lab_delivery_check_lines').select('id, sku, product_name_vi, qty_expected, qty_checked')
+    .in('id', lastRecs.map((r: any) => r.check_line_id));
+  const lineById = new Map((lines ?? []).map((l: any) => [l.id, l]));
+  const { data: gaps } = await supabase.from('lab_delivery_gaps').select('check_line_id, kind, lab_cause').in('check_line_id', lastRecs.map((r: any) => r.check_line_id));
+  const miscounted = new Set((gaps ?? []).filter((g: any) => g.lab_cause === 'shop_miscount').map((g: any) => `${g.check_line_id}:${g.kind}`));
+  const catalog = await fetchProductionCatalog(true);
+  const catBySku = new Map(catalog.map(p => [p.sku, p]));
+  const refById = new Map(mine.map((h: any) => [h.id, h.order_ref as string]));
+  const out: ReorderSuggestion[] = [];
+  for (const r of lastRecs) {
+    const l: any = lineById.get(r.check_line_id);
+    if (!l?.sku) continue;
+    const p = catBySku.get(l.sku);
+    if (!p) continue; // not orderable from the shop catalog
+    const sent = Number(l.qty_checked ?? l.qty_expected);
+    const received = Number(r.qty_received);
+    const missing = miscounted.has(`${l.id}:missing`) ? 0 : Math.max(0, sent - received);
+    const damaged = miscounted.has(`${l.id}:damaged`) ? 0 : Math.max(0, Math.min(Number(r.qty_damaged ?? 0), received));
+    const qty = missing + damaged;
+    if (qty <= 0) continue;
+    out.push({ checkLineId: l.id, sku: l.sku, name: p.name || l.product_name_vi, imageUrl: p.imageUrl, priceB2c: null, category: p.category, qty, missing, damaged, orderRef: refById.get(r.delivery_order_id) ?? '', deliveryDate: lastDate });
+  }
+  if (out.length) {
+    const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', out.map(s => s.sku));
+    const price = new Map((priceRows ?? []).filter((x: any) => Number(x.price_b2c) > 0).map((x: any) => [x.sku, Number(x.price_b2c)]));
+    for (const s of out) s.priceB2c = price.get(s.sku) ?? null;
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return { suggestions: out, deliveryDate: lastDate };
+}
+
+export async function markReorderSuggestionsAction(input: { checkLineIds: string[]; status: 'added' | 'dismissed'; byName?: string | null; shopName?: string }): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const ids = (input.checkLineIds ?? []).filter(Boolean).slice(0, 200);
+  if (!ids.length) return { ok: true };
+  // Only this shop's own lines.
+  const { data: rows } = await supabase.from('lab_shop_receipt_lines').select('check_line_id, delivery_order_id').in('check_line_id', ids);
+  const orderIds = Array.from(new Set((rows ?? []).map((r: any) => r.delivery_order_id)));
+  const { data: hdrs } = orderIds.length ? await supabase.from('lab_delivery_orders').select('id, shop_name').in('id', orderIds) : { data: [] as any[] };
+  const okOrders = new Set((hdrs ?? []).filter((h: any) => normShopName(h.shop_name) === normShopName(auth.shopName)).map((h: any) => h.id));
+  const allowed = (rows ?? []).filter((r: any) => okOrders.has(r.delivery_order_id)).map((r: any) => r.check_line_id);
+  if (!allowed.length) return { ok: true };
+  const { error } = await supabase.from('lab_shop_receipt_lines')
+    .update({ reorder_status: input.status, reorder_at: new Date().toISOString(), reorder_by_name: (input.byName ?? '').trim().slice(0, 80) || null })
+    .in('check_line_id', allowed).is('reorder_status', null);
+  return error ? { error: error.message } : { ok: true };
 }

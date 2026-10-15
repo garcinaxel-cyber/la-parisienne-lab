@@ -659,6 +659,38 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  // Re-order suggestion (Axel, 2026-10-15): what the last delivery was short / damaged.
+  const [reorderSugs, setReorderSugs] = useState<import('./actions').ReorderSuggestion[]>([]);
+  const [reorderBusy, setReorderBusy] = useState(false);
+  // Added suggestions are only marked 'added' once the order is really sent (confirmOrder) — a cart
+  // abandoned before the PIN brings them back next time instead of losing them.
+  const reorderPendingRef = useRef<{ id: string; sku: string }[]>([]);
+  const loadReorderSuggestions = useCallback(async () => {
+    const actions = await import('./actions');
+    const res = await actions.getReorderSuggestionsAction(readOnly ? shopName : undefined);
+    if (!res.error) setReorderSugs((res.suggestions ?? []).filter(sg => !reorderPendingRef.current.some(x => x.id === sg.checkLineId)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly, shopName]);
+  async function applyReorder(list: import('./actions').ReorderSuggestion[], status: 'added' | 'dismissed') {
+    if (!list.length) return;
+    setReorderBusy(true);
+    if (status === 'added') {
+      for (const sg of list) {
+        const cur = orderCart.find(l => l.sku === sg.sku)?.qty ?? 0;
+        setOrderQtyForProduct({ sku: sg.sku, name: sg.name, category: sg.category, imageUrl: sg.imageUrl, isPackaging: false, priceB2c: sg.priceB2c }, cur + sg.qty);
+      }
+    }
+    const ids = list.map(sg => sg.checkLineId);
+    setReorderSugs(prev => prev.filter(sg => !ids.includes(sg.checkLineId)));
+    if (status === 'added') {
+      reorderPendingRef.current = [...reorderPendingRef.current, ...list.map(sg => ({ id: sg.checkLineId, sku: sg.sku }))];
+    } else {
+      const actions = await import('./actions');
+      await actions.markReorderSuggestionsAction({ checkLineIds: ids, status, byName: orderCreatedByName || null, ...(readOnly ? { shopName } : {}) });
+    }
+    setReorderBusy(false);
+  }
+
   const loadRecentOrders = useCallback(async () => {
     const actions = await import('./actions');
     const res = await actions.getRecentManagerOrdersAction(readOnly ? shopName : undefined);
@@ -671,6 +703,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   useEffect(() => {
     if (tab !== 'order') return;
     loadRecentOrders();
+    loadReorderSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -1196,6 +1229,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     });
     setOrderSubmitting(false);
     if (res.error || !res.orderRef || !res.deliveryDate) { setOrderConfirmMsg(res.error ?? L('Lỗi không rõ', 'Unknown error')); return; }
+    const sentSkus = new Set(orderCart.filter(l => l.qty > 0).map(l => l.sku));
+    const doneReorder = reorderPendingRef.current.filter(x => sentSkus.has(x.sku)).map(x => x.id);
+    reorderPendingRef.current = [];
+    if (doneReorder.length) actions.markReorderSuggestionsAction({ checkLineIds: doneReorder, status: 'added', byName: res.managerName ?? (orderCreatedByName || null), ...(readOnly ? { shopName } : {}) }).catch(() => {});
     setOrderPendingConfirm(false);
     setOrderConfirmPin('');
     setOrderResult({ orderRef: res.orderRef, deliveryDate: res.deliveryDate, deliveryTime: res.deliveryTime, managerName: res.managerName });
@@ -2450,6 +2487,46 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                   )}
                 </div>
+
+                {reorderSugs.length > 0 && (
+                  <div className="rounded-2xl p-4 space-y-2.5" style={{ backgroundColor: '#FFF7F5', border: '1px solid #EFC3BE' }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold" style={{ color: RED }}>
+                          {L(`Lần giao ${fmtDate(reorderSugs[0].deliveryDate)} bị thiếu / hỏng`, `Your ${fmtDate(reorderSugs[0].deliveryDate)} delivery was short / damaged`)}
+                        </div>
+                        <div className="text-[11px]" style={{ color: '#6B7280' }}>{L('Thêm vào đơn này? Lab sẽ không tự thêm nữa.', 'Add them to this order? The Lab no longer adds them for you.')}</div>
+                      </div>
+                      <button onClick={() => applyReorder(reorderSugs, 'added')} disabled={reorderBusy}
+                        className="shrink-0 text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-40" style={{ backgroundColor: GREEN }}>
+                        {L('Thêm tất cả', 'Add all')}
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {reorderSugs.map(sg => (
+                        <div key={sg.checkLineId} className="flex items-center gap-2 bg-white rounded-xl px-2.5 py-2" style={{ border: `1px solid ${BORDER}` }}>
+                          {sg.imageUrl && <img src={thumb(sg.imageUrl, 80)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold text-navy truncate">{sg.name}</div>
+                            <div className="flex gap-1 mt-0.5 text-[10px] font-bold">
+                              {sg.missing > 0 && <span className="rounded px-1.5 py-0.5" style={{ backgroundColor: '#FDECEA', color: RED }}>{L(`Thiếu ${sg.missing}`, `${sg.missing} short`)}</span>}
+                              {sg.damaged > 0 && <span className="rounded px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>{L(`Hỏng ${sg.damaged}`, `${sg.damaged} damaged`)}</span>}
+                            </div>
+                          </div>
+                          <span className="text-sm font-bold shrink-0">×{sg.qty}</span>
+                          <button onClick={() => applyReorder([sg], 'added')} disabled={reorderBusy}
+                            className="shrink-0 text-xs font-bold rounded-lg px-2.5 py-1.5 disabled:opacity-40" style={{ border: `1.5px solid ${GREEN}`, color: GREEN }}>
+                            + {L('Thêm', 'Add')}
+                          </button>
+                          <button onClick={() => applyReorder([sg], 'dismissed')} disabled={reorderBusy}
+                            className="shrink-0 text-[11px] font-semibold underline disabled:opacity-40" style={{ color: '#6B7280' }}>
+                            {L('Bỏ qua', 'Skip')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {!!recentOrders?.length && (
                   <div className="bg-white rounded-2xl p-4 space-y-2" style={{ border: `1px solid ${BORDER}` }}>
