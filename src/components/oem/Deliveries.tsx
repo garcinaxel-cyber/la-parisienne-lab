@@ -143,7 +143,8 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
             const ready = alloc[o.key] ? Object.values(alloc[o.key]).reduce((s, v) => s + v, 0) : null;
             const kg = o.lines.every(l => bySku[l.sku]?.unit === 'kg');
             const u = kg ? 'kg' : L('gói', 'bags');
-            const status = nd ? <Chip tone="red">{L('Không giao', 'Not delivered')}</Chip>
+            const status = o.lines.some(l => l.other) ? <><Chip tone="grey">{L('Khách khác — bán từ kho OEM', 'Other customer — sold from OEM stock')}</Chip>{validated && <Chip tone="green">{L('Đã giao', 'Delivered')}</Chip>}</>
+              : nd ? <Chip tone="red">{L('Không giao', 'Not delivered')}</Chip>
               : validated ? <Chip tone="green">{L('Đã giao', 'Delivered')} · {o.lines[0]?.validated_by_name ?? ''}</Chip>
               : checking ? <Chip tone="blue">{L('Đang kiểm', 'Being checked')}</Chip>
               : ready != null && ready >= planned - 0.0005 ? <Chip tone="green">{L('Đủ hàng', 'Stock ready')}</Chip>
@@ -154,7 +155,7 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
                   {isOpen ? <ChevronDown size={14} style={{ color: FAINT }} /> : <ChevronRight size={14} style={{ color: FAINT }} />}
                   <span className="w-[70px] text-xs" style={{ color: MUTED }}>{dmy(o.date)}</span>
                   <span className="font-bold">{o.ref}</span>
-                  <span className="text-xs flex-1 min-w-[120px] truncate" style={{ color: MUTED }}>{clientOf(o)}{o.customer && o.customer !== clientOf(o) ? ` · ${o.customer}` : ''}</span>
+                  <span className="text-xs flex-1 min-w-[120px] truncate" style={{ color: MUTED }}>{o.lines.some(l => l.other) ? o.customer : <>{clientOf(o)}{o.customer && o.customer !== clientOf(o) ? ` · ${o.customer}` : ''}</>}</span>
                   <span className="text-xs" style={{ color: MUTED }}>{L('Kế hoạch', 'Planned')} <b style={{ color: '#111827' }}>{fmt(planned, kg ? 1 : 0)}</b></span>
                   <span className="text-xs" style={{ color: MUTED }}>{validated ? L('Đã giao', 'Delivered') : L('Sẵn', 'Ready')} <b style={{ color: '#111827' }}>{fmt(validated ? delivered : (ready ?? 0), kg ? 1 : 0)}</b> {u}</span>
                   {status}{odooOk && <Chip tone="green">Odoo ✓</Chip>}
@@ -178,7 +179,7 @@ export default function Deliveries({ deliveries, items, d, batches, showCheckLin
                         );
                       })}
                     </div>
-                    {reload && !nd && <OrderCartons orderRef={o.ref} deliveryDate={o.date} lines={o.lines} items={items} prod={prod} notes={notes} cartons={cartons} formats={formats} canPack={showCheckLink} canManage={canManage} reload={reload} L={L} />}
+                    {reload && !nd && !o.lines.some(l => l.other) && <OrderCartons orderRef={o.ref} deliveryDate={o.date} lines={o.lines} items={items} prod={prod} notes={notes} cartons={cartons} formats={formats} canPack={showCheckLink} canManage={canManage} reload={reload} L={L} />}
                   </div>
                 )}
               </div>

@@ -6,7 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import { allocateBaked, buildBatches, dOr, MORE_KEY, NOTE_KEY, noteText, PLAN_COLS, planKg, splitPlan, type PlanRow } from '@/components/oem/plan';
 import { setProductionOrderAction, fixProductionAction } from '@/lib/oem-actions';
-import { MM_CLIENT, type Item } from '@/components/oem/model';
+import { MM_CLIENT, CLIENT_INFO_KEY, markOtherCustomers, type Item } from '@/components/oem/model';
 
 // Station side of the OEM Orders tracker (Axel, 2026-09-25: "Hung devrait avoir accès qu'à ça").
 // Team Hung only needs one thing: per product, kg baked vs kg to bake. Packaging, deliveries and
@@ -59,13 +59,15 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       supabase.from('lab_mm_packaging_log').select('kind, sku, group_key, qty').in('kind', ['scrap_bulk', 'scrap_finished']),
       supabase.from('lab_mm_delivery_plan').select(PLAN_COLS).order('seq'),
       supabase.rpc('lab_mm_deliveries'),
-      supabase.from('lab_mm_settings').select('key, value').or(`key.like.${NOTE_KEY}%,key.like.${MORE_KEY}%`),
+      supabase.from('lab_mm_settings').select('key, value').or(`key.like.${NOTE_KEY}%,key.like.${MORE_KEY}%,key.like.${CLIENT_INFO_KEY}%`),
     ]);
     const st = (nt.data ?? []) as any[];
     setNotes(Object.fromEntries(st.filter(r => String(r.key).startsWith(NOTE_KEY)).map(r => [String(r.key).slice(NOTE_KEY.length), r.value ?? ''])));
     setMore(Object.fromEntries(st.filter(r => String(r.key).startsWith(MORE_KEY)).map(r => [String(r.key).slice(MORE_KEY.length), r.value ?? ''])));
     const dq: Record<string, number> = {};
-    for (const x of (dl.data ?? []) as any[]) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
+    // sales of OEM stock to other customers never count as delivered to the client (Axel 2026-10-15)
+    const dls = markOtherCustomers((dl.data ?? []) as any[], (it.data ?? []) as any[], Object.fromEntries(st.map(r => [r.key, r.value])));
+    for (const x of dls as any[]) if (!x.other && x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) dq[x.sku] = (dq[x.sku] ?? 0) + Number(x.qty_checked);
     setDelivered(dq);
     setAllItems(((it.data ?? []) as any[]).map(i => ({ ...i, unit_weight_g: Number(i.unit_weight_g), qty_ordered: Number(i.qty_ordered) })) as Item[]);
     const sp = splitPlan(dp.data); setPlan(sp.active); setCancelledPlan(sp.cancelled);

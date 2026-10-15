@@ -26,6 +26,7 @@ export type Delivery = {
   qty_planned: number | null; qty_expected: number | null; qty_checked: number | null; line_status: string | null;
   order_status: string | null; validated_at: string | null; validated_by_name: string | null;
   not_delivered: boolean; odoo_push_status: string | null; odoo_validated_at: string | null;
+  other?: boolean; // sold to another customer (not the OEM client): leaves the stock, never counts as delivered to the client
 };
 export type FgCount = { id: string; count_date: string; sku: string; qty_counted: number; qty_theoretical: number | null; gap: number | null; status: 'applied' | 'pending_admin' | 'rejected'; created_at: string; created_by_name: string | null; decided_by_name: string | null };
 export type Ingredient = { code: string; name: string; unit: string; sort_order: number };
@@ -58,7 +59,8 @@ export type Derived = {
   scrapBulkKg: Record<string, number>;     // per group
   scrapFinished: Record<string, number>;   // per sku (faulty bags + negative inventory gaps)
   foundQty: Record<string, number>;        // per sku (unexplained surplus accepted by admin)
-  deliveredQty: Record<string, number>;    // per sku (validated delivery checks)
+  deliveredQty: Record<string, number>;    // per sku (validated delivery checks, OEM client only)
+  otherSoldQty: Record<string, number>;    // per sku (validated sales of OEM stock to other customers)
   bulkAvail: Record<string, number>;       // per group — received − packed − broken bulk
   fgTheo: Record<string, number>;          // per sku — packed + found − delivered − faulty/lost
   targetKg: Record<string, number>;        // per group — initial target from the order
@@ -68,7 +70,7 @@ export type Derived = {
 
 export function derive(items: Item[], prod: ProdLog[], pack: PackLog[], deliveries: Delivery[]): Derived {
   const bySku: Record<string, Item> = {}; for (const i of items) bySku[i.sku] = i;
-  const d: Derived = { producedKg: {}, pendingKg: {}, declaredKg: {}, packedQty: {}, packedKg: {}, scrapBulkKg: {}, scrapFinished: {}, foundQty: {}, deliveredQty: {}, bulkAvail: {}, fgTheo: {}, targetKg: {}, remakeKg: {}, toProduceKg: {} };
+  const d: Derived = { producedKg: {}, pendingKg: {}, declaredKg: {}, packedQty: {}, packedKg: {}, scrapBulkKg: {}, scrapFinished: {}, foundQty: {}, deliveredQty: {}, otherSoldQty: {}, bulkAvail: {}, fgTheo: {}, targetKg: {}, remakeKg: {}, toProduceKg: {} };
   const add = (m: Record<string, number>, k: string, v: number) => { m[k] = (m[k] ?? 0) + v; };
   for (const i of items) add(d.targetKg, i.group_key, itemKg(i, i.qty_ordered));
   for (const l of prod) {
@@ -83,14 +85,33 @@ export function derive(items: Item[], prod: ProdLog[], pack: PackLog[], deliveri
     else if (p.kind === 'scrap_finished') { add(d.scrapFinished, p.sku, q); if (it) add(d.remakeKg, p.group_key, itemKg(it, q)); }
     else if (p.kind === 'found') add(d.foundQty, p.sku, q);
   }
-  for (const x of deliveries) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) add(d.deliveredQty, x.sku, Number(x.qty_checked));
+  for (const x of deliveries) if (x.order_status === 'validated' && !x.not_delivered && x.qty_checked != null) add(x.other ? d.otherSoldQty : d.deliveredQty, x.sku, Number(x.qty_checked));
   const groups = new Set([...items.map(i => i.group_key), ...Object.keys(d.producedKg), ...Object.keys(d.pendingKg)]);
   groups.forEach(g => {
     d.bulkAvail[g] = (d.producedKg[g] ?? 0) - (d.packedKg[g] ?? 0) - (d.scrapBulkKg[g] ?? 0);
     d.toProduceKg[g] = (d.targetKg[g] ?? 0) + (d.remakeKg[g] ?? 0);
   });
-  for (const i of items) d.fgTheo[i.sku] = (d.packedQty[i.sku] ?? 0) + (d.foundQty[i.sku] ?? 0) - (d.deliveredQty[i.sku] ?? 0) - (d.scrapFinished[i.sku] ?? 0);
+  for (const i of items) d.fgTheo[i.sku] = (d.packedQty[i.sku] ?? 0) + (d.foundQty[i.sku] ?? 0) - (d.deliveredQty[i.sku] ?? 0) - (d.otherSoldQty[i.sku] ?? 0) - (d.scrapFinished[i.sku] ?? 0);
   return d;
+}
+
+// Orders that are not the OEM client's (Axel 2026-10-15: S04307 sold a little Maison Mooncake stock to
+// another shop). lab_mm_settings client_info:<client>.customers = the client's Odoo customer names;
+// an order to anyone else is flagged other (no carton labels, not counted as delivered to the client).
+export const CLIENT_INFO_KEY = 'client_info:';
+const normCust = (s: string | null | undefined) => String(s ?? '').normalize('NFC').toUpperCase().replace(/\s+/g, ' ').trim();
+export function markOtherCustomers<T extends { sku: string; customer: string | null }>(rows: T[], items: { sku: string; client_name: string | null }[], settings: Record<string, string>): (T & { other: boolean })[] {
+  const clientOf: Record<string, string> = {}; for (const i of items) clientOf[i.sku] = i.client_name || MM_CLIENT;
+  const lists: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(settings)) if (k.startsWith(CLIENT_INFO_KEY)) {
+    try { const c = JSON.parse(v); if (Array.isArray(c?.customers)) lists[k.slice(CLIENT_INFO_KEY.length)] = c.customers.map(normCust).filter(Boolean); } catch { /* ignore */ }
+  }
+  return rows.map(r => {
+    const list = lists[clientOf[r.sku] ?? MM_CLIENT];
+    const c = normCust(r.customer);
+    const other = !!list?.length && !!c && !list.some(n => c.includes(n) || n.includes(c));
+    return { ...r, other };
+  });
 }
 
 export type Group = { key: string; name: string; title: string; skus: string[]; items: Item[] };

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Factory, Package, Truck, Boxes, Settings2, Loader2, RefreshCw, History, AlertTriangle, ChevronRight } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
-import { byClient, derive, dmy, fmt, itemKg, localToday, mondayOf, GREEN, GOLD, FAINT, MUTED, LINE, type Item, type ProdLog, type PackLog, type Hist, type Delivery, type FgCount, type Ingredient, type Usage, type RmCount } from './model';
+import { byClient, derive, markOtherCustomers, dmy, fmt, itemKg, localToday, mondayOf, GREEN, GOLD, FAINT, MUTED, LINE, type Item, type ProdLog, type PackLog, type Hist, type Delivery, type FgCount, type Ingredient, type Usage, type RmCount } from './model';
 import Overview from './Overview';
 import Packaging from './Packaging';
 import Deliveries from './Deliveries';
@@ -87,7 +87,8 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
     setProd((pl.data ?? []).map((r: any) => ({ ...r, weight_kg: Number(r.weight_kg), received_kg: r.received_kg == null ? null : Number(r.received_kg) })));
     setPack((pk.data ?? []).map((r: any) => ({ ...r, qty: Number(r.qty) })));
     setHist((hs.data ?? []) as Hist[]);
-    setDeliveries((dl.data ?? []) as Delivery[]);
+    const stMap = Object.fromEntries((st.data ?? []).map((r: any) => [r.key, r.value]));
+    setDeliveries(markOtherCustomers((dl.data ?? []) as Delivery[], (it.data ?? []) as any[], stMap));
     setFg((fc.data ?? []).map((r: any) => ({ ...r, qty_counted: Number(r.qty_counted), qty_theoretical: r.qty_theoretical == null ? null : Number(r.qty_theoretical), gap: r.gap == null ? null : Number(r.gap) })));
     setIngredients((ing.data ?? []) as Ingredient[]);
     setUsage((us.data ?? []).map((r: any) => ({ ...r, qty_per_kg: Number(r.qty_per_kg) })));
@@ -127,7 +128,7 @@ export default function OemOrdersView({ role, userId, userName }: { role: string
       : L(`${fmt(toPack.reduce((s, x) => s + x.kg, 0), 1)} kg bán TP chờ gói (${toPack.length} sản phẩm)`, `${fmt(toPack.reduce((s, x) => s + x.kg, 0), 1)} kg baked, waiting to be packed (${toPack.length} products)`) });
     // next delivery not covered by the ready stock
     const today = localToday();
-    const upcoming = deliveries.filter(x => cSkus.has(x.sku) && x.delivery_date >= today && x.order_status !== 'validated' && !x.not_delivered);
+    const upcoming = deliveries.filter(x => !x.other && cSkus.has(x.sku) && x.delivery_date >= today && x.order_status !== 'validated' && !x.not_delivered);
     if (upcoming.length) {
       const first = upcoming.reduce((a, b) => (a.delivery_date <= b.delivery_date ? a : b));
       const lines = upcoming.filter(x => x.order_ref === first.order_ref && x.delivery_date === first.delivery_date);
