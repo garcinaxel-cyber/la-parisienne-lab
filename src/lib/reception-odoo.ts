@@ -244,6 +244,40 @@ async function recordName(model: string, id: number | undefined): Promise<string
 
 const NO_MAIL = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
 
+// Return (stock.return.picking) of a VALIDATED delivery — the only move Odoo nets out of the REP /
+// SO "quantity sent" (checked live on REP/2026/01854: OUT 10 − return 5 → line sent 5, request Done).
+// Returns go back to the delivery's source (LAB/Stock). toRefund only matters for sales orders.
+async function returnFromDelivery(deliveryId: number, qtyByProduct: Map<number, number>, toRefund: boolean): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  const dMoves = await odooExecute<any[]>('stock.move', 'search_read', [[['picking_id', '=', deliveryId], ['state', '=', 'done']]], { fields: ['id', 'product_id', 'quantity'] });
+  const wizId = await odooExecuteWrite<number>('stock.return.picking', 'create', [{ picking_id: deliveryId }], { context: { active_id: deliveryId, active_ids: [deliveryId], active_model: 'stock.picking', ...NO_MAIL } });
+  const wiz = await odooExecuteWrite<any[]>('stock.return.picking', 'read', [[wizId]], { fields: ['product_return_moves'] });
+  const rLines = wiz[0]?.product_return_moves?.length ? await odooExecuteWrite<any[]>('stock.return.picking.line', 'read', [wiz[0].product_return_moves], { fields: ['id', 'product_id', 'move_id'] }) : [];
+  const remaining = new Map(qtyByProduct);
+  const cmds: any[] = [];
+  for (const rl of rLines) {
+    const pid = rl.product_id?.[0];
+    const want = remaining.get(pid) ?? 0;
+    const mv = dMoves.find(m => m.id === rl.move_id?.[0]);
+    const q = Math.min(want, Number(mv?.quantity ?? want));
+    remaining.set(pid, want - q);
+    cmds.push([1, rl.id, { quantity: q, to_refund: toRefund && q > 0 }]);
+  }
+  const short = Array.from(remaining.entries()).filter(([, q]) => q > 0);
+  if (short.length) return { ok: false, error: `Return: product(s) ${short.map(([p]) => p).join(', ')} not on the delivery` };
+  await odooExecuteWrite('stock.return.picking', 'write', [[wizId], { product_return_moves: cmds }], { context: NO_MAIL });
+  let res: any;
+  try { res = await odooExecuteWrite<any>('stock.return.picking', 'action_create_returns', [[wizId]], { context: NO_MAIL }); }
+  catch { res = await odooExecuteWrite<any>('stock.return.picking', 'create_returns', [[wizId]], { context: NO_MAIL }); }
+  const retId: number | undefined = res?.res_id;
+  if (!retId) return { ok: false, error: `Return not created: ${JSON.stringify(res)}` };
+  const rMoves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', retId]]], { fields: ['id', 'product_uom_qty'] });
+  for (const m of rMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
+  const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[retId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
+  const [ret] = await odooExecuteWrite<any[]>('stock.picking', 'read', [[retId]], { fields: ['name'] });
+  if (v !== true) return { ok: false, error: `Return ${ret?.name ?? retId} created but not validated: ${JSON.stringify(v)}` };
+  return { ok: true, name: ret?.name ?? String(retId) };
+}
+
 export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[]): Promise<SoFinalizeResult> {
   const live = inValidationLive();
   const done: string[] = [];
@@ -288,31 +322,9 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
 
     // 1. Return
     if (toReturn.size) {
-      const wizId = await odooExecuteWrite<number>('stock.return.picking', 'create', [{ picking_id: delivery.id }], { context: { active_id: delivery.id, active_ids: [delivery.id], active_model: 'stock.picking', ...NO_MAIL } });
-      const wiz = await odooExecuteWrite<any[]>('stock.return.picking', 'read', [[wizId]], { fields: ['product_return_moves'] });
-      const rLines = wiz[0]?.product_return_moves?.length ? await odooExecuteWrite<any[]>('stock.return.picking.line', 'read', [wiz[0].product_return_moves], { fields: ['id', 'product_id', 'move_id'] }) : [];
-      const remaining = new Map(toReturn);
-      const cmds: any[] = [];
-      for (const rl of rLines) {
-        const pid = rl.product_id?.[0];
-        const want = remaining.get(pid) ?? 0;
-        const mv = dMoves.find(m => m.id === rl.move_id?.[0]);
-        const q = Math.min(want, Number(mv?.quantity ?? want));
-        remaining.set(pid, want - q);
-        cmds.push([1, rl.id, { quantity: q, to_refund: q > 0 }]);
-      }
-      await odooExecuteWrite('stock.return.picking', 'write', [[wizId], { product_return_moves: cmds }], { context: NO_MAIL });
-      let res: any;
-      try { res = await odooExecuteWrite<any>('stock.return.picking', 'action_create_returns', [[wizId]], { context: NO_MAIL }); }
-      catch { res = await odooExecuteWrite<any>('stock.return.picking', 'create_returns', [[wizId]], { context: NO_MAIL }); }
-      const retId: number | undefined = res?.res_id;
-      if (!retId) return { ok: false, live, error: `Return not created: ${JSON.stringify(res)}`, done };
-      const rMoves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', retId]]], { fields: ['id', 'product_uom_qty'] });
-      for (const m of rMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
-      const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[retId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
-      if (v !== true) return { ok: false, live, error: `Return created (id ${retId}) but not validated: ${JSON.stringify(v)}`, done };
-      const [ret] = await odooExecuteWrite<any[]>('stock.picking', 'read', [[retId]], { fields: ['name'] });
-      done.push(`return ${ret?.name ?? retId}`);
+      const r = await returnFromDelivery(delivery.id, toReturn, true);
+      if (!r.ok) return { ok: false, live, error: r.error, done };
+      done.push(`return ${r.name}`);
     }
     // 2. Scrap (Lab loss)
     if (toScrap.size) {
@@ -438,31 +450,37 @@ export async function finalizeReplenishmentGaps(
         const p = prodBySku.get(sku)!; return { pid: p.id as number, uom: p.uom_id?.[0] as number, code: sku, qty };
       });
     };
-    const backToLab = agg(['transit_to_lab', 'transit_to_lab_scrap']);
-    const scrapLab = agg(['transit_to_lab_scrap']);
-    const scrapTransit = agg(['scrap_transit']);
+    // Axel 2026-10-15: everything that comes back from the transit is a RETURN of the validated
+    // LAB/OUT (not a free internal transfer), so the REP's "sent" drops and the request can close.
+    // Lost in transport = returned + scrapped at LAB too, for the same reason.
+    const backToLab = agg(['transit_to_lab', 'transit_to_lab_scrap', 'scrap_transit']);
+    const scrapLab = agg(['transit_to_lab_scrap', 'scrap_transit']);
     const toShop = agg(['lab_to_shop']);
     if (!live) return { ok: true, live, done: [...done,
-      ...backToLab.map(i => `transit → LAB ${i.code} ×${i.qty}`), ...scrapLab.map(i => `scrap LAB ${i.code} ×${i.qty}`),
-      ...scrapTransit.map(i => `scrap transit ${i.code} ×${i.qty}`), ...toShop.map(i => `LAB → shop ${i.code} ×${i.qty}`)] };
+      ...backToLab.map(i => `return of LAB/OUT ${i.code} ×${i.qty}`), ...scrapLab.map(i => `scrap LAB ${i.code} ×${i.qty}`),
+      ...toShop.map(i => `LAB → shop ${i.code} ×${i.qty}`)] };
 
     const types = await odooExecute<any[]>('stock.picking.type', 'search_read', [[['code', '=', 'internal'], ['default_location_src_id', '=', LAB_STOCK_LOCATION_ID]]], { fields: ['id'], limit: 1 });
     const typeId: number = types[0]?.id ?? 7;
     const { createScrapAtLocation } = await import('@/lib/odoo-scrap');
     if (backToLab.length) {
-      const r = await internalTransfer(typeId, TRANSIT_LOCATION_ID, LAB_STOCK_LOCATION_ID, `${orderRef} — écart réception (retour Lab)`, backToLab);
+      const outs = await odooExecute<any[]>('stock.picking', 'search_read',
+        [[['origin', '=', orderRef], ['location_id', '=', LAB_STOCK_LOCATION_ID], ['location_dest_id', '=', TRANSIT_LOCATION_ID], ['state', '=', 'done']]], { fields: ['id', 'name'] });
+      if (outs.length !== 1) return { ok: false, live, error: outs.length ? 'Several validated LAB/OUT for this order — return by hand' : 'No validated LAB/OUT for this order', done };
+      // The units must still be in transit (nothing else moved them), otherwise stop before writing.
+      const quants = await odooExecute<any[]>('stock.quant', 'search_read', [[['location_id', '=', TRANSIT_LOCATION_ID], ['product_id', 'in', backToLab.map(i => i.pid)]]], { fields: ['product_id', 'quantity'] });
+      for (const i of backToLab) {
+        const inTransit = quants.filter(q => q.product_id?.[0] === i.pid).reduce((t, q) => t + Number(q.quantity), 0);
+        if (inTransit < i.qty) return { ok: false, live, error: `${i.code}: only ${inTransit} in transit, ${i.qty} to return — check Odoo`, done };
+      }
+      const r = await returnFromDelivery(outs[0].id, new Map(backToLab.map(i => [i.pid, i.qty])), false);
       if (!r.ok) return { ok: false, live, error: r.error, done };
-      done.push(`transit → LAB ${r.name}`);
+      done.push(`return ${r.name} (of ${outs[0].name})`);
     }
     for (const i of scrapLab) {
       const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — hỏng khi giao (lỗi Lab)` });
       if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
       done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} · ${i.code} ×${i.qty}`);
-    }
-    for (const i of scrapTransit) {
-      const r = await createScrapAtLocation(TRANSIT_LOCATION_ID, { productId: i.pid, uomId: i.uom, qty: i.qty, reasonTagIds: [], origin: `${orderRef} — mất khi vận chuyển` });
-      if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
-      done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} (transit) · ${i.code} ×${i.qty}`);
     }
     if (toShop.length) {
       if (!shopStock) return { ok: false, live, error: 'Shop stock location unknown', done };

@@ -118,9 +118,9 @@ const ACTION_LABEL: Record<string, { vi: string; fr: string }> = {
   return: { vi: 'trả về Lab', fr: 'retour Lab' },
   return_scrap: { vi: 'trả về + hao hụt Lab', fr: 'retour + perte Lab' },
   extra: { vi: 'giao thêm', fr: 'livraison en plus' },
-  transit_to_lab: { vi: 'transit → kho Lab', fr: 'transit → stock Lab' },
-  transit_to_lab_scrap: { vi: 'về Lab + hao hụt Lab', fr: 'retour Lab + perte Lab' },
-  scrap_transit: { vi: 'hao hụt vận chuyển', fr: 'perte transport' },
+  transit_to_lab: { vi: 'trả về Lab (return)', fr: 'retour au Lab (return)' },
+  transit_to_lab_scrap: { vi: 'trả về Lab + hao hụt Lab', fr: 'retour + perte Lab' },
+  scrap_transit: { vi: 'trả về Lab + hao hụt vận chuyển', fr: 'retour + perte transport' },
   lab_to_shop: { vi: 'kho Lab → kho shop', fr: 'stock Lab → stock shop' },
 };
 function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: string; vi: boolean; onDone: () => void; canSend: boolean }) {
@@ -192,7 +192,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
       {!st.ready && !st.sent && <div style={{ color: '#6B7280' }}>{vi ? 'Chọn nguyên nhân cho từng dòng trước.' : 'Choisir la cause de chaque ligne d’abord.'}</div>}
       <div style={{ color: '#6B7280' }}>{st.sourceType === 'sales_order'
         ? (vi ? 'Odoo: 1 phiếu trả hàng cho cả đơn + scrap Lab + giao thêm; hoá đơn về nháp, sửa số lượng (kế toán xác nhận lại).' : 'Odoo : 1 retour pour toute la commande + scrap Lab + livraison en plus ; facture repassée en brouillon, quantités ajustées (la compta revalide).')
-        : (vi ? 'Odoo: nhập kho shop số hàng tốt + chuyển transit → Lab / scrap / Lab → shop.' : 'Odoo : réception shop au bon nombre + transferts transit → Lab / scrap / Lab → shop.')}</div>
+        : (vi ? 'Odoo: nhập kho shop số hàng tốt + trả hàng (return) trên phiếu LAB/OUT + scrap / Lab → shop.' : 'Odoo : réception shop au bon nombre + retour sur la livraison LAB/OUT + scrap / Lab → shop.')}</div>
     </div>
   );
 }
