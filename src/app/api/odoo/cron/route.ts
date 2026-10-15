@@ -4,6 +4,7 @@ import { odooConfigured, odooAuthHealth } from '@/lib/odoo';
 import { sendAdminPush } from '@/lib/push-notify';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
+import { retryPendingShopIns } from '@/lib/reception-in-retry';
 
 // Lab-local (Asia/Ho_Chi_Minh) rolling window for the packaging sync — matches the
 // delivery-check feature's own scope (today + tomorrow only, kept tight for cost).
@@ -61,7 +62,13 @@ export async function GET(req: Request) {
     try { packaging = await syncOrderPackagingLines(supabase as any, labUpcomingDates(2)); }
     catch (e: any) { packaging = { ok: false, error: String(e?.message ?? e) }; }
 
-    return NextResponse.json({ ...result, packaging, odooAuth: auth ? { read: auth.read, write: auth.write } : null });
+    // Best-effort — retry the shop IN of conforming receptions confirmed before the Lab's OUT
+    // existed / was validated in Odoo (see reception-in-retry.ts).
+    let shopInRetry: any = null;
+    try { shopInRetry = await retryPendingShopIns(supabase as any); }
+    catch (e: any) { shopInRetry = { ok: false, error: String(e?.message ?? e) }; console.error('retryPendingShopIns failed:', e); }
+
+    return NextResponse.json({ ...result, packaging, shopInRetry, odooAuth: auth ? { read: auth.read, write: auth.write } : null });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Cron sync failed' }, { status: 502 });
   }

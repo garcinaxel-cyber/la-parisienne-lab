@@ -21,7 +21,7 @@ export type GapStatus = 'open' | 'waiting_shop' | 'waiting_return' | 'closed';
 export const GAP_DEADLINE_HOURS = 48;
 export const DAMAGED_RETURN_MAX_DELIVERIES = 2;
 const WINDOW_DAYS = 14;
-const GAPS_FROM = '2026-10-14'; // Axel 14/10: 13/10 deliveries were before the process existed — handled by hand
+export const GAPS_FROM = '2026-10-14'; // Axel 14/10: 13/10 deliveries were before the process existed — handled by hand
 
 export type DeliveryGap = {
   id: string | null; // lab_delivery_gaps row id once persisted
