@@ -6,6 +6,7 @@ import { getOdooDoneExternalMap } from '@/lib/late-delivery-odoo-cache';
 import { fetchOrderDeliveryDestinationsBatch, normShopName } from '@/lib/delivery-check';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { listDeliveryGaps } from '@/lib/reception-gaps';
+import { loadOrderReceptions, isPortalShop, type OrderReception } from '@/lib/reception-tracker';
 
 export const revalidate = 0;
 
@@ -208,10 +209,26 @@ export default async function DeliveryCheckPage() {
     const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const { gaps } = await listDeliveryGaps(sb as any);
     deliveryGapsCount = gaps.filter(g => (g.kind !== 'damaged' && g.status === 'open') || g.returnOverdue).length;
+    // + products received that were on no slip, still to settle (Axel, 2026-10-16).
+    const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
+    deliveryGapsCount += offslipOpen ?? 0;
   } catch (e) { console.error('delivery gaps count failed:', e); }
+
+  // Shop reception tracker (Axel, 2026-10-16) — today + the late days (never tomorrow: nothing
+  // has left yet). Read only, never blocks the page.
+  let receptions: OrderReception[] = [];
+  try {
+    const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+    receptions = await loadOrderReceptions(sb as any, dateWindow.filter(d => d <= today));
+  } catch (e) { console.error('reception tracker failed:', e); }
+  // Today's portal-shop orders not sent yet (not counted, shown as "+N not sent yet").
+  const notSentToday = ordersFinal.filter(o => o.delivery_date === today && isPortalShop(o.shop_name)
+    && o.status !== 'validated' && !o.marked_not_delivered).length;
 
   return (
     <DeliveryCheckIndexView
+      receptions={receptions}
+      notSentToday={notSentToday}
       deliveryGapsCount={deliveryGapsCount}
       today={today}
       tomorrow={tomorrow}

@@ -494,3 +494,47 @@ export async function finalizeReplenishmentGaps(
     return { ok: false, live, error: e?.message ?? String(e), done };
   }
 }
+
+// ── 6. Off-slip products (Axel, 2026-10-16) ────────────────────────────────────────────────────
+// A shop received units that were on NO delivery slip. The shop keeps them; Odoo must show them
+// in its stock. When they were a customer's sales order delivered to the wrong place, the
+// customer is not charged for them: return on that order's delivery (back to LAB/Stock) + the
+// invoice back to draft with the quantity lowered — the same finalizeSalesOrderGaps path as the
+// Moon Flower gaps — then LAB → shop. Otherwise only LAB → shop.
+export async function finalizeOffSlip(input: {
+  shopName: string; sku: string; qty: number; sourceSoRef: string | null; origin: string;
+}): Promise<SoFinalizeResult> {
+  const live = inValidationLive();
+  const done: string[] = [];
+  if (!odooWriteConfigured()) return { ok: false, live, error: 'Odoo write account not configured', done };
+  try {
+    const { SHOP_CONFIG } = await import('@/lib/shops');
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    const cfgKey = Object.keys(SHOP_CONFIG).find(k => norm(k) === norm(input.shopName));
+    const whCode = cfgKey ? SHOP_CONFIG[cfgKey].warehouseCode : undefined;
+    if (!whCode) return { ok: false, live, error: `${input.shopName} has no Odoo warehouse — settle by hand`, done };
+    const whs = await odooExecuteWrite<any[]>('stock.warehouse', 'search_read', [[['code', '=', whCode]]], { fields: ['id', 'lot_stock_id'] });
+    const shopStock: number | undefined = whs[0]?.lot_stock_id?.[0];
+    if (!shopStock) return { ok: false, live, error: `Warehouse ${whCode} not found in Odoo`, done };
+    const prods = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'default_code', 'uom_id'] });
+    const p = prods[0];
+    if (!p) return { ok: false, live, error: `Product ${input.sku} not found in Odoo`, done };
+
+    // 1. Customer order: not charged for these units (return + invoice draft, lowered).
+    if (input.sourceSoRef) {
+      const r = await finalizeSalesOrderGaps(input.sourceSoRef, [{ sku: input.sku, qty: input.qty, action: 'return' }]);
+      done.push(...r.done.map(d => `${input.sourceSoRef}: ${d}`));
+      if (!r.ok) return { ok: false, live, error: `${input.sourceSoRef}: ${r.error}`, done };
+    }
+    // 2. The shop keeps them: LAB/Stock → shop stock.
+    if (!live) { done.push(`LAB → ${whCode} ${input.sku} ×${input.qty}`); return { ok: true, live, done }; }
+    const types = await odooExecuteWrite<any[]>('stock.picking.type', 'search_read', [[['code', '=', 'internal'], ['default_location_src_id', '=', LAB_STOCK_LOCATION_ID]]], { fields: ['id'], limit: 1 });
+    const t = await internalTransfer(types[0]?.id ?? 7, LAB_STOCK_LOCATION_ID, shopStock, input.origin,
+      [{ pid: p.id, uom: p.uom_id?.[0], code: input.sku, qty: input.qty }]);
+    if (!t.ok) return { ok: false, live, error: t.error, done };
+    done.push(`LAB → ${whCode} ${t.name} · ${input.sku} ×${input.qty}`);
+    return { ok: true, live, done };
+  } catch (e: any) {
+    return { ok: false, live, error: e?.message ?? String(e), done };
+  }
+}

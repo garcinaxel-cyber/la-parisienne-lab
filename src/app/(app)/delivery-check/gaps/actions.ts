@@ -121,3 +121,34 @@ export async function sendOrderToOdooAction(deliveryOrderId: string): Promise<{ 
   revalidatePath('/delivery-check/gaps');
   return res;
 }
+
+// ── Products received that were on NO slip (Axel, 2026-10-16) ──────────────────────────────────
+export type OffslipRow = import('@/lib/offslip').OffslipItem & { suggestions: import('@/lib/offslip').OffslipSuggestion[] };
+
+export async function getOffslipItemsAction(): Promise<{ items?: OffslipRow[]; canSendOdoo?: boolean; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { listOffslipItems, suggestSourceOrders, offslipReady } = await import('@/lib/offslip');
+  if (!(await offslipReady(sb as any))) return { items: [], canSendOdoo: ODOO_SEND_ROLES.includes(auth.role) };
+  const items = await listOffslipItems(sb as any, { days: 14 });
+  const rows: OffslipRow[] = [];
+  for (const i of items) rows.push({ ...i, suggestions: i.status === 'open' ? await suggestSourceOrders(sb as any, i) : [] });
+  return { items: rows, canSendOdoo: ODOO_SEND_ROLES.includes(auth.role) };
+}
+
+export async function settleOffslipAction(input: { id: string; cause: import('@/lib/offslip').OffslipCause; sourceOrderRef: string | null }): Promise<{ ok?: boolean; done?: string[]; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  // Same rule as the other gaps: anything that writes to Odoo = lab manager / admin only.
+  if (input.cause !== 'shop_error' && !ODOO_SEND_ROLES.includes(auth.role)) return { error: 'Only the Lab manager or an admin can send to Odoo' };
+  if (!['customer_order', 'lab_extra', 'shop_error'].includes(input.cause)) return { error: 'Bad cause' };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { settleOffslip } = await import('@/lib/offslip');
+  const res = await settleOffslip(sb as any, { id: input.id, cause: input.cause, sourceOrderRef: input.sourceOrderRef?.trim() || null, byName: auth.name });
+  revalidatePath('/delivery-check/gaps');
+  revalidatePath('/delivery-check');
+  return res;
+}

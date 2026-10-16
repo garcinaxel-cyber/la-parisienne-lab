@@ -1,4 +1,5 @@
 'use client';
+import OffslipBlock from './OffslipBlock';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store, Lock } from 'lucide-react';
@@ -1709,6 +1710,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     );
                   })}
                 </div>
+                {/* Products received that were on no slip (Axel, 2026-10-16). */}
+                {day !== 'tomorrow' && (
+                  <OffslipBlock deliveryOrderId={o.header.id} orderRef={o.header.order_ref} shopName={shopName} readOnly={readOnly}
+                    byName={name} canDeclare={canConfirm} L={L} onZoom={u => setZoomImage(u)} />
+                )}
               </div>
                 );
               })}

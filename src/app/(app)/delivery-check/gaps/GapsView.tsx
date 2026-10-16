@@ -197,7 +197,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
   );
 }
 
-export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean }) {
+export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -283,6 +283,9 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
           {schemaReady ? '' : (vi ? 'Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật) — các lệch được tính từ xác nhận của shop.' : 'Décisions pas encore enregistrables (ajout en base non appliqué) — écarts calculés depuis les réceptions shop.')}
         </span>
       </div>
+
+      {/* Products received that were on no slip (Axel, 2026-10-16) — see OffslipPanel. */}
+      {extra}
 
       {overdueCount > 0 && (
         <div className="rounded-xl px-4 py-2.5 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>

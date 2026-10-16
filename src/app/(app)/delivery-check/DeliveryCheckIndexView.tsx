@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin, ArrowRightLeft } from 'lucide-react';
+import { ClipboardCheck, ChevronRight, CircleAlert, CheckCircle2, CheckCheck, LayoutGrid, Printer, AlertTriangle, ChevronDown, CalendarDays, History, MapPin, ArrowRightLeft, PackageCheck, Clock } from 'lucide-react';
+import type { OrderReception } from '@/lib/reception-tracker';
 import { isOrderDone } from '@/lib/delivery-order-status';
 
 type OrderRow = {
@@ -45,13 +46,39 @@ const GAP_REASON_LABEL: Record<string, { vi: string; fr: string }> = {
   unmatched_sku_or_zero_qty: { vi: 'SKU không khớp hoặc số lượng = 0', fr: 'SKU non reconnu ou quantité = 0' },
 };
 
-export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps, dateAlerts, deliveryGapsCount = 0 }: {
+export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendingCakesCount, syncGaps, dateAlerts, deliveryGapsCount = 0, receptions = [], notSentToday = 0 }: {
   today: string; tomorrow: string; orders: OrderRow[]; pendingCakesCount: number; syncGaps: SyncGap[]; dateAlerts: DateAlert[]; deliveryGapsCount?: number;
+  receptions?: OrderReception[]; notSentToday?: number;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const [gapsOpen, setGapsOpen] = useState(false);
   const [dateAlertsOpen, setDateAlertsOpen] = useState(false);
+  // Shop reception tracker (Axel, 2026-10-16): which shops confirmed today's deliveries.
+  const [recOpen, setRecOpen] = useState(false);
+  const [recShop, setRecShop] = useState<string | null>(null);
+  const recByKey = new Map(receptions.map(r => [`${r.deliveryDate}||${r.orderRef}`, r]));
+  const recToday = receptions.filter(r => r.deliveryDate === today);
+  const recDone = recToday.filter(r => r.state !== 'waiting').length;
+  const recWaiting = recToday.filter(r => r.state === 'waiting');
+  const recLate = recWaiting.filter(r => r.late).length;
+  const recGap = recToday.filter(r => r.state === 'gap').length;
+  const recOlder = receptions.filter(r => r.deliveryDate < today && r.state === 'waiting');
+  const hhmm = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('fr-FR', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }) : '—';
+  const ago = (iso: string | null) => {
+    if (!iso) return '';
+    const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+  };
+  // One row per shop, the ones still waiting first.
+  const recShops = Array.from(recToday.reduce((m, r) => {
+    const k = r.shopName; const a = m.get(k) ?? []; a.push(r); m.set(k, a); return m;
+  }, new Map<string, OrderReception[]>()).entries()).map(([shop, list]) => ({
+    shop, list: list.sort((a, b) => (a.sentAt ?? '').localeCompare(b.sentAt ?? '')),
+    done: list.filter(r => r.state !== 'waiting').length, waiting: list.filter(r => r.state === 'waiting'),
+    late: list.some(r => r.late), gap: list.some(r => r.state === 'gap'),
+  })).sort((a, b) => (b.waiting.length ? 1 : 0) - (a.waiting.length ? 1 : 0) || (b.late ? 1 : 0) - (a.late ? 1 : 0) || a.shop.localeCompare(b.shop));
+  const tileTone = recToday.length === 0 || recWaiting.length === 0 ? 'grey' : recLate ? 'red' : 'amber';
   const router = useRouter();
   const searchParams = useSearchParams();
   // Day selection lives in the URL (?day=tomorrow), not local state — an assistant who taps
@@ -136,7 +163,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
         <Link href="/delivery-check/category"
           className="flex items-center gap-3 rounded-xl px-4 py-3.5"
           style={{ backgroundColor: '#1f2937' }}>
@@ -194,7 +221,107 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           </div>
           <ChevronRight size={18} className="shrink-0" style={{ color: deliveryGapsCount > 0 ? '#FECACA' : '#9CA3AF' }} />
         </Link>
+        <button type="button" onClick={() => setRecOpen(o => !o)}
+          className="flex items-center gap-3 rounded-xl px-4 py-3.5 text-left"
+          style={tileTone === 'red' ? { backgroundColor: '#DC2626' } : tileTone === 'amber' ? { backgroundColor: '#FEF3C7', border: '2px solid #D97706' } : { backgroundColor: '#F3F4F6' }}>
+          {tileTone === 'red' ? <AlertTriangle size={20} className="shrink-0 text-white" />
+            : tileTone === 'amber' ? <Clock size={20} className="shrink-0" style={{ color: '#B45309' }} />
+            : <PackageCheck size={20} className="shrink-0" style={{ color: recToday.length ? '#1A4731' : '#9CA3AF' }} />}
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold" style={{ color: tileTone === 'red' ? '#fff' : tileTone === 'amber' ? '#78350F' : recToday.length ? '#1A4731' : '#6B7280' }}>
+              {vi ? 'Shop đã nhận' : 'Shop received'} · {recDone} / {recToday.length}
+            </div>
+            <div className="text-xs" style={{ color: tileTone === 'red' ? '#FECACA' : tileTone === 'amber' ? '#92400E' : '#9CA3AF' }}>
+              {!recToday.length ? (vi ? 'Chưa có đơn nào gửi hôm nay' : "Rien d'envoyé aujourd'hui")
+                : recLate ? (vi ? `${recLate} chưa xác nhận sau 3 giờ` : `${recLate} non confirmée(s) après 3 h`)
+                : recWaiting.length ? (vi ? `${recWaiting.length} đã gửi, chưa xác nhận` : `${recWaiting.length} envoyée(s), pas encore confirmée(s)`)
+                : (vi ? 'Tất cả shop đã xác nhận' : 'Tous les shops ont confirmé')}
+            </div>
+          </div>
+          <ChevronDown size={18} className="shrink-0 transition-transform" style={{ color: tileTone === 'red' ? '#FECACA' : '#9CA3AF', transform: recOpen ? 'rotate(180deg)' : undefined }} />
+        </button>
       </div>
+
+      {recOpen && (
+        <section className="bg-white rounded-xl p-4 sm:p-5 space-y-3" style={{ border: '1px solid #E5E7EB' }} aria-label={vi ? 'Shop nhận hàng hôm nay' : "Réception des shops aujourd'hui"}>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#C9A84C' }}>
+                {vi ? 'Shop nhận hàng' : 'Réception shops'} · {new Date(today + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </div>
+              <div className="text-lg font-bold text-navy">
+                {vi ? `${recDone} / ${recToday.length} đơn đã gửi được shop xác nhận` : `${recDone} sur ${recToday.length} commandes envoyées confirmées par les shops`}
+              </div>
+            </div>
+            <span className="text-xs text-ink-light">{vi ? 'REP + SO của các shop · không tính Winmart, khách B2B' : 'REP + SO des shops · hors Winmart et clients B2B'}</span>
+          </div>
+          {recToday.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="h-2.5 rounded-full overflow-hidden flex" style={{ backgroundColor: '#F1EFE6' }}>
+                <div style={{ width: `${((recDone - recGap) / recToday.length) * 100}%`, backgroundColor: '#1A4731' }} />
+                <div style={{ width: `${(recGap / recToday.length) * 100}%`, backgroundColor: '#D97706' }} />
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: '#374151' }}>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#1A4731' }} />{vi ? 'Đã nhận' : 'Reçu'} · {recDone - recGap}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#D97706' }} />{vi ? 'Đã nhận, có lệch' : 'Reçu avec écart'} · {recGap}</span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#F1EFE6', border: '1px solid #D6D3C4' }} />{vi ? 'Đã gửi, chờ shop' : 'Envoyée, en attente du shop'} · {recWaiting.length}</span>
+                {notSentToday > 0 && <span style={{ color: '#9CA3AF' }}>+ {notSentToday} {vi ? 'đơn chưa gửi (không tính)' : 'pas encore envoyée(s) (non comptée(s))'}</span>}
+              </div>
+            </div>
+          )}
+          {recShops.length > 0 && (
+            <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #EEECE4' }}>
+              {recShops.map((g, i) => {
+                const open = recShop === g.shop;
+                const firstWaiting = g.waiting[0];
+                const color = g.waiting.length ? (g.late ? '#B91C1C' : '#B45309') : g.gap ? '#C2410C' : '#1A4731';
+                return (
+                  <div key={g.shop} style={{ borderTop: i ? '1px solid #EEECE4' : undefined, backgroundColor: g.waiting.length ? (g.late ? '#FEF2F2' : '#FFFBEB') : undefined }}>
+                    <button type="button" onClick={() => setRecShop(open ? null : g.shop)} className="w-full flex items-center gap-3 px-3 sm:px-4 py-3 text-left">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold" style={{ color: '#1A2C24' }}>{g.shop}</div>
+                        <div className="text-xs font-semibold mt-0.5" style={{ color }}>
+                          {g.waiting.length
+                            ? (vi ? `Chờ shop · gửi ${ago(firstWaiting.sentAt)} trước` : `En attente · partie il y a ${ago(firstWaiting.sentAt)}`)
+                            : g.gap ? (vi ? 'Đã nhận · có lệch' : 'Reçu · avec écart')
+                            : `${vi ? 'Đã nhận' : 'Reçu'} ${g.list.map(r => hhmm(r.receivedAt)).join(' · ')}`}
+                        </div>
+                      </div>
+                      <span className="text-xs text-ink-light shrink-0">{g.list.length} {g.list.some(r => r.sourceType === 'sales_order') ? 'SO' : 'REP'}</span>
+                      <span className="text-base font-bold tabular-nums shrink-0" style={{ color }}>{g.done} / {g.list.length}</span>
+                      <ChevronDown size={16} className="shrink-0 transition-transform" style={{ color: '#6B7280', transform: open ? 'rotate(180deg)' : undefined }} />
+                    </button>
+                    {open && (
+                      <div className="px-3 sm:px-4 pb-3 space-y-1.5">
+                        {g.list.map(r => (
+                          <Link key={r.headerId} href={r.state === 'gap' ? '/delivery-check/gaps' : `/delivery-check/${r.deliveryDate}/${r.orderRef}`}
+                            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-white px-3 py-2 text-xs" style={{ border: '1px solid #EEECE4' }}>
+                            <span className="font-mono font-bold text-navy">{r.orderRef}</span>
+                            <span style={{ color: '#374151' }}>{vi ? 'Rời Lab' : 'Départ Lab'} {hhmm(r.sentAt)}{r.sentBy ? ` · ${r.sentBy}` : ''}</span>
+                            <span className="flex-1" />
+                            {r.state === 'waiting'
+                              ? <span className="font-semibold" style={{ color: r.late ? '#B91C1C' : '#B45309' }}>{vi ? `Chưa xác nhận · ${r.confirmed}/${r.lines} dòng` : `Non confirmée · ${r.confirmed}/${r.lines} lignes`}</span>
+                              : <span className="font-semibold" style={{ color: r.state === 'gap' ? '#C2410C' : '#1A4731' }}>
+                                  {r.state === 'gap' ? (vi ? 'Có lệch → Lệch giao hàng' : 'Écart → Écarts de livraison') : (vi ? 'Đã nhận' : 'Reçue')} {hhmm(r.receivedAt)}{r.receivedBy ? ` · ${r.receivedBy}` : ''}
+                                </span>}
+                            <ChevronRight size={14} style={{ color: '#9CA3AF' }} />
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {recOlder.length > 0 && (
+            <div className="text-xs rounded-lg px-3 py-2" style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
+              {vi ? 'Ngày trước, shop vẫn chưa xác nhận: ' : 'Jours précédents, toujours pas confirmées : '}
+              {recOlder.map(r => `${r.orderRef} (${r.shopName}, ${r.deliveryDate.slice(8, 10)}/${r.deliveryDate.slice(5, 7)})`).join(' · ')}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex gap-1.5">
@@ -326,6 +453,16 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             </div>
           )}
         </div>
+        {(() => {
+          // Shop reception badge (Axel, 2026-10-16) — only for portal-shop orders already sent.
+          const rec = recByKey.get(`${o.delivery_date}||${o.order_ref}`);
+          if (!rec) return null;
+          const st = rec.state === 'received' ? { bg: '#ECF3EE', fg: '#1A4731', bd: '#2D6A4F', t: `${vi ? 'Shop đã nhận' : 'Reçu par le shop'} ${hhmm(rec.receivedAt)}` }
+            : rec.state === 'gap' ? { bg: '#FFEDD5', fg: '#9A3412', bd: '#C2410C', t: vi ? 'Shop đã nhận · có lệch' : 'Reçu · écart' }
+            : rec.late ? { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', t: `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.sentAt)}` }
+            : { bg: '#FEF3C7', fg: '#92400E', bd: '#D97706', t: `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.sentAt)}` };
+          return <span className="hidden sm:inline-flex items-center text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0" style={{ backgroundColor: st.bg, color: st.fg, border: `1px dashed ${st.bd}` }}>{st.t}</span>;
+        })()}
         {notDelivered ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#B91C1C' }}>
             <CheckCheck size={15} /> {vi ? '100% (không giao)' : '100% (non livrée)'}

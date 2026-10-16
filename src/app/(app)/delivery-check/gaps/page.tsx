@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { listDeliveryGaps } from '@/lib/reception-gaps';
 import { receptionOdooMode } from '@/lib/reception-odoo';
 import GapsView from './GapsView';
+import OffslipPanel from './OffslipPanel';
 
 export const revalidate = 0;
 
@@ -16,5 +17,5 @@ export default async function DeliveryGapsPage() {
 
   const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
   const { gaps, schemaReady } = await listDeliveryGaps(sb as any);
-  return <GapsView initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} />;
+  return <GapsView initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<OffslipPanel />} />;
 }

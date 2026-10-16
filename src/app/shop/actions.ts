@@ -3379,3 +3379,54 @@ export async function markReorderSuggestionsAction(input: { checkLineIds: string
     .in('check_line_id', allowed).is('reorder_status', null);
   return error ? { error: error.message } : { ok: true };
 }
+
+// ── Products received that were on NO delivery slip (Axel, 2026-10-16) ─────────────────────────
+// The shop declares them from its reception (photo required) and keeps them; the Lab settles them
+// on the Delivery gaps page (src/lib/offslip.ts). Additive: no effect on the existing lines.
+export async function declareOffslipAction(input: {
+  deliveryOrderId: string; sku: string; productName: string; qty: number; photoUrls: string[]; note: string | null;
+  declaredByName: string; shopName?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireShopOrStaffSession(input.shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const name = (input.declaredByName ?? '').trim().slice(0, 80);
+  if (!name) return { error: 'Name required' };
+  const qty = Math.floor(Number(input.qty));
+  if (!(qty > 0) || qty > 500) return { error: 'Số lượng không hợp lệ / Invalid quantity' };
+  const photos = (input.photoUrls ?? []).filter(u => typeof u === 'string' && u.includes('/receipt-gaps/')).slice(0, 4);
+  if (!photos.length) return { error: 'Cần ít nhất 1 ảnh / A photo is required' };
+  const { data: header } = await supabase.from('lab_delivery_orders')
+    .select('id, shop_name, order_ref, delivery_date').eq('id', input.deliveryOrderId).maybeSingle();
+  if (!header || normalizeShopName(header.shop_name) !== normalizeShopName(auth.shopName)) return { error: 'Order not found for this shop' };
+  const sku = String(input.sku ?? '').trim();
+  const [{ data: v }, { data: x }] = await Promise.all([
+    supabase.from('lab_fiche_variants').select('sku').eq('sku', sku).limit(1),
+    supabase.from('lab_excluded_skus').select('sku').eq('sku', sku).limit(1),
+  ]);
+  if (!sku || (!(v ?? []).length && !(x ?? []).length)) return { error: 'Unknown product' };
+  const productName = String(input.productName ?? '').trim().slice(0, 160) || sku;
+  const { error } = await supabase.from('lab_offslip_items').insert({
+    delivery_order_id: header.id, order_ref: header.order_ref, delivery_date: header.delivery_date, shop_name: header.shop_name,
+    sku, product_name: productName, qty, photo_urls: photos, note: input.note ? String(input.note).slice(0, 300) : null,
+    declared_by_name: name,
+  });
+  if (error) return { error: error.message };
+  const vi: PushPayload = { title: auth.shopName, body: `📦 Nhận ngoài phiếu: ${qty} × ${productName} (${header.order_ref}) — ${name}`, url: '/delivery-check/gaps' };
+  const en: PushPayload = { title: auth.shopName, body: `📦 Received off-slip: ${qty} × ${productName} (${header.order_ref}) — ${name}`, url: '/delivery-check/gaps' };
+  await awaitPush(sendAdminPush(supabase, vi, en));
+  return { ok: true };
+}
+
+export async function getOffslipForOrdersAction(deliveryOrderIds: string[], shopName?: string): Promise<{ items?: import('@/lib/offslip').OffslipItem[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const ids = (deliveryOrderIds ?? []).filter(Boolean).slice(0, 50);
+  if (!ids.length) return { items: [] };
+  const { listOffslipItems } = await import('@/lib/offslip');
+  const items = await listOffslipItems(supabase as any, { deliveryOrderIds: ids, days: 30 });
+  return { items: items.filter(i => normalizeShopName(i.shopName) === normalizeShopName(auth.shopName)) };
+}
