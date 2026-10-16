@@ -97,7 +97,7 @@ export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, read
     : { t: L('Đã cộng vào tồn kho shop', 'Added to the shop stock'), bg: '#ECFDF3', fg: '#067647' };
 
   return (
-    <div className="px-4 py-3 space-y-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+    <div className="px-4 py-3 space-y-2" style={{ borderBottom: `1px solid ${HAIR}` }}>
       {items.length > 0 && (
         <div className="rounded-xl p-2.5 space-y-2" style={{ border: `1.5px solid ${GOLD}`, backgroundColor: '#fff' }}>
           <div className="text-[11px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>{L('Ngoài phiếu · đã khai báo', 'Off-slip · declared')}</div>

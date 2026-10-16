@@ -1599,6 +1599,12 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     </div>
                   )}
                 </div>
+                {/* Products received that were on no slip (Axel, 2026-10-16) — at the top so the shop does not forget it. */}
+                {day !== 'tomorrow' && (
+                  <OffslipBlock deliveryOrderId={o.header.id} orderRef={o.header.order_ref} shopName={shopName} readOnly={readOnly}
+                    byName={name} canDeclare={canConfirm} L={L} onZoom={u => setZoomImage(u)}
+                    excludeSkus={(orders ?? []).filter(x => x.header.delivery_date === o.header.delivery_date).flatMap(x => x.lines.map(l => l.sku).filter((v): v is string => !!v))} />
+                )}
                 <div className="divide-y" style={{ borderColor: GOLD_PALE }}>
                   {o.lines.map(l => {
                     const ref = refQty(l);
@@ -1710,12 +1716,6 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     );
                   })}
                 </div>
-                {/* Products received that were on no slip (Axel, 2026-10-16). */}
-                {day !== 'tomorrow' && (
-                  <OffslipBlock deliveryOrderId={o.header.id} orderRef={o.header.order_ref} shopName={shopName} readOnly={readOnly}
-                    byName={name} canDeclare={canConfirm} L={L} onZoom={u => setZoomImage(u)}
-                    excludeSkus={(orders ?? []).filter(x => x.header.delivery_date === o.header.delivery_date).flatMap(x => x.lines.map(l => l.sku).filter((v): v is string => !!v))} />
-                )}
               </div>
                 );
               })}
