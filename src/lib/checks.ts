@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runReconciliationCheck, type ReconciliationResult } from '@/lib/reconciliation';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
-import { odooExecute, odooExecuteWrite, odooConfigured, labTodayUtcThreshold } from '@/lib/odoo';
+import { odooExecute, odooExecuteWrite, odooConfigured, labTodayUtcThreshold, NOT_ADJUST_REP } from '@/lib/odoo';
 import { SYNC_GRACE_DAYS, ODOO_FETCH_CAPS } from '@/lib/odoo-sync';
 import { getLabStockAllQuants } from '@/lib/odoo-inventory';
 
@@ -243,7 +243,7 @@ export async function measureOdooFetchVolume(): Promise<OdooVolume> {
     const salesIds: number[] = await odooExecute('sale.order', 'search',
       [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]]);
     const replIds: number[] = await odooExecute('stock.replenishment.request', 'search',
-      [[['state', 'in', ['draft', 'submitted', 'approved']], ['delivery_date', '>=', threshold]]]);
+      [[['state', 'in', ['draft', 'submitted', 'approved']], NOT_ADJUST_REP, ['delivery_date', '>=', threshold]]]);
     const [salesLines, replLines] = await Promise.all([
       salesIds.length ? odooExecute<number>('sale.order.line', 'search_count', [[['order_id', 'in', salesIds]]]) : Promise.resolve(0),
       replIds.length ? odooExecute<number>('stock.replenishment.request.line', 'search_count', [[['request_id', 'in', replIds]]]) : Promise.resolve(0),

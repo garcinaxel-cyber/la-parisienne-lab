@@ -211,3 +211,9 @@ export function isLastDayOfMonthVN(): boolean {
 export function vnPeriodStr(): string {
   return vnTodayStr().slice(0, 7);
 }
+
+/** Adjustment REPs created by the app for products received off the slip (Axel, 2026-10-16) start
+ *  their `notes` with this marker. Every app import of REPs adds NOT_ADJUST_REP to its domain so
+ *  they never become production cards, Delivery check orders or shop receptions. */
+export const ADJUST_REP_MARKER = '[app-adjust]';
+export const NOT_ADJUST_REP: [string, string, string] = ['notes', 'not ilike', ADJUST_REP_MARKER];

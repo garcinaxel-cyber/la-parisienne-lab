@@ -7,7 +7,7 @@
 //
 // Odoo flow reminder: REP → LAB/OUT (LAB/Stock 8 → transit 13) → SHOP/IN (transit 13 → shop).
 // The SHOP/IN picking is found by origin = REP ref and source location = transit.
-import { odooConfigured, odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
+import { odooConfigured, odooExecute, odooExecuteWrite, odooWriteConfigured, ADJUST_REP_MARKER } from '@/lib/odoo';
 import { writeQuantitiesAndValidatePicking, type PlannedWrite } from '@/lib/odoo-delivery-validate';
 
 export const LAB_STOCK_LOCATION_ID = 8;
@@ -497,12 +497,119 @@ export async function finalizeReplenishmentGaps(
 
 // ── 6. Off-slip products (Axel, 2026-10-16) ────────────────────────────────────────────────────
 // A shop received units that were on NO delivery slip. The shop keeps them; Odoo must show them
-// in its stock. When they were a customer's sales order delivered to the wrong place, the
-// customer is not charged for them: return on that order's delivery (back to LAB/Stock) + the
-// invoice back to draft with the quantity lowered — the same finalizeSalesOrderGaps path as the
-// Moon Flower gaps — then LAB → shop. Otherwise only LAB → shop.
+// in its stock AND in the shop's order documents, because Axel analyses deliveries by exporting
+// the REPs (quantity sent vs received) — a loose internal transfer would never show there.
+//   1. When they were a customer's sales order delivered to the wrong place, that customer is not
+//      charged for them: return on that order's delivery (back to LAB/Stock) + the invoice back to
+//      draft with the quantity lowered (finalizeSalesOrderGaps, same as the Moon Flower gaps).
+//   2. Then the receiving shop gets them through its own kind of document:
+//      - REP shop  → a NEW adjustment REP, fully automatic: create → submit → approve → validate
+//        the LAB/OUT → validate the shop IN → quantity received → mark as done. Its `notes` start
+//        with ADJUST_REP_MARKER so the app never imports it (no production card, no Delivery check,
+//        no shop reception): odoo-sync / odoo-order-lock / checks filter it out.
+//      - SO shop (Moon Flower) → a new line on the SO it was received with (allowed on a confirmed
+//        SO), its delivery validated, and the line added to the invoice if one exists (left draft).
+
+async function validateWholePicking(pickingId: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  const moves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', pickingId], ['state', 'not in', ['done', 'cancel']]]], { fields: ['id', 'product_uom_qty'] });
+  if (!moves.length) return { ok: false, error: `picking ${pickingId} has no open move` };
+  const plan: PlannedWrite[] = moves.map(m => ({ sku: String(m.id), moveId: m.id, note: null, expectedQty: Number(m.product_uom_qty), deliverQty: Number(m.product_uom_qty) }));
+  return writeQuantitiesAndValidatePicking(pickingId, plan);
+}
+
+async function createAdjustmentRep(input: {
+  whCode: string; deliveryDate: string; note: string; items: { pid: number; code: string; qty: number }[];
+}): Promise<{ ok: boolean; name?: string; error?: string; done: string[] }> {
+  const done: string[] = [];
+  const { labLocalToOdooUtc } = await import('@/lib/odoo');
+  const whs = await odooExecuteWrite<any[]>('stock.warehouse', 'search_read', [[['code', 'in', [input.whCode, 'LAB']]]], { fields: ['id', 'code'] });
+  const dest = whs.find(w => w.code === input.whCode), src = whs.find(w => w.code === 'LAB');
+  if (!dest || !src) return { ok: false, error: `Warehouse ${!dest ? input.whCode : 'LAB'} not found in Odoo`, done };
+  const reqId = await odooExecuteWrite<number>('stock.replenishment.request', 'create', [{
+    warehouse_id: dest.id, source_warehouse_id: src.id,
+    delivery_date: labLocalToOdooUtc(input.deliveryDate, '09:00'),
+    notes: `${ADJUST_REP_MARKER} ${input.note}`,
+  }], { context: NO_MAIL });
+  for (const i of input.items) {
+    await odooExecuteWrite('stock.replenishment.request.line', 'create', [{ request_id: reqId, product_id: i.pid, quantity_requested: i.qty }], { context: NO_MAIL });
+  }
+  const readReq = async () => (await odooExecuteWrite<any[]>('stock.replenishment.request', 'read', [[reqId]], { fields: ['name', 'state', 'delivery_picking_ids', 'receipt_picking_ids', 'line_ids'] }))[0];
+  let req = await readReq();
+  const name: string = req?.name ?? `REP id ${reqId}`;
+  done.push(`${name} created (adjustment)`);
+  try {
+    await odooExecuteWrite('stock.replenishment.request', 'action_submit', [[reqId]], { context: NO_MAIL });
+    await odooExecuteWrite('stock.replenishment.request', 'action_approve', [[reqId]], { context: NO_MAIL });
+    req = await readReq();
+    const outIds: number[] = req.delivery_picking_ids ?? [];
+    if (outIds.length !== 1) return { ok: false, name, error: `${name}: ${outIds.length} delivery picking(s) after approval — finish by hand`, done };
+    const out = await validateWholePicking(outIds[0]);
+    if (!out.ok) return { ok: false, name, error: `${name} LAB/OUT: ${out.error}`, done };
+    done.push(`${name}: LAB/OUT ${await recordName('stock.picking', outIds[0])} validated`);
+
+    const ins = await odooExecuteWrite<any[]>('stock.picking', 'search_read',
+      [[['origin', '=', name], ['location_id', '=', TRANSIT_LOCATION_ID], ['state', 'not in', ['done', 'cancel']]]], { fields: ['id', 'name'] });
+    if (ins.length !== 1) return { ok: false, name, error: `${name}: ${ins.length} shop IN found — finish by hand`, done };
+    const inn = await validateWholePicking(ins[0].id);
+    if (!inn.ok) return { ok: false, name, error: `${name} shop IN: ${inn.error}`, done };
+    done.push(`${name}: shop IN ${ins[0].name} validated`);
+
+    const lines = await odooExecuteWrite<any[]>('stock.replenishment.request.line', 'read', [req.line_ids ?? []], { fields: ['id', 'product_id'] });
+    for (const l of lines) {
+      const it = input.items.find(i => i.pid === l.product_id?.[0]);
+      if (it) await odooExecuteWrite('stock.replenishment.request.line', 'write', [[l.id], { quantity_received: it.qty }], { context: NO_MAIL });
+    }
+    req = await readReq();
+    if (req.state !== 'done') {
+      await odooExecuteWrite('stock.replenishment.request', 'action_mark_done', [[reqId]], { context: NO_MAIL });
+      req = await readReq();
+    }
+    if (req.state !== 'done') return { ok: false, name, error: `${name}: still "${req.state}" after mark as done — close it by hand`, done };
+    done.push(`${name}: done`);
+    return { ok: true, name, done };
+  } catch (e: any) {
+    return { ok: false, name, error: `${name}: ${e?.message ?? String(e)}`, done };
+  }
+}
+
+async function addLineToSalesOrder(soRef: string, p: { id: number; default_code: string }, qty: number): Promise<{ ok: boolean; error?: string; done: string[] }> {
+  const done: string[] = [];
+  const [so] = await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', '=', soRef]]], { fields: ['id', 'name', 'state', 'invoice_ids'] });
+  if (!so) return { ok: false, error: `${soRef} not found in Odoo`, done };
+  if (so.state !== 'sale') return { ok: false, error: `${soRef} is "${so.state}", not a confirmed order — settle by hand`, done };
+  const lineId = await odooExecuteWrite<number>('sale.order.line', 'create', [{ order_id: so.id, product_id: p.id, product_uom_qty: qty }], { context: NO_MAIL });
+  done.push(`${soRef}: + line ${p.default_code} ×${qty}`);
+  try {
+    // A confirmed SO launches its procurement for the new line (a delivery move). Validate it,
+    // but only when the picking holds nothing else — never ship other lines by accident.
+    const moves = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['sale_line_id', '=', lineId], ['state', 'not in', ['done', 'cancel']]]], { fields: ['id', 'picking_id'] });
+    const pickId: number | undefined = moves[0]?.picking_id?.[0];
+    if (!pickId) return { ok: false, error: `${soRef}: no delivery created for the new line — validate by hand`, done };
+    const others = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', '=', pickId], ['state', 'not in', ['done', 'cancel']], ['sale_line_id', '!=', lineId]]], { fields: ['id'] });
+    if (others.length) return { ok: false, error: `${soRef}: the new line joined a delivery with other open lines — validate by hand`, done };
+    const v = await validateWholePicking(pickId);
+    if (!v.ok) return { ok: false, error: `${soRef} delivery: ${v.error}`, done };
+    done.push(`${soRef}: delivery ${await recordName('stock.picking', pickId)} validated`);
+
+    const invs = so.invoice_ids?.length ? await odooExecuteWrite<any[]>('account.move', 'read', [so.invoice_ids], { fields: ['id', 'name', 'state', 'move_type'] }) : [];
+    const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
+    if (!inv) { done.push('no invoice yet — the line will be invoiced with the order'); return { ok: true, done }; }
+    if (inv.state === 'posted') { await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL }); done.push(`invoice ${inv.name} → draft`); }
+    const [sl] = await odooExecuteWrite<any[]>('sale.order.line', 'read', [[lineId]], { fields: ['price_unit', 'discount', 'tax_id'] });
+    await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: [[0, 0, {
+      product_id: p.id, quantity: qty, price_unit: sl?.price_unit ?? 0, discount: sl?.discount ?? 0,
+      tax_ids: [[6, 0, sl?.tax_id ?? []]], sale_line_ids: [[6, 0, [lineId]]],
+    }]] }], { context: NO_MAIL });
+    done.push(`invoice ${inv.name}: + ${p.default_code} ×${qty}, left in DRAFT — accounting re-posts it`);
+    return { ok: true, done };
+  } catch (e: any) {
+    return { ok: false, error: `${soRef}: ${e?.message ?? String(e)}`, done };
+  }
+}
+
 export async function finalizeOffSlip(input: {
   shopName: string; sku: string; qty: number; sourceSoRef: string | null; origin: string;
+  deliveryDate: string; receivingOrderRef: string | null;
 }): Promise<SoFinalizeResult> {
   const live = inValidationLive();
   const done: string[] = [];
@@ -511,11 +618,10 @@ export async function finalizeOffSlip(input: {
     const { SHOP_CONFIG } = await import('@/lib/shops');
     const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
     const cfgKey = Object.keys(SHOP_CONFIG).find(k => norm(k) === norm(input.shopName));
-    const whCode = cfgKey ? SHOP_CONFIG[cfgKey].warehouseCode : undefined;
-    if (!whCode) return { ok: false, live, error: `${input.shopName} has no Odoo warehouse — settle by hand`, done };
-    const whs = await odooExecuteWrite<any[]>('stock.warehouse', 'search_read', [[['code', '=', whCode]]], { fields: ['id', 'lot_stock_id'] });
-    const shopStock: number | undefined = whs[0]?.lot_stock_id?.[0];
-    if (!shopStock) return { ok: false, live, error: `Warehouse ${whCode} not found in Odoo`, done };
+    const cfg = cfgKey ? SHOP_CONFIG[cfgKey] : undefined;
+    const repWh = cfg?.docType === 'replenishment' ? cfg.warehouseCode : undefined;
+    const recvSo = !repWh && input.receivingOrderRef && !input.receivingOrderRef.startsWith('REP') ? input.receivingOrderRef : null;
+    if (!repWh && !recvSo) return { ok: false, live, error: `${input.shopName}: no REP warehouse and no sales order to attach — settle by hand`, done };
     const prods = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'default_code', 'uom_id'] });
     const p = prods[0];
     if (!p) return { ok: false, live, error: `Product ${input.sku} not found in Odoo`, done };
@@ -526,13 +632,18 @@ export async function finalizeOffSlip(input: {
       done.push(...r.done.map(d => `${input.sourceSoRef}: ${d}`));
       if (!r.ok) return { ok: false, live, error: `${input.sourceSoRef}: ${r.error}`, done };
     }
-    // 2. The shop keeps them: LAB/Stock → shop stock.
-    if (!live) { done.push(`LAB → ${whCode} ${input.sku} ×${input.qty}`); return { ok: true, live, done }; }
-    const types = await odooExecuteWrite<any[]>('stock.picking.type', 'search_read', [[['code', '=', 'internal'], ['default_location_src_id', '=', LAB_STOCK_LOCATION_ID]]], { fields: ['id'], limit: 1 });
-    const t = await internalTransfer(types[0]?.id ?? 7, LAB_STOCK_LOCATION_ID, shopStock, input.origin,
-      [{ pid: p.id, uom: p.uom_id?.[0], code: input.sku, qty: input.qty }]);
-    if (!t.ok) return { ok: false, live, error: t.error, done };
-    done.push(`LAB → ${whCode} ${t.name} · ${input.sku} ×${input.qty}`);
+    // 2. The shop keeps them, through its own order document.
+    if (!live) {
+      done.push(repWh
+        ? `new adjustment REP → ${repWh}: ${input.sku} ×${input.qty} (OUT + IN validated, marked done)`
+        : `${recvSo}: + line ${input.sku} ×${input.qty}, delivery validated, invoice adjusted`);
+      return { ok: true, live, done };
+    }
+    const r = repWh
+      ? await createAdjustmentRep({ whCode: repWh, deliveryDate: input.deliveryDate, note: input.origin, items: [{ pid: p.id, code: input.sku, qty: input.qty }] })
+      : await addLineToSalesOrder(recvSo!, p, input.qty);
+    done.push(...r.done);
+    if (!r.ok) return { ok: false, live, error: r.error, done };
     return { ok: true, live, done };
   } catch (e: any) {
     return { ok: false, live, error: e?.message ?? String(e), done };

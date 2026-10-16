@@ -1,4 +1,4 @@
-import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labDayUtcRange } from '@/lib/odoo';
+import { odooExecute, odooExecuteWrite, odooWriteConfigured, labDateOf, labDayUtcRange, NOT_ADJUST_REP } from '@/lib/odoo';
 
 export interface OrderLockBucket {
   eligible: number;
@@ -76,7 +76,7 @@ export async function lockTomorrowOrders(dryRun: boolean): Promise<OrderLockResu
   }
 
   const repls = await odooExecute<any[]>('stock.replenishment.request', 'search_read',
-    [[['state', 'in', ['draft', 'submitted']], ['delivery_date', '>=', start], ['delivery_date', '<', end]]],
+    [[['state', 'in', ['draft', 'submitted']], NOT_ADJUST_REP, ['delivery_date', '>=', start], ['delivery_date', '<', end]]],
     { fields: ['id', 'name', 'state'] });
   res.replenishments.eligible = repls.length;
   for (const r of repls) {

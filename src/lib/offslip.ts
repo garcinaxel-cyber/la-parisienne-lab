@@ -74,7 +74,8 @@ export async function settleOffslip(sb: SupabaseClient, input: { id: string; cau
   const src = input.cause === 'customer_order' ? input.sourceOrderRef!.trim() : null;
   const res = await finalizeOffSlip({
     shopName: row.shop_name, sku: row.sku, qty: Number(row.qty), sourceSoRef: src,
-    origin: `${row.order_ref ?? row.delivery_date} — ngoài phiếu${src ? ` (${src})` : ''}`,
+    origin: `ngoài phiếu ${row.order_ref ?? row.delivery_date}${src ? ` (${src})` : ''}`,
+    deliveryDate: row.delivery_date, receivingOrderRef: row.order_ref ?? null,
   });
   await sb.from('lab_reception_odoo_runs').insert({
     delivery_order_id: row.delivery_order_id, order_ref: row.order_ref, action: 'offslip_finalize', created_by_name: input.byName,

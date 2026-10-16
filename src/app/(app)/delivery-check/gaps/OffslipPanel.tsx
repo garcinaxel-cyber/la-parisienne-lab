@@ -2,8 +2,10 @@
 // Products a shop received that were on NO delivery slip (Axel, 2026-10-16) — Lab side, on top of
 // the Delivery gaps page. One card per declared product: photo, the shop's note, a suggested
 // customer order (same product delivered that day or the day before), and three causes:
-//   customer_order : customer not charged (return + invoice back to draft) + LAB → shop
-//   lab_extra      : LAB → shop only
+//   customer_order : customer not charged (return + invoice back to draft) + the shop gets them
+//   lab_extra      : the shop gets them only
+// "The shop gets them" = a new adjustment REP closed automatically (REP shops), or a new line on
+// the SO it was received with (Moon Flower) — so they show in Axel's REP / SO exports.
 //   shop_error     : nothing in Odoo
 import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
@@ -51,12 +53,15 @@ export default function OffslipPanel() {
     if (res.ok) load();
   }
 
+  const toShop = (r: OffslipRow) => r.orderRef && !r.orderRef.startsWith('REP')
+    ? T(`thêm dòng +${r.qty} vào đơn ${r.orderRef} (giao + hoá đơn)`, `ligne +${r.qty} ajoutée à ${r.orderRef} (livraison validée, facture ajustée)`)
+    : T(`tạo REP điều chỉnh +${r.qty} (xuất + nhận đã xác nhận, đóng REP)`, `nouvelle REP d'ajustement +${r.qty} (envoi + réception validés, REP clôturée)`);
   const causes: { k: Cause; t: string; d: (r: OffslipRow) => string }[] = [
     { k: 'customer_order', t: T('Đơn của khách, giao nhầm chỗ', "Commande d'un client, livrée au mauvais endroit"),
-      d: r => T(`Odoo: trả hàng ${r.qty} trên phiếu giao của đơn → hoá đơn về nháp, bớt ${r.qty} → chuyển LAB → shop +${r.qty}. Khách không bị tính tiền, shop giữ bánh.`,
-        `Odoo : retour de ${r.qty} sur la livraison de la commande → facture remise en brouillon sans ces ${r.qty} (la compta la reposte) → transfert LAB → shop +${r.qty}. Le client n'est pas facturé, le shop garde les gâteaux.`) },
+      d: r => T(`Odoo: trả hàng ${r.qty} trên phiếu giao của đơn → hoá đơn về nháp, bớt ${r.qty} → ${toShop(r)}. Khách không bị tính tiền, shop giữ bánh.`,
+        `Odoo : retour de ${r.qty} sur la livraison de la commande → facture remise en brouillon sans ces ${r.qty} (la compta la reposte) → ${toShop(r)}. Le client n'est pas facturé, le shop garde les gâteaux.`) },
     { k: 'lab_extra', t: T('Lab gửi dư / không rõ nguồn', 'Envoyé en trop par le Lab / origine inconnue'),
-      d: r => T(`Odoo: chuyển LAB → shop +${r.qty}. Không đụng hoá đơn.`, `Odoo : transfert LAB → shop +${r.qty}. Aucune facture touchée.`) },
+      d: r => r.orderRef && !r.orderRef.startsWith('REP') ? T(`Odoo: ${toShop(r)}.`, `Odoo : ${toShop(r)}.`) : T(`Odoo: ${toShop(r)}. Không đụng hoá đơn.`, `Odoo : ${toShop(r)}. Aucune facture touchée.`) },
     { k: 'shop_error', t: T('Shop nhầm (không có hàng thừa)', 'Erreur du shop (rien en plus)'),
       d: () => T('Không làm gì trên Odoo.', 'Rien dans Odoo.') },
   ];

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { odooExecute, odooDateTimeToLocal, labTodayUtcThreshold } from '@/lib/odoo';
+import { odooExecute, odooDateTimeToLocal, labTodayUtcThreshold, NOT_ADJUST_REP } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
 import { OemAwareExcludedSet } from '@/lib/oem';
 
@@ -158,7 +158,7 @@ const extractNote = (raw: unknown): string | null => {
 
 // ── 2. Replenishment requests — draft/submitted/approved (everything entered, not yet shipped) ──
 const repls: any[] = await odooExecute('stock.replenishment.request', 'search_read',
-  [[['state', 'in', ['draft', 'submitted', 'approved']], ['delivery_date', '>=', threshold]]],
+  [[['state', 'in', ['draft', 'submitted', 'approved']], NOT_ADJUST_REP, ['delivery_date', '>=', threshold]]],
   { fields: ['name', 'warehouse_id', 'delivery_date', 'state'], limit: ODOO_FETCH_CAPS.repl });
 
 const replIds = repls.map(r => r.id);
