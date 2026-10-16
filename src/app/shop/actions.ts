@@ -3406,6 +3406,17 @@ export async function declareOffslipAction(input: {
     supabase.from('lab_excluded_skus').select('sku').eq('sku', sku).limit(1),
   ]);
   if (!sku || (!(v ?? []).length && !(x ?? []).length)) return { error: 'Unknown product' };
+  // Axel, 2026-10-16: a product that IS on one of this shop's slips that day is never off-slip —
+  // an extra unit goes through its own line (the existing 'thừa' gap), not around it.
+  const { data: sameDay } = await supabase.from('lab_delivery_orders').select('id, order_ref, shop_name').eq('delivery_date', header.delivery_date);
+  const mine = (sameDay ?? []).filter((h: any) => normalizeShopName(h.shop_name) === normalizeShopName(auth.shopName));
+  if (mine.length) {
+    const { data: onSlip } = await supabase.from('lab_delivery_check_lines').select('delivery_order_id').eq('sku', sku).in('delivery_order_id', mine.map((h: any) => h.id)).limit(1);
+    if ((onSlip ?? []).length) {
+      const ref = mine.find((h: any) => h.id === onSlip![0].delivery_order_id)?.order_ref ?? '';
+      return { error: `Sản phẩm này có trong phiếu ${ref} — nhận dư thì sửa số ở dòng đó. / This product is on ${ref}: change the count on its line.` };
+    }
+  }
   const productName = String(input.productName ?? '').trim().slice(0, 160) || sku;
   const { error } = await supabase.from('lab_offslip_items').insert({
     delivery_order_id: header.id, order_ref: header.order_ref, delivery_date: header.delivery_date, shop_name: header.shop_name,

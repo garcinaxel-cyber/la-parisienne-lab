@@ -23,8 +23,11 @@ async function compress(file: File, maxSide = 1280, quality = 0.8): Promise<File
 
 type Prod = { sku: string; name: string; imageUrl: string | null };
 
-export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, readOnly, byName, canDeclare, L, onZoom }: {
+export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, readOnly, byName, canDeclare, L, onZoom, excludeSkus = [] }: {
   deliveryOrderId: string; orderRef: string; shopName: string; readOnly: boolean; byName: string; canDeclare: boolean;
+  // SKUs already on one of this shop's slips for the same day (Axel, 2026-10-16): an extra unit of
+  // those is counted on its own line (existing 'thừa' gap flow), never declared off-slip.
+  excludeSkus?: string[];
   L: (vi: string, en: string) => string; onZoom?: (url: string) => void;
 }) {
   const [items, setItems] = useState<OffslipItem[]>([]);
@@ -32,6 +35,7 @@ export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, read
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Prod[]>([]);
   const [searching, setSearching] = useState(false);
+  const [hidden, setHidden] = useState(0);
   const [picked, setPicked] = useState<Prod | null>(null);
   const [qty, setQty] = useState(1);
   const [photos, setPhotos] = useState<string[]>([]);
@@ -55,10 +59,13 @@ export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, read
       const a = await import('./actions');
       const r = await a.searchStockCountProductsAction(s, readOnly ? shopName : undefined);
       setSearching(false);
-      setResults((r.products ?? []).slice(0, 12).map(p => ({ sku: p.sku, name: p.name, imageUrl: p.imageUrl })));
+      const ex = new Set(excludeSkus);
+      const all = r.products ?? [];
+      setHidden(all.filter(p => ex.has(p.sku)).length);
+      setResults(all.filter(p => !ex.has(p.sku)).slice(0, 12).map(p => ({ sku: p.sku, name: p.name, imageUrl: p.imageUrl })));
     }, 250);
     return () => clearTimeout(t);
-  }, [q, picked, readOnly, shopName]);
+  }, [q, picked, readOnly, shopName, excludeSkus.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function reset() { setQ(''); setResults([]); setPicked(null); setQty(1); setPhotos([]); setNote(''); setErr(null); }
   async function addPhoto(f: File | undefined) {
@@ -134,6 +141,11 @@ export default function OffslipBlock({ deliveryOrderId, orderRef, shopName, read
                   <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm sản phẩm…', 'Search a product…')} className="flex-1 py-2.5 text-[13.5px] outline-none bg-transparent" />
                   {searching && <Loader2 size={14} className="animate-spin" style={{ color: '#9CA3AF' }} />}
                 </label>
+                {hidden > 0 && (
+                  <div className="text-[11.5px] rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
+                    {L(`${hidden} sản phẩm có trong phiếu hôm nay không hiện ở đây: nhận dư thì sửa số ở dòng của sản phẩm đó.`, `${hidden} product(s) on today's slips are not listed here: for an extra unit, change the count on that product's line.`)}
+                  </div>
+                )}
                 {results.map(p => (
                   <button key={p.sku} type="button" onClick={() => setPicked(p)} className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left" style={{ border: `1px solid ${HAIR}` }}>
                     {p.imageUrl ? <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-md object-cover" /> : <div className="w-9 h-9 rounded-md" style={{ backgroundColor: PALE }} />}
