@@ -2572,7 +2572,11 @@ export async function receiveShopTransferAction(input: {
     const code = transferWarehouseCode(t.to_shop);
     if (!code) return { error: 'Kho nhận không có kho Odoo' };
     const r = await receiveReturnFromPartnerShop({ fromShop: t.from_shop, toWarehouseCode: code, ref: t.ref, lines: recvList });
-    odoo = r.ok ? { ok: true, docs: r.docs } : { ok: false, error: r.error + (r.docs.length ? ` (đã làm: ${r.docs.join('; ')})` : '') };
+    // Partly done in Odoo (some returns validated) → never let a retry return them twice: the
+    // transfer is closed as received and the Lab is alerted to finish the rest by hand.
+    odoo = r.ok ? { ok: true, docs: r.docs }
+      : r.docs.length ? { ok: true, docs: [...r.docs, `⚠ CHƯA XONG: ${r.error}`], backorderWarning: `Odoo chưa xong hết: ${r.error} — Lab cần kiểm tra` }
+      : { ok: false, error: r.error };
   } else if (toPartner) {
     const r = await receiveSaleToPartnerShop(Number(t.odoo_so_id), Number(t.odoo_picking_id), recvList);
     odoo = r.ok ? { ok: true, docs: r.docs, backorderWarning: r.warning } : { ok: false, error: r.error };
