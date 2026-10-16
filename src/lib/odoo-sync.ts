@@ -97,7 +97,7 @@ export async function runOdooSync(supabase: SupabaseClient): Promise<OdooSyncRes
 //     the lab produces from what is ENTERED, confirmation in Odoo comes later) ──
 const ordersRaw: any[] = await odooExecute('sale.order', 'search_read',
   [[['state', 'in', ['draft', 'sent', 'sale']], ['commitment_date', '>=', threshold]]],
-  { fields: ['name', 'partner_id', 'commitment_date', 'state'], limit: ODOO_FETCH_CAPS.sales });
+  { fields: ['name', 'partner_id', 'commitment_date', 'state', 'client_order_ref'], limit: ODOO_FETCH_CAPS.sales });
 
 // La Paris's own retail branches + Winmart never produce/deliver from their OWN sale.order —
 // that record is just the shop's retail sale, entered a day later (Axel, 2026-08-26), and has
@@ -114,7 +114,10 @@ const isExcludedRetailShopSale = (partnerName: string) => {
   const n = partnerName.trim().toLowerCase();
   return SALES_ORDER_EXCLUDED_SHOP_SUBSTRINGS.some(s => n.includes(s));
 };
-const orders = ordersRaw.filter(o => !isExcludedRetailShopSale(o.partner_id?.[1] ?? ''));
+// Shop → Hoàn Kiếm stock transfers are Moon sale.orders delivered from a SHOP warehouse
+// (odoo-moon-transfer.ts, client_order_ref "TRF-…") — never production demand. They carry no
+// commitment_date so the domain above already skips them; this is the explicit second guard.
+const orders = ordersRaw.filter(o => !isExcludedRetailShopSale(o.partner_id?.[1] ?? '') && !String(o.client_order_ref || '').startsWith('TRF-'));
 
 const orderIds = orders.map(o => o.id);
 // Fetch every line, including note-only rows (display_type='line_note') — Odoo lets a

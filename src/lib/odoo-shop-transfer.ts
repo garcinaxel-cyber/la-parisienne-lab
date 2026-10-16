@@ -1,6 +1,7 @@
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 import { SHOP_CONFIG } from '@/lib/shops';
 import { writeQuantitiesAndValidatePicking, type PlannedWrite } from '@/lib/odoo-delivery-validate';
+import { isPartnerShop } from '@/lib/odoo-moon-transfer';
 
 // Inter-shop stock transfers (Axel, 2026-09-07: "transferts de stock entre shops … et que ça se
 // fasse sur Odoo aussi"). Option A of the study: ONE standard Odoo internal transfer
@@ -65,8 +66,11 @@ export function transferWarehouseCode(shopName: string): string | null {
 // d'inventaire pour le moment" — keep the Moon Flower virtual-location mechanism built but
 // dormant). To turn it on later, change this back to `!!SHOP_CONFIG[shopName]?.portalAccount`
 // (the virtual-location code path below is already complete and typechecked for that case).
+// 2026-10-16 (Axel, "option 1"): Moon Flower (Hoàn Kiếm) is now eligible too — NOT through the
+// dormant virtual-location path below, but as a partner shop handled by odoo-moon-transfer.ts
+// (a Moon sale from the sender's warehouse, or a return on Moon's unpaid deliveries).
 export function transferEligible(shopName: string): boolean {
-  return !!transferWarehouseCode(shopName);
+  return !!transferWarehouseCode(shopName) || isPartnerShop(shopName);
 }
 
 // true for a shop that participates via the virtual location (no real Odoo warehouse) — used to

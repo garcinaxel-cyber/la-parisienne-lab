@@ -12,6 +12,7 @@ import { odooConfigured, odooExecute } from '@/lib/odoo';
 import { createManagerReplenishment, tomorrowLabDate, isManagerOrderWindowOpenForTomorrow } from '@/lib/odoo-manager-order';
 import { sendShopPush, sendAdminPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 import { createInterShopTransfer, receiveInterShopTransfer, cancelInterShopTransfer, transferWarehouseCode, transferEligible, transferRefCode, isVirtualTransferShop } from '@/lib/odoo-shop-transfer';
+import { isPartnerShop, createSaleToPartnerShop, cancelSaleToPartnerShop, receiveSaleToPartnerShop, planReturnFromPartnerShop, receiveReturnFromPartnerShop } from '@/lib/odoo-moon-transfer';
 import { SHOP_NAMES_ALL } from '@/lib/shops';
 import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie } from '@/lib/event-session';
 import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, parseDailyTargets, type EventShop } from '@/lib/event-shops';
@@ -2369,7 +2370,7 @@ export async function getTransferPeersAction(shopName?: string): Promise<{ shopN
 function mapTransferRow(t: any, lines: any[]): ShopTransfer {
   return {
     id: t.id, ref: t.ref, fromShop: t.from_shop, toShop: t.to_shop, status: t.status,
-    odooPickingName: t.odoo_picking_name ?? null, sentByName: t.sent_by_name ?? null, sentAt: t.sent_at,
+    odooPickingName: t.odoo_picking_name ?? t.odoo_so_name ?? null, sentByName: t.sent_by_name ?? null, sentAt: t.sent_at,
     receivedByName: t.received_by_name ?? null, receivedAt: t.received_at ?? null,
     cancelledByName: t.cancelled_by_name ?? null, cancelledAt: t.cancelled_at ?? null,
     note: t.note ?? null, receiveNote: t.receive_note ?? null, lineCount: Number(t.line_count ?? 0), unitCount: Number(t.unit_count ?? 0),
@@ -2456,18 +2457,39 @@ export async function submitShopTransferAction(input: {
   const ref = `TRF-${fromCode}-${toCode}-${String(seq).padStart(4, '0')}`;
   const note = input.note?.trim().slice(0, 500) || undefined;
 
-  const odoo = await createInterShopTransfer(auth.shopName, toShop, lines, ref, note);
-  if (!odoo.ok || !odoo.pickingId) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+  // Hoàn Kiếm / Moon Flower (2026-10-16, option 1): a Moon sale from the sender's warehouse, or
+  // — when Moon sends — nothing in Odoo yet, only a check that unpaid Moon deliveries cover it.
+  type SendOdoo = { ok: boolean; error?: string; pickingId?: number; pickingName?: string; moveIdBySku?: Record<string, number>; assigned?: boolean; soId?: number; soName?: string; docs?: string };
+  let odoo: SendOdoo;
+  if (isPartnerShop(toShop)) {
+    const code = transferWarehouseCode(auth.shopName);
+    if (!code) return { error: 'Kho gửi không có kho Odoo' };
+    const r = await createSaleToPartnerShop({ fromWarehouseCode: code, toShop, ref, note, lines: lines.map(l => ({ sku: l.sku, qty: l.qty })) });
+    odoo = r.ok ? { ok: true, pickingId: r.pickingId, pickingName: r.pickingName, assigned: r.assigned, soId: r.soId, soName: r.soName, docs: `${r.soName} · ${r.pickingName}` } : { ok: false, error: r.error };
+  } else if (isPartnerShop(auth.shopName)) {
+    if (!transferWarehouseCode(toShop)) return { error: 'Kho nhận không có kho Odoo' };
+    const r = await planReturnFromPartnerShop(auth.shopName, lines.map(l => ({ sku: l.sku, qty: l.qty })));
+    odoo = r.ok ? { ok: true, assigned: true, docs: `Trả hàng từ: ${Array.from(new Set(r.allocations.map(a => a.soName))).join(', ')} (khi nhận)` } : { ok: false, error: r.error };
+  } else {
+    odoo = await createInterShopTransfer(auth.shopName, toShop, lines, ref, note);
+    if (odoo.ok && !odoo.pickingId) odoo = { ok: false, error: 'Lỗi Odoo không xác định' };
+  }
+  if (!odoo.ok) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+  const undoOdoo = async () => {
+    if (odoo.soId) await cancelSaleToPartnerShop(odoo.soId).catch(() => {});
+    else if (odoo.pickingId) await cancelInterShopTransfer(odoo.pickingId).catch(() => {});
+  };
 
   const units = lines.reduce((a, l) => a + l.qty, 0);
   const { data: inserted, error: insErr } = await supabase.from('lab_shop_transfers').insert({
     ref, from_shop: auth.shopName, to_shop: toShop, status: 'sent',
-    odoo_picking_id: odoo.pickingId, odoo_picking_name: odoo.pickingName ?? null,
+    odoo_picking_id: odoo.pickingId ?? null, odoo_picking_name: odoo.pickingName ?? null,
+    odoo_so_id: odoo.soId ?? null, odoo_so_name: odoo.soName ?? null, odoo_docs: odoo.docs ?? null,
     sent_by_name: sentByName, sent_by_manager_id: manager.id, note: note ?? null,
     line_count: lines.length, unit_count: units,
   }).select('*').single();
   if (insErr || !inserted) {
-    await cancelInterShopTransfer(odoo.pickingId).catch(() => {});
+    await undoOdoo();
     return { error: `Không lưu được phiếu chuyển kho: ${insErr?.message ?? 'insert'}` };
   }
   const { data: lineRows, error: lineErr } = await supabase.from('lab_shop_transfer_lines').insert(lines.map(l => ({
@@ -2476,7 +2498,7 @@ export async function submitShopTransferAction(input: {
   }))).select('*');
   if (lineErr) {
     await supabase.from('lab_shop_transfers').delete().eq('id', inserted.id);
-    await cancelInterShopTransfer(odoo.pickingId).catch(() => {});
+    await undoOdoo();
     return { error: `Không lưu được dòng chuyển kho: ${lineErr.message}` };
   }
 
@@ -2517,7 +2539,10 @@ export async function receiveShopTransferAction(input: {
   if (t.to_shop !== auth.shopName) return { error: 'Phiếu này không gửi cho kho của bạn' };
   if (t.status === 'received') return { error: 'Phiếu này đã được nhận' };
   if (t.status === 'cancelled') return { error: 'Phiếu này đã bị huỷ' };
-  if (!t.odoo_picking_id) return { error: 'Phiếu chưa có mã Odoo — liên hệ quản lý' };
+  const fromPartner = isPartnerShop(t.from_shop);
+  const toPartner = isPartnerShop(t.to_shop);
+  if (!fromPartner && !t.odoo_picking_id) return { error: 'Phiếu chưa có mã Odoo — liên hệ quản lý' };
+  if (toPartner && !t.odoo_so_id) return { error: 'Phiếu chưa có đơn bán Odoo — liên hệ quản lý' };
 
   const { data: lineRows } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id);
   const sentBySku: Record<string, number> = {};
@@ -2541,7 +2566,19 @@ export async function receiveShopTransferAction(input: {
   const receiveNote = (input.receiveNote ?? '').trim().slice(0, 500);
   if (hasDiff && !receiveNote) return { error: 'Số lượng nhận khác số lượng gửi — cần ghi rõ lý do' };
 
-  const odoo = await receiveInterShopTransfer(Number(t.odoo_picking_id), Object.entries(received).map(([sku, qtyReceived]) => ({ sku, qtyReceived })));
+  let odoo: { ok: boolean; error?: string; backorderWarning?: string; docs?: string[] };
+  const recvList = Object.entries(received).map(([sku, qty]) => ({ sku, qty }));
+  if (fromPartner) {
+    const code = transferWarehouseCode(t.to_shop);
+    if (!code) return { error: 'Kho nhận không có kho Odoo' };
+    const r = await receiveReturnFromPartnerShop({ fromShop: t.from_shop, toWarehouseCode: code, ref: t.ref, lines: recvList });
+    odoo = r.ok ? { ok: true, docs: r.docs } : { ok: false, error: r.error + (r.docs.length ? ` (đã làm: ${r.docs.join('; ')})` : '') };
+  } else if (toPartner) {
+    const r = await receiveSaleToPartnerShop(Number(t.odoo_so_id), Number(t.odoo_picking_id), recvList);
+    odoo = r.ok ? { ok: true, docs: r.docs, backorderWarning: r.warning } : { ok: false, error: r.error };
+  } else {
+    odoo = await receiveInterShopTransfer(Number(t.odoo_picking_id), recvList.map(l => ({ sku: l.sku, qtyReceived: l.qty })));
+  }
   if (!odoo.ok) {
     const viPayload: PushPayload = { title: auth.shopName, body: `⚠️ Nhận chuyển kho ${t.ref} thất bại trên Odoo: ${odoo.error ?? '?'}` };
     await awaitPush(sendAdminPush(supabase, viPayload, { title: auth.shopName, body: `⚠️ Transfer ${t.ref} reception failed on Odoo: ${odoo.error ?? '?'}` }));
@@ -2553,19 +2590,21 @@ export async function receiveShopTransferAction(input: {
     await supabase.from('lab_shop_transfer_lines').update({ qty_received: q }).eq('transfer_id', t.id).eq('sku', sku);
   }
   const { data: updated } = await supabase.from('lab_shop_transfers')
-    .update({ status: 'received', received_by_name: receivedByName, received_at: now, receive_note: receiveNote || null })
+    .update({ status: 'received', received_by_name: receivedByName, received_at: now, receive_note: receiveNote || null, ...(odoo.docs?.length ? { odoo_docs: odoo.docs.join(' · ').slice(0, 1000) } : {}) })
     .eq('id', t.id).select('*').single();
   const { data: freshLines } = await supabase.from('lab_shop_transfer_lines').select('*').eq('transfer_id', t.id).order('product_name_vi');
 
   const diffs = (freshLines ?? []).filter((l: any) => Number(l.qty_received ?? 0) !== Number(l.qty_sent))
     .map((l: any) => `${l.product_name_vi} ${Number(l.qty_received ?? 0) - Number(l.qty_sent)}`);
   const unitsRecv = Object.values(received).reduce((a, b) => a + b, 0);
-  const shortfallNote = isVirtualTransferShop(t.from_shop)
+  const shortfallNote = fromPartner
+    ? `chỉ số lượng thực nhận được trả về kho ${shortShop(t.to_shop)} và trừ khỏi hóa đơn Moon`
+    : isVirtualTransferShop(t.from_shop)
     ? `chỉ số lượng thực nhận được cộng vào kho Odoo của ${shortShop(t.to_shop)}`
     : `phần thiếu vẫn nằm trong kho ${shortShop(t.from_shop)} trên Odoo — nếu mất hàng, ${shortShop(t.from_shop)} cần ghi hao hụt`;
   const diffTxt = diffs.length ? ` — ⚠ chênh lệch: ${diffs.join(', ')} (${shortfallNote})` : '';
   const viPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} đã nhận chuyển kho ${t.ref}: ${unitsRecv} cái (${receivedByName})${diffTxt}` };
-  const enPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} received transfer ${t.ref}: ${unitsRecv} units (${receivedByName})${diffs.length ? ` — ⚠ differences: ${diffs.join(', ')}` : ''}` };
+  const enPayload: PushPayload = { title: t.from_shop, body: `✅ ${shortShop(t.to_shop)} received transfer ${t.ref}: ${unitsRecv} units (${receivedByName})${diffs.length ? ` — ⚠ differences: ${diffs.join(', ')}` : ''}${odoo.docs?.length ? ` · Odoo: ${odoo.docs.join(' · ')}` : ''}` };
   await awaitPush(Promise.all([sendShopPush(supabase, t.from_shop, viPayload), sendAdminPush(supabase, viPayload, enPayload)]));
 
   return { transfer: mapTransferRow(updated ?? { ...t, status: 'received', received_by_name: receivedByName, received_at: now }, freshLines ?? []), warning: odoo.backorderWarning };
@@ -2584,7 +2623,10 @@ export async function cancelShopTransferAction(input: { shopName?: string; trans
   if (!t) return { error: 'Phiếu chuyển kho không tìm thấy' };
   if (t.from_shop !== auth.shopName) return { error: 'Chỉ kho gửi mới huỷ được phiếu này' };
   if (t.status !== 'sent') return { error: t.status === 'received' ? 'Phiếu đã được nhận — không thể huỷ' : 'Phiếu đã bị huỷ' };
-  if (t.odoo_picking_id) {
+  if (t.odoo_so_id) {
+    const odoo = await cancelSaleToPartnerShop(Number(t.odoo_so_id));
+    if (!odoo.ok) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
+  } else if (t.odoo_picking_id) {
     const odoo = await cancelInterShopTransfer(Number(t.odoo_picking_id));
     if (!odoo.ok) return { error: odoo.error ?? 'Lỗi Odoo không xác định' };
   }
@@ -3304,17 +3346,66 @@ export async function getEventSalesSummaryAction(): Promise<{ summary?: EventSal
 // rajouter à leur commande" — suggestion to validate, LAST delivery only. Missing = sent (Bếp)
 // − received, plus the damaged units. Lines the Lab settled as "shop miscounted" are left out,
 // and a suggestion added to the cart or dismissed never comes back (reorder_status, lab_v123).
+// 2026-10-16 (Axel): same block for stock the shop TRANSFERRED OUT — "quand y a le transfert de
+// stock ils doivent avoir dans leur recommandation à leur prochaine commande". Those rows carry
+// source 'transfer', checkLineId = 't:<transfer line id>', qty = quantity sent, transferRef/toShop.
 export type ReorderSuggestion = {
   checkLineId: string; sku: string; name: string; imageUrl: string | null; priceB2c: number | null; category: string;
   qty: number; missing: number; damaged: number; orderRef: string; deliveryDate: string;
+  source?: 'delivery' | 'transfer'; transferred?: number; transferTo?: string;
 };
+
+const TRANSFER_REORDER_FROM = '2026-10-16';
+
+async function transferReorderSuggestions(supabase: any, shopName: string): Promise<ReorderSuggestion[]> {
+  const since = new Date(Math.max(Date.parse(`${TRANSFER_REORDER_FROM}T00:00:00+07:00`), Date.now() - 14 * 86400 * 1000)).toISOString();
+  const { data: ts } = await supabase.from('lab_shop_transfers').select('id, ref, from_shop, to_shop, status, sent_at')
+    .in('status', ['sent', 'received']).gte('sent_at', since).order('sent_at', { ascending: false }).limit(100);
+  const mine = (ts ?? []).filter((t: any) => normShopName(t.from_shop) === normShopName(shopName));
+  if (!mine.length) return [];
+  const { data: tl } = await supabase.from('lab_shop_transfer_lines').select('id, transfer_id, sku, product_name_vi, qty_sent, reorder_status')
+    .in('transfer_id', mine.map((t: any) => t.id)).is('reorder_status', null);
+  if (!tl?.length) return [];
+  const catalog = await fetchProductionCatalog(true);
+  const catBySku = new Map(catalog.map(p => [p.sku, p]));
+  const tById = new Map(mine.map((t: any) => [t.id, t]));
+  const out: ReorderSuggestion[] = [];
+  for (const l of tl) {
+    const p = catBySku.get(l.sku);
+    if (!p) continue; // not orderable from the shop catalog
+    const t: any = tById.get(l.transfer_id);
+    const q = Number(l.qty_sent);
+    if (!(q > 0)) continue;
+    out.push({
+      checkLineId: `t:${l.id}`, sku: l.sku, name: p.name || l.product_name_vi, imageUrl: p.imageUrl, priceB2c: null, category: p.category,
+      qty: q, missing: 0, damaged: 0, orderRef: t.ref, deliveryDate: String(t.sent_at).slice(0, 10),
+      source: 'transfer', transferred: q, transferTo: t.to_shop,
+    });
+  }
+  return out;
+}
 
 export async function getReorderSuggestionsAction(shopName?: string): Promise<{ suggestions?: ReorderSuggestion[]; deliveryDate?: string | null; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const target = normShopName(auth.shopName);
+  const [fromDeliveries, fromTransfers] = await Promise.all([
+    deliveryReorderSuggestions(supabase, auth.shopName),
+    transferReorderSuggestions(supabase, auth.shopName).catch(() => [] as ReorderSuggestion[]),
+  ]);
+  const all = [...(fromDeliveries.suggestions ?? []), ...fromTransfers];
+  const missingPrice = all.filter(s => s.priceB2c == null);
+  if (missingPrice.length) {
+    const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', Array.from(new Set(missingPrice.map(s => s.sku))));
+    const price = new Map((priceRows ?? []).filter((x: any) => Number(x.price_b2c) > 0).map((x: any) => [x.sku, Number(x.price_b2c)]));
+    for (const s of missingPrice) s.priceB2c = price.get(s.sku) ?? null;
+  }
+  return { suggestions: all, deliveryDate: fromDeliveries.deliveryDate ?? null };
+}
+
+async function deliveryReorderSuggestions(supabase: any, shopName: string): Promise<{ suggestions?: ReorderSuggestion[]; deliveryDate?: string | null }> {
+  const target = normShopName(shopName);
   const today = vnDateStr();
   const { data: hdrs } = await supabase.from('lab_delivery_orders').select('id, order_ref, delivery_date, shop_name, marked_not_delivered')
     .eq('status', 'validated').lte('delivery_date', today).gte('delivery_date', '2026-10-14').order('delivery_date', { ascending: false }).limit(60);
@@ -3325,7 +3416,7 @@ export async function getReorderSuggestionsAction(shopName?: string): Promise<{ 
   const { data: recs } = await supabase.from('lab_shop_receipt_lines').select('*').in('delivery_order_id', ids).not('qty_received', 'is', null);
   if (!recs?.length) return { suggestions: [], deliveryDate: null };
   const dateById = new Map(mine.map((h: any) => [h.id, h.delivery_date as string]));
-  const lastDate = recs.map((r: any) => dateById.get(r.delivery_order_id) ?? '').sort().pop()!;
+  const lastDate: string = recs.map((r: any) => String(dateById.get(r.delivery_order_id) ?? '')).sort().pop()!;
   const lastIds = mine.filter((h: any) => h.delivery_date === lastDate).map((h: any) => h.id);
   const lastRecs = recs.filter((r: any) => lastIds.includes(r.delivery_order_id) && !r.reorder_status);
   if (!lastRecs.length) return { suggestions: [], deliveryDate: lastDate };
@@ -3336,7 +3427,7 @@ export async function getReorderSuggestionsAction(shopName?: string): Promise<{ 
   const miscounted = new Set((gaps ?? []).filter((g: any) => g.lab_cause === 'shop_miscount').map((g: any) => `${g.check_line_id}:${g.kind}`));
   const catalog = await fetchProductionCatalog(true);
   const catBySku = new Map(catalog.map(p => [p.sku, p]));
-  const refById = new Map(mine.map((h: any) => [h.id, h.order_ref as string]));
+  const refById = new Map<string, string>(mine.map((h: any) => [h.id, h.order_ref as string]));
   const out: ReorderSuggestion[] = [];
   for (const r of lastRecs) {
     const l: any = lineById.get(r.check_line_id);
@@ -3349,12 +3440,7 @@ export async function getReorderSuggestionsAction(shopName?: string): Promise<{ 
     const damaged = miscounted.has(`${l.id}:damaged`) ? 0 : Math.max(0, Math.min(Number(r.qty_damaged ?? 0), received));
     const qty = missing + damaged;
     if (qty <= 0) continue;
-    out.push({ checkLineId: l.id, sku: l.sku, name: p.name || l.product_name_vi, imageUrl: p.imageUrl, priceB2c: null, category: p.category, qty, missing, damaged, orderRef: refById.get(r.delivery_order_id) ?? '', deliveryDate: lastDate });
-  }
-  if (out.length) {
-    const { data: priceRows } = await supabase.from('product_variants').select('sku, price_b2c').in('sku', out.map(s => s.sku));
-    const price = new Map((priceRows ?? []).filter((x: any) => Number(x.price_b2c) > 0).map((x: any) => [x.sku, Number(x.price_b2c)]));
-    for (const s of out) s.priceB2c = price.get(s.sku) ?? null;
+    out.push({ checkLineId: l.id, sku: l.sku, name: p.name || l.product_name_vi, imageUrl: p.imageUrl, priceB2c: null, category: p.category, qty, missing, damaged, orderRef: refById.get(r.delivery_order_id) ?? '', deliveryDate: lastDate, source: 'delivery' });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return { suggestions: out, deliveryDate: lastDate };
@@ -3365,7 +3451,24 @@ export async function markReorderSuggestionsAction(input: { checkLineIds: string
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-  const ids = (input.checkLineIds ?? []).filter(Boolean).slice(0, 200);
+  const rawIds = (input.checkLineIds ?? []).filter(Boolean).slice(0, 200);
+  const byName = (input.byName ?? '').trim().slice(0, 80) || null;
+  // Transfer lines ('t:<id>') — only transfers this shop sent.
+  const tIds = rawIds.filter(i => i.startsWith('t:')).map(i => i.slice(2));
+  if (tIds.length) {
+    const { data: tl } = await supabase.from('lab_shop_transfer_lines').select('id, transfer_id').in('id', tIds);
+    const tfIds = Array.from(new Set((tl ?? []).map((r: any) => r.transfer_id)));
+    const { data: tfs } = tfIds.length ? await supabase.from('lab_shop_transfers').select('id, from_shop').in('id', tfIds) : { data: [] as any[] };
+    const okTf = new Set((tfs ?? []).filter((t: any) => normShopName(t.from_shop) === normShopName(auth.shopName)).map((t: any) => t.id));
+    const allowedT = (tl ?? []).filter((r: any) => okTf.has(r.transfer_id)).map((r: any) => r.id);
+    if (allowedT.length) {
+      const { error: tErr } = await supabase.from('lab_shop_transfer_lines')
+        .update({ reorder_status: input.status, reorder_at: new Date().toISOString(), reorder_by_name: byName })
+        .in('id', allowedT).is('reorder_status', null);
+      if (tErr) return { error: tErr.message };
+    }
+  }
+  const ids = rawIds.filter(i => !i.startsWith('t:'));
   if (!ids.length) return { ok: true };
   // Only this shop's own lines.
   const { data: rows } = await supabase.from('lab_shop_receipt_lines').select('check_line_id, delivery_order_id').in('check_line_id', ids);

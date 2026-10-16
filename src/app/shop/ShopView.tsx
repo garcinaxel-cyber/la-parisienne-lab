@@ -676,9 +676,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (!list.length) return;
     setReorderBusy(true);
     if (status === 'added') {
+      // Same SKU may come twice (short on delivery + transferred out): sum before writing the cart.
+      const bySku = new Map<string, { sg: import('./actions').ReorderSuggestion; qty: number }>();
       for (const sg of list) {
+        const e = bySku.get(sg.sku);
+        if (e) e.qty += sg.qty; else bySku.set(sg.sku, { sg, qty: sg.qty });
+      }
+      for (const { sg, qty } of Array.from(bySku.values())) {
         const cur = orderCart.find(l => l.sku === sg.sku)?.qty ?? 0;
-        setOrderQtyForProduct({ sku: sg.sku, name: sg.name, category: sg.category, imageUrl: sg.imageUrl, isPackaging: false, priceB2c: sg.priceB2c }, cur + sg.qty);
+        setOrderQtyForProduct({ sku: sg.sku, name: sg.name, category: sg.category, imageUrl: sg.imageUrl, isPackaging: false, priceB2c: sg.priceB2c }, cur + qty);
       }
     }
     const ids = list.map(sg => sg.checkLineId);
@@ -2500,7 +2506,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="text-sm font-bold" style={{ color: RED }}>
-                          {L(`Lần giao ${fmtDate(reorderSugs[0].deliveryDate)} bị thiếu / hỏng`, `Your ${fmtDate(reorderSugs[0].deliveryDate)} delivery was short / damaged`)}
+                          {(() => {
+                            const del = reorderSugs.find(s => s.source !== 'transfer');
+                            const hasTr = reorderSugs.some(s => s.source === 'transfer');
+                            if (del && hasTr) return L('Gợi ý đặt lại: hàng thiếu / hỏng và hàng đã chuyển đi', 'Re-order: short / damaged and transferred-out stock');
+                            if (del) return L(`Lần giao ${fmtDate(del.deliveryDate)} bị thiếu / hỏng`, `Your ${fmtDate(del.deliveryDate)} delivery was short / damaged`);
+                            return L('Hàng đã chuyển cho cửa hàng khác — đặt lại?', 'Stock you transferred out — re-order it?');
+                          })()}
                         </div>
                         <div className="text-[11px]" style={{ color: '#6B7280' }}>{L('Thêm vào đơn này? Lab sẽ không tự thêm nữa.', 'Add them to this order? The Lab no longer adds them for you.')}</div>
                       </div>
@@ -2518,6 +2530,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                             <div className="flex gap-1 mt-0.5 text-[10px] font-bold">
                               {sg.missing > 0 && <span className="rounded px-1.5 py-0.5" style={{ backgroundColor: '#FDECEA', color: RED }}>{L(`Thiếu ${sg.missing}`, `${sg.missing} short`)}</span>}
                               {sg.damaged > 0 && <span className="rounded px-1.5 py-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>{L(`Hỏng ${sg.damaged}`, `${sg.damaged} damaged`)}</span>}
+                              {sg.source === 'transfer' && <span className="rounded px-1.5 py-0.5 truncate" style={{ backgroundColor: '#EEF2FF', color: '#3730A3' }}>{L(`Đã chuyển ${sg.transferred} → ${(sg.transferTo ?? '').replace(/^La Paris\s+/i, '')}`, `Sent ${sg.transferred} → ${(sg.transferTo ?? '').replace(/^La Paris\s+/i, '')}`)}</span>}
                             </div>
                           </div>
                           <span className="text-sm font-bold shrink-0">×{sg.qty}</span>
