@@ -63,7 +63,6 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
   const recWaiting = recToday.filter(r => r.state === 'waiting');
   const recLate = recWaiting.filter(r => r.late).length;
   const recGap = recToday.filter(r => r.state === 'gap').length;
-  const recOlder = receptions.filter(r => r.deliveryDate < today && r.state === 'waiting');
   const hhmm = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('fr-FR', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }) : '—';
   const ago = (iso: string | null) => {
     if (!iso) return '';
@@ -312,12 +311,6 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
                   </div>
                 );
               })}
-            </div>
-          )}
-          {recOlder.length > 0 && (
-            <div className="text-xs rounded-lg px-3 py-2" style={{ backgroundColor: '#FFFBEB', color: '#92400E' }}>
-              {vi ? 'Ngày trước, shop vẫn chưa xác nhận: ' : 'Jours précédents, toujours pas confirmées : '}
-              {recOlder.map(r => `${r.orderRef} (${r.shopName}, ${r.deliveryDate.slice(8, 10)}/${r.deliveryDate.slice(5, 7)})`).join(' · ')}
             </div>
           )}
         </section>
