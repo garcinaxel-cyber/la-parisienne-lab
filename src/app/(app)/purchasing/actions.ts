@@ -4,7 +4,7 @@
 // creates the purchase order in Odoo by hand and types its number here.
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
-import { labDayUtcRange, odooExecute } from '@/lib/odoo';
+import { labDayUtcRange, odooExecute, odooExecuteWrite } from '@/lib/odoo';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
 async function guard() {
@@ -36,7 +36,7 @@ async function refreshDraftPos(db: NonNullable<ReturnType<typeof rawService>>): 
   if (!poIds.length) return [];
   let pos: any[] = [];
   try {
-    pos = await odooExecute<any[]>('purchase.order', 'search_read', [[['id', 'in', poIds]]],
+    pos = await odooExecuteWrite<any[]>('purchase.order', 'search_read', [[['id', 'in', poIds]]],
       { fields: ['id', 'name', 'state', 'partner_id', 'amount_total', 'date_approve'], context: { active_test: false } });
   } catch { return []; }
   const byId = new Map(pos.map(p => [p.id, p]));
@@ -435,10 +435,14 @@ export async function createDraftPoAction(lineIds: string[], vendorId: number | 
       }];
     });
     const origin = 'App ' + Array.from(new Set((reqs ?? []).map(r => `#${r.no}`))).join(' ');
-    const poId = await odooExecute<number>('purchase.order', 'create', [{
+    // Purchase orders go through the WRITE account (API-PRODUCTION, Purchase rights). The read-only
+    // account has none: P01412 (13/10) only worked because the read key had expired and every call
+    // fell back to the write account; once the read key was renewed, Miss Flavor got 'not allowed
+    // to create purchase.order' (Axel, 2026-10-16).
+    const poId = await odooExecuteWrite<number>('purchase.order', 'create', [{
       ...(vendorId ? { partner_id: vendorId } : {}), origin: origin.slice(0, 120), order_line: orderLines,
     }]);
-    const [po] = await odooExecute<any[]>('purchase.order', 'read', [[poId], ['name', 'partner_id']]);
+    const [po] = await odooExecuteWrite<any[]>('purchase.order', 'read', [[poId], ['name', 'partner_id']]);
     const now = new Date().toISOString();
     const { error: uErr } = await g.db.from('lab_purchase_request_lines').update({
       po_odoo_id: poId, po_ref: po?.name ?? null, po_created_at: now, po_created_by_name: g.a.name || null,
