@@ -10,7 +10,6 @@ const ADDR = '18 Phú Xá, Phường Phú Thượng, TP Hà Nội, Việt Nam';
 const CONTACT = 'SĐT: 0985 023 553 · Email: Laparisiene09@gmail.com';
 
 const CSS = `
-@page { size: A4; margin: 0 }
 .oemp * { box-sizing: border-box; margin: 0; padding: 0 }
 .oemp { font-family: Lato, Carlito, Arial, sans-serif; color: #3A2E25; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #fff }
 .oemp .en { color: #9A8B7A; font-weight: 400 }
@@ -38,7 +37,8 @@ const CSS = `
 .oemp .m { border-bottom: 0.6px solid #E4D9C8; padding-bottom: 1mm } .oemp .m .lb { font-size: 7pt; color: #9A8B7A; display: block } .oemp .m .v { font-weight: 600 }
 .oemp table { width: 100%; border-collapse: collapse; font-size: 7.8pt }
 .oemp th { background: #FAF6EF; border-bottom: 0.6px solid #E4D9C8; padding: 1.6mm 1mm; font-size: 7pt; font-weight: 600; color: #5C4B3D; text-align: left } .oemp th .en { display: block; font-size: 6.2pt; font-weight: 400 }
-.oemp td { border-bottom: 0.6px solid #EFE8DC; padding: 1.3mm 1mm } .oemp td.r, .oemp th.r { text-align: right } .oemp td.mono { font-family: 'DejaVu Sans Mono', Menlo, monospace; font-size: 7.2pt }
+.oemp td { border-bottom: 0.6px solid #EFE8DC; padding: 1.3mm 1mm } .oemp td.r, .oemp th.r { text-align: right } .oemp td.mono { font-family: 'DejaVu Sans Mono', Menlo, monospace; font-size: 7pt; white-space: nowrap }
+.oemp td.nw { white-space: nowrap } .oemp tr { break-inside: avoid; page-break-inside: avoid } .oemp thead { display: table-header-group } .oemp tfoot { display: table-row-group }
 .oemp tfoot td { font-weight: 700; background: #FAF6EF }
 .oemp .chk { margin-top: 4mm; background: #FAF6EF; border-radius: 3mm; padding: 3mm 4mm; line-height: 1.75; color: #5C4B3D; page-break-inside: avoid }
 .oemp .chk .h { font-weight: 600; color: #8B6A4F } .oemp .box { display: inline-block; width: 9px; height: 9px; border: 1px solid #B8A890; border-radius: 2.5px; vertical-align: -1px; margin-right: 4px }
@@ -47,7 +47,7 @@ const CSS = `
 .oemp .sig .t { font-weight: 600; color: #8B6A4F; letter-spacing: .6px } .oemp .sig .s { height: 20mm; border: 0.6px solid #E4D9C8; border-radius: 3mm; margin: 2mm 4mm }
 .oemp .sig .l { text-align: left; margin: 0 4mm; font-size: 7.6pt; line-height: 1.9; color: #5C4B3D }
 @media screen { .oemp { background: #EDE7DC; padding: 12px 0 } .oemp .sheet, .oemp .pg { box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 12px } }
-@media print { .no-print { display: none !important } .oemp { padding: 0 } }
+@media print { .no-print { display: none !important } .oemp { padding: 0 } .oemp .pg { width: auto; min-height: 0; padding: 0; margin: 0 } }
 `;
 
 export default function OemPrintView({ doc, note, cartons, names, client }: { doc: 'labels' | 'note'; note: any; cartons: any[]; names: Record<string, string>; client: any }) {
@@ -57,7 +57,8 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
   const pages: any[][] = []; for (let i = 0; i < cartons.length; i += 4) pages.push(cartons.slice(i, i + 4));
   return (
     <div className="oemp">
-      <style>{CSS}</style>
+      {/* labels: full-bleed A4 sheets; delivery note: real page margins so long tables break cleanly across pages */}
+      <style>{CSS + (doc === 'labels' ? '@page { size: A4; margin: 0 }' : '@page { size: A4; margin: 12mm 13mm 12mm 13mm }')}</style>
       <div className="no-print" style={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', justifyContent: 'center', gap: 12, padding: '10px 0' }}>
         <button onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#1A4731', color: '#fff', fontWeight: 700, borderRadius: 12, padding: '10px 18px' }}>
           <Printer size={16} /> {doc === 'labels' ? `In ${total} tem thùng` : 'In phiếu giao hàng'}
@@ -67,7 +68,7 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
         <div className="sheet" key={pi}>
           {pg.map((c: any) => (
             <div className="lab" key={c.id}>
-              <div className="hd">{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/logo-print.png" alt="La Paris" /><div className="co"><b>{CO}</b><br />{ADDR}</div></div>
+              <div className="hd">{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/oem-la-paris-logo.png" alt="La Paris" /><div className="co"><b>{CO}</b><br />{ADDR}</div></div>
               <div className="ttl"><span>TEM THÙNG HÀNG <span className="en">/ Carton label</span></span><span className="en">{c.line_no} / {total}</span></div>
               <div className="serial"><div className="k">Số serial thùng <span className="en">/ Carton S/N</span></div><div className="v">{c.serial}</div></div>
               <div className="grid">
@@ -87,7 +88,7 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
         </div>
       )) : (
         <div className="pg">
-          <div className="nhd">{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/logo-print.png" alt="La Paris" /><div className="nco"><b>{CO}</b><br />{ADDR}<br />{CONTACT}</div></div>
+          <div className="nhd">{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/oem-la-paris-logo.png" alt="La Paris" /><div className="nco"><b>{CO}</b><br />{ADDR}<br />{CONTACT}</div></div>
           <div className="nttl"><h1>PHIẾU GIAO HÀNG</h1><span className="en">Delivery note</span></div>
           <div className="cbox">
             <div><span className="lb">Khách hàng <span className="en">/ Client</span></span><b>{client.legal ?? note.client_name}</b></div>
@@ -107,7 +108,7 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
           <table>
             <thead><tr><th>STT<span className="en">No.</span></th><th>Số serial thùng<span className="en">Carton S/N</span></th><th>Sản phẩm<span className="en">Product</span></th><th>Số lô / Ngày SX<span className="en">Lot / prod. date</span></th><th className="r">Số túi<span className="en">Bags</span></th><th className="r">Quy cách<span className="en">Bag size</span></th><th className="r">KL tịnh (kg)<span className="en">Net kg</span></th><th>Ghi chú<span className="en">Notes</span></th></tr></thead>
             <tbody>{cartons.map(c => (
-              <tr key={c.id}><td>{c.line_no}</td><td className="mono">{c.serial}</td><td>{names[c.sku] ?? c.sku}</td><td>{c.lot_no} · {dmy(c.prod_date)}</td><td className="r">{c.bags}</td><td className="r">{n1(Number(c.bag_kg))} kg</td><td className="r">{n1(Number(c.net_kg))}</td><td></td></tr>
+              <tr key={c.id}><td>{c.line_no}</td><td className="mono">{c.serial}</td><td>{names[c.sku] ?? c.sku}</td><td className="nw">{c.lot_no}<br /><span style={{ color: '#9A8B7A' }}>{dmy(c.prod_date)}</span></td><td className="r">{c.bags}</td><td className="r">{n1(Number(c.bag_kg))} kg</td><td className="r">{n1(Number(c.net_kg))}</td><td></td></tr>
             ))}</tbody>
             <tfoot><tr><td colSpan={4} className="r">Tổng cộng / Total · {total} thùng</td><td className="r">{bags}</td><td></td><td className="r">{n1(kg)}</td><td></td></tr></tfoot>
           </table>
