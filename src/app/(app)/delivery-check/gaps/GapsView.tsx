@@ -197,7 +197,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
   );
 }
 
-export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode }) {
+export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra, extraClosed }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode; extraClosed?: React.ReactNode }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -302,6 +302,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
           </button>
         ))}
       </div>
+
+      {tab === 'closed' && extraClosed}
 
       <div className="flex flex-col lg:flex-row gap-4">
         <div className="lg:w-[380px] shrink-0 bg-white rounded-xl border border-gray-200 overflow-hidden">

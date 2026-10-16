@@ -14,7 +14,8 @@ import { getOffslipItemsAction, settleOffslipAction, type OffslipRow } from './a
 
 type Cause = 'customer_order' | 'lab_extra' | 'shop_error';
 
-export default function OffslipPanel() {
+// mode 'open' sits above the tabs (to settle); mode 'closed' sits in the « Clôturés » tab (Axel, 16/10).
+export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'closed' }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const T = (v: string, f: string) => (vi ? v : f);
@@ -23,7 +24,6 @@ export default function OffslipPanel() {
   const [sel, setSel] = useState<Record<string, { cause: Cause | null; ref: string }>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<Record<string, { ok: boolean; text: string }>>({});
-  const [showClosed, setShowClosed] = useState(false);
   const [zoom, setZoom] = useState<string | null>(null);
 
   const load = async () => {
@@ -42,6 +42,9 @@ export default function OffslipPanel() {
   if (!rows || !rows.length) return null;
   const open = rows.filter(r => r.status === 'open');
   const closed = rows.filter(r => r.status === 'closed');
+  if (mode === 'open' && !open.length) return null;
+  if (mode === 'closed' && !closed.length) return null;
+  const showClosed = mode === 'closed';
 
   async function settle(r: OffslipRow) {
     const s = sel[r.id];
@@ -70,12 +73,11 @@ export default function OffslipPanel() {
     <section className="bg-white rounded-2xl p-4 sm:p-5 space-y-3" style={{ border: '1.5px solid #C9A84C' }}>
       <div className="flex items-center gap-2">
         <PackagePlus size={18} style={{ color: '#8A6D14' }} />
-        <h2 className="text-base font-bold text-navy flex-1">{T('Hàng ngoài phiếu', 'Produits hors livraison')} {open.length ? `· ${open.length}` : ''}</h2>
-        {closed.length > 0 && <button onClick={() => setShowClosed(v => !v)} className="text-xs font-semibold underline text-ink-light">{showClosed ? T('Ẩn đã xử lý', 'Masquer les réglés') : T(`Đã xử lý (${closed.length})`, `Réglés (${closed.length})`)}</button>}
+        <h2 className="text-base font-bold text-navy flex-1">{T('Hàng ngoài phiếu', 'Produits hors livraison')} · {mode === 'closed' ? `${T('đã xử lý', 'réglés')} · ${closed.length}` : open.length}</h2>
       </div>
-      <p className="text-xs text-ink-light">{T('Shop nhận được sản phẩm không có trên phiếu nào. Shop giữ lại; chọn nguyên nhân để cập nhật Odoo.', "Le shop a reçu un produit qui n'est sur aucun bon. Il le garde ; choisir la cause pour mettre Odoo à jour.")}</p>
+      {mode === 'open' && <p className="text-xs text-ink-light">{T('Shop nhận được sản phẩm không có trên phiếu nào. Shop giữ lại; chọn nguyên nhân để cập nhật Odoo.', "Le shop a reçu un produit qui n'est sur aucun bon. Il le garde ; choisir la cause pour mettre Odoo à jour.")}</p>}
 
-      {open.map(r => {
+      {mode === 'open' && open.map(r => {
         const s = sel[r.id] ?? { cause: null, ref: '' };
         const partial = !!r.decidedAt; // claimed but not closed: something failed mid-way
         return (
@@ -162,6 +164,11 @@ export default function OffslipPanel() {
             {r.labCause === 'customer_order' ? `${T('Đơn khách', 'Commande client')} ${r.sourceOrderRef}` : r.labCause === 'lab_extra' ? T('Lab gửi dư', 'Envoyé en trop') : T('Shop nhầm', 'Erreur shop')}
             {r.odooMode === 'simulated' ? ` · ${T('mô phỏng', 'simulé')}` : ''} · {r.decidedBy}
           </span>
+          {Array.isArray(r.odooLog?.done) && r.odooLog.done.length > 0 && (
+            <div className="w-full font-mono text-[11px] leading-relaxed rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#EEF3EF', color: '#374151' }}>
+              {r.odooLog.done.map((d: string, k: number) => <div key={k}>{d}</div>)}
+            </div>
+          )}
         </div>
       ))}
 
