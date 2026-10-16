@@ -6,7 +6,7 @@
 //                "new product" with a photo, and the follow-up of the team's own requests.
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
+import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
 import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
@@ -520,11 +520,26 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{L('Bộ phận mua hàng sẽ tìm hoặc tạo sản phẩm trước khi đặt.', 'Purchasing finds or creates it before ordering.')}</div>
               <label className="block mt-2"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Tên sản phẩm', 'Product name')}</span>
                 <input value={draft.name} onChange={e => setDraft(d => ({ ...d, name: e.target.value }))} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
-              <label className="mt-2 flex items-center gap-3 rounded-xl p-2.5 cursor-pointer" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
-                {draft.photoUrl ? <img src={draft.photoUrl} alt="" className="w-12 h-12 rounded-lg object-cover" /> : uploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
-                <span className="text-[13px] font-bold">{draft.photoUrl ? L('Đã có ảnh · đổi', 'Photo added · change') : L('Chụp hoặc chọn ảnh', 'Take or choose a photo')}</span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => pickPhoto(e.target.files?.[0])} />
-              </label>
+              {/* Photo: camera OR gallery (Axel, 2026-10-16: Hưng could only shoot live, not pick an
+                  existing picture — capture="environment" forces the camera on phones). Desktop: drop too. */}
+              <div className="mt-2 rounded-xl p-2.5" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); const f = Array.from(e.dataTransfer.files ?? []).find(x => x.type.startsWith('image/')); if (f) pickPhoto(f); }}>
+                <div className="flex items-center gap-3">
+                  {draft.photoUrl ? <img src={draft.photoUrl} alt="" className="w-12 h-12 rounded-lg object-cover" /> : uploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                  <span className="text-[13px] font-bold">{draft.photoUrl ? L('Đã có ảnh · đổi', 'Photo added · change') : L('Thêm ảnh sản phẩm', 'Add a product photo')}</span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <label className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-[13px] font-bold cursor-pointer" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>
+                    <Camera size={15} /> {L('Chụp ảnh', 'Take photo')}
+                    <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploading} onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                  <label className="flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-[13px] font-bold cursor-pointer" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>
+                    <ImageIcon size={15} /> {L('Chọn ảnh có sẵn', 'Choose a picture')}
+                    <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                </div>
+              </div>
               <div className="flex gap-2 mt-2">
                 <label className="flex-1"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Số lượng', 'Quantity')}</span>
                   <input inputMode="decimal" value={draft.qty ? String(draft.qty) : ''} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setDraft(d => ({ ...d, qty: isNaN(v) ? 0 : v })); }} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>

@@ -5,6 +5,8 @@ declare module 'lucide-react' {
 
   export const AlertCircle: LucideIcon;
   export const Loader2: LucideIcon;
+  export const Camera: LucideIcon;
+  export const ImageIcon: LucideIcon;
   export const Ban: LucideIcon;
   export const CheckCircle2: LucideIcon;
   export const ChevronDown: LucideIcon;
