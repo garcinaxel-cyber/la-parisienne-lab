@@ -4,7 +4,7 @@
 // creates the purchase order in Odoo by hand and types its number here.
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
-import { labDayUtcRange, odooExecute, odooExecuteWrite } from '@/lib/odoo';
+import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
 async function guard() {
@@ -296,20 +296,20 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   try {
-    const tmpls = await odooExecute<any[]>('product.template', 'search_read', [[['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['active', '=', true]]],
+    const tmpls = await odooExecuteWrite<any[]>('product.template', 'search_read', [[['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['active', '=', true]]],
       { fields: ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id'], limit: 3000 });
     const tmplIds = tmpls.map(t => t.id);
     // Vietnamese names (Odoo vi_VN translation) for the chefs' screen. Never blocks the sync.
     const viName = new Map<number, string>();
     try {
       for (let i = 0; i < tmplIds.length; i += 300) {
-        const rows = await odooExecute<any[]>('product.template', 'read', [tmplIds.slice(i, i + 300), ['name']], { context: { lang: 'vi_VN' } });
+        const rows = await odooExecuteWrite<any[]>('product.template', 'read', [tmplIds.slice(i, i + 300), ['name']], { context: { lang: 'vi_VN' } });
         for (const r of rows) if (r?.name) viName.set(r.id, String(r.name).replace(/\s+/g, ' ').trim());
       }
     } catch { /* keep the names we have */ }
     const vendorsByTmpl = new Map<number, { id: number; name: string }[]>();
     for (let i = 0; i < tmplIds.length; i += 300) {
-      const sup = await odooExecute<any[]>('product.supplierinfo', 'search_read', [[['product_tmpl_id', 'in', tmplIds.slice(i, i + 300)]]],
+      const sup = await odooExecuteWrite<any[]>('product.supplierinfo', 'search_read', [[['product_tmpl_id', 'in', tmplIds.slice(i, i + 300)]]],
         { fields: ['partner_id', 'product_tmpl_id', 'sequence'], order: 'sequence asc, id asc', limit: 5000 });
       for (const s of sup) {
         const t = s.product_tmpl_id?.[0]; const p = s.partner_id;
@@ -324,7 +324,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     let bomByProduct: Map<number, number> | null = new Map();
     try {
       for (let off = 0; off < 20000; off += 2000) {
-        const ls = await odooExecute<any[]>('mrp.bom.line', 'search_read', [[['product_id.categ_id', '=', RAW_MATERIAL_CATEG_ID], ['bom_id.active', '=', true]]],
+        const ls = await odooExecuteWrite<any[]>('mrp.bom.line', 'search_read', [[['product_id.categ_id', '=', RAW_MATERIAL_CATEG_ID], ['bom_id.active', '=', true]]],
           { fields: ['product_id'], limit: 2000, offset: off });
         for (const l of ls) { const pid = l.product_id?.[0]; if (pid) bomByProduct.set(pid, (bomByProduct.get(pid) ?? 0) + 1); }
         if (ls.length < 2000) break;
@@ -413,7 +413,7 @@ export async function createDraftPoAction(lineIds: string[], vendorId: number | 
   const reqNo = new Map((reqs ?? []).map(r => [r.id, r]));
   try {
     const productIds = Array.from(new Set(lines.map(l => productOf.get(l.tmpl_id)!)));
-    const prods = await odooExecute<any[]>('product.product', 'read', [productIds, ['display_name', 'uom_id']], { context: { lang: 'vi_VN' } });
+    const prods = await odooExecuteWrite<any[]>('product.product', 'read', [productIds, ['display_name', 'uom_id']], { context: { lang: 'vi_VN' } });
     const prodById = new Map(prods.map(p => [p.id, p]));
     // One PO line per product.
     const byProduct = new Map<number, { qty: number; notes: string[] }>();
