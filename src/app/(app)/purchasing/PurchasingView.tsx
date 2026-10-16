@@ -12,12 +12,18 @@ import {
   getPurchasingBoardAction, setVendorAction, markOrderedAction, cancelLinesAction, undoLineStepAction,
   linkNewProductAction, markNewToCreateAction, getWithdrawalsDayAction, correctWithdrawalLineAction, getHistoryAction,
   getCatalogueAction, syncCatalogueAction, updateMaterialAction, checkMaterialsAction, createDraftPoAction, type Board,
-  getPendingWithdrawalsAction, confirmWithdrawalAction, addStorageRequestAction,
+  getPendingWithdrawalsAction, confirmWithdrawalAction, refuseTransferAction, addStorageRequestAction,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
 type Tab = 'requests' | 'storage' | 'history' | 'catalogue';
+
+// Who a slip concerns: the team for a storage withdrawal, "from → to" for a transfer (2026-10-16).
+function SlipWho({ w, lang }: { w: Withdrawal; lang: 'vi' | 'en' }) {
+  if (w.kind !== 'transfer' || !w.fromTeam || !w.toTeam) return <TeamBadge team={w.team} lang={lang} />;
+  return <><span className="inline-block text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 mr-1" style={{ backgroundColor: '#8A6D14', color: '#fff' }}>⇄ {lang === 'vi' ? 'Chuyển' : 'Transfer'}</span><TeamBadge team={w.fromTeam} lang={lang} /> → <TeamBadge team={w.toTeam} lang={lang} /></>;
+}
 
 function TeamBadge({ team, lang }: { team: string; lang: 'vi' | 'en' }) {
   const t = TEAM_SHORT[team];
@@ -451,6 +457,13 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
     setPv(prev => { const n = { ...prev }; w.lines.forEach(l => delete n[l.id]); return n; });
     loadPending(); load();
   }
+  async function refuseSlip(w: Withdrawal) {
+    setConfirming(w.id); setErr(null);
+    const r = await refuseTransferAction(w.id);
+    setConfirming(null);
+    if (r.error) setErr(r.error);
+    loadPending(); load();
+  }
   async function save(w: Withdrawal) {
     for (const l of w.lines) {
       const raw = val[l.id]; if (raw == null) continue;
@@ -478,10 +491,11 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
               <div key={w.id} className="px-4 py-3" style={{ borderTop: `1px solid ${HAIR}` }}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <b className="text-[14px] tabular-nums">#{w.no}</b>
-                  <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
+                  <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <SlipWho w={w} lang={lang} /> · {w.takenBy}</span>
                   <span className="text-[11px] font-extrabold rounded-md px-2 py-0.5" style={late ? { backgroundColor: LATE, color: '#fff' } : { backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
                     {L(`chờ ${mins} phút`, `waiting ${mins} min`)}</span>
                 </div>
+                {w.note && <div className="text-[12px] mt-1" style={{ color: '#6B7280' }}>“{w.note}”</div>}
                 <div className="mt-1.5">
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -496,7 +510,9 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                     </div>
                   ))}
                 </div>
-                <div className="flex justify-end pt-2">
+                <div className="flex justify-end gap-2 pt-2">
+                  {w.kind === 'transfer' && <button disabled={confirming === w.id} onClick={() => refuseSlip(w)} className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-bold bg-white" style={{ border: `1px solid ${BORDER}`, color: LATE }}>
+                    <X size={14} /> {L('Từ chối', 'Refuse')}</button>}
                   <button disabled={confirming === w.id} onClick={() => confirmSlip(w)} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-extrabold text-white" style={{ backgroundColor: NAVY }}>
                     {confirming === w.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />} {L('Xác nhận', 'Confirm')}</button>
                 </div>
@@ -525,7 +541,8 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
         : !items.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có phiếu lấy nào trong ngày.', 'No withdrawal that day.')}</div>
         : byItem ? (() => {
           const t = new Map<string, { name: string; uom: string; qty: number; teams: Set<string> }>();
-          for (const w of items) for (const l of w.lines) {
+          // Storage outflow only: a transfer between teams never leaves storage.
+          for (const w of items) if (w.kind !== 'transfer') for (const l of w.lines) {
             const k = `${l.tmplId ?? l.name}|${l.uom}`;
             const e = t.get(k) ?? { name: nm(l), uom: l.uom, qty: 0, teams: new Set<string>() };
             e.qty += l.correctedQty ?? l.qty; e.teams.add(w.team); t.set(k, e);
@@ -548,8 +565,10 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
             <div key={w.id} className="py-3" style={{ borderTop: `1px solid ${HAIR}` }}>
               <div className="flex items-center gap-2 flex-wrap">
                 <b className="text-[13px] tabular-nums">#{w.no}</b>
-                <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <TeamBadge team={w.team} lang={lang} /> · {w.takenBy}</span>
-                {w.status === 'to_confirm'
+                <span className="text-xs flex-1" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · <SlipWho w={w} lang={lang} /> · {w.takenBy}</span>
+                {w.refused
+                  ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{L('Đã từ chối', 'Refused')}{w.refusedBy ? ` · ${w.refusedBy}` : ''}</span>
+                  : w.status === 'to_confirm'
                   ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ xác nhận', 'To confirm')}</span>
                   : w.lines.some(l => l.correctedQty != null)
                   ? <span className="text-[10.5px] font-extrabold rounded-md px-2 py-0.5" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}{w.confirmedBy ? ` · ${w.confirmedBy}` : ''}</span>
@@ -587,7 +606,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                       </div>
                     ))}
                   </div>
-                  {w.status !== 'to_confirm' && <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>}
+                  {w.status !== 'to_confirm' && !w.refused && <button onClick={() => setEdit(w.id)} className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: GOLD_TEXT }}><Pencil size={12} /> {L('Sửa', 'Correct')}</button>}
                 </>
               )}
             </div>

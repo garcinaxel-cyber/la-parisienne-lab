@@ -3,7 +3,7 @@
 // admin. Phase 1: everything stays in the app; Odoo is only read (catalogue sync). The assistant still
 // creates the purchase order in Odoo by hand and types its number here.
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
-import { classifyRaw, parsePacks, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
+import { classifyRaw, parsePacks, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecute } from '@/lib/odoo';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
@@ -179,7 +179,7 @@ export async function getPendingWithdrawalsAction(): Promise<{ items?: Withdrawa
 export async function confirmWithdrawalAction(withdrawalId: string, qtys: { lineId: string; qty: number | null }[]): Promise<{ ok?: boolean; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
-  const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status').eq('id', withdrawalId).maybeSingle();
+  const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status, kind, from_team, to_team').eq('id', withdrawalId).maybeSingle();
   if (!w) return { error: 'Not found' };
   if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
   const { data: lines } = await g.db.from('lab_raw_withdrawal_lines').select('id, qty').eq('withdrawal_id', w.id);
@@ -203,9 +203,40 @@ export async function confirmWithdrawalAction(withdrawalId: string, qtys: { line
   if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
   const extra = changed ? ` · ${changed} dòng đã sửa số lượng` : '';
   const extraEn = changed ? ` · ${changed} line(s) corrected` : '';
+  if (w.kind === 'transfer') {
+    const dir = `${TEAM_SHORT[w.from_team]?.vi ?? w.from_team} → ${TEAM_SHORT[w.to_team]?.vi ?? w.to_team}`;
+    await awaitPush(sendTeamPush(g.db, w.team,
+      { title: 'La Parisienne Lab', body: `✅ Kho đã xác nhận phiếu chuyển #${w.no} (${dir})${extra}`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
+      { title: 'La Parisienne Lab', body: `✅ Storage confirmed transfer #${w.no} (${dir})${extraEn}`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
+    return { ok: true };
+  }
   await awaitPush(sendTeamPush(g.db, w.team,
     { title: 'La Parisienne Lab', body: `✅ Kho đã xác nhận phiếu #${w.no}${extra} — có thể lấy hàng`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
     { title: 'La Parisienne Lab', body: `✅ Storage confirmed slip #${w.no} (${w.team})${extraEn}`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
+  return { ok: true };
+}
+
+// Storage refuses a transfer between teams (Axel, 2026-10-16). The slip is closed (status
+// 'confirmed' + refused_at) and every line corrected to 0, so no total counts it. Transfers only:
+// storage withdrawals keep their usual flow (confirm with 0 for what was not given).
+export async function refuseTransferAction(withdrawalId: string): Promise<{ ok?: boolean; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status, kind, from_team, to_team').eq('id', withdrawalId).maybeSingle();
+  if (!w) return { error: 'Not found' };
+  if (w.kind !== 'transfer') return { error: 'Only transfers can be refused.' };
+  if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xử lý. / Already handled.' };
+  const now = new Date().toISOString();
+  const { data: upd, error } = await g.db.from('lab_raw_withdrawals')
+    .update({ status: 'confirmed', confirmed_at: now, confirmed_by_name: g.a.name || null, refused_at: now, refused_by_name: g.a.name || null })
+    .eq('id', w.id).eq('status', 'to_confirm').select('id');
+  if (error) return { error: error.message };
+  if (!upd?.length) return { error: 'Phiếu này đã được xử lý. / Already handled.' };
+  await g.db.from('lab_raw_withdrawal_lines').update({ corrected_qty: 0, corrected_by_name: g.a.name || null, corrected_at: now }).eq('withdrawal_id', w.id);
+  const dir = `${TEAM_SHORT[w.from_team]?.vi ?? w.from_team} → ${TEAM_SHORT[w.to_team]?.vi ?? w.to_team}`;
+  await awaitPush(sendTeamPush(g.db, w.team,
+    { title: 'La Parisienne Lab', body: `❌ Kho từ chối phiếu chuyển #${w.no} (${dir})`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
+    { title: 'La Parisienne Lab', body: `❌ Storage refused transfer #${w.no} (${dir})`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
   return { ok: true };
 }
 

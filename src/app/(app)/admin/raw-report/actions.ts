@@ -43,18 +43,27 @@ export async function getRawReportAction(from: string, to: string): Promise<{ da
   };
 
   // 1) Taken
-  const { data: ws } = await db.from('lab_raw_withdrawals').select('id, team').gte('created_at', start).lt('created_at', end).limit(5000);
-  const teamOf = new Map((ws ?? []).map(w => [w.id, w.team]));
-  const teamsWithSlips = Array.from(new Set((ws ?? []).map(w => w.team)));
-  const wIds = Array.from(teamOf.keys());
+  // Transfers between teams (2026-10-16): once storage confirmed them, the quantity moves from the
+  // giving team to the receiving one; pending or refused transfers count nothing.
+  const { data: ws } = await db.from('lab_raw_withdrawals').select('id, team, kind, from_team, to_team, status, refused_at').gte('created_at', start).lt('created_at', end).limit(5000);
+  const slipOf = new Map((ws ?? []).map((w: any) => [w.id, w]));
+  const teamsWithSlips = Array.from(new Set((ws ?? []).flatMap((w: any) => w.kind === 'transfer' ? [w.from_team, w.to_team] : [w.team]).filter(Boolean)));
+  const wIds = Array.from(slipOf.keys());
   for (let i = 0; i < wIds.length; i += 200) {
     const { data: ls } = await db.from('lab_raw_withdrawal_lines').select('withdrawal_id, sku, name, uom, qty, corrected_qty').in('withdrawal_id', wIds.slice(i, i + 200));
     for (const l of ls ?? []) {
       if (!l.sku) continue;
-      const team = teamOf.get(l.withdrawal_id) ?? '?';
+      const w: any = slipOf.get(l.withdrawal_id);
+      const q = Number(l.corrected_qty ?? l.qty);
+      const moves: [string, number][] = !w ? [['?', q]]
+        : w.kind === 'transfer' ? (w.status === 'confirmed' && !w.refused_at ? [[w.from_team, -q], [w.to_team, q]] : [])
+        : [[w.team, q]];
+      if (!moves.length) continue;
       const r = row(l.sku, l.name, l.uom);
-      r.taken[team] = (r.taken[team] ?? 0) + Number(l.corrected_qty ?? l.qty);
-      r.slips[team] = (r.slips[team] ?? 0) + 1;
+      for (const [team, v] of moves) {
+        r.taken[team] = (r.taken[team] ?? 0) + v;
+        r.slips[team] = (r.slips[team] ?? 0) + 1;
+      }
     }
   }
 

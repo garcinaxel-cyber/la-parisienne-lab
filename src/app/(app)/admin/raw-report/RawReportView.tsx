@@ -147,7 +147,7 @@ export default function RawReportView() {
                       <td className="px-3 py-2 text-right tabular-nums">{x.pct == null ? '—' : `${signed(x.pct * 100, n => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 }))} %`}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{signed(x.val, vnd)}</td>
                     </tr>
-                    {o && teamsIn.filter(t => (x.r.taken[t] ?? 0) > 0 || (x.r.recipe[t] ?? 0) > 0).map(t => { const tk = x.r.taken[t] ?? 0, rc = x.r.recipe[t] ?? 0; return (
+                    {o && teamsIn.filter(t => Math.abs(x.r.taken[t] ?? 0) > 1e-9 || (x.r.recipe[t] ?? 0) > 0).map(t => { const tk = x.r.taken[t] ?? 0, rc = x.r.recipe[t] ?? 0; return (
                       <tr key={t} style={{ backgroundColor: '#FCFAF3' }}>
                         <td></td><td className="px-3 py-1.5 text-[12px]"><span className="text-[10.5px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: TEAM_SHORT[t]?.bg, color: TEAM_SHORT[t]?.color }}>{TEAM_SHORT[t]?.[lang === 'vi' ? 'vi' : 'en'] ?? t}</span> <span style={{ color: '#6B7280' }}>· {x.r.slips[t] ?? 0} {L('phiếu', 'slips')}</span></td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-[12px]">{fmtQty(tk)} {x.r.uom}</td><td className="px-3 py-1.5 text-right tabular-nums text-[12px]">{fmtQty(rc)} {x.r.uom}</td>

@@ -4,13 +4,15 @@
 //                Recorded at once; the storage manager only corrects if needed.
 //   Đặt mua    : purchase request to the purchasing team (quantities only, never prices), plus
 //                "new product" with a photo, and the follow-up of the team's own requests.
+//   Chuyển team: transfer of raw materials between teams, both directions, confirmed by storage
+//                (Axel, 2026-10-16).
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
-import { RAW_TYPES, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
+import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
+import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import {
-  getRawCatalogForChefAction, recordWithdrawalAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
+  getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
   getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, type TeamRequestsMeta,
 } from './raw-actions';
 
@@ -29,7 +31,12 @@ async function compressImage(file: File): Promise<Blob> {
 
 export default function RawMaterialsTab({ team, lang, userName }: { team: string; lang: 'vi' | 'en'; userName: string | null }) {
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
-  const [mode, setMode] = useState<'take' | 'request'>('take');
+  const [mode, setMode] = useState<'take' | 'transfer' | 'request'>('take');
+  // Both pick raw materials with quantities (same list, same steppers) and show the same slips.
+  const takeLike = mode === 'take' || mode === 'transfer';
+  const [direction, setDirection] = useState<'give' | 'receive'>('give');
+  const [other, setOther] = useState<string | null>(null);
+  const [tNote, setTNote] = useState('');
   const [items, setItems] = useState<RawMaterial[] | null>(null);
   const [type, setType] = useState<'all' | RawType>('all');
   const [sub, setSub] = useState<string>('all');
@@ -41,7 +48,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   // take
   const [qty, setQty] = useState<Record<number, number>>({});
   const [unit, setUnit] = useState<Record<number, number>>({});
-  const [sheet, setSheet] = useState<null | 'take' | 'cart' | 'new'>(null);
+  const [sheet, setSheet] = useState<null | 'take' | 'transfer' | 'cart' | 'new'>(null);
   const [today, setToday] = useState<Withdrawal[]>([]);
   // What an off-recipe item was taken for (Axel, 2026-10-09), per raw material, optional.
   const [usedFor, setUsedFor] = useState<Record<number, string>>({});
@@ -91,7 +98,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setHist(null);
     getTeamWithdrawalsAction(team, period).then(r => setHist(r.items ?? []));
   }, [team, period]);
-  useEffect(() => { if (view === 'history' && mode === 'take') loadHist(); }, [view, mode, loadHist]);
+  useEffect(() => { if (view === 'history' && takeLike) loadHist(); }, [view, takeLike, loadHist]);
   useEffect(() => { loadMine(); }, [loadMine]);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
   function saveName(v: string) { setName(v); try { localStorage.setItem(NAME_KEY, v); } catch {} }
@@ -123,6 +130,20 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setQty({}); setUnit({}); setSheet(null); setView('history');
     setPeriod('today');
     setMsg({ ok: true, text: L(`Đã gửi phiếu #${res.no}. Chờ kho xác nhận rồi mới lấy hàng.`, `Slip #${res.no} sent. Wait for storage to confirm before taking the goods.`) });
+    loadToday();
+  }
+  async function confirmTransfer() {
+    if (!name.trim()) { setEditName(true); setMsg({ ok: false, text: L('Nhập tên người thực hiện trước.', 'Enter your name first.') }); return; }
+    if (!other) return;
+    setBusy(true);
+    const res = await recordTransferAction(team, name.trim(), direction, other, picked.map(({ m, n }) => {
+      const u = unit[m.tmplId] ?? -1;
+      return { tmplId: m.tmplId, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null };
+    }), tNote.trim() || null);
+    setBusy(false);
+    if (res.error) { setMsg({ ok: false, text: res.error }); return; }
+    setQty({}); setUnit({}); setTNote(''); setSheet(null); setView('history'); setPeriod('today');
+    setMsg({ ok: true, text: L(`Đã gửi phiếu chuyển #${res.no}. Chờ kho xác nhận.`, `Transfer #${res.no} sent. Waiting for storage to confirm.`) });
     loadToday();
   }
   async function sendRequest() {
@@ -191,15 +212,20 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
   return (
     <div className="space-y-3 pb-24">
-      <div className="grid grid-cols-2 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
-        {([['take', L('Lấy từ kho', 'Take from storage'), Package], ['request', L('Đặt mua', 'Request purchase'), ShoppingBag]] as const).map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setMode(k)} className="inline-flex items-center justify-center gap-1.5 rounded-lg py-2.5 text-[13px] font-extrabold"
-            style={{ backgroundColor: mode === k ? NAVY : 'transparent', color: mode === k ? '#fff' : '#6B7280' }}><Icon size={15} /> {label}</button>
+      <div className="grid grid-cols-3 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
+        {([['take', L('Lấy từ kho', 'Take from storage'), Package], ['transfer', L('Chuyển team', 'Transfer team'), ArrowRightLeft], ['request', L('Đặt mua', 'Request purchase'), ShoppingBag]] as const).map(([k, label, Icon]) => (
+          <button key={k} onClick={() => {
+            // Take and transfer share the quantity pickers: start clean when switching between them,
+            // so items picked for one never end up in the other by mistake.
+            if (k !== mode && k !== 'request' && mode !== 'request') { setQty({}); setUnit({}); }
+            setMode(k);
+          }} className="inline-flex items-center justify-center gap-1 rounded-lg py-2.5 px-1 text-[12px] leading-tight font-extrabold text-center"
+            style={{ backgroundColor: mode === k ? NAVY : 'transparent', color: mode === k ? '#fff' : '#6B7280' }}><Icon size={14} className="flex-none" /> {label}</button>
         ))}
       </div>
       <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 text-[12.5px]" style={{ border: `1px solid ${BORDER}` }}>
         <User size={14} style={{ color: '#9CA3AF' }} />
-        <span style={{ color: '#6B7280' }}>{mode === 'take' ? L('Người lấy', 'Taken by') : L('Người yêu cầu', 'Requested by')}</span>
+        <span style={{ color: '#6B7280' }}>{mode === 'take' ? L('Người lấy', 'Taken by') : mode === 'transfer' ? L('Người thực hiện', 'Done by') : L('Người yêu cầu', 'Requested by')}</span>
         {editName ? <input autoFocus value={name} onChange={e => saveName(e.target.value)} onBlur={() => setEditName(false)} className="flex-1 font-bold outline-none" placeholder={L('Tên của bạn', 'Your name')} />
           : <><b className="flex-1">{name || '—'}</b><button onClick={() => setEditName(true)} className="text-xs font-extrabold" style={{ color: GOLD_TEXT }}>{L('Đổi', 'Change')}</button></>}
       </div>
@@ -216,7 +242,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
       <div className="flex gap-1.5">
         {([['list', L('Chọn nguyên liệu', 'Pick items'), null],
-           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), mode === 'take' ? today.length : mine.filter(l => l.status !== 'to_approve' || !meta.canApprove).length]] as const).map(([k, label, n]) => (
+           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : mode === 'transfer' ? L('Phiếu hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), takeLike ? today.length : mine.filter(l => l.status !== 'to_approve' || !meta.canApprove).length]] as const).map(([k, label, n]) => (
           <button key={k} onClick={() => setView(k)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12.5px] font-extrabold"
             style={{ backgroundColor: view === k ? PALE : '#fff', color: view === k ? GOLD_TEXT : '#6B7280', border: `1.5px solid ${view === k ? GOLD : BORDER}` }}>
             {label}
@@ -235,6 +261,25 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         <div className="flex gap-1.5 overflow-x-auto pb-0.5">
           {['all', ...Object.keys(RAW_TYPES[type].subs)].map(s => (
             <button key={s} onClick={() => setSub(s)} className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-bold" style={chipSm(sub === s)}>{s === 'all' ? L('Tất cả nhóm', 'All groups') : subLabel(type, s, lang)}</button>))}
+        </div>
+      )}
+      {mode === 'transfer' && (
+        <div className="bg-white rounded-2xl p-3 space-y-2" style={{ border: `1.5px solid ${GOLD}` }}>
+          <div className="text-[11px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>{L('Chiều chuyển', 'Direction')}</div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {([['give', L('Chuyển cho team khác →', 'Give to a team →')], ['receive', L('← Nhận từ team khác', '← Receive from a team')]] as const).map(([k, lab]) => (
+              <button key={k} onClick={() => setDirection(k)} className="rounded-xl py-2.5 px-1 text-[12.5px] font-extrabold"
+                style={direction === k ? { backgroundColor: NAVY, color: '#fff', border: `1px solid ${NAVY}` } : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>{lab}</button>
+            ))}
+          </div>
+          <div className="text-[11px] font-extrabold uppercase tracking-wide pt-1" style={{ color: GOLD_TEXT }}>{L('Team kia', 'Other team')}</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {TRANSFER_TEAMS.filter(t => t !== team).map(t => { const ts = TEAM_SHORT[t]; const on = other === t; return (
+              <button key={t} onClick={() => setOther(t)} className="rounded-full px-3.5 py-1.5 text-[12.5px] font-extrabold"
+                style={{ backgroundColor: on ? ts.bg : '#fff', color: ts.color, border: `${on ? 2 : 1}px solid ${on ? ts.color : BORDER}` }}>{on ? '✓ ' : ''}{ts[lang]}</button>); })}
+          </div>
+          {other && <div className="rounded-lg px-2.5 py-2 text-[12.5px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>
+            {direction === 'give' ? `Team ${TEAM_SHORT[team]?.[lang] ?? team} → Team ${TEAM_SHORT[other][lang]}` : `Team ${TEAM_SHORT[other][lang]} → Team ${TEAM_SHORT[team]?.[lang] ?? team}`}</div>}
         </div>
       )}
       <label className="flex items-center gap-2 bg-white rounded-xl px-3" style={{ border: `1px solid ${BORDER}` }}>
@@ -262,7 +307,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-bold leading-snug">{rawName(m, lang)}</div>
                   <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>{subLabel(m.type, m.sub, lang)} · {m.sku ?? '—'}{mode === 'request' ? ` · ${m.uom}` : ''}</div>
-                  {mode === 'take' && m.packs.length > 0 && (
+                  {takeLike && m.packs.length > 0 && (
                     <div className="flex gap-1 mt-1 flex-wrap">
                       {[-1, ...m.packs.map((_, i) => i)].map(i => (
                         <button key={i} onClick={() => setUnit(s => ({ ...s, [m.tmplId]: i }))} className="text-[10.5px] font-bold rounded-md px-1.5 py-0.5"
@@ -270,7 +315,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     </div>
                   )}
                 </div>
-                {mode === 'take' ? (
+                {takeLike ? (
                   <div className="text-center flex-none">
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
                       <button onClick={() => setQty(s => ({ ...s, [m.tmplId]: Math.max(0, (s[m.tmplId] ?? 0) - 1) }))} className="w-9 h-9 flex items-center justify-center" style={{ color: NAVY }}><Minus size={15} /></button>
@@ -296,16 +341,17 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
       </>)}
 
-      {view === 'history' && (mode === 'take' ? ((() => {
+      {view === 'history' && (takeLike ? ((() => {
         const list = period === 'today' ? today : hist;
         const qOf = (l: Withdrawal['lines'][number]) => l.correctedQty ?? l.qty;
         // Per-ingredient totals for the period (storage correction wins, as everywhere).
         const totals = new Map<string, { name: string; uom: string; qty: number; slips: number }>();
-        for (const w of list ?? []) for (const l of w.lines) {
+        // Transfers (2026-10-16): + received, − given, once storage confirmed them.
+        for (const w of list ?? []) { const sign = slipSign(w, team); if (!sign) continue; for (const l of w.lines) {
           const k = `${l.tmplId ?? l.name}|${l.uom}`;
           const t = totals.get(k) ?? { name: lineName(l), uom: l.uom, qty: 0, slips: 0 };
-          t.qty += qOf(l); t.slips += 1; totals.set(k, t);
-        }
+          t.qty += sign * qOf(l); t.slips += 1; totals.set(k, t);
+        } }
         const totalRows = Array.from(totals.values()).sort((x, y) => x.name.localeCompare(y.name, lang === 'vi' ? 'vi' : 'en'));
         // Slips grouped by day, newest first.
         const groups: { ymd: string; day: string; items: Withdrawal[] }[] = [];
@@ -324,7 +370,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
             ))}
           </div>
           <div className="flex justify-between items-center px-1 pt-1">
-            <b className="text-[13px]">{L('Phiếu lấy kho', 'Storage withdrawals')} <span className="font-normal" style={{ color: '#6B7280' }}>· {list ? list.length : '…'}</span></b>
+            <b className="text-[13px]">{L('Phiếu lấy kho & chuyển', 'Withdrawals & transfers')} <span className="font-normal" style={{ color: '#6B7280' }}>· {list ? list.length : '…'}</span></b>
             {!!list?.length && (
               <button onClick={() => setByItem(v => !v)} className="text-[12px] font-extrabold rounded-lg px-2.5 py-1"
                 style={byItem ? { backgroundColor: NAVY, color: '#fff' } : { border: `1px solid ${BORDER}`, color: GOLD_TEXT, backgroundColor: '#fff' }}>
@@ -353,9 +399,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 return (
                 <div key={w.id} className="bg-white rounded-2xl px-3 pt-2.5 pb-1" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center gap-2 pb-1.5">
-                    <b className="text-[14px] tabular-nums">#{w.no}</b>
-                    <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
-                    {w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ kho xác nhận', 'Waiting for storage')}</span>
+                    {w.kind === 'transfer'
+                      ? <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5 flex-none tabular-nums" style={{ backgroundColor: '#8A6D14', color: '#fff' }}>⇄ #{w.no}</span>
+                      : <b className="text-[14px] tabular-nums">#{w.no}</b>}
+                    <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{w.kind === 'transfer' && w.fromTeam && w.toTeam ? <b style={{ color: '#1A2C24' }}>{TEAM_SHORT[w.fromTeam]?.[lang] ?? w.fromTeam} → {TEAM_SHORT[w.toTeam]?.[lang] ?? w.toTeam} · </b> : null}{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
+                    {w.refused ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FBEAE8', color: LATE }}>✕ {L('Kho từ chối', 'Refused')}</span>
+                      : w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ kho xác nhận', 'Waiting for storage')}</span>
                       : corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
                       : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>✓ {L('Kho đã xác nhận', 'Confirmed')}</span>}
                   </div>
@@ -364,12 +413,13 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     const recent = reminded[w.id] && Date.now() - reminded[w.id] < 3 * 60 * 1000;
                     return (
                       <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 mb-1.5 text-[12px]" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
-                        <span className="flex-1">{L(`Chưa lấy hàng: chờ kho xác nhận (${mins} phút).`, `Do not take yet: waiting for storage (${mins} min).`)}</span>
+                        <span className="flex-1">{w.kind === 'transfer' ? L(`Chờ kho xác nhận phiếu chuyển (${mins} phút).`, `Waiting for storage to confirm the transfer (${mins} min).`) : L(`Chưa lấy hàng: chờ kho xác nhận (${mins} phút).`, `Do not take yet: waiting for storage (${mins} min).`)}</span>
                         {mins >= 2 && <button disabled={!!recent} onClick={() => remind(w)} className="flex-none rounded-md px-2.5 py-1 text-[12px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#8A5A00', color: '#fff' }}>
                           {recent ? L('Đã nhắc', 'Reminded') : L('Nhắc kho', 'Remind storage')}</button>}
                       </div>
                     );
                   })()}
+                  {w.note && <div className="text-[12px] pb-1.5" style={{ color: '#6B7280' }}>“{w.note}”</div>}
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-baseline gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
                       <div className="flex-1 min-w-0">
@@ -378,7 +428,9 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                         {l.offRecipe && <div className="text-[11px] font-bold" style={{ color: '#8A5A00' }}>⚠ {L('Ngoài công thức', 'Off recipe')}{l.usedFor ? ` · ${L('cho', 'for')}: ${l.usedFor}` : ''}</div>}
                       </div>
                       <div className="text-right whitespace-nowrap">
-                        <span className="text-[15px] font-extrabold tabular-nums">{fmtQty(qOf(l))}</span> <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                        {w.kind === 'transfer' ? (() => { const out = w.fromTeam === team; return (
+                          <span className="text-[15px] font-extrabold tabular-nums" style={{ color: w.refused ? '#9CA3AF' : out ? LATE : '#067647' }}>{out ? '− ' : '+ '}{fmtQty(qOf(l))}</span>); })()
+                          : <span className="text-[15px] font-extrabold tabular-nums">{fmtQty(qOf(l))}</span>} <span className="text-[12px] font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
                         {l.correctedQty != null && <div className="text-[11px] line-through tabular-nums" style={{ color: '#9CA3AF' }}>{fmtQty(l.qty)} {l.uom}</div>}
                       </div>
                     </div>
@@ -454,6 +506,10 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         <button onClick={() => setSheet('take')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
           <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Ghi phiếu lấy', 'Record withdrawal')} ›</span></button>
       )}
+      {mode === 'transfer' && picked.length > 0 && !sheet && (
+        <button onClick={() => { if (!other) { setMsg({ ok: false, text: L('Chọn team kia trước.', 'Choose the other team first.') }); return; } setSheet('transfer'); }} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
+          <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}{other ? ` · ${direction === 'give' ? L('cho', 'to') : L('từ', 'from')} ${TEAM_SHORT[other][lang]}` : ''}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Ghi phiếu chuyển', 'Record transfer')} ›</span></button>
+      )}
       {mode === 'request' && (cart.length + newItems.length) > 0 && !sheet && (
         <button onClick={() => setSheet('cart')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
           <b className="flex-1 text-left text-[13.5px]">{cart.length + newItems.length} {L('dòng', 'lines')}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Gửi yêu cầu', 'Send request')} ›</span></button>
@@ -482,6 +538,24 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <button disabled={busy} onClick={confirmTake} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Gửi cho kho', 'Send to storage')}</button>
               <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Sửa lại', 'Go back')}</button>
             </>)}
+            {sheet === 'transfer' && other && (() => { const from = direction === 'give' ? team : other, to = direction === 'give' ? other : team; const badge = (t: string) => (
+              <span className="text-[13px] font-extrabold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: TEAM_SHORT[t]?.bg ?? '#F2F4F7', color: TEAM_SHORT[t]?.color ?? '#344054' }}>Team {TEAM_SHORT[t]?.[lang] ?? t}</span>); return (<>
+              <div className="text-[15px] font-extrabold">{L('Phiếu chuyển nguyên liệu', 'Transfer slip')}</div>
+              <div className="flex items-center gap-2 mt-2">{badge(from)}<ArrowRightLeft size={16} style={{ color: GOLD_TEXT }} />{badge(to)}</div>
+              <div className="text-xs mt-1.5 mb-2" style={{ color: '#6B7280' }}>{name} · {L('hôm nay', 'today')}</div>
+              {picked.map(({ m, n }) => { const u = unit[m.tmplId] ?? -1; return (
+                <div key={m.tmplId} className="py-2 text-[13px] flex justify-between gap-3" style={{ borderTop: `1px solid ${HAIR}` }}>
+                  <span>{rawName(m, lang)}</span>
+                  <b className="whitespace-nowrap tabular-nums">{u >= 0 ? `${fmtQty(n)} × ${m.packs[u].label}` : `${fmtQty(n)} ${m.uom}`}{u >= 0 && <span className="font-semibold" style={{ color: '#9CA3AF' }}> = {fmtQty(toBase(m, n))} {m.uom}</span>}</b>
+                </div>); })}
+              <label className="block mt-2"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Lý do / dùng cho món nào (tuỳ chọn)', 'Why / for which product (optional)')}</span>
+                <input value={tNote} onChange={e => setTNote(e.target.value)} maxLength={200} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
+              <div className="rounded-xl px-3 py-2 text-xs mt-2 flex items-start gap-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}><ShieldCheck size={14} className="flex-none mt-0.5" />
+                {L(`Kho xác nhận trước khi tính. Sau đó số lượng được trừ khỏi Team ${TEAM_SHORT[from]?.vi ?? from} và cộng cho Team ${TEAM_SHORT[to]?.vi ?? to}.`,
+                  `Storage confirms before it counts. Then it comes off Team ${TEAM_SHORT[from]?.en ?? from} and is added to Team ${TEAM_SHORT[to]?.en ?? to}.`)}</div>
+              <button disabled={busy} onClick={confirmTransfer} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Gửi kho xác nhận', 'Send to storage for confirmation')}</button>
+              <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Sửa lại', 'Keep editing')}</button>
+            </>); })()}
             {sheet === 'cart' && (<>
               <div className="text-[15px] font-extrabold">{L('Yêu cầu mua', 'Purchase request')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('không hiển thị giá', 'prices are not shown')}</div>

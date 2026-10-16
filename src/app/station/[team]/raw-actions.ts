@@ -3,7 +3,7 @@
 // are recorded in the app only; nothing goes to Odoo. Test phase: team Hưng only (see RAW_TEAMS).
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
-import { TEAM_SHORT, pieceUnit, piecesFromKg, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { TEAM_SHORT, TRANSFER_TEAMS, pieceUnit, piecesFromKg, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { labDayUtcRange, vnTodayStr } from '@/lib/odoo';
 
 export async function getRawCatalogForChefAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
@@ -50,13 +50,16 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
 
 // Storage (purchasing role) is told a slip waits for its confirmation. Vietnamese only, like the
 // purchase pushes. Opens the Stock picking tab.
-async function notifyStorage(db: NonNullable<ReturnType<typeof rawService>>, team: string, no: number, count: number, who: string, reminder: boolean) {
+async function notifyStorage(db: NonNullable<ReturnType<typeof rawService>>, team: string, no: number, count: number, who: string, reminder: boolean, transfer?: { from: string; to: string } | null) {
   const ids = await purchasingUserIds(db);
   if (!ids.length) return;
   const teamVi = TEAM_SHORT[team]?.vi ?? team;
+  const what = transfer
+    ? `phiếu chuyển #${no} · ${TEAM_SHORT[transfer.from]?.vi ?? transfer.from} → ${TEAM_SHORT[transfer.to]?.vi ?? transfer.to}`
+    : `phiếu lấy kho #${no} · Team ${teamVi}`;
   const body = reminder
-    ? `⏰ ${who || 'Chef'} đang chờ: phiếu lấy kho #${no} · Team ${teamVi} · ${count} dòng — cần xác nhận`
-    : `📦 Phiếu lấy kho #${no} · Team ${teamVi} · ${who || '—'} · ${count} dòng — chờ bạn xác nhận`;
+    ? `⏰ ${who || 'Chef'} đang chờ: ${what} · ${count} dòng — cần xác nhận`
+    : `${transfer ? '⇄' : '📦'} ${what.charAt(0).toUpperCase() + what.slice(1)} · ${who || '—'} · ${count} dòng — chờ bạn xác nhận`;
   const p = { title: 'La Parisienne Lab', body, url: '/purchasing?tab=storage', tag: `raw-pick-${no}` };
   await awaitPush(sendUsersPush(db, ids, p, p));
 }
@@ -68,14 +71,52 @@ export async function remindStorageAction(team: string, withdrawalId: string): P
   if (!canActForTeam(a, team)) return { error: 'Forbidden' };
   const db = rawService();
   if (!db) return { error: 'Server not configured' };
-  const { data: w } = await db.from('lab_raw_withdrawals').select('id, no, team, taken_by, status, reminded_at').eq('id', withdrawalId).maybeSingle();
+  const { data: w } = await db.from('lab_raw_withdrawals').select('id, no, team, taken_by, status, reminded_at, kind, from_team, to_team').eq('id', withdrawalId).maybeSingle();
   if (!w || w.team !== team) return { error: 'Not found' };
   if (w.status !== 'to_confirm') return { ok: true };
   if (w.reminded_at && Date.now() - new Date(w.reminded_at).getTime() < 3 * 60 * 1000) return { ok: true };
   const { count } = await db.from('lab_raw_withdrawal_lines').select('id', { count: 'exact', head: true }).eq('withdrawal_id', w.id);
   await db.from('lab_raw_withdrawals').update({ reminded_at: new Date().toISOString() }).eq('id', w.id);
-  await notifyStorage(db, team, Number(w.no), count ?? 0, w.taken_by || a.name || '', true);
+  await notifyStorage(db, team, Number(w.no), count ?? 0, w.taken_by || a.name || '', true,
+    w.kind === 'transfer' ? { from: w.from_team, to: w.to_team } : null);
   return { ok: true };
+}
+
+// A team's slips: the ones it recorded, plus transfers to or from it recorded by another team.
+const teamOr = (team: string) => { const t = /^[a-z_]+$/.test(team) ? team : '__none__'; return `team.eq.${t},from_team.eq.${t},to_team.eq.${t}`; };
+
+export type TransferInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null };
+
+// Transfer between teams (Axel, 2026-10-16): both directions, recorded by either team, waits for
+// storage to confirm like a withdrawal. Nothing to Odoo; off-recipe never applies (not a storage take).
+export async function recordTransferAction(team: string, doneBy: string, direction: 'give' | 'receive', otherTeam: string, lines: TransferInput[], note?: string | null): Promise<{ ok?: boolean; no?: number; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  if (!(TRANSFER_TEAMS as readonly string[]).includes(otherTeam) || otherTeam === team) return { error: 'Bad team' };
+  if (direction !== 'give' && direction !== 'receive') return { error: 'Bad direction' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const clean = (lines ?? []).map(l => ({ ...l, qty: Math.round(Number(l.qty) * 1000) / 1000 })).filter(l => l.tmplId && l.qty > 0).slice(0, 80);
+  if (!clean.length) return { error: 'Empty' };
+  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom').in('tmpl_id', clean.map(l => l.tmplId));
+  const byId = new Map((mats ?? []).map(m => [m.tmpl_id, m]));
+  if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  const from = direction === 'give' ? team : otherTeam, to = direction === 'give' ? otherTeam : team;
+  const who = String(doneBy ?? '').trim().slice(0, 80) || a.name || null;
+  const { data: w, error } = await db.from('lab_raw_withdrawals')
+    .insert({ team, kind: 'transfer', from_team: from, to_team: to, note: String(note ?? '').trim().slice(0, 200) || null,
+      taken_by: who, created_by: a.userId, status: 'to_confirm' }).select('id, no').single();
+  if (error || !w) return { error: error?.message ?? 'Insert failed' };
+  const rows = clean.map(l => {
+    const m = byId.get(l.tmplId)!;
+    return { withdrawal_id: w.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: l.qty,
+      pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null, off_recipe: false, used_for: null };
+  });
+  const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
+  if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }
+  await notifyStorage(db, team, Number(w.no), rows.length, who || '', false, { from, to });
+  return { ok: true, no: Number(w.no) };
 }
 
 export async function getTeamWithdrawalsTodayAction(team: string): Promise<{ items?: Withdrawal[]; error?: string }> {
@@ -86,7 +127,7 @@ export async function getTeamWithdrawalsTodayAction(team: string): Promise<{ ite
   if (!db) return { error: 'Server not configured' };
   const { start, end } = labDayUtcRange(vnTodayStr());
   try {
-    const items = await loadWithdrawals(db, q => q.eq('team', team).gte('created_at', start).lt('created_at', end).order('created_at', { ascending: false }));
+    const items = await loadWithdrawals(db, q => q.or(teamOr(team)).gte('created_at', start).lt('created_at', end).order('created_at', { ascending: false }));
     return { items };
   } catch (e: any) { return { error: e.message }; }
 }
@@ -104,7 +145,7 @@ export async function getTeamWithdrawalsAction(team: string, period: 'today' | '
   const from = period === 'today' ? today : period === 'yesterday' ? shift(today, -1) : shift(today, -6);
   const to = period === 'yesterday' ? shift(today, -1) : today;
   try {
-    const items = await loadWithdrawals(db, q => q.eq('team', team).gte('created_at', labDayUtcRange(from).start).lt('created_at', labDayUtcRange(to).end).order('created_at', { ascending: false }));
+    const items = await loadWithdrawals(db, q => q.or(teamOr(team)).gte('created_at', labDayUtcRange(from).start).lt('created_at', labDayUtcRange(to).end).order('created_at', { ascending: false }));
     return { items };
   } catch (e: any) { return { error: e.message }; }
 }

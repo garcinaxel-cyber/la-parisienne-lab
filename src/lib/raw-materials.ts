@@ -166,7 +166,20 @@ export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | 
   offRecipe: boolean; usedFor: string | null };
 // status (Axel, 2026-10-09): a new slip waits for storage (purchasing role) to confirm it before the chef takes the goods.
 export type Withdrawal = { id: string; no: number; team: string; takenBy: string | null; createdAt: string; lines: WithdrawalLine[];
-  status: 'to_confirm' | 'confirmed'; confirmedAt: string | null; confirmedBy: string | null };
+  status: 'to_confirm' | 'confirmed'; confirmedAt: string | null; confirmedBy: string | null;
+  // Transfers between teams (Axel, 2026-10-16): kind 'transfer', fromTeam -> toTeam, confirmed by storage
+  // like a withdrawal. Refused = refused (lines corrected to 0).
+  kind: 'take' | 'transfer'; fromTeam: string | null; toTeam: string | null; note: string | null;
+  refused: boolean; refusedBy: string | null };
+
+/** Signed quantity a slip line counts for `team`: storage withdrawals +, transfers + when received,
+ *  − when given. Transfers count only once storage confirmed them; refused ones count 0. */
+export function slipSign(w: Pick<Withdrawal, 'kind' | 'team' | 'fromTeam' | 'toTeam' | 'status' | 'refused'>, team: string): number {
+  if (w.kind !== 'transfer') return w.team === team ? 1 : 0;
+  if (w.refused || w.status !== 'confirmed') return 0;
+  return w.toTeam === team ? 1 : w.fromTeam === team ? -1 : 0;
+}
+export const TRANSFER_TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'] as const;
 
 // Odoo vendor names are long legal names ("CHI NHÁNH CÔNG TY TNHH ... TẠI HÀ NỘI") — a short form for lists.
 export function shortVendor(name: string | null | undefined): string {
