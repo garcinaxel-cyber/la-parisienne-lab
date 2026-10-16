@@ -48,6 +48,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   // take
   const [qty, setQty] = useState<Record<number, number>>({});
   const [unit, setUnit] = useState<Record<number, number>>({});
+  // What the chef is typing, kept as text while the field is being edited (Axel, 2026-10-16: "ils
+  // peuvent pas faire en dessous d'1 kg"): reformatting the value on every key turned "0" into an
+  // empty field and "1," into "1", so 0,5 kg or 1,5 kg could never be typed.
+  const [qtyTxt, setQtyTxt] = useState<Record<string, string>>({});
+  const parseQty = (t: string) => { const v = parseFloat(t.replace(/\s+/g, '').replace(',', '.')); return isNaN(v) ? 0 : Math.max(0, v); };
+  const dropTxt = (k: string) => setQtyTxt(x => { if (!(k in x)) return x; const n = { ...x }; delete n[k]; return n; });
   const [sheet, setSheet] = useState<null | 'take' | 'transfer' | 'cart' | 'new'>(null);
   const [today, setToday] = useState<Withdrawal[]>([]);
   // What an off-recipe item was taken for (Axel, 2026-10-09), per raw material, optional.
@@ -127,7 +133,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
     setUsedFor({});
-    setQty({}); setUnit({}); setSheet(null); setView('history');
+    setQty({}); setUnit({}); setQtyTxt({}); setSheet(null); setView('history');
     setPeriod('today');
     setMsg({ ok: true, text: L(`Đã gửi phiếu #${res.no}. Chờ kho xác nhận rồi mới lấy hàng.`, `Slip #${res.no} sent. Wait for storage to confirm before taking the goods.`) });
     loadToday();
@@ -142,7 +148,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     }), tNote.trim() || null);
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
-    setQty({}); setUnit({}); setTNote(''); setSheet(null); setView('history'); setPeriod('today');
+    setQty({}); setUnit({}); setQtyTxt({}); setTNote(''); setSheet(null); setView('history'); setPeriod('today');
     setMsg({ ok: true, text: L(`Đã gửi phiếu chuyển #${res.no}. Chờ kho xác nhận.`, `Transfer #${res.no} sent. Waiting for storage to confirm.`) });
     loadToday();
   }
@@ -217,7 +223,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
           <button key={k} onClick={() => {
             // Take and transfer share the quantity pickers: start clean when switching between them,
             // so items picked for one never end up in the other by mistake.
-            if (k !== mode && k !== 'request' && mode !== 'request') { setQty({}); setUnit({}); }
+            if (k !== mode && k !== 'request' && mode !== 'request') { setQty({}); setUnit({}); setQtyTxt({}); }
             setMode(k);
           }} className="inline-flex items-center justify-center gap-1 rounded-lg py-2.5 px-1 text-[12px] leading-tight font-extrabold text-center"
             style={{ backgroundColor: mode === k ? NAVY : 'transparent', color: mode === k ? '#fff' : '#6B7280' }}><Icon size={14} className="flex-none" /> {label}</button>
@@ -318,10 +324,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 {takeLike ? (
                   <div className="text-center flex-none">
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                      <button onClick={() => setQty(s => ({ ...s, [m.tmplId]: Math.max(0, (s[m.tmplId] ?? 0) - 1) }))} className="w-9 h-9 flex items-center justify-center" style={{ color: NAVY }}><Minus size={15} /></button>
-                      <input inputMode="decimal" value={n ? fmtQty(n) : ''} placeholder="0" onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setQty(s => ({ ...s, [m.tmplId]: isNaN(v) ? 0 : Math.max(0, v) })); }}
+                      <button onClick={() => { dropTxt(`t${m.tmplId}`); setQty(s => ({ ...s, [m.tmplId]: Math.max(0, (s[m.tmplId] ?? 0) - 1) })); }} className="w-9 h-9 flex items-center justify-center" style={{ color: NAVY }}><Minus size={15} /></button>
+                      <input inputMode="decimal" value={qtyTxt[`t${m.tmplId}`] ?? (n ? fmtQty(n) : '')} placeholder="0"
+                        onChange={e => { const t = e.target.value.replace(/[^0-9.,]/g, ''); setQtyTxt(x => ({ ...x, [`t${m.tmplId}`]: t })); setQty(s => ({ ...s, [m.tmplId]: parseQty(t) })); }}
+                        onBlur={() => dropTxt(`t${m.tmplId}`)}
                         className="w-12 h-9 text-center font-extrabold text-[13.5px] outline-none tabular-nums" style={{ borderLeft: `1px solid ${HAIR}`, borderRight: `1px solid ${HAIR}` }} />
-                      <button onClick={() => setQty(s => ({ ...s, [m.tmplId]: (s[m.tmplId] ?? 0) + 1 }))} className="w-9 h-9 flex items-center justify-center" style={{ color: NAVY }}><Plus size={15} /></button>
+                      <button onClick={() => { dropTxt(`t${m.tmplId}`); setQty(s => ({ ...s, [m.tmplId]: (s[m.tmplId] ?? 0) + 1 })); }} className="w-9 h-9 flex items-center justify-center" style={{ color: NAVY }}><Plus size={15} /></button>
                     </div>
                     <div className="text-[10px] mt-0.5" style={{ color: '#9CA3AF' }}>{unitLabel(m)}</div>
                   </div>
@@ -565,9 +573,10 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 <div key={c.tmplId} className="py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
                   <div className="flex items-center gap-2"><b className="flex-1 text-[13px]">{rawName(m, lang)}</b>
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                      <button onClick={() => upd({ qty: pu ? kgFromPieces(Math.max(0, shown - pu.step), pu) : Math.max(0, c.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
-                      <input inputMode={pu ? 'numeric' : 'decimal'} value={fmtQty(shown)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); const n = isNaN(v) ? 0 : Math.max(0, v); upd({ qty: pu ? kgFromPieces(Math.round(n), pu) : n }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
-                      <button onClick={() => upd({ qty: pu ? kgFromPieces(shown + pu.step, pu) : c.qty + 1 })} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
+                      <button onClick={() => { dropTxt(`c${c.tmplId}`); upd({ qty: pu ? kgFromPieces(Math.max(0, shown - pu.step), pu) : Math.max(0, c.qty - 1) }); }} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
+                      <input inputMode={pu ? 'numeric' : 'decimal'} value={qtyTxt[`c${c.tmplId}`] ?? fmtQty(shown)} onBlur={() => dropTxt(`c${c.tmplId}`)}
+                        onChange={e => { const t = e.target.value.replace(/[^0-9.,]/g, ''); setQtyTxt(x => ({ ...x, [`c${c.tmplId}`]: t })); const n = parseQty(t); upd({ qty: pu ? kgFromPieces(Math.round(n), pu) : n }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
+                      <button onClick={() => { dropTxt(`c${c.tmplId}`); upd({ qty: pu ? kgFromPieces(shown + pu.step, pu) : c.qty + 1 }); }} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
                     </div><span className="text-[11.5px] w-6" style={{ color: '#6B7280' }}>{pu ? L(pu.vi, pu.en) : m.uom}</span>
                     <button onClick={() => setCart(xs => xs.filter((_, j) => j !== i))} style={{ color: '#9CA3AF' }}><X size={14} /></button></div>
                   {pu && <div className="text-[11px] mt-1 text-right font-semibold" style={{ color: GOLD_TEXT }}>{fmtQty(shown)} {L(pu.vi, pu.en)} × {Math.round(pu.kg * 1000)} g = {fmtQty(c.qty)} {m.uom}</div>}
