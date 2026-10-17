@@ -1,3 +1,4 @@
+import { parseWishNote } from '@/lib/cake-wish';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import StationView from './StationView';
@@ -156,7 +157,27 @@ export default async function StationPage({ params }: { params: { team: string }
       : { data: [] as any[] };
     const publishedRefs = new Set((pubRows ?? []).map((r: any) => r.order_ref).filter(Boolean));
 
+    // Birthday-cake message typed by the shop in its order form (Axel, 2026-10-17): it rides in the
+    // line note as "🎂 <message> | <note>" (src/lib/cake-wish.ts). Orders placed through the shop
+    // form always carry an explicit decision, so a cake from those orders with no message is a
+    // display cake ("no message"), not a missing one: only other orders keep the red badge.
+    const allRefs = Array.from(new Set(Object.values(breakdownMap).flat().map((b: any) => b?.order_ref).filter(Boolean))) as string[];
+    // Read with the service role: chefs have no RLS access to lab_shop_manager_orders (only the
+    // order refs are read). Without the key, nothing is found and the red badge stays as before.
+    let formRows: any[] = [];
+    if (allRefs.length && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const { createClient: createSb } = await import('@supabase/supabase-js');
+      const svc = createSb(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data } = await svc.from('lab_shop_manager_orders').select('order_ref').in('order_ref', allRefs);
+      formRows = data ?? [];
+    }
+    const shopFormRefs = new Set(formRows.map((r: any) => r.order_ref));
+
     const mapped = (assignments ?? []).map((a: any) => {
+      const bdsRaw: any[] = breakdownMap[a.id] ?? [];
+      const bdsParsed = bdsRaw.map((b: any) => ({ b, w: parseWishNote(b?.note) }));
+      const shopWishes = bdsParsed.map(x => x.w.wish).filter(Boolean);
+      const allFromShopForm = bdsRaw.length > 0 && bdsRaw.every((b: any) => b?.order_ref && shopFormRefs.has(b.order_ref));
       const variant = a.variant_id ? variantById[a.variant_id] ?? null : null;
       const fiche = a.fiche_id ? ficheById[a.fiche_id] ?? null : null;
       return {
@@ -166,7 +187,8 @@ export default async function StationPage({ params }: { params: { team: string }
         weight_grams: variant?.weight_g ?? fiche?.weight_grams ?? null,
         category_name_vi: fiche?.category ?? null,
         category_name_en: fiche?.category ?? null,
-        bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || null,
+        bc_message: bcByAsg[a.id]?.messages.join(' · ') || bcByProduct[a.product_name_vi]?.messages.join(' · ') || manualByAsg[a.id]?.message || shopWishes.join(' · ') || null,
+        bc_no_wish: !shopWishes.length && allFromShopForm,
         bc_ready_time: bcByAsg[a.id]?.ready || bcByProduct[a.product_name_vi]?.ready || manualByAsg[a.id]?.ready_time || null,
         bc_notes: manualByAsg[a.id]?.notes || null,
         bc_design_notes: manualByAsg[a.id]?.design_notes || null,
@@ -174,8 +196,10 @@ export default async function StationPage({ params }: { params: { team: string }
         bc_shop_name: manualByAsg[a.id]?.shop_name || null,
         bc_order_ref: manualByAsg[a.id]?.order_ref || null,
         draft_odoo: isDraftOdoo(((breakdownMap[a.id] ?? []) as any[]).map((b: any) => b.order_ref)),
-        breakdown: (breakdownMap[a.id] ?? []).map((b: any) => ({
+        breakdown: bdsParsed.map(({ b, w }) => ({
           ...b,
+          note: w.isBirthday ? (w.note || null) : (b.note ?? null),
+          wish: w.wish || null,
           delivery_time: b.order_ref ? (deliveryTimeByRef[b.order_ref] ?? null) : null,
         })),
         lab_imports: Array.isArray(a.lab_imports) ? a.lab_imports[0] : a.lab_imports,

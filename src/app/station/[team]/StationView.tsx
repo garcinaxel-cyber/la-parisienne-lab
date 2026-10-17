@@ -46,6 +46,7 @@ function SkeletonRow() {
 // est la REP...").
 type BreakdownItem = {
   shop_name: string; qty: number; order_ref?: string; delivery_time?: string | null; note?: string | null;
+  wish?: string | null; // birthday-cake message from the shop order form (page.tsx, 2026-10-17)
   changed_at?: string; changed_delta?: number;
 };
 
@@ -75,6 +76,7 @@ type Assignment = {
   transferred?: boolean;
   qty_sent_total?: number;
   bc_message?: string | null;
+  bc_no_wish?: boolean; // every order is from the shop form and none asked for a message: a display cake
   bc_notes?: string | null; // generic free-text note (entremets etc. — see page.tsx, 2026-08-27)
   bc_ready_time?: string | null;
   bc_design_notes?: string | null;
@@ -1095,7 +1097,7 @@ export default function StationView({
       const boSung = !!a.lab_imports?.imported_at
         && labDay.format(new Date(a.lab_imports.imported_at)) === a.lab_imports.delivery_date;
       const bds = (Array.isArray(a.breakdown) ? a.breakdown : []).filter(b => b.order_ref);
-      for (const b of bds) add(b.order_ref!, b.shop_name, b.delivery_time?.slice(0, 5) ?? null, boSung, { a, qty: b.qty, note: b.note ?? null });
+      for (const b of bds) add(b.order_ref!, b.shop_name, b.delivery_time?.slice(0, 5) ?? null, boSung, { a, qty: b.qty, note: [b.wish ? `🎂 ${b.wish}` : '', b.note ?? ''].filter(Boolean).join(' · ') || null });
       if (!bds.length && a.bc_order_ref && a.bc_order_ref !== '__pending_create__') {
         add(a.bc_order_ref, a.bc_shop_name || '', a.bc_ready_time?.slice(0, 5) ?? null, boSung, { a, qty: a.qty_to_produce, note: a.bc_notes ?? null });
       }
@@ -3251,6 +3253,11 @@ function ProductionCard({
                   style={{ backgroundColor: '#FEF3C7', color: '#92600A' }}>
                   🎂 <span style={{ fontWeight: 500 }}>{a.bc_message}</span>
                 </span>
+              ) : a.category_name_vi === 'Birthday cake' && a.bc_no_wish ? (
+                <span className="text-xs font-medium rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: '#F3F4F6', color: '#4B5563' }}>
+                  {lang === 'vi' ? 'Không có lời chúc · bánh bày tủ' : 'Pas de message · gâteau vitrine'}
+                </span>
               ) : a.category_name_vi === 'Birthday cake' && (
                 <span className="text-xs font-bold rounded-lg px-2 py-1 inline-flex items-center gap-1.5"
                   style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}
@@ -3364,6 +3371,11 @@ function ProductionCard({
                 </span>
                 <span className="font-black" style={{ color: '#1A4731' }}>x{b.qty}</span>
               </div>
+              {b.wish && (
+                <div className="text-xs font-bold mt-1" style={{ color: '#92600A' }}>
+                  🎂 {b.wish}
+                </div>
+              )}
               {b.note && (
                 <div className="text-xs font-semibold mt-1 whitespace-pre-line" style={{ color: '#B45309' }}>
                   📝 {b.note}
@@ -3559,6 +3571,11 @@ function TermineCard({
                 </span>
                 <span className="font-bold">x{b.qty}</span>
               </div>
+              {b.wish && (
+                <div className="font-bold mt-0.5" style={{ color: '#92600A' }}>
+                  🎂 {b.wish}
+                </div>
+              )}
               {b.note && (
                 <div className="font-semibold mt-0.5 whitespace-pre-line" style={{ color: '#B45309' }}>
                   📝 {b.note}

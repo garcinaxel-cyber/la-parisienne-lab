@@ -1,5 +1,6 @@
 'use client';
 import OffslipBlock from './OffslipBlock';
+import { WISH_CATEGORIES, composeDraftNote, composeOrderNote, parseWishNote } from '@/lib/cake-wish';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Truck, Cake, Trash2, CheckCircle2, AlertTriangle, Clock, Loader2, LogOut, User, Phone, MapPin, StickyNote, Pencil, Search, ArrowLeft, Settings, Plus, Minus, X, Check, ClipboardList, ClipboardCheck, FileText, Download, Package2, Send, Bell, ArrowRightLeft, ShoppingBag, Store, Lock } from 'lucide-react';
@@ -470,7 +471,8 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
   const [orderSearchResults, setOrderSearchResults] = useState<ShopManagerCatalogProduct[]>([]);
   const [orderSearching, setOrderSearching] = useState(false);
-  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null; priceB2c: number | null }[]>([]);
+  // isBirthday / wish / noWish: birthday-cake message typed by the shop (Axel, 2026-10-17) — see src/lib/cake-wish.ts.
+  const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null; priceB2c: number | null; isBirthday?: boolean; wish?: string; noWish?: boolean }[]>([]);
   const [orderDraftLoaded, setOrderDraftLoaded] = useState<ShopManagerOrderDraft | null>(null);
   const [orderDraftSaving, setOrderDraftSaving] = useState(false);
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
@@ -724,7 +726,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     const draft = res.draft ?? null;
     setOrderDraftLoaded(draft);
     if (draft) {
-      setOrderCart(draft.lines.map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note ?? '', imageUrl: null, priceB2c: l.priceB2c ?? null })));
+      setOrderCart(draft.lines.map(l => { const w = parseWishNote(l.note); return { sku: l.sku, name: l.name, qty: l.qty, note: w.note, imageUrl: null, priceB2c: l.priceB2c ?? null, isBirthday: w.isBirthday, wish: w.wish, noWish: w.noWish }; }));
       if (draft.deliveryTime) setOrderDeliveryTime(draft.deliveryTime);
       if (draft.createdByName) setOrderCreatedByName(draft.createdByName);
     } else {
@@ -1170,7 +1172,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       createdByName: name,
       deliveryDate: orderDeliveryDate,
       deliveryTime: orderDeliveryTime,
-      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
+      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: composeDraftNote(l) || undefined })),
     });
     setOrderDraftSaving(false);
     if (res.error) { setOrderMsg(L(`Lỗi: ${res.error}`, `Error: ${res.error}`)); return false; }
@@ -1198,7 +1200,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     orderCartDirtyRef.current = true;
     setOrderCart(prev => {
       const exists = prev.some(l => l.sku === p.sku);
-      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl, priceB2c: p.priceB2c ?? null }] : prev;
+      if (!exists) return clamped > 0 ? [...prev, { sku: p.sku, name: p.name, qty: clamped, note: '', imageUrl: p.imageUrl, priceB2c: p.priceB2c ?? null, isBirthday: WISH_CATEGORIES.includes(p.category), wish: '', noWish: false }] : prev;
       return prev.map(l => l.sku === p.sku ? { ...l, qty: clamped } : l);
     });
   }
@@ -1211,6 +1213,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   function updateOrderNote(sku: string, note: string) {
     orderCartDirtyRef.current = true;
     setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, note } : l));
+  }
+
+  function updateOrderWish(sku: string, patch: { wish?: string; noWish?: boolean }) {
+    orderCartDirtyRef.current = true;
+    setOrderCart(prev => prev.map(l => l.sku === sku ? { ...l, ...patch, ...(patch.noWish ? { wish: '' } : {}) } : l));
   }
 
   function removeOrderItem(sku: string) {
@@ -1232,7 +1239,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       ...(readOnly ? { shopName } : {}),
       deliveryDate: orderDeliveryDate ?? '',
       deliveryTime: orderDeliveryTime,
-      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: l.note.trim() || undefined })),
+      lines: orderCart.filter(l => l.qty > 0).map(l => ({ sku: l.sku, name: l.name, qty: l.qty, note: composeOrderNote(l) || undefined })),
     });
     setOrderSubmitting(false);
     if (res.error || !res.orderRef || !res.deliveryDate) { setOrderConfirmMsg(res.error ?? L('Lỗi không rõ', 'Unknown error')); return; }
@@ -1253,6 +1260,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   // cancelled), then opens the confirm-and-PIN modal.
   async function openOrderConfirm() {
     setOrderMsg(null);
+    // Every birthday cake needs a decision: a message, or "no message" ticked (Axel, 2026-10-17).
+    const undecided = orderCart.filter(l => l.qty > 0 && l.isBirthday && !(l.wish ?? '').trim() && !l.noWish);
+    if (undecided.length) {
+      setOrderMsg(L(`Bánh sinh nhật: ghi lời chúc hoặc tick « Không có lời chúc » — ${undecided.map(l => l.name).join(', ')}`,
+        `Birthday cake: write the message or tick "No message" — ${undecided.map(l => l.name).join(', ')}`));
+      return;
+    }
     await saveOrderDraft();
     setOrderConfirmPin('');
     setOrderConfirmMsg(null);
@@ -2726,8 +2740,25 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               <Plus size={12} />
                             </button>
                             <input type="text" value={l.note} onChange={e => updateOrderNote(l.sku, e.target.value)}
-                              placeholder={L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
+                              placeholder={l.isBirthday ? L('Ghi chú cho bếp (tuỳ chọn)', 'Note for the kitchen (optional)') : L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                           </div>
+                          {l.isBirthday && (
+                            <div className="space-y-1.5">
+                              <label className="flex flex-col gap-0.5 rounded-lg px-2.5 py-1.5"
+                                style={l.noWish ? { border: '1px dashed #D1D5DB', backgroundColor: '#F9FAFB', opacity: 0.6 } : { border: '1.5px solid #C9A84C', backgroundColor: '#FEF6DD' }}>
+                                <span className="text-[11px] font-bold" style={{ color: l.noWish ? '#6B7280' : '#8A6D14' }}>{L('🎂 Lời chúc trên bánh', '🎂 Message on the cake')}</span>
+                                <input type="text" value={l.wish ?? ''} disabled={!!l.noWish} maxLength={120}
+                                  onChange={e => updateOrderWish(l.sku, { wish: e.target.value.replace(/\|/g, '/') })}
+                                  placeholder={l.noWish ? '—' : L('vd. Happy Birthday Minh Anh', 'e.g. Happy Birthday Minh Anh')}
+                                  className="bg-transparent text-sm font-semibold outline-none" />
+                              </label>
+                              <label className="flex items-center gap-2 text-xs" style={{ color: l.noWish ? '#1A4731' : '#6B7280', fontWeight: l.noWish ? 600 : 400 }}>
+                                <input type="checkbox" checked={!!l.noWish} onChange={e => updateOrderWish(l.sku, { noWish: e.target.checked })}
+                                  className="w-4 h-4" style={{ accentColor: '#1A4731' }} />
+                                {L('Không có lời chúc (bánh bày tủ)', 'No message (display cake)')}
+                              </label>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
