@@ -1,6 +1,6 @@
 'use server';
 // Raw materials — chef side (Axel, 2026-10-08). Phase 1: storage withdrawals and purchase requests
-// are recorded in the app only; nothing goes to Odoo. Test phase: team Hưng only (see RAW_TEAMS).
+// are recorded in the app only; nothing goes to Odoo. Open to all 4 teams since 2026-10-17 (see RAW_TEAMS).
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
 import { TEAM_SHORT, TRANSFER_TEAMS, pieceUnit, piecesFromKg, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';

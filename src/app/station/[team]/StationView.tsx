@@ -117,7 +117,7 @@ type FicheStep = {
 
 type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw';
 // Raw materials tab (withdrawals + purchase requests, Axel 2026-10-08) — test phase on team Hưng only.
-const RAW_TEAMS = ['hung'];
+const RAW_TEAMS = ['hung', 'baby_mama', 'entremet', 'baker'];
 
 type DateSummary = {
   delivery_date: string;
