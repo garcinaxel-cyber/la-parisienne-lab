@@ -47,7 +47,8 @@ export async function getRawReportAction(from: string, to: string): Promise<{ da
   // giving team to the receiving one; pending or refused transfers count nothing.
   const { data: ws } = await db.from('lab_raw_withdrawals').select('id, team, kind, from_team, to_team, status, refused_at').gte('created_at', start).lt('created_at', end).limit(5000);
   const slipOf = new Map((ws ?? []).map((w: any) => [w.id, w]));
-  const teamsWithSlips = Array.from(new Set((ws ?? []).flatMap((w: any) => w.kind === 'transfer' ? [w.from_team, w.to_team] : [w.team]).filter(Boolean)));
+  // A return to storage (to_team 'kho', 2026-10-17) only lowers the giving team — storage is not a team column.
+  const teamsWithSlips = Array.from(new Set((ws ?? []).flatMap((w: any) => w.kind === 'transfer' ? [w.from_team, w.to_team] : [w.team]).filter((t: any) => t && t !== 'kho')));
   const wIds = Array.from(slipOf.keys());
   for (let i = 0; i < wIds.length; i += 200) {
     const { data: ls } = await db.from('lab_raw_withdrawal_lines').select('withdrawal_id, sku, name, uom, qty, corrected_qty').in('withdrawal_id', wIds.slice(i, i + 200));
@@ -56,7 +57,7 @@ export async function getRawReportAction(from: string, to: string): Promise<{ da
       const w: any = slipOf.get(l.withdrawal_id);
       const q = Number(l.corrected_qty ?? l.qty);
       const moves: [string, number][] = !w ? [['?', q]]
-        : w.kind === 'transfer' ? (w.status === 'confirmed' && !w.refused_at ? [[w.from_team, -q], [w.to_team, q]] : [])
+        : w.kind === 'transfer' ? (w.status === 'confirmed' && !w.refused_at ? ([[w.from_team, -q], [w.to_team, q]] as [string, number][]).filter(([t]) => t !== 'kho') : [])
         : [[w.team, q]];
       if (!moves.length) continue;
       const r = row(l.sku, l.name, l.uom);

@@ -93,8 +93,12 @@ export async function recordTransferAction(team: string, doneBy: string, directi
   const a = await rawActor();
   if (!a) return { error: 'Not authenticated' };
   if (!canActForTeam(a, team)) return { error: 'Forbidden' };
-  if (!(TRANSFER_TEAMS as readonly string[]).includes(otherTeam) || otherTeam === team) return { error: 'Bad team' };
+  // 'kho' (Axel, 2026-10-17): a team can also give raw materials BACK to the Lab storage — one way only
+  // (taking from storage is a normal withdrawal).
+  const toStorage = otherTeam === 'kho';
+  if (!toStorage && (!(TRANSFER_TEAMS as readonly string[]).includes(otherTeam) || otherTeam === team)) return { error: 'Bad team' };
   if (direction !== 'give' && direction !== 'receive') return { error: 'Bad direction' };
+  if (toStorage && direction !== 'give') return { error: 'Bad direction' };
   const db = rawService();
   if (!db) return { error: 'Server not configured' };
   const clean = (lines ?? []).map(l => ({ ...l, qty: Math.round(Number(l.qty) * 1000) / 1000 })).filter(l => l.tmplId && l.qty > 0).slice(0, 80);

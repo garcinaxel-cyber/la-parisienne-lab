@@ -274,18 +274,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
           <div className="text-[11px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>{L('Chiều chuyển', 'Direction')}</div>
           <div className="grid grid-cols-2 gap-1.5">
             {([['give', L('Chuyển cho team khác →', 'Give to a team →')], ['receive', L('← Nhận từ team khác', '← Receive from a team')]] as const).map(([k, lab]) => (
-              <button key={k} onClick={() => setDirection(k)} className="rounded-xl py-2.5 px-1 text-[12.5px] font-extrabold"
+              <button key={k} disabled={other === 'kho' && k === 'receive'} onClick={() => setDirection(k)} className="rounded-xl py-2.5 px-1 text-[12.5px] font-extrabold disabled:opacity-35"
                 style={direction === k ? { backgroundColor: NAVY, color: '#fff', border: `1px solid ${NAVY}` } : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>{lab}</button>
             ))}
           </div>
           <div className="text-[11px] font-extrabold uppercase tracking-wide pt-1" style={{ color: GOLD_TEXT }}>{L('Team kia', 'Other team')}</div>
           <div className="flex gap-1.5 flex-wrap">
-            {TRANSFER_TEAMS.filter(t => t !== team).map(t => { const ts = TEAM_SHORT[t]; const on = other === t; return (
-              <button key={t} onClick={() => setOther(t)} className="rounded-full px-3.5 py-1.5 text-[12.5px] font-extrabold"
-                style={{ backgroundColor: on ? ts.bg : '#fff', color: ts.color, border: `${on ? 2 : 1}px solid ${on ? ts.color : BORDER}` }}>{on ? '✓ ' : ''}{ts[lang]}</button>); })}
+            {[...TRANSFER_TEAMS.filter(t => t !== team), 'kho'].map(t => { const ts = TEAM_SHORT[t]; const on = other === t; return (
+              <button key={t} onClick={() => { setOther(t); if (t === 'kho') setDirection('give'); }} className="rounded-full px-3.5 py-1.5 text-[12.5px] font-extrabold"
+                style={{ backgroundColor: on ? ts.bg : '#fff', color: ts.color, border: `${on ? 2 : 1}px solid ${on ? ts.color : BORDER}` }}>{on ? '✓ ' : ''}{t === 'kho' ? L('Kho Lab (trả lại)', 'Lab storage (return)') : ts[lang]}</button>); })}
           </div>
           {other && <div className="rounded-lg px-2.5 py-2 text-[12.5px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>
-            {direction === 'give' ? `Team ${TEAM_SHORT[team]?.[lang] ?? team} → Team ${TEAM_SHORT[other][lang]}` : `Team ${TEAM_SHORT[other][lang]} → Team ${TEAM_SHORT[team]?.[lang] ?? team}`}</div>}
+            {other === 'kho' ? `Team ${TEAM_SHORT[team]?.[lang] ?? team} → ${L('Kho Lab', 'Lab storage')}`
+              : direction === 'give' ? `Team ${TEAM_SHORT[team]?.[lang] ?? team} → Team ${TEAM_SHORT[other][lang]}` : `Team ${TEAM_SHORT[other][lang]} → Team ${TEAM_SHORT[team]?.[lang] ?? team}`}</div>}
         </div>
       )}
       <label className="flex items-center gap-2 bg-white rounded-xl px-3" style={{ border: `1px solid ${BORDER}` }}>

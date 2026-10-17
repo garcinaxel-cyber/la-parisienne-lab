@@ -597,11 +597,16 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
         : !items.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>{L('Chưa có phiếu lấy nào trong ngày.', 'No withdrawal that day.')}</div>
         : byItem ? (() => {
           const t = new Map<string, { name: string; uom: string; qty: number; teams: Set<string> }>();
-          // Storage outflow only: a transfer between teams never leaves storage.
-          for (const w of items) if (w.kind !== 'transfer') for (const l of w.lines) {
-            const k = `${l.tmplId ?? l.name}|${l.uom}`;
-            const e = t.get(k) ?? { name: nm(l), uom: l.uom, qty: 0, teams: new Set<string>() };
-            e.qty += l.correctedQty ?? l.qty; e.teams.add(w.team); t.set(k, e);
+          // Net storage outflow: withdrawals minus confirmed returns to storage (2026-10-17). A transfer
+          // between two teams never touches storage.
+          for (const w of items) {
+            const back = w.kind === 'transfer' && w.toTeam === 'kho';
+            if (w.kind === 'transfer' && (!back || w.status !== 'confirmed' || w.refused)) continue;
+            for (const l of w.lines) {
+              const k = `${l.tmplId ?? l.name}|${l.uom}`;
+              const e = t.get(k) ?? { name: nm(l), uom: l.uom, qty: 0, teams: new Set<string>() };
+              e.qty += (back ? -1 : 1) * (l.correctedQty ?? l.qty); e.teams.add(back ? (w.fromTeam ?? w.team) : w.team); t.set(k, e);
+            }
           }
           const rows = Array.from(t.values()).sort((a, b) => a.name.localeCompare(b.name, lang === 'vi' ? 'vi' : 'en'));
           return (
