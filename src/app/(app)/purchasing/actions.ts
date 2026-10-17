@@ -124,11 +124,58 @@ export async function cancelLinesAction(lineIds: string[]) {
 }
 
 // A chef's "new product" turns out to exist already: the line becomes a normal line on that product.
+// Axel, 2026-10-17: link a chef's new product to the one just created in Odoo — searched live by SKU or
+// name (any purchasable product, not only the "Raw Material" category: e.g. VTTH1051, a mixer spare
+// part in "vật tư tiêu hao"). A product not yet in the app catalogue is imported on link.
+export type OdooProductHit = { tmplId: number; name: string; sku: string | null; uom: string; categ: string; inApp: boolean };
+export async function searchOdooProductsAction(q: string): Promise<{ items?: OdooProductHit[]; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const t = String(q ?? '').trim().slice(0, 60);
+  if (t.length < 2) return { items: [] };
+  try {
+    const rows = await odooExecuteWrite<any[]>('product.template', 'search_read',
+      [['&', ['purchase_ok', '=', true], ['active', '=', true], '|', ['default_code', 'ilike', t], ['name', 'ilike', t]]],
+      { fields: ['id', 'name', 'default_code', 'uom_id', 'categ_id'], limit: 25, order: 'create_date desc', context: { lang: 'vi_VN' } });
+    const { data: have } = rows.length ? await g.db.from('lab_raw_materials').select('tmpl_id').in('tmpl_id', rows.map(r => r.id)) : { data: [] as any[] };
+    const inApp = new Set((have ?? []).map((r: any) => r.tmpl_id));
+    return { items: rows.map(r => ({ tmplId: r.id, name: String(r.name).trim(), sku: r.default_code || null, uom: r.uom_id?.[1] ?? '', categ: r.categ_id?.[1] ?? '', inApp: inApp.has(r.id) })) };
+  } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
+}
+
+async function importTemplateFromOdoo(db: NonNullable<ReturnType<typeof rawService>>, tmplId: number): Promise<{ ok: true } | { error: string }> {
+  const [t] = await odooExecuteWrite<any[]>('product.template', 'read', [[tmplId], ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id', 'purchase_ok']]);
+  if (!t) return { error: 'Product not found in Odoo' };
+  let nameVi: string | null = null;
+  try { const [v] = await odooExecuteWrite<any[]>('product.template', 'read', [[tmplId], ['name']], { context: { lang: 'vi_VN' } }); nameVi = v?.name ? String(v.name).trim() : null; } catch { /* optional */ }
+  const sup = await odooExecuteWrite<any[]>('product.supplierinfo', 'search_read', [[['product_tmpl_id', '=', tmplId]]], { fields: ['partner_id'], order: 'sequence asc, id asc', limit: 20 });
+  const vend: { id: number; name: string }[] = [];
+  for (const s of sup) if (s.partner_id && !vend.some(v => v.id === s.partner_id[0])) vend.push({ id: s.partner_id[0], name: s.partner_id[1] });
+  const uomRaw = t.uom_id?.[1] ?? 'Unit';
+  const uom = /^unit|^unité|^quả|^cái/i.test(uomRaw) ? 'Unit' : uomRaw;
+  const c = classifyRaw(t.name);
+  const { error } = await db.from('lab_raw_materials').insert({
+    tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), name_vi: nameVi, uom,
+    type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: true, checked: false, purchased: Number(t.purchased_product_qty) > 0,
+    vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend, active: true, synced_at: new Date().toISOString(),
+  });
+  return error ? { error: error.message } : { ok: true };
+}
+
 export async function linkNewProductAction(lineId: string, tmplId: number) {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
-  const { data: m } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').eq('tmpl_id', tmplId).maybeSingle();
+  let { data: m } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').eq('tmpl_id', tmplId).maybeSingle();
+  if (!m) {
+    try {
+      const imp = await importTemplateFromOdoo(g.db, Number(tmplId));
+      if ('error' in imp) return { error: imp.error };
+    } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
+    ({ data: m } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').eq('tmpl_id', tmplId).maybeSingle());
+  }
   if (!m) return { error: 'Unknown raw material' };
+  // Re-activate a product the catalogue sync had set aside.
+  await g.db.from('lab_raw_materials').update({ active: true }).eq('tmpl_id', tmplId).eq('active', false);
   const { data: l } = await g.db.from('lab_purchase_request_lines').select('name, note').eq('id', lineId).maybeSingle();
   if (!l) return { error: 'Not found' };
   const note = [`Chef: ${l.name}`, l.note].filter(Boolean).join(' · ').slice(0, 400);
@@ -296,7 +343,11 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   try {
-    const tmpls = await odooExecuteWrite<any[]>('product.template', 'search_read', [[['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['active', '=', true]]],
+    // + products imported into the app by hand (linked to a chef's new product, any category) — kept
+    // in sync instead of being set aside because they are outside "Raw Material".
+    const { data: known } = await g.db.from('lab_raw_materials').select('tmpl_id').eq('active', true).limit(5000);
+    const knownIds = (known ?? []).map(r => r.tmpl_id);
+    const tmpls = await odooExecuteWrite<any[]>('product.template', 'search_read', [['&', ['active', '=', true], '|', ['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['id', 'in', knownIds]]],
       { fields: ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id'], limit: 3000 });
     const tmplIds = tmpls.map(t => t.id);
     // Vietnamese names (Odoo vi_VN translation) for the chefs' screen. Never blocks the sync.

@@ -275,10 +275,8 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
               </div>
               <div className="flex gap-2 flex-wrap items-center">
                 {l.newState === 'to_create' && <span className="text-[11px] font-bold rounded-md px-2 py-1" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Chờ tạo trong Odoo', 'Waiting for Odoo creation')}</span>}
-                <select disabled={busy} defaultValue="" onChange={e => { const id = Number(e.target.value); if (id) run(linkNewProductAction(l.id, id)); }} className="rounded-lg px-2 py-1.5 text-xs bg-white max-w-[230px]" style={{ border: `1px solid ${BORDER}` }}>
-                  <option value="">{L('Gắn với sản phẩm có sẵn…', 'Link to an existing product…')}</option>
-                  {board.catalogue.map(c => <option key={c.tmplId} value={c.tmplId}>{(lang === 'vi' && c.nameVi) || c.name}</option>)}
-                </select>
+                <LinkProductPicker L={L} lang={lang as any} busy={busy} catalogue={board.catalogue}
+                  onPick={(tmplId) => run(linkNewProductAction(l.id, tmplId))} />
                 {l.newState !== 'to_create' && <button disabled={busy} onClick={() => run(markNewToCreateAction(l.id))} className="rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white" style={{ border: `1px solid ${BORDER}` }}>{L('Cần tạo trong Odoo', 'Needs creating in Odoo')}</button>}
                 <button disabled={busy} onClick={() => { if (confirm(L('Huỷ yêu cầu này?', 'Cancel this request?'))) run(cancelLinesAction([l.id])); }} className="p-1.5" style={{ color: '#9CA3AF' }}><X size={14} /></button>
               </div>
@@ -287,6 +285,64 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+// Axel, 2026-10-17: link a chef's new product by SKU or name — the app catalogue first (instant), then
+// a live Odoo search (finds a product created minutes ago, any category); imported on link.
+function LinkProductPicker({ L, lang, busy, catalogue, onPick }: {
+  L: LFn; lang: 'vi' | 'en'; busy: boolean; catalogue: Board['catalogue']; onPick: (tmplId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [odoo, setOdoo] = useState<import('./actions').OdooProductHit[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const nq = normVendor(q.trim());
+  const local = !nq ? [] : catalogue.filter(c => nq.split(/\s+/).every(w => normVendor(`${c.name} ${c.nameVi ?? ''} ${c.sku ?? ''}`).includes(w))).slice(0, 8);
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 2) { setOdoo(null); return; }
+    setLoading(true);
+    const h = setTimeout(async () => {
+      const { searchOdooProductsAction } = await import('./actions');
+      const r = await searchOdooProductsAction(t);
+      setOdoo(r.items ?? []); setLoading(false);
+    }, 350);
+    return () => clearTimeout(h);
+  }, [q]);
+  const localIds = new Set(local.map(c => c.tmplId));
+  const extra = (odoo ?? []).filter(o => !localIds.has(o.tmplId));
+  if (!open) return (
+    <button disabled={busy} onClick={() => setOpen(true)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white" style={{ border: `1px solid ${BORDER}` }}>
+      <Search size={13} /> {L('Gắn với sản phẩm Odoo…', 'Link to an Odoo product…')}
+    </button>
+  );
+  const row = (key: number, name: string, sku: string | null, sub: string, badge: string | null) => (
+    <button key={key} disabled={busy} onClick={() => { onPick(key); setOpen(false); setQ(''); }}
+      className="w-full text-left px-2.5 py-1.5 hover:bg-[#FFFAEE] flex items-center gap-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+      {sku && <span className="font-mono text-[11px] font-bold shrink-0" style={{ color: NAVY }}>{sku}</span>}
+      <span className="text-xs flex-1 min-w-0 truncate">{name}</span>
+      {sub && <span className="text-[10.5px] shrink-0" style={{ color: '#9CA3AF' }}>{sub}</span>}
+      {badge && <span className="text-[10px] font-bold rounded px-1.5 py-0.5 shrink-0" style={{ backgroundColor: '#EEF2FF', color: '#3730A3' }}>{badge}</span>}
+    </button>
+  );
+  return (
+    <div className="w-[340px] max-w-full rounded-lg bg-white" style={{ border: `1px solid ${BORDER}` }}>
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+        <Search size={13} style={{ color: '#9CA3AF' }} />
+        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('SKU hoặc tên, vd VTTH1051', 'SKU or name, e.g. VTTH1051')}
+          className="flex-1 text-xs outline-none bg-transparent" />
+        {loading && <Loader2 size={13} className="animate-spin" style={{ color: '#9CA3AF' }} />}
+        <button onClick={() => { setOpen(false); setQ(''); }} aria-label={L('Đóng', 'Close')} style={{ color: '#9CA3AF' }}><X size={13} /></button>
+      </div>
+      <div className="max-h-64 overflow-y-auto">
+        {local.map(c => row(c.tmplId, (lang === 'vi' && c.nameVi) || c.name, c.sku, c.uom, null))}
+        {extra.map(o => row(o.tmplId, o.name, o.sku, o.uom, o.inApp ? null : L('Odoo · mới', 'Odoo · new')))}
+        {q.trim().length >= 2 && !loading && !local.length && !extra.length && (
+          <div className="px-2.5 py-2 text-[11.5px]" style={{ borderTop: `1px solid ${HAIR}`, color: '#9CA3AF' }}>{L('Không tìm thấy trên Odoo (sản phẩm phải bật "Có thể mua")', 'Not found in Odoo (the product must be "Can be purchased")')}</div>
+        )}
+      </div>
     </div>
   );
 }
