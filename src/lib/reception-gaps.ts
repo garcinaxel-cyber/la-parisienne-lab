@@ -341,7 +341,7 @@ export async function sendOrderToOdoo(sb: SupabaseClient, deliveryOrderId: strin
   const toSend = st.lines.filter(l => l.action && !l.sent && l.sku);
   const isSo = st.sourceType === 'sales_order';
   const result = isSo
-    ? await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as SoGapLine['action'] })))
+    ? await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as SoGapLine['action'] })), { byName })
     : await finalizeReplenishmentGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as RepGapLine['action'] })), await receptionLinesOf(sb, deliveryOrderId));
   const now = new Date().toISOString();
   await sb.from('lab_reception_odoo_runs').insert({

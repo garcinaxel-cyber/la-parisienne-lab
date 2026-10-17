@@ -279,9 +279,13 @@ async function returnFromDelivery(deliveryId: number, qtyByProduct: Map<number, 
   return { ok: true, name: ret?.name ?? String(retId) };
 }
 
-export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[]): Promise<SoFinalizeResult> {
+export async function finalizeSalesOrderGaps(
+  orderRef: string, lines: SoGapLine[],
+  opts: { reasonEn?: string; reasonVi?: string; byName?: string } = {},
+): Promise<SoFinalizeResult> {
   const live = inValidationLive();
   const done: string[] = [];
+  const docNames: string[] = []; // for the invoice note
   if (!odooWriteConfigured()) return { ok: false, live, error: 'Odoo write account not configured', done };
   if (!lines.length) return { ok: true, live, done: ['nothing to send'] };
   try {
@@ -326,6 +330,7 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
       const r = await returnFromDelivery(delivery.id, toReturn, true);
       if (!r.ok) return { ok: false, live, error: r.error, done };
       done.push(`return ${r.name}`);
+      docNames.push(`return / trả hàng ${r.name}`);
     }
     // 2. Scrap (Lab loss)
     if (toScrap.size) {
@@ -334,7 +339,9 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
         const p = prods.find(x => x.id === pid);
         const r = await createScrapAtLocation(LAB_STOCK_LOCATION_ID, { productId: pid, uomId: p.uom_id?.[0], qty: q, reasonTagIds: [], origin: `${orderRef} — hỏng/mất khi giao (lỗi Lab)` });
         if (!r.ok) return { ok: false, live, error: `Scrap failed: ${r.error}`, done };
-        done.push(`scrap ${await recordName('stock.scrap', r.scrapId)} · ${p.default_code} ×${q}`);
+        const scrapName = await recordName('stock.scrap', r.scrapId);
+        done.push(`scrap ${scrapName} · ${p.default_code} ×${q}`);
+        docNames.push(`scrap ${scrapName}`);
       }
     }
     // 3. Extra delivery
@@ -353,7 +360,9 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
       for (const m of eMoves) await odooExecuteWrite('stock.move', 'write', [[m.id], { quantity: m.product_uom_qty }], { context: NO_MAIL });
       const v = await odooExecuteWrite<any>('stock.picking', 'button_validate', [[pickId]], { context: { skip_backorder: true, cancel_backorder: true, ...NO_MAIL } });
       if (v !== true) return { ok: false, live, error: `Extra delivery created (id ${pickId}) but not validated: ${JSON.stringify(v)}`, done };
-      done.push(`extra delivery ${await recordName('stock.picking', pickId)}`);
+      const extraName = await recordName('stock.picking', pickId);
+      done.push(`extra delivery ${extraName}`);
+      docNames.push(`extra delivery / giao thêm ${extraName}`);
     }
     // 4. Invoice (Axel 2026-10-14: "pas d'avoir, faut passer la facture en draft et ajuster").
     // The existing customer invoice goes back to draft and its lines follow the quantities:
@@ -372,6 +381,7 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
     for (const [pid, q] of Array.from(toReturn.entries())) delta.set(pid, (delta.get(pid) ?? 0) - q);
     for (const [pid, q] of Array.from(extra.entries())) delta.set(pid, (delta.get(pid) ?? 0) + q);
     const cmds: any[] = [];
+    const changes: { code: string; name?: string; from: number; to: number }[] = [];
     for (const [pid, d] of Array.from(delta.entries())) {
       if (!d) continue;
       const code = prods.find(x => x.id === pid)?.default_code ?? pid;
@@ -380,13 +390,29 @@ export async function finalizeSalesOrderGaps(orderRef: string, lines: SoGapLine[
         const q = Math.max(0, Number(il.quantity) + d);
         cmds.push([1, il.id, { quantity: q }]);
         done.push(`invoice ${code}: ${il.quantity} → ${q}`);
+        changes.push({ code: String(code), name: String(il.product_id?.[1] ?? '').replace(/^\[[^\]]*\]\s*/, ''), from: Number(il.quantity), to: q });
       } else if (d > 0) {
         const sl = soLinesFull.find(l => l.product_id?.[0] === pid);
         cmds.push([0, 0, { product_id: pid, quantity: d, price_unit: sl?.price_unit ?? 0, discount: sl?.discount ?? 0, tax_ids: [[6, 0, sl?.tax_id ?? []]], sale_line_ids: sl ? [[6, 0, [sl.id]]] : [] }]);
         done.push(`invoice ${code}: +${d} (new line)`);
+        changes.push({ code: String(code), from: 0, to: d });
       } else done.push(`invoice ${code}: no line to lower`);
     }
-    if (cmds.length) await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
+    if (cmds.length) {
+      await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
+      const acts = new Set(lines.map(l => l.action));
+      const why: [string, string][] = [];
+      if (acts.has('return_scrap')) why.push(['damaged on arrival, Lab loss', 'hỏng khi nhận hàng, lỗi Lab']);
+      if (acts.has('return')) why.push(['not received by the shop', 'shop không nhận được']);
+      if (acts.has('extra')) why.push(['Lab sent more than ordered', 'Lab gửi dư']);
+      const { postInvoiceNote } = await import('@/lib/odoo-invoice-note');
+      const noted = await postInvoiceNote({
+        invoiceId: inv.id, orderRef, byName: opts.byName, changes, docs: docNames,
+        reasonEn: opts.reasonEn ?? (why.map(w => w[0]).join('; ') || 'reception gap'),
+        reasonVi: opts.reasonVi ?? (why.map(w => w[1]).join('; ') || 'chênh lệch khi nhận hàng'),
+      });
+      if (!noted) done.push('invoice note NOT posted (Odoo error)');
+    }
     done.push(`invoice ${inv.name} left in DRAFT — accounting re-posts it`);
     return { ok: true, live, done };
   } catch (e: any) {
@@ -600,6 +626,13 @@ async function addLineToSalesOrder(soRef: string, p: { id: number; default_code:
       product_id: p.id, quantity: qty, price_unit: sl?.price_unit ?? 0, discount: sl?.discount ?? 0,
       tax_ids: [[6, 0, sl?.tax_id ?? []]], sale_line_ids: [[6, 0, [lineId]]],
     }]] }], { context: NO_MAIL });
+    const { postInvoiceNote } = await import('@/lib/odoo-invoice-note');
+    const noted = await postInvoiceNote({
+      invoiceId: inv.id, orderRef: soRef, changes: [{ code: p.default_code, from: 0, to: qty }],
+      docs: [`delivery / giao hàng ${await recordName('stock.picking', pickId)}`],
+      reasonEn: 'received without a delivery slip, kept by the shop', reasonVi: 'nhận hàng không có phiếu, shop giữ lại',
+    });
+    if (!noted) done.push('invoice note NOT posted (Odoo error)');
     done.push(`invoice ${inv.name}: + ${p.default_code} ×${qty}, left in DRAFT — accounting re-posts it`);
     return { ok: true, done };
   } catch (e: any) {
@@ -628,7 +661,10 @@ export async function finalizeOffSlip(input: {
 
     // 1. Customer order: not charged for these units (return + invoice draft, lowered).
     if (input.sourceSoRef) {
-      const r = await finalizeSalesOrderGaps(input.sourceSoRef, [{ sku: input.sku, qty: input.qty, action: 'return' }]);
+      const r = await finalizeSalesOrderGaps(input.sourceSoRef, [{ sku: input.sku, qty: input.qty, action: 'return' }], {
+        reasonEn: `delivered to ${input.shopName} by mistake, the shop keeps them`,
+        reasonVi: `giao nhầm cho ${input.shopName}, shop giữ lại`,
+      });
       done.push(...r.done.map(d => `${input.sourceSoRef}: ${d}`));
       if (!r.ok) return { ok: false, live, error: `${input.sourceSoRef}: ${r.error}`, done };
     }

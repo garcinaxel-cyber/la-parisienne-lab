@@ -289,11 +289,26 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
       if (inv.state === 'posted') await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL });
       const iLines = await odooExecute<any[]>('account.move.line', 'search_read', [[['move_id', '=', inv.id], ['display_type', '=', 'product']]], { fields: ['id', 'product_id', 'quantity'] });
       const cmds: any[] = [];
+      const changes: { code: string; name?: string; from: number; to: number }[] = [];
       for (const [pid, q] of Array.from(qty.entries())) {
         const il = iLines.find(l => l.product_id?.[0] === pid);
-        if (il) cmds.push([1, il.id, { quantity: Math.max(0, Number(il.quantity) - q) }]);
+        if (!il) continue;
+        const to = Math.max(0, Number(il.quantity) - q);
+        cmds.push([1, il.id, { quantity: to }]);
+        const label = String(il.product_id?.[1] ?? '');
+        const code = allocs.find(a => a.productId === pid)?.sku ?? (label.match(/^\[([^\]]+)\]/)?.[1] ?? String(pid));
+        changes.push({ code, name: label.replace(/^\[[^\]]*\]\s*/, ''), from: Number(il.quantity), to });
       }
-      if (cmds.length) await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
+      if (cmds.length) {
+        await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
+        const { postInvoiceNote } = await import('@/lib/odoo-invoice-note');
+        const noted = await postInvoiceNote({
+          invoiceId: inv.id, orderRef: allocs[0].soName, changes, docs: [`return / trả hàng ${r.name} → ${input.toWarehouseCode}`, input.ref],
+          reasonEn: `stock transfer ${input.fromShop} → ${input.toWarehouseCode}, goods returned to the receiving shop`,
+          reasonVi: `chuyển hàng ${input.fromShop} → ${input.toWarehouseCode}, hàng trả về kho shop nhận`,
+        });
+        if (!noted) docs.push(`${allocs[0].soName}: ghi chú hóa đơn lỗi`);
+      }
       docs.push(`${inv.name || allocs[0].soName}: −${allocs.map(a => `${a.sku}×${a.qty}`).join(', ')} (draft)`);
     }
     return { ok: true, docs };
