@@ -192,7 +192,15 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
       {!st.ready && !st.sent && <div style={{ color: '#6B7280' }}>{vi ? 'Chọn nguyên nhân cho từng dòng trước.' : 'Choisir la cause de chaque ligne d’abord.'}</div>}
       <div style={{ color: '#6B7280' }}>{st.sourceType === 'sales_order'
         ? (vi ? 'Odoo: 1 phiếu trả hàng cho cả đơn + scrap Lab + giao thêm; hoá đơn về nháp, sửa số lượng (kế toán xác nhận lại).' : 'Odoo : 1 retour pour toute la commande + scrap Lab + livraison en plus ; facture repassée en brouillon, quantités ajustées (la compta revalide).')
-        : (vi ? 'Odoo: nhập kho shop số hàng tốt + trả hàng (return) trên phiếu LAB/OUT + scrap / Lab → shop.' : 'Odoo : réception shop au bon nombre + retour sur la livraison LAB/OUT + scrap / Lab → shop.')}</div>
+        : (() => {
+          // Only what THIS order will really do (Axel, 2026-10-18: a plain return showed "+ scrap").
+          const acts = new Set(st.lines.filter(l => !l.sent && l.action).map(l => l.action as string));
+          const parts: string[] = [vi ? 'nhập kho shop số hàng tốt' : 'réception shop au bon nombre'];
+          if (['transit_to_lab', 'transit_to_lab_scrap', 'scrap_transit'].some(a => acts.has(a))) parts.push(vi ? 'trả hàng (return) trên phiếu LAB/OUT' : 'retour sur la livraison LAB/OUT');
+          if (['transit_to_lab_scrap', 'scrap_transit'].some(a => acts.has(a))) parts.push(vi ? 'scrap (hao hụt Lab)' : 'scrap (perte Lab)');
+          if (acts.has('lab_to_shop')) parts.push(vi ? 'chuyển Lab → shop' : 'transfert Lab → shop');
+          return `Odoo : ${parts.join(' + ')}.`;
+        })()}</div>
     </div>
   );
 }
