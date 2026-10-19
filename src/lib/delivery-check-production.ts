@@ -118,6 +118,7 @@ export async function fetchProductionGapsByOrder(
       lines.push(...(data ?? []));
     }
     const relevant = lines.filter(l => l.sku && !isStockFamily(l.product_category));
+    console.log('[prodgaps] headers', headerIds.length, 'lines', lines.length, 'relevant', relevant.length);
     if (!relevant.length) return out;
 
     const { data: imports } = await supabase.from('lab_imports').select('id, delivery_date').in('delivery_date', dates);
@@ -169,6 +170,7 @@ export async function fetchProductionGapsByOrder(
       if (!problem) continue;
       for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) bad.add(`${date}||${b.order_ref}||${sku}`);
     }
+    console.log('[prodgaps] imports', importIds.length, 'cards', cards.length, 'variants', Object.keys(skuByVariant).length, 'bad', bad.size);
     for (const l of relevant) {
       const h = headerById[l.delivery_order_id]; if (!h) continue;
       if (!bad.has(`${h.delivery_date}||${h.order_ref}||${l.sku}`)) continue;
