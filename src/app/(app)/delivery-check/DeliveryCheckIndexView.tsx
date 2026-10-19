@@ -277,8 +277,33 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           )}
         </div>
       ) : (
-        <div className="space-y-2">
-          {dayOrders.map(o => renderOrderRow(o))}
+        // Grouped by customer (Axel, 2026-10-19: "trier par client, plus simple à lire").
+        <div className="space-y-4">
+          {Array.from(dayOrders.reduce((m, o) => {
+            const k = (o.shop_name || '—').trim();
+            (m.get(k) ?? m.set(k, []).get(k)!).push(o);
+            return m;
+          }, new Map<string, OrderRow[]>()))
+            .sort((a, b) => a[0].localeCompare(b[0], 'vi'))
+            .map(([shop, group]) => {
+              const sorted = [...group].sort((a, b) => a.order_ref.localeCompare(b.order_ref));
+              const received = sorted.filter(o => { const r = recByKey.get(`${o.delivery_date}||${o.order_ref}`); return r && r.state !== 'waiting'; }).length;
+              const tracked = sorted.filter(o => recByKey.has(`${o.delivery_date}||${o.order_ref}`)).length;
+              return (
+                <div key={shop}>
+                  <div className="flex items-baseline gap-2 px-1 mb-1.5">
+                    <span className="text-sm font-bold text-navy">{shop}</span>
+                    <span className="text-xs" style={{ color: '#6B7280' }}>
+                      {sorted.length} {vi ? 'đơn' : sorted.length > 1 ? 'commandes' : 'commande'}
+                      {tracked > 0 ? ` · ${received}/${tracked} ${vi ? 'shop đã nhận' : 'reçue(s) par le shop'}` : ''}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {sorted.map(o => renderOrderRow(o))}
+                  </div>
+                </div>
+              );
+            })}
         </div>
       )}
     </div>
