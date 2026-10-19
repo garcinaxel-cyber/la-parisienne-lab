@@ -1,6 +1,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect, notFound } from 'next/navigation';
 import { ensureDeliveryOrderChecklist, fetchOnlineOrderInfo, fetchOrderDeliveryDestination } from '@/lib/delivery-check';
+import { fetchProductionStatusBySku } from '@/lib/delivery-check-production';
 import DeliveryCheckOrderView from './DeliveryCheckOrderView';
 
 export const revalidate = 0;
@@ -33,10 +34,13 @@ export default async function DeliveryCheckOrderPage({ params }: { params: { dat
   // "Commande de X — à livrer à Y" (Axel, 2026-09-22) — null when the order's own shop already
   // matches where it's actually delivered (the normal case).
   const destination = await fetchOrderDeliveryDestination(supabase, orderRef, header.shop_name);
+  // Production vs delivery column (Axel, 2026-10-19) — display only, empty on any failure.
+  const prodBySku = await fetchProductionStatusBySku(supabase, date,
+    lines.filter(l => l.category === 'production' && l.sku).map(l => l.sku as string));
   const today = labToday();
   // A past date (2026-08-26: late-created orders for a manual cake from a prior day) belongs on
   // the "late" tab, not "tomorrow" — the old ternary only ever considered today vs. everything else.
   const backHref = date === today ? '/delivery-check' : date > today ? '/delivery-check?day=tomorrow' : '/delivery-check?day=late';
 
-  return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} onlineInfo={onlineInfo} destination={destination} />;
+  return <DeliveryCheckOrderView header={header} lines={lines} backHref={backHref} onlineInfo={onlineInfo} destination={destination} prodBySku={prodBySku} />;
 }

@@ -6,6 +6,46 @@ import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck, ArrowRightLeft } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo, DeliveryDestination } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
+import type { ProdStatus } from '@/lib/delivery-check-production';
+import { TEAM_LABELS, type Team } from '@/lib/types';
+
+// Families made as extra production for stock, never on demand (Axel, 2026-10-19: tiramisu,
+// biscuits voyage, macarons → "soit en stock soit c'est pas envoyé") — no production alert.
+const STOCK_FAMILIES = new Set(['macaron', 'biscuit voyage', 'tiramisu']);
+
+// "Bếp → kho" cell (Axel, 2026-10-19): what the kitchen produced / sent to stock for this SKU
+// vs what is delivered, for the whole delivery date. Information only — never blocks anything.
+function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string | null; vi: boolean }) {
+  const chip = (bg: string, color: string, text: string) => (
+    <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ backgroundColor: bg, color }}>{text}</span>
+  );
+  const grey = (t: string) => chip('#F3F4F6', '#4B5563', t);
+  if (!s) return null;
+  const teams = s.teams.map(t => TEAM_LABELS[t as Team]?.vi ?? t).join(', ');
+  const day = s.ordered > 0 ? (vi ? `Cả ngày: giao ${s.checked}/${s.ordered}` : `Journée : livré ${s.checked}/${s.ordered}`) : null;
+  const sub = (color: string, text: string | null) => text ? <div className="text-[11px] leading-snug mt-0.5" style={{ color }}>{text}</div> : null;
+
+  if (family && STOCK_FAMILIES.has(family.trim().toLowerCase())) {
+    return <div>{grey(vi ? 'Kho · làm thêm' : 'Stock · prod. extra')}</div>;
+  }
+  if (s.cards === 0) return <div>{grey(vi ? 'Kho · không có thẻ SX' : 'Stock · pas de carte')}</div>;
+  if (s.planned === 0) {
+    return <div>{grey(s.stock > 0 ? (vi ? `Có sẵn ×${s.stock}` : `Dispo stock ×${s.stock}`) : (vi ? 'Chặn' : 'Bloqué'))}{sub('#6B7280', day)}</div>;
+  }
+  let main;
+  if (s.sent >= s.planned) main = chip('#ECFDF5', '#047857', vi ? `Chuyển kho ✓ ${s.sent}/${s.planned}` : `Transféré ✓ ${s.sent}/${s.planned}`);
+  else if (s.sent > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Chuyển kho ${s.sent}/${s.planned}` : `Transféré ${s.sent}/${s.planned}`);
+  else if (s.produced > 0) main = chip('#FDECEA', '#B42318', vi ? `Chưa chuyển kho 0/${s.planned}` : `Pas transféré 0/${s.planned}`);
+  else main = chip('#FDECEA', '#B42318', vi ? `Chưa làm 0/${s.planned}` : `Pas produit 0/${s.planned}`);
+  const over = s.checked - (s.sent + s.stock);
+  return (
+    <div>
+      {main}
+      {sub('#6B7280', [teams, day].filter(Boolean).join(' · ') || null)}
+      {over > 0 && s.sent < s.checked && sub('#6D28D9', vi ? `Giao nhiều hơn chuyển kho +${over}` : `Livré > transféré +${over}`)}
+    </div>
+  );
+}
 
 type LineState = { qty: string; reason: string; note: string };
 
@@ -35,7 +75,7 @@ function fmtDiff(diff: number): string {
 // identity on every setState-triggered re-render (i.e. every keystroke via upd()), so it
 // unmounted and remounted this entire subtree each time, including whatever input had focus.
 // Needs everything it used to read from closure passed in as props instead.
-function Section({ title, icon: Icon, items, state, checked, savingLine, validated, vi, upd, checkLine, setChecked, hiddenFromPrint, toggleHidden }: {
+function Section({ title, icon: Icon, items, state, checked, savingLine, validated, vi, upd, checkLine, setChecked, hiddenFromPrint, toggleHidden, prod }: {
   title: string; icon: any; items: CheckLine[];
   state: Record<string, LineState>; checked: Set<string>; savingLine: string | null; validated: boolean; vi: boolean;
   upd: (id: string, patch: Partial<LineState>) => void;
@@ -43,8 +83,10 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
   setChecked: (fn: (p: Set<string>) => Set<string>) => void;
   hiddenFromPrint: Record<string, boolean>;
   toggleHidden: (id: string, hidden: boolean) => void;
+  prod?: Record<string, ProdStatus> | null;
 }) {
   if (!items.length) return null;
+  const withProd = !!prod;
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2.5" style={{ backgroundColor: '#F9FAFB' }}>
@@ -52,6 +94,14 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
         <span className="text-sm font-bold text-navy">{title}</span>
         <span className="text-xs text-ink-light">· {items.filter(l => checked.has(l.id)).length}/{items.length}</span>
       </div>
+      {withProd && (
+        <div className="hidden sm:grid sm:grid-cols-12 sm:gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-light border-b border-border-soft">
+          <div className="sm:col-span-4">{vi ? 'Sản phẩm' : 'Produit'}</div>
+          <div className="sm:col-span-1 text-center">{vi ? 'Đặt' : 'Cmd'}</div>
+          <div className="sm:col-span-3">{vi ? 'Bếp → kho (cả ngày)' : 'Cuisine → stock (journée)'}</div>
+          <div className="sm:col-span-4 text-center">{vi ? 'Kiểm' : 'Check'}</div>
+        </div>
+      )}
       <div className="divide-y divide-border-soft">
         {items.map(l => {
           const st = state[l.id] ?? { qty: String(l.qty_expected), reason: '', note: '' };
@@ -75,7 +125,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                   qty+check wrapper makes it transparent to the grid from tablet/desktop up, so
                   that layout is untouched — only phones (<640px) get the stacked version. */}
               <div className="flex flex-col gap-2 sm:grid sm:grid-cols-12 sm:items-center sm:gap-2">
-                <div className="sm:col-span-5 min-w-0">
+                <div className={`${withProd ? 'sm:col-span-4' : 'sm:col-span-5'} min-w-0`}>
                   <div className="text-base font-semibold text-navy leading-snug sm:text-sm sm:font-normal sm:truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</div>
                   {l.sku && <div className="text-[11px] text-ink-light font-mono">{l.sku}</div>}
                   {l.note && (
@@ -83,10 +133,12 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                       📝 {l.note}
                     </div>
                   )}
+                  {withProd && <div className="sm:hidden mt-1"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} /></div>}
                 </div>
                 <div className="flex items-center justify-between gap-2 sm:contents">
-                <div className="sm:col-span-2 text-center font-bold text-navy">×{l.qty_expected}</div>
-                <div className="sm:col-span-5 flex items-center justify-center gap-2">
+                <div className={`${withProd ? 'sm:col-span-1' : 'sm:col-span-2'} text-center font-bold text-navy`}>×{l.qty_expected}</div>
+                {withProd && <div className="hidden sm:block sm:col-span-3 min-w-0"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} /></div>}
+                <div className={`${withProd ? 'sm:col-span-4' : 'sm:col-span-5'} flex items-center justify-center gap-2`}>
                   {isChecked ? (
                     <>
                       <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
@@ -148,7 +200,7 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
   );
 }
 
-export default function DeliveryCheckOrderView({ header, lines, backHref, onlineInfo, destination }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string; onlineInfo?: OnlineOrderCheckInfo | null; destination?: DeliveryDestination | null }) {
+export default function DeliveryCheckOrderView({ header, lines, backHref, onlineInfo, destination, prodBySku }: { header: DeliveryOrderHeader; lines: CheckLine[]; backHref: string; onlineInfo?: OnlineOrderCheckInfo | null; destination?: DeliveryDestination | null; prodBySku?: Record<string, ProdStatus> | null }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -382,7 +434,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
 
       <Section title={vi ? 'Sản phẩm sản xuất' : 'Produits fabriqués'} icon={PackageCheck} items={production}
         state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked}
-        hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} />
+        hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} prod={prodBySku ?? null} />
       <Section title={vi ? 'Bao bì / khác' : 'Packaging / divers'} icon={Box} items={packaging}
         state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked}
         hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} />
