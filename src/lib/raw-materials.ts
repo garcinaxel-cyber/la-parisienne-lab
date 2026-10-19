@@ -14,6 +14,9 @@ export type RawMaterial = {
   vendorId: number | null; vendorName: string | null; vendors: { id: number; name: string }[];
   /** Active Odoo BOM lines using it (null = not known yet) and the "no recipe needed" switch (Axel, 2026-10-09). */
   bomCount: number | null; noRecipeNeeded: boolean;
+  /** Brands of this one Odoo product (Axel, 2026-10-19: Kem whipping = Paysan Breton / Pauls / Bravo). When set, the chef
+   *  picks the brand on the storage slip; Odoo and accounting keep the single product. */
+  brands: string[];
 };
 
 // Taken from storage but used in no Odoo recipe — the chef is asked what it was for (Axel, 2026-10-09).
@@ -163,7 +166,7 @@ export type PurchaseLine = {
 
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;
   packLabel: string | null; packCount: number | null; correctedQty: number | null; correctedBy: string | null;
-  offRecipe: boolean; usedFor: string | null };
+  offRecipe: boolean; usedFor: string | null; brand: string | null };
 // status (Axel, 2026-10-09): a new slip waits for storage (purchasing role) to confirm it before the chef takes the goods.
 export type Withdrawal = { id: string; no: number; team: string; takenBy: string | null; createdAt: string; lines: WithdrawalLine[];
   status: 'to_confirm' | 'confirmed'; confirmedAt: string | null; confirmedBy: string | null;

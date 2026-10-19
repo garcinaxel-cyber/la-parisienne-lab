@@ -109,15 +109,23 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
   function saveName(v: string) { setName(v); try { localStorage.setItem(NAME_KEY, v); } catch {} }
 
-  const byId = useMemo(() => new Map((items ?? []).map(m => [m.tmplId, m])), [items]);
+  // Brands (Axel, 2026-10-19): a product with several brands shows one row per brand when taking /
+  // transferring (Kem whipping · Paysan Breton, · Pauls…). Each row gets its own negative key so the
+  // quantity state stays per brand; the slip is saved on the real Odoo product + the brand.
+  type TakeMat = RawMaterial & { realId?: number; brand?: string };
+  const takeItems = useMemo<TakeMat[]>(() => (items ?? []).flatMap(m => !m.brands?.length ? [m] : m.brands.map((b, i) => ({
+    ...m, tmplId: -(m.tmplId * 10 + i + 1), realId: m.tmplId, brand: b,
+    name: `${m.name} · ${b}`, nameVi: m.nameVi ? `${m.nameVi} · ${b}` : null,
+  }))), [items]);
+  const byId = useMemo(() => new Map<number, TakeMat>([...(items ?? []), ...takeItems].map(m => [m.tmplId, m])), [items, takeItems]);
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return (items ?? []).filter(m => (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub)
+    return ((mode === 'take' || mode === 'transfer') ? takeItems : (items ?? [])).filter(m => (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub)
       && (!s || m.name.toLowerCase().includes(s) || (m.nameVi ?? '').toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s)))
       .sort((a, b) => rawName(a, lang).localeCompare(rawName(b, lang), lang === 'vi' ? 'vi' : 'en'));
-  }, [items, type, sub, q, lang]);
+  }, [items, takeItems, mode, type, sub, q, lang]);
   // Lines already saved keep the Odoo name of the day; show them in the screen's language when the product is known.
-  const lineName = (l: { tmplId: number | null; name: string }) => { const m = l.tmplId != null ? byId.get(l.tmplId) : undefined; return m ? rawName(m, lang) : l.name; };
+  const lineName = (l: { tmplId: number | null; name: string; brand?: string | null }) => { const m = l.tmplId != null ? byId.get(l.tmplId) : undefined; return (m ? rawName(m, lang) : l.name) + (l.brand ? ` · ${l.brand}` : ''); };
   const toBase = (m: RawMaterial, n: number) => { const u = unit[m.tmplId] ?? -1; return u >= 0 && m.packs[u] ? n * m.packs[u].factor : n; };
   const unitLabel = (m: RawMaterial) => { const u = unit[m.tmplId] ?? -1; return u >= 0 && m.packs[u] ? m.packs[u].label : m.uom; };
   const picked = Object.entries(qty).filter(([, v]) => v > 0).map(([k, v]) => ({ m: byId.get(Number(k))!, n: v })).filter(x => x.m);
@@ -127,7 +135,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(true);
     const res = await recordWithdrawalAction(team, name.trim(), picked.map(({ m, n }) => {
       const u = unit[m.tmplId] ?? -1;
-      return { tmplId: m.tmplId, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null,
+      return { tmplId: m.realId ?? m.tmplId, brand: m.brand ?? null, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null,
         usedFor: isOffRecipe(m) ? (usedFor[m.tmplId] ?? '').trim() || null : null };
     }));
     setBusy(false);
@@ -144,7 +152,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(true);
     const res = await recordTransferAction(team, name.trim(), direction, other, picked.map(({ m, n }) => {
       const u = unit[m.tmplId] ?? -1;
-      return { tmplId: m.tmplId, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null };
+      return { tmplId: m.realId ?? m.tmplId, brand: m.brand ?? null, qty: toBase(m, n), packLabel: u >= 0 ? m.packs[u]?.label ?? null : null, packCount: u >= 0 ? n : null };
     }), tNote.trim() || null);
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
@@ -357,7 +365,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         const totals = new Map<string, { name: string; uom: string; qty: number; slips: number }>();
         // Transfers (2026-10-16): + received, − given, once storage confirmed them.
         for (const w of list ?? []) { const sign = slipSign(w, team); if (!sign) continue; for (const l of w.lines) {
-          const k = `${l.tmplId ?? l.name}|${l.uom}`;
+          const k = `${l.tmplId ?? l.name}|${l.brand ?? ''}|${l.uom}`;
           const t = totals.get(k) ?? { name: lineName(l), uom: l.uom, qty: 0, slips: 0 };
           t.qty += sign * qOf(l); t.slips += 1; totals.set(k, t);
         } }

@@ -56,6 +56,7 @@ export function mapMaterial(r: any): RawMaterial {
     packs: Array.isArray(r.packs) ? r.packs : [], visible: !!r.visible, checked: !!r.checked, purchased: !!r.purchased,
     vendorId: r.vendor_id ?? null, vendorName: r.vendor_name ?? null, vendors: Array.isArray(r.vendors) ? r.vendors : [],
     bomCount: r.bom_count == null ? null : Number(r.bom_count), noRecipeNeeded: !!r.no_recipe_needed,
+    brands: Array.isArray(r.brands) ? r.brands.filter((b: any) => typeof b === 'string' && b.trim()) : [],
   };
 }
 
@@ -100,7 +101,7 @@ export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawServi
   const lines = new Map<string, any[]>();
   for (let i = 0; i < ids.length; i += 200) {
     const { data } = await db.from('lab_raw_withdrawal_lines')
-      .select('id, withdrawal_id, tmpl_id, sku, name, uom, qty, pack_label, pack_count, corrected_qty, corrected_by_name, off_recipe, used_for')
+      .select('id, withdrawal_id, tmpl_id, sku, name, uom, qty, pack_label, pack_count, corrected_qty, corrected_by_name, off_recipe, used_for, brand')
       .in('withdrawal_id', ids.slice(i, i + 200));
     for (const l of data ?? []) { const a = lines.get(l.withdrawal_id) ?? []; a.push(l); lines.set(l.withdrawal_id, a); }
   }
@@ -113,7 +114,7 @@ export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawServi
       id: l.id, tmplId: l.tmpl_id ?? null, sku: l.sku ?? null, name: l.name, uom: l.uom, qty: Number(l.qty),
       packLabel: l.pack_label ?? null, packCount: l.pack_count == null ? null : Number(l.pack_count),
       correctedQty: l.corrected_qty == null ? null : Number(l.corrected_qty), correctedBy: l.corrected_by_name ?? null,
-      offRecipe: !!l.off_recipe, usedFor: l.used_for ?? null,
+      offRecipe: !!l.off_recipe, usedFor: l.used_for ?? null, brand: l.brand ?? null,
     })),
   }));
 }

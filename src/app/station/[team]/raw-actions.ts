@@ -16,7 +16,15 @@ export async function getRawCatalogForChefAction(): Promise<{ items?: RawMateria
   return { items: (data ?? []).map(mapMaterial) };
 }
 
-export type WithdrawalInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null; usedFor?: string | null };
+export type WithdrawalInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null; usedFor?: string | null; brand?: string | null };
+
+// Brand of a product that has several (Axel, 2026-10-19): must be one of the catalogue's brands.
+function pickBrand(m: any, brand: string | null | undefined): { brand: string | null; error?: string } {
+  const list: string[] = Array.isArray(m?.brands) ? m.brands : [];
+  if (!list.length) return { brand: null };
+  const b = list.find(x => x === String(brand ?? '').trim());
+  return b ? { brand: b } : { brand: null, error: `${m.name}: chọn thương hiệu (${list.join(' / ')}) / choose the brand` };
+}
 
 export async function recordWithdrawalAction(team: string, takenBy: string, lines: WithdrawalInput[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
   const a = await rawActor();
@@ -27,9 +35,10 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
   const clean = (lines ?? []).map(l => ({ ...l, qty: Math.round(Number(l.qty) * 1000) / 1000 })).filter(l => l.tmplId && l.qty > 0).slice(0, 80);
   if (!clean.length) return { error: 'Empty' };
   // Names and units are re-read server-side, never trusted from the phone.
-  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, bom_count, no_recipe_needed').in('tmpl_id', clean.map(l => l.tmplId));
+  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, bom_count, no_recipe_needed, brands').in('tmpl_id', clean.map(l => l.tmplId));
   const byId = new Map((mats ?? []).map(m => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  for (const l of clean) { const r = pickBrand(byId.get(l.tmplId), l.brand); if (r.error) return { error: r.error }; }
   const { data: w, error } = await db.from('lab_raw_withdrawals')
     // Waits for storage to confirm before the chef takes the goods (Axel, 2026-10-09: "hien confirm d'abord").
     .insert({ team, taken_by: String(takenBy ?? '').trim().slice(0, 80) || a.name || null, created_by: a.userId, status: 'to_confirm' }).select('id, no').single();
@@ -40,7 +49,8 @@ export async function recordWithdrawalAction(team: string, takenBy: string, line
       pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null,
       // Off-recipe flag decided here from the catalogue, never from the phone (Axel, 2026-10-09).
       off_recipe: m.bom_count === 0 && !m.no_recipe_needed,
-      used_for: String(l.usedFor ?? '').trim().slice(0, 120) || null };
+      used_for: String(l.usedFor ?? '').trim().slice(0, 120) || null,
+      brand: pickBrand(m, l.brand).brand };
   });
   const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
   if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }
@@ -85,7 +95,7 @@ export async function remindStorageAction(team: string, withdrawalId: string): P
 // A team's slips: the ones it recorded, plus transfers to or from it recorded by another team.
 const teamOr = (team: string) => { const t = /^[a-z_]+$/.test(team) ? team : '__none__'; return `team.eq.${t},from_team.eq.${t},to_team.eq.${t}`; };
 
-export type TransferInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null };
+export type TransferInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null; brand?: string | null };
 
 // Transfer between teams (Axel, 2026-10-16): both directions, recorded by either team, waits for
 // storage to confirm like a withdrawal. Nothing to Odoo; off-recipe never applies (not a storage take).
@@ -103,9 +113,10 @@ export async function recordTransferAction(team: string, doneBy: string, directi
   if (!db) return { error: 'Server not configured' };
   const clean = (lines ?? []).map(l => ({ ...l, qty: Math.round(Number(l.qty) * 1000) / 1000 })).filter(l => l.tmplId && l.qty > 0).slice(0, 80);
   if (!clean.length) return { error: 'Empty' };
-  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom').in('tmpl_id', clean.map(l => l.tmplId));
+  const { data: mats } = await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, brands').in('tmpl_id', clean.map(l => l.tmplId));
   const byId = new Map((mats ?? []).map(m => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  for (const l of clean) { const r = pickBrand(byId.get(l.tmplId), l.brand); if (r.error) return { error: r.error }; }
   const from = direction === 'give' ? team : otherTeam, to = direction === 'give' ? otherTeam : team;
   const who = String(doneBy ?? '').trim().slice(0, 80) || a.name || null;
   const { data: w, error } = await db.from('lab_raw_withdrawals')
@@ -115,7 +126,8 @@ export async function recordTransferAction(team: string, doneBy: string, directi
   const rows = clean.map(l => {
     const m = byId.get(l.tmplId)!;
     return { withdrawal_id: w.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: l.qty,
-      pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null, off_recipe: false, used_for: null };
+      pack_label: l.packLabel ? String(l.packLabel).slice(0, 40) : null, pack_count: l.packCount ?? null, off_recipe: false, used_for: null,
+      brand: pickBrand(m, l.brand).brand };
   });
   const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
   if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }

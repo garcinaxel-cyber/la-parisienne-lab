@@ -495,7 +495,8 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
   // Names in the screen's language (slips keep the Odoo name of the day): same catalogue as the chefs.
   const [viName, setViName] = useState<Map<number, string>>(new Map());
   useEffect(() => { getCatalogueAction().then(r => setViName(new Map((r.items ?? []).filter(m => m.nameVi).map(m => [m.tmplId, m.nameVi as string])))); }, []);
-  const nm = (l: { tmplId: number | null; name: string }) => (lang === 'vi' && l.tmplId != null && viName.get(l.tmplId)) || l.name;
+  // + the brand the chef picked, for products with several brands (2026-10-19).
+  const nm = (l: { tmplId: number | null; name: string; brand?: string | null }) => ((lang === 'vi' && l.tmplId != null && viName.get(l.tmplId)) || l.name) + (l.brand ? ` · ${l.brand}` : '');
   const load = useCallback(async () => { const r = await getWithdrawalsDayAction(date); if (r.error) setErr(r.error); else { setErr(null); setItems(r.items!); } }, [date]);
   useEffect(() => { setItems(null); load(); }, [load]);
   const lines = (items ?? []).reduce((s, w) => s + w.lines.length, 0);
@@ -603,7 +604,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
             const back = w.kind === 'transfer' && w.toTeam === 'kho';
             if (w.kind === 'transfer' && (!back || w.status !== 'confirmed' || w.refused)) continue;
             for (const l of w.lines) {
-              const k = `${l.tmplId ?? l.name}|${l.uom}`;
+              const k = `${l.tmplId ?? l.name}|${l.brand ?? ''}|${l.uom}`;
               const e = t.get(k) ?? { name: nm(l), uom: l.uom, qty: 0, teams: new Set<string>() };
               e.qty += (back ? -1 : 1) * (l.correctedQty ?? l.qty); e.teams.add(back ? (w.fromTeam ?? w.team) : w.team); t.set(k, e);
             }
@@ -857,6 +858,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [syncing, setSyncing] = useState(false);
   const [packFor, setPackFor] = useState<number | null>(null);
   const [packLabel, setPackLabel] = useState(''); const [packFactor, setPackFactor] = useState('');
+  const [brandFor, setBrandFor] = useState<number | null>(null); const [brandText, setBrandText] = useState('');
   const [cf, setCf] = useState<Partial<Record<ColKey, Set<string>>>>({});
   const [sort, setSort] = useState<{ key: 'name' | 'bom'; dir: 1 | -1 }>({ key: 'name', dir: 1 });
   const [openCol, setOpenCol] = useState<{ k: ColKey; rect: { left: number; bottom: number }; sorts?: ColSortOpt[] } | null>(null);
@@ -1011,6 +1013,16 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                         <button onClick={() => { const f = parseFloat(packFactor.replace(',', '.')); if (packLabel.trim() && f > 0) patch(m, { packs: [...m.packs, { label: packLabel.trim(), factor: f }] }); setPackFor(null); setPackLabel(''); setPackFactor(''); }} style={{ color: NAVY }}><Check size={13} /></button>
                       </div>
                     ) : <button onClick={() => { setPackFor(m.tmplId); setPackLabel(''); setPackFactor(''); }} className="text-[11px] font-bold" style={{ color: GOLD_TEXT }}>+ {L('quy cách', 'pack')}</button>}
+                    {/* Brands (2026-10-19): the chef picks one on the storage slip; Odoo keeps one product. */}
+                    {(m.brands ?? []).length > 0 && <div className="flex flex-wrap gap-1 mt-1">{m.brands.map(b => (
+                      <span key={b} className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10.5px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{b}
+                        <button onClick={() => patch(m, { brands: m.brands.filter(x => x !== b) })} aria-label={L('Xoá', 'Remove')} style={{ color: '#9CA3AF' }}><X size={10} /></button></span>))}</div>}
+                    {brandFor === m.tmplId ? (
+                      <div className="flex items-center gap-1 mt-1">
+                        <input value={brandText} onChange={e => setBrandText(e.target.value)} placeholder={L('vd Paysan Breton', 'e.g. Paysan Breton')} className="w-28 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
+                        <button onClick={() => { if (brandText.trim()) patch(m, { brands: [...(m.brands ?? []), brandText.trim()] }); setBrandFor(null); setBrandText(''); }} style={{ color: NAVY }} aria-label="OK"><Check size={13} /></button>
+                      </div>
+                    ) : <button onClick={() => { setBrandFor(m.tmplId); setBrandText(''); }} className="block text-[11px] font-bold mt-0.5" style={{ color: GOLD_TEXT }}>+ {L('thương hiệu', 'brand')}</button>}
                   </td>
                   <td className="px-3 py-2 text-center whitespace-nowrap">
                     {/* Off-recipe alert at the station (Axel, 2026-10-09): number of Odoo recipes using it, and

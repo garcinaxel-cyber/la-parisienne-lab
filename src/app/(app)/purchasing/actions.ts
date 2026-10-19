@@ -415,7 +415,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
   } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
 }
 
-export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[]; noRecipeNeeded?: boolean }) {
+export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[]; noRecipeNeeded?: boolean; brands?: string[] }) {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   const p: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by_name: g.a.name || null };
@@ -424,6 +424,7 @@ export async function updateMaterialAction(tmplId: number, patch: { type?: strin
   if (typeof patch.visible === 'boolean') p.visible = patch.visible;
   if (typeof patch.checked === 'boolean') p.checked = patch.checked;
   if (typeof patch.noRecipeNeeded === 'boolean') p.no_recipe_needed = patch.noRecipeNeeded;
+  if (Array.isArray(patch.brands)) p.brands = Array.from(new Set(patch.brands.map(b => String(b ?? '').trim().slice(0, 40)).filter(Boolean))).slice(0, 8);
   if (Array.isArray(patch.packs)) p.packs = patch.packs
     .map(x => ({ label: String(x.label ?? '').trim().slice(0, 30), factor: Number(x.factor) }))
     .filter(x => x.label && x.factor > 0).slice(0, 5);
