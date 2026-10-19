@@ -111,14 +111,19 @@ export async function fetchProductionGapsByOrder(
   if (!dates.length || !headerIds.length) return out;
   try {
     const lines: any[] = [];
-    for (let i = 0; i < headerIds.length; i += 300) {
-      const { data } = await supabase.from('lab_delivery_check_lines')
-        .select('delivery_order_id, sku, product_name_vi, product_category, qty_checked')
-        .in('delivery_order_id', headerIds.slice(i, i + 300)).eq('category', 'production').gt('qty_checked', 0).limit(10000);
-      lines.push(...(data ?? []));
+    // Paginated: PostgREST caps every response at 1000 rows (2026-10-19 — the first version read
+    // only 1000 of the window's lines, so most orders never got their tag).
+    for (let i = 0; i < headerIds.length; i += 100) {
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase.from('lab_delivery_check_lines')
+          .select('id, delivery_order_id, sku, product_name_vi, product_category, qty_checked')
+          .in('delivery_order_id', headerIds.slice(i, i + 100)).eq('category', 'production').gt('qty_checked', 0)
+          .order('id').range(from, from + 999);
+        lines.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
     }
     const relevant = lines.filter(l => l.sku && !isStockFamily(l.product_category));
-    console.log('[prodgaps] headers', headerIds.length, 'lines', lines.length, 'relevant', relevant.length);
     if (!relevant.length) return out;
 
     const { data: imports } = await supabase.from('lab_imports').select('id, delivery_date').in('delivery_date', dates);
@@ -129,8 +134,8 @@ export async function fetchProductionGapsByOrder(
     const cards: any[] = [];
     for (let from = 0; ; from += 1000) {
       const { data } = await supabase.from('lab_assignments')
-        .select('import_id, variant_id, status, cancelled, total_qty, qty_to_produce, qty_sent_total, breakdown')
-        .in('import_id', importIds).range(from, from + 999);
+        .select('id, import_id, variant_id, status, cancelled, total_qty, qty_to_produce, qty_sent_total, breakdown')
+        .in('import_id', importIds).order('id').range(from, from + 999);
       cards.push(...(data ?? []));
       if (!data || data.length < 1000) break;
     }
@@ -170,7 +175,6 @@ export async function fetchProductionGapsByOrder(
       if (!problem) continue;
       for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) bad.add(`${date}||${b.order_ref}||${sku}`);
     }
-    console.log('[prodgaps] imports', importIds.length, 'cards', cards.length, 'variants', Object.keys(skuByVariant).length, 'bad', bad.size);
     for (const l of relevant) {
       const h = headerById[l.delivery_order_id]; if (!h) continue;
       if (!bad.has(`${h.delivery_date}||${h.order_ref}||${l.sku}`)) continue;
