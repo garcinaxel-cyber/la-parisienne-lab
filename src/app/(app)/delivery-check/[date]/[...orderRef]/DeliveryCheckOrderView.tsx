@@ -12,7 +12,7 @@ import { TEAM_LABELS, type Team } from '@/lib/types';
 
 // "Bếp → kho" cell (Axel, 2026-10-19): what the kitchen produced / sent to stock for this SKU
 // vs what is delivered, for the whole delivery date. Information only — never blocks anything.
-function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string | null; vi: boolean }) {
+function ProdCell({ s, family, vi, leaving }: { s: ProdStatus | undefined; family: string | null; vi: boolean; leaving: boolean }) {
   const chip = (bg: string, color: string, text: string) => (
     <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold whitespace-nowrap" style={{ backgroundColor: bg, color }}>{text}</span>
   );
@@ -29,8 +29,10 @@ function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string
   // "Có sẵn" on an on-demand product is not normal (Axel, 2026-10-19: SBPACAOC ×2 marked from
   // stock while LAB stock was 0 → delivered with no MO) — orange "check", never grey.
   const skipWarn = (n: number) => chip('#FFF4D6', '#8A5A00', vi ? `Bếp báo có sẵn ×${n} · kiểm tra` : `Cuisine dit « en stock » ×${n} · vérifier`);
+  // Blocked card but the product is leaving anyway → red, it means delivered with no production.
+  const blockedLeaving = chip('#FDECEA', '#B42318', vi ? 'Bếp chặn · nhưng đang giao' : 'Bloqué en cuisine · mais livré');
   if (s.planned === 0) {
-    return <div>{s.stock > 0 ? skipWarn(s.stock) : grey(vi ? 'Chặn' : 'Bloqué')}{sub('#6B7280', day)}</div>;
+    return <div>{s.stock > 0 ? skipWarn(s.stock) : leaving ? blockedLeaving : grey(vi ? 'Chặn' : 'Bloqué')}{sub('#6B7280', day)}</div>;
   }
   // Badge = THIS order's card(s) when the cards say which orders they serve; else the day total.
   const base = s.order && s.order.planned > 0 ? s.order : s;
@@ -39,7 +41,7 @@ function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string
   const dayCovered = s.sent >= s.checked;
   let main;
   if (s.order && s.order.planned === 0) {
-    main = s.order.stock > 0 ? skipWarn(s.order.stock) : grey(vi ? 'Chặn' : 'Bloqué');
+    main = s.order.stock > 0 ? skipWarn(s.order.stock) : leaving ? blockedLeaving : grey(vi ? 'Chặn' : 'Bloqué');
   } else if (base.sent >= base.planned) main = chip('#ECFDF5', '#047857', vi ? `Chuyển kho ✓ ${base.sent}/${base.planned}` : `Transféré ✓ ${base.sent}/${base.planned}`);
   else if (s.order && base.sent < base.planned && dayCovered && s.checked > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Thẻ này ${base.sent}/${base.planned} · cả ngày đủ` : `Cette carte ${base.sent}/${base.planned} · journée OK`);
   else if (base.sent > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Chuyển kho ${base.sent}/${base.planned}` : `Transféré ${base.sent}/${base.planned}`);
@@ -152,11 +154,11 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                       📝 {l.note}
                     </div>
                   )}
-                  {withProd && <div className="sm:hidden mt-1"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} /></div>}
+                  {withProd && <div className="sm:hidden mt-1"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} leaving={Number((state[l.id] ?? {}).qty ?? l.qty_checked ?? 0) > 0 && checked.has(l.id)} /></div>}
                 </div>
                 <div className="flex items-center justify-between gap-2 sm:contents">
                 <div className={`${withProd ? 'sm:col-span-1' : 'sm:col-span-2'} text-center font-bold text-navy`}>×{l.qty_expected}</div>
-                {withProd && <div className="hidden sm:block sm:col-span-3 min-w-0"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} /></div>}
+                {withProd && <div className="hidden sm:block sm:col-span-3 min-w-0"><ProdCell s={l.sku ? prod![l.sku] : undefined} family={l.product_category} vi={vi} leaving={Number((state[l.id] ?? {}).qty ?? l.qty_checked ?? 0) > 0 && checked.has(l.id)} /></div>}
                 <div className={`${withProd ? 'sm:col-span-4' : 'sm:col-span-5'} flex items-center justify-center gap-2`}>
                   {isChecked ? (
                     <>

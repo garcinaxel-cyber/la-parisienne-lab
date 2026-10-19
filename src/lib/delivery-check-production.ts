@@ -157,13 +157,15 @@ export async function fetchProductionGapsByOrder(
       if (!sku || !date) continue;
       sentDay[`${date}||${sku}`] = (sentDay[`${date}||${sku}`] ?? 0) + (Number(c.qty_sent_total) || 0);
     }
+    // A card blocked AFTER the product already left (2026-10-19 SBPACAOC REP/02058: "Có sẵn" then
+    // "Chặn · Lỗi" at 14:27, yet ×2 delivered and received by the shop) must not hide the gap.
     for (const c of cards) {
-      if (c.cancelled || c.status === 'blocked') continue;
+      if (c.cancelled) continue;
       const sku = skuByVariant[c.variant_id]; const date = dateByImport[c.import_id];
       if (!sku || !date) continue;
       if ((checkedDay[`${date}||${sku}`] ?? 0) <= (sentDay[`${date}||${sku}`] ?? 0)) continue;
       const qty = Number(c.qty_to_produce ?? c.total_qty) || 0;
-      const problem = c.status === 'skip' || (Number(c.qty_sent_total) || 0) < qty;
+      const problem = c.status === 'skip' || c.status === 'blocked' || (Number(c.qty_sent_total) || 0) < qty;
       if (!problem) continue;
       for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) bad.add(`${date}||${b.order_ref}||${sku}`);
     }
