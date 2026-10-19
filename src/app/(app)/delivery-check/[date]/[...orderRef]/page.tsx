@@ -36,7 +36,7 @@ export default async function DeliveryCheckOrderPage({ params }: { params: { dat
   const destination = await fetchOrderDeliveryDestination(supabase, orderRef, header.shop_name);
   // Production vs delivery column (Axel, 2026-10-19) — display only, empty on any failure.
   const prodBySku = await fetchProductionStatusBySku(supabase, date,
-    lines.filter(l => l.category === 'production' && l.sku).map(l => l.sku as string));
+    lines.filter(l => l.category === 'production' && l.sku).map(l => l.sku as string), orderRef);
   const today = labToday();
   // A past date (2026-08-26: late-created orders for a manual cake from a prior day) belongs on
   // the "late" tab, not "tomorrow" — the old ternary only ever considered today vs. everything else.

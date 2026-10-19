@@ -32,17 +32,32 @@ function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string
   if (s.planned === 0) {
     return <div>{grey(s.stock > 0 ? (vi ? `Có sẵn ×${s.stock}` : `Dispo stock ×${s.stock}`) : (vi ? 'Chặn' : 'Bloqué'))}{sub('#6B7280', day)}</div>;
   }
+  // Badge = THIS order's card(s) when the cards say which orders they serve; else the day total.
+  const base = s.order && s.order.planned > 0 ? s.order : s;
   let main;
-  if (s.sent >= s.planned) main = chip('#ECFDF5', '#047857', vi ? `Chuyển kho ✓ ${s.sent}/${s.planned}` : `Transféré ✓ ${s.sent}/${s.planned}`);
-  else if (s.sent > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Chuyển kho ${s.sent}/${s.planned}` : `Transféré ${s.sent}/${s.planned}`);
-  else if (s.produced > 0) main = chip('#FDECEA', '#B42318', vi ? `Chưa chuyển kho 0/${s.planned}` : `Pas transféré 0/${s.planned}`);
-  else main = chip('#FDECEA', '#B42318', vi ? `Chưa làm 0/${s.planned}` : `Pas produit 0/${s.planned}`);
+  if (s.order && s.order.planned === 0) {
+    main = grey(s.order.stock > 0 ? (vi ? `Có sẵn ×${s.order.stock}` : `Dispo stock ×${s.order.stock}`) : (vi ? 'Chặn' : 'Bloqué'));
+  } else if (base.sent >= base.planned) main = chip('#ECFDF5', '#047857', vi ? `Chuyển kho ✓ ${base.sent}/${base.planned}` : `Transféré ✓ ${base.sent}/${base.planned}`);
+  else if (base.sent > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Chuyển kho ${base.sent}/${base.planned}` : `Transféré ${base.sent}/${base.planned}`);
+  else if (base.produced > 0) main = chip('#FDECEA', '#B42318', vi ? `Chưa chuyển kho 0/${base.planned}` : `Pas transféré 0/${base.planned}`);
+  else main = chip('#FDECEA', '#B42318', vi ? `Chưa làm 0/${base.planned}` : `Pas produit 0/${base.planned}`);
+  const scope = s.order
+    ? (s.order.shared > 1 ? (vi ? `thẻ chung ${s.order.shared} đơn` : `carte commune ${s.order.shared} cmd`) : null)
+    : (vi ? 'cả ngày' : 'journée');
+  // Day line only when something is wrong elsewhere — names the other order(s).
+  const others = s.order ? s.others : [];
+  const shown = others.slice(0, 2).map(o =>
+    `${o.ref.replace(/^REP\/\d{4}\//, 'REP/')}${o.shop ? ' ' + o.shop.replace(/^La Paris\s*/, '') : ''}${o.shared > 1 ? ` (+${o.shared - 1})` : ''} ${o.notMade ? (vi ? 'chưa làm' : 'pas produit') : (vi ? 'chưa chuyển' : 'pas transf.')} ${o.missing}`);
+  const otherLine = others.length
+    ? (vi ? 'Đơn khác: ' : 'Autres cmd : ') + shown.join(' · ') + (others.length > 2 ? ` +${others.length - 2}` : '')
+    : null;
   const over = s.checked - (s.sent + s.stock);
   return (
     <div>
       {main}
-      {sub('#6B7280', [teams, day].filter(Boolean).join(' · ') || null)}
-      {over > 0 && s.sent < s.checked && sub('#6D28D9', vi ? `Giao nhiều hơn chuyển kho +${over}` : `Livré > transféré +${over}`)}
+      {sub('#6B7280', [teams, scope].filter(Boolean).join(' · ') || null)}
+      {sub('#B45309', otherLine)}
+      {over > 0 && s.sent < s.checked && sub('#6D28D9', vi ? `Cả ngày: giao nhiều hơn chuyển kho +${over}` : `Journée : livré > transféré +${over}`)}
     </div>
   );
 }

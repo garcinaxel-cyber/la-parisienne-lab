@@ -20,16 +20,21 @@ export interface ProdStatus {
   teams: string[];
   ordered: number;
   checked: number;
+  // Cards made for THIS order (card.breakdown lists the order refs it serves). `shared` = the
+  // largest number of orders on one of those cards (>1 → transfer can't be split per order).
+  order: { planned: number; produced: number; sent: number; stock: number; blocked: number; shared: number } | null;
+  // Other cards of the day still short of transfer — named so the assistant knows where.
+  others: { ref: string; shop: string | null; missing: number; shared: number; notMade: boolean }[];
 }
 
 export async function fetchProductionStatusBySku(
-  supabase: SupabaseClient, date: string, skus: string[],
+  supabase: SupabaseClient, date: string, skus: string[], orderRef?: string,
 ): Promise<Record<string, ProdStatus>> {
   const out: Record<string, ProdStatus> = {};
   const uniq = Array.from(new Set(skus.filter(Boolean)));
   if (!date || !uniq.length) return out;
   try {
-    const blank = (): ProdStatus => ({ cards: 0, planned: 0, produced: 0, sent: 0, stock: 0, blocked: 0, teams: [], ordered: 0, checked: 0 });
+    const blank = (): ProdStatus => ({ cards: 0, planned: 0, produced: 0, sent: 0, stock: 0, blocked: 0, teams: [], ordered: 0, checked: 0, order: null, others: [] });
     for (const s of uniq) out[s] = blank();
 
     const [{ data: variants }, { data: imports }, { data: dayLines }] = await Promise.all([
@@ -52,7 +57,7 @@ export async function fetchProductionStatusBySku(
     if (!vids.length || !importIds.length) return out;
 
     const { data: cards } = await supabase.from('lab_assignments')
-      .select('variant_id, team, status, cancelled, total_qty, qty_to_produce, qty_produced, qty_sent_total')
+      .select('variant_id, team, status, cancelled, total_qty, qty_to_produce, qty_produced, qty_sent_total, breakdown')
       .in('import_id', importIds).in('variant_id', vids);
     for (const c of cards ?? []) {
       if (c.cancelled) continue;
@@ -60,11 +65,29 @@ export async function fetchProductionStatusBySku(
       const qty = Number(c.qty_to_produce ?? c.total_qty) || 0;
       s.cards += 1;
       if (c.team && !s.teams.includes(c.team)) s.teams.push(c.team);
+      const bd: any[] = Array.isArray(c.breakdown) ? c.breakdown : [];
+      const refs = Array.from(new Set(bd.map(b => b?.order_ref).filter(Boolean))) as string[];
+      const mine = !!orderRef && refs.includes(orderRef);
+      if (mine) {
+        const o = s.order ??= { planned: 0, produced: 0, sent: 0, stock: 0, blocked: 0, shared: 1 };
+        o.shared = Math.max(o.shared, refs.length || 1);
+        if (c.status === 'skip') o.stock += qty;
+        else if (c.status === 'blocked') o.blocked += qty;
+        else { o.planned += qty; o.produced += Number(c.qty_produced) || 0; o.sent += Number(c.qty_sent_total) || 0; }
+      }
       if (c.status === 'skip') { s.stock += qty; continue; }
       if (c.status === 'blocked') { s.blocked += qty; continue; }
+      const sent = Number(c.qty_sent_total) || 0;
       s.planned += qty;
       s.produced += Number(c.qty_produced) || 0;
-      s.sent += Number(c.qty_sent_total) || 0;
+      s.sent += sent;
+      if (!mine && sent < qty) {
+        const first = bd.find(b => b?.order_ref) ?? null;
+        s.others.push({
+          ref: first?.order_ref ?? '?', shop: first?.shop_name ?? null, missing: qty - sent,
+          shared: refs.length || 1, notMade: !(Number(c.qty_produced) > 0),
+        });
+      }
     }
   } catch {
     return {}; // display-only: any failure just hides the column content, never the page
