@@ -401,11 +401,32 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
   const [picks, setPicks] = useState<{ tmplId: number; qty: string; note: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Axel, 2026-10-19: Hiền could not add "Đế bánh vuông 9*9cm" (VTTH1025, "vật tư tiêu hao") — the
+  // app catalogue only holds raw materials. Odoo is now searched live too; a product picked from
+  // Odoo is imported into the app catalogue when the request is saved.
+  const [odooHits, setOdooHits] = useState<{ tmplId: number; name: string; nameVi: string | null; sku: string | null; uom: string; visible: boolean; vendorIds: number[]; odoo: true }[]>([]);
+  const [odooBusy, setOdooBusy] = useState(false);
+  const [extra, setExtra] = useState<Map<number, Board['catalogue'][number]>>(new Map());
   const label = (c: Board['catalogue'][number]) => (lang === 'vi' && c.nameVi) || c.name;
-  const byId = useMemo(() => new Map(catalogue.map(c => [c.tmplId, c])), [catalogue]);
+  const byId = useMemo(() => { const m = new Map(catalogue.map(c => [c.tmplId, c])); extra.forEach((v, k) => m.set(k, v)); return m; }, [catalogue, extra]);
   const nq = normVendor(q.trim());
   const results = !nq ? [] : catalogue.filter(c => c.visible && !picks.some(p => p.tmplId === c.tmplId)
     && nq.split(/\s+/).every(w => normVendor(`${c.name} ${c.nameVi ?? ''} ${c.sku ?? ''}`).includes(w))).slice(0, 30);
+  const odooOnly = odooHits.filter(h => !results.some(r => r.tmplId === h.tmplId) && !picks.some(p => p.tmplId === h.tmplId));
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 2) { setOdooHits([]); return; }
+    let live = true;
+    setOdooBusy(true);
+    const h = setTimeout(async () => {
+      const { searchOdooProductsAction } = await import('./actions');
+      const r = await searchOdooProductsAction(t);
+      if (!live) return;
+      setOdooBusy(false);
+      setOdooHits((r.items ?? []).map(i => ({ tmplId: i.tmplId, name: i.name, nameVi: null, sku: i.sku, uom: /^unit|^unité|^quả|^cái/i.test(i.uom) ? 'Unit' : i.uom, visible: true, vendorIds: [], odoo: true as const })));
+    }, 350);
+    return () => { live = false; clearTimeout(h); };
+  }, [q]);
   const valid = picks.filter(p => parseFloat(p.qty.replace(',', '.')) > 0);
   async function submit() {
     setBusy(true); setErr(null);
@@ -421,7 +442,7 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
         <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>
           <div className="flex items-center gap-2 px-2.5 py-2">
             <Search size={14} style={{ color: '#9CA3AF' }} />
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nguyên liệu…', 'Search raw materials…')} className="flex-1 text-[13px] outline-none bg-transparent" />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm theo tên hoặc mã SKU…', 'Search by name or SKU…')} className="flex-1 text-[13px] outline-none bg-transparent" />
             {q && <button type="button" onClick={() => setQ('')} aria-label="clear"><X size={14} style={{ color: '#9CA3AF' }} /></button>}
           </div>
           {nq && <div className="max-h-48 overflow-y-auto p-1" style={{ borderTop: `1px solid ${HAIR}` }}>
@@ -431,7 +452,16 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
                 <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{label(c)}</span><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
               </button>
             ))}
-            {!results.length && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy', 'Nothing found')}</div>}
+            {odooOnly.map(c => (
+              <button key={`o${c.tmplId}`} type="button" onClick={() => { setExtra(m => new Map(m).set(c.tmplId, c)); setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '' }]); setQ(''); }}
+                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
+                <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{c.sku ? `[${c.sku}] ` : ''}{c.name}</span>
+                <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: '#EEF2FF', color: NAVY }}>Odoo</span>
+                <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
+              </button>
+            ))}
+            {odooBusy && !odooOnly.length && <div className="px-2.5 py-1.5 text-[11.5px]" style={{ color: '#9CA3AF' }}><Loader2 size={11} className="animate-spin inline" /> {L('Đang tìm trên Odoo…', 'Searching Odoo…')}</div>}
+            {!results.length && !odooOnly.length && !odooBusy && <div className="px-2.5 py-3 text-[12.5px] text-center" style={{ color: '#6B7280' }}>{L('Không tìm thấy (cả trên Odoo)', 'Nothing found (Odoo included)')}</div>}
           </div>}
         </div>
         {picks.length > 0 && <div className="rounded-lg" style={{ border: `1px solid ${BORDER}` }}>

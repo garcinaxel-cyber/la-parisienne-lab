@@ -294,7 +294,18 @@ export async function addStorageRequestAction(lines: { tmplId: number; qty: numb
   if (!g) return { error: 'Forbidden' };
   const clean = (lines ?? []).filter(l => l.tmplId && Number(l.qty) > 0).slice(0, 80);
   if (!clean.length) return { error: 'Empty' };
-  const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId));
+  let { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId));
+  // Products picked from the live Odoo search (any purchasable product) are imported first.
+  const missing = clean.map(l => l.tmplId).filter(id => !(mats ?? []).some((m: any) => m.tmpl_id === id));
+  if (missing.length) {
+    try {
+      for (const id of missing) {
+        const imp = await importTemplateFromOdoo(g.db, Number(id));
+        if ('error' in imp) return { error: imp.error };
+      }
+    } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
+    ({ data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId)));
+  }
   const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
   const { data: r, error } = await g.db.from('lab_purchase_requests')
