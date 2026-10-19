@@ -94,3 +94,89 @@ export async function fetchProductionStatusBySku(
   }
   return out;
 }
+
+// Families made as extra production for stock, never on demand (Axel, 2026-10-19).
+export const STOCK_FAMILIES = new Set(['macaron', 'biscuit voyage', 'tiramisu']);
+export const isStockFamily = (cat: string | null | undefined) => !!cat && STOCK_FAMILIES.has(cat.trim().toLowerCase());
+
+// "Écart SX" tag on the delivery-check list (Axel, 2026-10-19). Per order: products already
+// checked (qty > 0, i.e. leaving) whose own production card — the card whose breakdown names this
+// order — is not fully sent to stock, or was marked "Có sẵn" (served from stock) although it is an
+// on-demand product. Stock families are ignored. Display only; empty on any failure.
+export async function fetchProductionGapsByOrder(
+  supabase: SupabaseClient, dates: string[], headerById: Record<string, { order_ref: string; delivery_date: string }>,
+): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {};
+  const headerIds = Object.keys(headerById);
+  if (!dates.length || !headerIds.length) return out;
+  try {
+    const lines: any[] = [];
+    for (let i = 0; i < headerIds.length; i += 300) {
+      const { data } = await supabase.from('lab_delivery_check_lines')
+        .select('delivery_order_id, sku, product_name_vi, product_category, qty_checked')
+        .in('delivery_order_id', headerIds.slice(i, i + 300)).eq('category', 'production').gt('qty_checked', 0).limit(10000);
+      lines.push(...(data ?? []));
+    }
+    const relevant = lines.filter(l => l.sku && !isStockFamily(l.product_category));
+    if (!relevant.length) return out;
+
+    const { data: imports } = await supabase.from('lab_imports').select('id, delivery_date').in('delivery_date', dates);
+    const dateByImport: Record<string, string> = {};
+    for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
+    const importIds = Object.keys(dateByImport);
+    if (!importIds.length) return out;
+    const cards: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data } = await supabase.from('lab_assignments')
+        .select('import_id, variant_id, status, cancelled, total_qty, qty_to_produce, qty_sent_total, breakdown')
+        .in('import_id', importIds).range(from, from + 999);
+      cards.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    const vids = Array.from(new Set(cards.map(c => c.variant_id).filter(Boolean)));
+    const skuByVariant: Record<string, string> = {};
+    for (let i = 0; i < vids.length; i += 300) {
+      const { data } = await supabase.from('lab_fiche_variants').select('id, sku').in('id', vids.slice(i, i + 300));
+      for (const v of data ?? []) if (v.sku) skuByVariant[v.id] = v.sku;
+    }
+    // date||ref||sku → has a problem
+    const bad = new Set<string>();
+    // Day balance per date||sku: transfer isn't really per order (2026-10-19 BMSBDT: the card of
+    // REP/02060 was sent, but the one croissant went to REP/02058) — only tag when the day as a
+    // whole delivered more than the kitchen sent to stock.
+    const sentDay: Record<string, number> = {};
+    const checkedDay: Record<string, number> = {};
+    for (const l of relevant) {
+      const h = headerById[l.delivery_order_id]; if (!h) continue;
+      const k = `${h.delivery_date}||${l.sku}`;
+      checkedDay[k] = (checkedDay[k] ?? 0) + (Number(l.qty_checked) || 0);
+    }
+    for (const c of cards) {
+      if (c.cancelled || c.status === 'blocked' || c.status === 'skip') continue;
+      const sku = skuByVariant[c.variant_id]; const date = dateByImport[c.import_id];
+      if (!sku || !date) continue;
+      sentDay[`${date}||${sku}`] = (sentDay[`${date}||${sku}`] ?? 0) + (Number(c.qty_sent_total) || 0);
+    }
+    for (const c of cards) {
+      if (c.cancelled || c.status === 'blocked') continue;
+      const sku = skuByVariant[c.variant_id]; const date = dateByImport[c.import_id];
+      if (!sku || !date) continue;
+      if ((checkedDay[`${date}||${sku}`] ?? 0) <= (sentDay[`${date}||${sku}`] ?? 0)) continue;
+      const qty = Number(c.qty_to_produce ?? c.total_qty) || 0;
+      const problem = c.status === 'skip' || (Number(c.qty_sent_total) || 0) < qty;
+      if (!problem) continue;
+      for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) bad.add(`${date}||${b.order_ref}||${sku}`);
+    }
+    for (const l of relevant) {
+      const h = headerById[l.delivery_order_id]; if (!h) continue;
+      if (!bad.has(`${h.delivery_date}||${h.order_ref}||${l.sku}`)) continue;
+      const key = `${h.delivery_date}||${h.order_ref}`;
+      const list = out[key] ??= [];
+      if (!list.includes(l.product_name_vi)) list.push(l.product_name_vi);
+    }
+  } catch (e) {
+    console.error('production gaps by order failed:', e);
+    return {};
+  }
+  return out;
+}

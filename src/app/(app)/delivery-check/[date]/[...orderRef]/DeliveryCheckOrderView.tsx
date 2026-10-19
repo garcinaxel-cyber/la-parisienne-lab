@@ -6,12 +6,9 @@ import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck, ArrowRightLeft } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo, DeliveryDestination } from '@/lib/delivery-check';
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
-import type { ProdStatus } from '@/lib/delivery-check-production';
+import { isStockFamily, type ProdStatus } from '@/lib/delivery-check-production';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 
-// Families made as extra production for stock, never on demand (Axel, 2026-10-19: tiramisu,
-// biscuits voyage, macarons → "soit en stock soit c'est pas envoyé") — no production alert.
-const STOCK_FAMILIES = new Set(['macaron', 'biscuit voyage', 'tiramisu']);
 
 // "Bếp → kho" cell (Axel, 2026-10-19): what the kitchen produced / sent to stock for this SKU
 // vs what is delivered, for the whole delivery date. Information only — never blocks anything.
@@ -25,19 +22,26 @@ function ProdCell({ s, family, vi }: { s: ProdStatus | undefined; family: string
   const day = s.ordered > 0 ? (vi ? `Cả ngày: giao ${s.checked}/${s.ordered}` : `Journée : livré ${s.checked}/${s.ordered}`) : null;
   const sub = (color: string, text: string | null) => text ? <div className="text-[11px] leading-snug mt-0.5" style={{ color }}>{text}</div> : null;
 
-  if (family && STOCK_FAMILIES.has(family.trim().toLowerCase())) {
+  if (isStockFamily(family)) {
     return <div>{grey(vi ? 'Kho · làm thêm' : 'Stock · prod. extra')}</div>;
   }
   if (s.cards === 0) return <div>{grey(vi ? 'Kho · không có thẻ SX' : 'Stock · pas de carte')}</div>;
+  // "Có sẵn" on an on-demand product is not normal (Axel, 2026-10-19: SBPACAOC ×2 marked from
+  // stock while LAB stock was 0 → delivered with no MO) — orange "check", never grey.
+  const skipWarn = (n: number) => chip('#FFF4D6', '#8A5A00', vi ? `Bếp báo có sẵn ×${n} · kiểm tra` : `Cuisine dit « en stock » ×${n} · vérifier`);
   if (s.planned === 0) {
-    return <div>{grey(s.stock > 0 ? (vi ? `Có sẵn ×${s.stock}` : `Dispo stock ×${s.stock}`) : (vi ? 'Chặn' : 'Bloqué'))}{sub('#6B7280', day)}</div>;
+    return <div>{s.stock > 0 ? skipWarn(s.stock) : grey(vi ? 'Chặn' : 'Bloqué')}{sub('#6B7280', day)}</div>;
   }
   // Badge = THIS order's card(s) when the cards say which orders they serve; else the day total.
   const base = s.order && s.order.planned > 0 ? s.order : s;
+  // This order's card short, but the day as a whole sent enough for what left (transfer isn't
+  // really per order) → orange info, not red.
+  const dayCovered = s.sent >= s.checked;
   let main;
   if (s.order && s.order.planned === 0) {
-    main = grey(s.order.stock > 0 ? (vi ? `Có sẵn ×${s.order.stock}` : `Dispo stock ×${s.order.stock}`) : (vi ? 'Chặn' : 'Bloqué'));
+    main = s.order.stock > 0 ? skipWarn(s.order.stock) : grey(vi ? 'Chặn' : 'Bloqué');
   } else if (base.sent >= base.planned) main = chip('#ECFDF5', '#047857', vi ? `Chuyển kho ✓ ${base.sent}/${base.planned}` : `Transféré ✓ ${base.sent}/${base.planned}`);
+  else if (s.order && base.sent < base.planned && dayCovered && s.checked > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Thẻ này ${base.sent}/${base.planned} · cả ngày đủ` : `Cette carte ${base.sent}/${base.planned} · journée OK`);
   else if (base.sent > 0) main = chip('#FFF4D6', '#8A5A00', vi ? `Chuyển kho ${base.sent}/${base.planned}` : `Transféré ${base.sent}/${base.planned}`);
   else if (base.produced > 0) main = chip('#FDECEA', '#B42318', vi ? `Chưa chuyển kho 0/${base.planned}` : `Pas transféré 0/${base.planned}`);
   else main = chip('#FDECEA', '#B42318', vi ? `Chưa làm 0/${base.planned}` : `Pas produit 0/${base.planned}`);

@@ -32,6 +32,9 @@ type OrderRow = {
   // mistakes it for a normal same-shop delivery at any point in the flow.
   mismatch?: boolean;
   actual_shop?: string | null;
+  // Products leaving on this order whose own production card isn't fully sent to stock (or was
+  // marked "Có sẵn") — Axel, 2026-10-19. Info only.
+  prod_gap?: string[];
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -372,6 +375,13 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             : { bg: '#FEF3C7', fg: '#92400E', bd: '#D97706', t: `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.sentAt)}` };
           return <span className="hidden sm:inline-flex items-center text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0" style={{ backgroundColor: st.bg, color: st.fg, border: `1px dashed ${st.bd}` }}>{st.t}</span>;
         })()}
+        {!!o.prod_gap?.length && (
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0"
+            style={{ backgroundColor: '#FDECEA', color: '#B42318', border: '1px solid #F4A6A0' }}
+            title={o.prod_gap.join('\n')}>
+            <AlertTriangle size={12} /> {vi ? `Lệch SX · ${o.prod_gap.length}` : `Écart SX · ${o.prod_gap.length}`}
+          </span>
+        )}
         {notDelivered ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-bold shrink-0" style={{ color: '#B91C1C' }}>
             <CheckCheck size={15} /> {vi ? '100% (không giao)' : '100% (non livrée)'}
