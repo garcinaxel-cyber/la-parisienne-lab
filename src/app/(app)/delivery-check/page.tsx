@@ -208,7 +208,9 @@ export default async function DeliveryCheckPage() {
   try {
     const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
     const { gaps } = await listDeliveryGaps(sb as any);
-    deliveryGapsCount = gaps.filter(g => (g.kind !== 'damaged' && g.status === 'open') || g.returnOverdue).length;
+    // Only what still needs a decision (Axel, 2026-10-19): a damaged unit already settled (photo →
+    // Lab loss, sent to Odoo) but not physically back yet is a bonus since 14/10, not a to-do.
+    deliveryGapsCount = gaps.filter(g => g.kind !== 'damaged' && g.status === 'open').length;
     // + products received that were on no slip, still to settle (Axel, 2026-10-16).
     const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
     deliveryGapsCount += offslipOpen ?? 0;

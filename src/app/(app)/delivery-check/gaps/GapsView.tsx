@@ -230,7 +230,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
   }), [initialGaps]);
   const list = byTab[tab];
   const current = list.find(g => g.key === selected) ?? list[0] ?? null;
-  const overdueCount = initialGaps.filter(g => g.overdue || g.returnOverdue).length;
+  const overdueCount = initialGaps.filter(g => g.overdue).length; // a damaged unit not back is no longer a to-do (2026-10-19)
 
   function pick(g: DeliveryGap) { setSelected(g.key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
 
