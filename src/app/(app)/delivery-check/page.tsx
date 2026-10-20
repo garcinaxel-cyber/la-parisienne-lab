@@ -150,8 +150,11 @@ export default async function DeliveryCheckPage() {
   }
 
   // Pending manual cakes (3rd panier) for the badge count
+  // Same dates as the /delivery-check/unreconciled page (today + tomorrow): the late-grace window
+  // made the badge count a past cake the page never lists (Axel 2026-10-20: "1 non concilié" with
+  // nothing to reconcile — a 19/10 Léonie ×3 already produced).
   const { data: pendingCakes } = await supabase.from('lab_manual_cakes')
-    .select('id').in('delivery_date', dateWindow).is('matched_order_ref', null).is('cancelled_at', null)
+    .select('id').in('delivery_date', [today, tomorrow]).is('matched_order_ref', null).is('cancelled_at', null)
     .limit(2000);
 
   // Coverage check (see odoo-sync.ts's syncGaps doc comment): the 15-min cron already flags any
