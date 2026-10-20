@@ -8,9 +8,10 @@
 //                (Axel, 2026-10-16).
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw } from 'lucide-react';
+import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw, ClipboardCheck } from 'lucide-react';
 import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
+import RoomCountPanel from './RoomCountPanel';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
   getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, type TeamRequestsMeta,
@@ -31,7 +32,7 @@ async function compressImage(file: File): Promise<Blob> {
 
 export default function RawMaterialsTab({ team, lang, userName }: { team: string; lang: 'vi' | 'en'; userName: string | null }) {
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
-  const [mode, setMode] = useState<'take' | 'transfer' | 'request'>('take');
+  const [mode, setMode] = useState<'take' | 'transfer' | 'request' | 'count'>('take');
   // Both pick raw materials with quantities (same list, same steppers) and show the same slips.
   const takeLike = mode === 'take' || mode === 'transfer';
   const [direction, setDirection] = useState<'give' | 'receive'>('give');
@@ -224,19 +225,30 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const ordered = mine.filter(l => l.status === 'ordered' || l.status === 'received');
   const cancelled = mine.filter(l => l.status === 'cancelled');
 
-  return (
-    <div className="space-y-3 pb-24">
-      <div className="grid grid-cols-3 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
-        {([['take', L('Lấy từ kho', 'Take from storage'), Package], ['transfer', L('Chuyển team', 'Transfer team'), ArrowRightLeft], ['request', L('Đặt mua', 'Request purchase'), ShoppingBag]] as const).map(([k, label, Icon]) => (
+  // Room count (Axel, 2026-10-20): 4th mode, the team counts its own room (RoomCountPanel).
+  const modeBar = (
+      <div className="grid grid-cols-4 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
+        {([['take', L('Lấy từ kho', 'Take from storage'), Package], ['transfer', L('Chuyển team', 'Transfer team'), ArrowRightLeft], ['request', L('Đặt mua', 'Request purchase'), ShoppingBag], ['count', L('Kiểm kê room', 'Room count'), ClipboardCheck]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => {
             // Take and transfer share the quantity pickers: start clean when switching between them,
             // so items picked for one never end up in the other by mistake.
-            if (k !== mode && k !== 'request' && mode !== 'request') { setQty({}); setUnit({}); setQtyTxt({}); }
+            if (k !== mode && (k === 'take' || k === 'transfer') && (mode === 'take' || mode === 'transfer')) { setQty({}); setUnit({}); setQtyTxt({}); }
             setMode(k);
-          }} className="inline-flex items-center justify-center gap-1 rounded-lg py-2.5 px-1 text-[12px] leading-tight font-extrabold text-center"
+          }} className="inline-flex flex-col items-center justify-center gap-0.5 rounded-lg py-2 px-0.5 text-[11.5px] leading-tight font-extrabold text-center"
             style={{ backgroundColor: mode === k ? NAVY : 'transparent', color: mode === k ? '#fff' : '#6B7280' }}><Icon size={14} className="flex-none" /> {label}</button>
         ))}
       </div>
+  );
+  if (mode === 'count') return (
+    <div className="space-y-3 pb-24">
+      {modeBar}
+      <RoomCountPanel team={team} lang={lang} items={items} />
+    </div>
+  );
+
+  return (
+    <div className="space-y-3 pb-24">
+      {modeBar}
       <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 text-[12.5px]" style={{ border: `1px solid ${BORDER}` }}>
         <User size={14} style={{ color: '#9CA3AF' }} />
         <span style={{ color: '#6B7280' }}>{mode === 'take' ? L('Người lấy', 'Taken by') : mode === 'transfer' ? L('Người thực hiện', 'Done by') : L('Người yêu cầu', 'Requested by')}</span>

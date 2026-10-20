@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { ClipboardList, Plus, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
+import { ClipboardList, ClipboardCheck, Plus, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
 
 type Session = {
   id: string; inventory_date: string; status: string;
@@ -56,6 +56,16 @@ export default function InventoryIndexView({ sessions }: { sessions: Session[] }
         </button>
       </div>
       {error && <div className="text-sm font-semibold" style={{ color: '#DC2626' }}>{error}</div>}
+
+      {/* Chefs' room counts (Axel, 2026-10-20): check list of what each team counted, left out and why. */}
+      <button onClick={() => router.push('/inventory/rooms')} className="card w-full p-4 flex items-center gap-3 text-left hover:bg-cream/60">
+        <ClipboardCheck size={20} className="text-gold shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-bold text-navy">{vi ? 'Kiểm kê room các team' : 'Inventaire des rooms des chefs'}</div>
+          <div className="text-xs text-ink-light">{vi ? 'Đã đếm, = 0, không đếm và lý do, đếm nhiều lượt, cảnh báo đơn vị' : 'Comptés, = 0, hors inventaire et raisons, saisies multiples, alertes d\'unité'}</div>
+        </div>
+        <span className="text-xs font-bold text-navy shrink-0">›</span>
+      </button>
 
       <div className="space-y-2">
         <h2 className="text-sm font-bold text-navy uppercase tracking-wide">{vi ? 'Gần đây' : 'Récents'}</h2>
