@@ -35,6 +35,7 @@ type OrderRow = {
   // Products leaving on this order whose own production card isn't fully sent to stock (or was
   // marked "Có sẵn") — Axel, 2026-10-19. Info only.
   prod_gap?: string[];
+  prod_short?: string[];
 };
 
 type SyncGap = { order_ref: string; source_type: string; delivery_date: string | null; reason: string };
@@ -380,6 +381,13 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
             style={{ backgroundColor: '#FDECEA', color: '#B42318', border: '1px solid #F4A6A0' }}
             title={o.prod_gap.join('\n')}>
             <AlertTriangle size={12} /> {vi ? `Lệch SX · ${o.prod_gap.length}` : `Écart SX · ${o.prod_gap.length}`}
+          </span>
+        )}
+        {!o.prod_gap?.length && !!o.prod_short?.length && (
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0"
+            style={{ backgroundColor: '#FFF4D6', color: '#8A5A00', border: '1px solid #F0D98A' }}
+            title={(vi ? 'Thẻ SX của đơn này chưa chuyển kho đủ (cả ngày vẫn đủ):\n' : 'Carte de cette commande pas entièrement transférée (journée OK) :\n') + o.prod_short.join('\n')}>
+            <AlertTriangle size={12} /> {vi ? `Thẻ chưa chuyển đủ · ${o.prod_short.length}` : `Carte pas transf. · ${o.prod_short.length}`}
           </span>
         )}
         {notDelivered ? (

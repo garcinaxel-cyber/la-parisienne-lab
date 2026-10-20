@@ -105,6 +105,10 @@ export const isStockFamily = (cat: string | null | undefined) => !!cat && STOCK_
 // on-demand product. Stock families are ignored. Display only; empty on any failure.
 export async function fetchProductionGapsByOrder(
   supabase: SupabaseClient, dates: string[], headerById: Record<string, { order_ref: string; delivery_date: string }>,
+  // Filled with the orders whose OWN card was not fully sent to stock although the day as a whole
+  // balances (Axel 2026-10-20, SBCPB: REP/02075's card sent 1/3, the shared card of 02076/02078
+  // sent 4 for 2 delivered) — softer orange "Thẻ chưa chuyển đủ" tag, distinct from the red one.
+  shortOut?: Record<string, string[]>,
 ): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {};
   const headerIds = Object.keys(headerById);
@@ -147,6 +151,7 @@ export async function fetchProductionGapsByOrder(
     }
     // date||ref||sku → has a problem
     const bad = new Set<string>();
+    const short = new Set<string>();
     // Day balance per date||sku: transfer isn't really per order (2026-10-19 BMSBDT: the card of
     // REP/02060 was sent, but the one croissant went to REP/02058) — only tag when the day as a
     // whole delivered more than the kitchen sent to stock.
@@ -169,14 +174,22 @@ export async function fetchProductionGapsByOrder(
       if (c.cancelled) continue;
       const sku = skuByVariant[c.variant_id]; const date = dateByImport[c.import_id];
       if (!sku || !date) continue;
-      if ((checkedDay[`${date}||${sku}`] ?? 0) <= (sentDay[`${date}||${sku}`] ?? 0)) continue;
       const qty = Number(c.qty_to_produce ?? c.total_qty) || 0;
+      if ((checkedDay[`${date}||${sku}`] ?? 0) <= (sentDay[`${date}||${sku}`] ?? 0)) {
+        if (c.status !== 'skip' && c.status !== 'blocked' && (Number(c.qty_sent_total) || 0) < qty)
+          for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) short.add(`${date}||${b.order_ref}||${sku}`);
+        continue;
+      }
       const problem = c.status === 'skip' || c.status === 'blocked' || (Number(c.qty_sent_total) || 0) < qty;
       if (!problem) continue;
       for (const b of Array.isArray(c.breakdown) ? c.breakdown : []) if (b?.order_ref) bad.add(`${date}||${b.order_ref}||${sku}`);
     }
     for (const l of relevant) {
       const h = headerById[l.delivery_order_id]; if (!h) continue;
+      if (shortOut && short.has(`${h.delivery_date}||${h.order_ref}||${l.sku}`)) {
+        const sl = shortOut[`${h.delivery_date}||${h.order_ref}`] ??= [];
+        if (!sl.includes(l.product_name_vi)) sl.push(l.product_name_vi);
+      }
       if (!bad.has(`${h.delivery_date}||${h.order_ref}||${l.sku}`)) continue;
       const key = `${h.delivery_date}||${h.order_ref}`;
       const list = out[key] ??= [];

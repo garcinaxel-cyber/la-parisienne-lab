@@ -136,8 +136,9 @@ export default async function DeliveryCheckPage() {
   for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null, marked_not_delivered: (h as any).marked_not_delivered ?? false };
   const headerIds = (headers ?? []).map((h: any) => h.id);
   // "Écart SX" tag (Axel, 2026-10-19) — display only, empty on failure.
+  const prodShortByKey: Record<string, string[]> = {};
   const prodGapsByKey = await fetchProductionGapsByOrder(supabase, dateWindow,
-    Object.fromEntries((headers ?? []).map((h: any) => [h.id, { order_ref: h.order_ref, delivery_date: h.delivery_date }])));
+    Object.fromEntries((headers ?? []).map((h: any) => [h.id, { order_ref: h.order_ref, delivery_date: h.delivery_date }])), prodShortByKey);
 
   // Lines checked so far, to show an "X/Y" progress badge without opening the order
   const { data: checkLines } = headerIds.length
@@ -185,6 +186,7 @@ export default async function DeliveryCheckPage() {
       // instead of the plain green "validé" it fell back to before.
       marked_not_delivered: h?.marked_not_delivered ?? false,
       prod_gap: prodGapsByKey[key] ?? [],
+      prod_short: prodShortByKey[key] ?? [],
       // "Qui a passé commande" (Axel, 2026-09-20) — see the comment above managerNameByRef/
       // onlineOrderRefs for what each of these does and doesn't cover.
       manager_name: managerNameByRef[o.order_ref] ?? null,
