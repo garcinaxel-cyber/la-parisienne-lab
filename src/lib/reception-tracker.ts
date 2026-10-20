@@ -13,11 +13,16 @@ import { PORTAL_SHOP_NAMES } from '@/lib/shops';
 
 /** Sent and still not confirmed after this long = late (red). Axel, 2026-10-16. */
 export const RECEPTION_LATE_HOURS = 3;
+/** Earliest lab-local hour a delivery leaves on its delivery date (first slot is 07:00). */
+export const RECEPTION_DEPARTURE_HOUR = 7;
 
 export type ReceptionState = 'waiting' | 'received' | 'gap';
 export type OrderReception = {
   headerId: string; orderRef: string; deliveryDate: string; shopName: string; sourceType: string | null;
   sentAt: string | null; sentBy: string | null;
+  // When the shop wait really starts: the validation time, but never before the morning of the
+  // delivery date (Axel 2026-10-20: orders locked the evening before showed "Attente shop · 19 h").
+  waitFrom: string | null;
   lines: number; confirmed: number; state: ReceptionState;
   receivedAt: string | null; receivedBy: string | null; late: boolean;
 };
@@ -66,10 +71,14 @@ export async function loadOrderReceptions(sb: SupabaseClient, dates: string[]): 
     const done = ls.length > 0 && confirmed >= ls.length;
     const state: ReceptionState = !done ? 'waiting' : gap ? 'gap' : 'received';
     const sentAt = (h.validated_at as string | null) ?? null;
-    const late = state === 'waiting' && !!sentAt && now - new Date(sentAt).getTime() > RECEPTION_LATE_HOURS * 3600_000;
+    const [y, m, d] = String(h.delivery_date).split('-').map(Number);
+    const departure = Date.UTC(y, m - 1, d, RECEPTION_DEPARTURE_HOUR - 7, 0, 0); // lab = UTC+7
+    const waitFromMs = sentAt ? Math.max(new Date(sentAt).getTime(), departure) : null;
+    const waitFrom = waitFromMs != null ? new Date(waitFromMs).toISOString() : null;
+    const late = state === 'waiting' && waitFromMs != null && now - waitFromMs > RECEPTION_LATE_HOURS * 3600_000;
     return {
       headerId: h.id, orderRef: h.order_ref, deliveryDate: h.delivery_date, shopName: h.shop_name, sourceType: h.source_type ?? null,
-      sentAt, sentBy: h.validated_by_name ?? null, lines: ls.length, confirmed: Math.min(confirmed, ls.length), state,
+      sentAt, waitFrom, sentBy: h.validated_by_name ?? null, lines: ls.length, confirmed: Math.min(confirmed, ls.length), state,
       receivedAt: done ? lastAt : null, receivedBy: done ? lastBy : null, late,
     };
   });

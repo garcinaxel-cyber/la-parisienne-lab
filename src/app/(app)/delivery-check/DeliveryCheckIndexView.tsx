@@ -372,8 +372,8 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           if (!rec) return null;
           const st = rec.state === 'received' ? { bg: '#ECF3EE', fg: '#1A4731', bd: '#2D6A4F', t: `${vi ? 'Shop đã nhận' : 'Reçu par le shop'} ${hhmm(rec.receivedAt)}` }
             : rec.state === 'gap' ? { bg: '#FFEDD5', fg: '#9A3412', bd: '#C2410C', t: vi ? 'Shop đã nhận · có lệch' : 'Reçu · écart' }
-            : rec.late ? { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', t: `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.sentAt)}` }
-            : { bg: '#FEF3C7', fg: '#92400E', bd: '#D97706', t: `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.sentAt)}` };
+            : rec.late ? { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', t: (rec.waitFrom && new Date(rec.waitFrom).getTime() > Date.now() ? (vi ? 'Chờ giao' : 'À livrer') : `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.waitFrom ?? rec.sentAt)}`) }
+            : { bg: '#FEF3C7', fg: '#92400E', bd: '#D97706', t: (rec.waitFrom && new Date(rec.waitFrom).getTime() > Date.now() ? (vi ? 'Chờ giao' : 'À livrer') : `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.waitFrom ?? rec.sentAt)}`) };
           return <span className="hidden sm:inline-flex items-center text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0" style={{ backgroundColor: st.bg, color: st.fg, border: `1px dashed ${st.bd}` }}>{st.t}</span>;
         })()}
         {!!o.prod_gap?.length && (
