@@ -340,6 +340,17 @@ export async function sendOrderToOdoo(sb: SupabaseClient, deliveryOrderId: strin
   if (!st.ready) return { error: 'Every gap line must be settled first' };
   const toSend = st.lines.filter(l => l.action && !l.sent && l.sku);
   const isSo = st.sourceType === 'sales_order';
+  // A line the shop never confirmed used to count as "received = sent" (2026-10-20, REP/02075:
+  // 12 strawberry macarons never ticked by Timecity, noted received 12 on Odoo). Not any more.
+  if (!isSo) {
+    const [{ data: cl }, { data: rc }] = await Promise.all([
+      sb.from('lab_delivery_check_lines').select('id, qty_checked, qty_expected').eq('delivery_order_id', deliveryOrderId),
+      sb.from('lab_shop_receipt_lines').select('check_line_id').eq('delivery_order_id', deliveryOrderId),
+    ]);
+    const done = new Set((rc ?? []).map((r: any) => r.check_line_id));
+    const open = (cl ?? []).filter((l: any) => Number(l.qty_checked ?? l.qty_expected) > 0 && !done.has(l.id));
+    if (open.length) return { error: `Shop chưa xác nhận ${open.length} dòng — nhờ shop xác nhận trước khi gửi Odoo. / The shop has not confirmed ${open.length} line(s) yet.` };
+  }
   const result = isSo
     ? await finalizeSalesOrderGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as SoGapLine['action'] })), { byName })
     : await finalizeReplenishmentGaps(st.orderRef, toSend.map(l => ({ sku: l.sku as string, qty: l.qty, action: l.action as RepGapLine['action'] })), await receptionLinesOf(sb, deliveryOrderId));

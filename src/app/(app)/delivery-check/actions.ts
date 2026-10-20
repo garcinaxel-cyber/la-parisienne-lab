@@ -36,6 +36,16 @@ export async function checkLineAction(
   const { data: line } = await supabase.from('lab_delivery_check_lines')
     .select('qty_expected, delivery_order_id').eq('id', lineId).single();
   if (!line) return { error: 'Line not found' };
+  // Axel 2026-10-20 (REP/02079): a line changed 1 → 3 six minutes AFTER the order was validated
+  // and its Lab OUT pushed to Odoo at 1 — the shop then received 3, Odoo transit went −2. A
+  // validated order is locked: unlock first (re-validation re-pushes), and once Odoo holds the OUT
+  // any extra goes through the gaps screen ("Lab gửi dư" = LAB → shop transfer).
+  const { data: hdr } = await supabase.from('lab_delivery_orders')
+    .select('status, odoo_push_status').eq('id', line.delivery_order_id).maybeSingle();
+  if (hdr?.odoo_push_status === 'validated' || hdr?.odoo_push_status === 'already_done') {
+    return { error: 'Đơn đã xác nhận trên Odoo — không sửa được. Gửi thêm hàng: dùng « Lệch giao hàng » (Lab gửi dư). / Already validated on Odoo — use the gaps screen for extra units.' };
+  }
+  if (hdr?.status === 'validated') return { error: 'Đơn đã khoá — bấm « Mở khoá » trước khi sửa. / Order locked — unlock it first.' };
   const isDiff = qtyChecked !== line.qty_expected;
   if (isDiff && !isWeighedEntry(qtyChecked) && !reason) return { error: 'Reason required' };
 
@@ -294,6 +304,14 @@ export async function validateDeliveryOnOdooAction(
       patch.odoo_push_error = result.error ?? 'Erreur inconnue';
     }
     await supabase.from('lab_delivery_orders').update(patch).eq('id', deliveryOrderId);
+    // The shop may have finished its reception before the Lab's OUT existed (2026-10-20,
+    // REP/02089): validate its IN now that there is something in transit. No-op otherwise.
+    if (result.ok && header.source_type === 'replenishment') {
+      try {
+        const { autoValidateShopIn } = await import('@/lib/reception-auto-in');
+        await autoValidateShopIn(supabase as any, deliveryOrderId, header.order_ref, auth.profile?.full_name ?? 'Lab');
+      } catch (e) { console.error('autoValidateShopIn after OUT failed:', e); }
+    }
     // Point 3 (Axel, 2026-09-02) — permanent push journal: odoo_push_error above is overwritten
     // by the next successful attempt, so failures (and auto-created missing lines) would vanish
     // from history. This log is append-only and never rewritten. Best-effort: a log failure

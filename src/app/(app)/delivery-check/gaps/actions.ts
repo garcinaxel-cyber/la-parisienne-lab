@@ -152,3 +152,27 @@ export async function settleOffslipAction(input: { id: string; cause: import('@/
   revalidatePath('/delivery-check');
   return res;
 }
+
+// ── Receptions done by the shop but whose IN is still open on Odoo (Axel, 2026-10-20) ──────────
+export async function getStuckShopInsAction(): Promise<{ items?: import('@/lib/reception-auto-in').StuckShopIn[]; canRetry?: boolean; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  try {
+    const { listStuckShopIns } = await import('@/lib/reception-auto-in');
+    return { items: await listStuckShopIns(sb as any), canRetry: ODOO_SEND_ROLES.includes(auth.role) };
+  } catch (e: any) { return { error: e?.message ?? String(e) }; }
+}
+
+export async function retryShopInAction(deliveryOrderId: string, orderRef: string): Promise<{ outcome?: string; detail?: string; error?: string }> {
+  const auth = await requireLabStaff();
+  if ('error' in auth) return { error: auth.error };
+  if (!ODOO_SEND_ROLES.includes(auth.role)) return { error: 'Only the Lab manager or an admin can send to Odoo' };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { autoValidateShopIn } = await import('@/lib/reception-auto-in');
+  const r = await autoValidateShopIn(sb as any, deliveryOrderId, orderRef, auth.name);
+  revalidatePath('/delivery-check/gaps');
+  return r;
+}

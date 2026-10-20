@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/lab/off-recipe-recap", "schedule": "0 11 * * *" },
-    { "path": "/api/lab/reception-gaps-alerts", "schedule": "0 2 * * *" }
+    { "path": "/api/lab/reception-gaps-alerts", "schedule": "0 2 * * *" },
+    { "path": "/api/lab/reception-in-sweep", "schedule": "15 * * * *" }
   ]
 }

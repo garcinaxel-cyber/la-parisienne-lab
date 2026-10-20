@@ -18,7 +18,7 @@ import { readEventIdFromCookie, setEventSessionCookie, clearEventSessionCookie }
 import { getActiveEventById, getActiveEventByPin, getActiveEventByName, hasAnyActiveEvent, parseDailyTargets, type EventShop } from '@/lib/event-shops';
 import { isOemSku } from '@/lib/oem';
 import { computeLineGaps, gapsSchemaReady, listDeliveryGaps, syncGapsForLine, type DeliveryGap, type GapKind, type GapStatus } from '@/lib/reception-gaps';
-import { validateShopIn } from '@/lib/reception-odoo';
+import { autoValidateShopIn } from '@/lib/reception-auto-in';
 
 // Shop portal data layer — two entry points into the same underlying reads/writes:
 //  - the shop's OWN session (role='shop', shop_name resolved from lab_profiles).
@@ -543,9 +543,13 @@ export async function confirmReceiptAction(input: {
       // Shop IN auto-validation (Axel, 2026-10-14): conforming reception → validated on Odoo
       // right away; any gap → left to the assistants (Lệch giao hàng page). Never blocks the shop.
       if (header.source_type === 'replenishment') {
-        try { await autoValidateShopIn(supabase, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('autoValidateShopIn failed:', e); }
+        try { await autoValidateShopIn(supabase as any, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('autoValidateShopIn failed:', e); }
       }
     }
+  } else if (header.source_type === 'replenishment') {
+    // Correction on an already complete reception (2026-10-20, REP/02059 & 02091: gap typed then
+    // corrected → the gap closed itself, the IN stayed open on Odoo). Re-run: no-op if done.
+    try { await autoValidateShopIn(supabase as any, input.deliveryOrderId, header.order_ref, name); } catch (e) { console.error('autoValidateShopIn failed:', e); }
   }
 
   // Axel, 2026-08-27: once the shop has confirmed EVERY line of a REPLENISHMENT order's receipt
@@ -559,31 +563,6 @@ export async function confirmReceiptAction(input: {
   }
 
   return { ok: true };
-}
-
-async function autoValidateShopIn(supabase: ReturnType<typeof service>, deliveryOrderId: string, orderRef: string, byName: string): Promise<void> {
-  if (!supabase || !(await gapsSchemaReady(supabase as any))) return;
-  const { data: lines } = await supabase.from('lab_delivery_check_lines')
-    .select('id, sku, qty_expected, qty_checked').eq('delivery_order_id', deliveryOrderId);
-  const { data: recs } = await supabase.from('lab_shop_receipt_lines').select('*').eq('delivery_order_id', deliveryOrderId);
-  const recByLine = new Map((recs ?? []).map((r: any) => [r.check_line_id, r]));
-  const rows = (lines ?? []).map((l: any) => {
-    const r: any = recByLine.get(l.id);
-    return { sku: l.sku as string | null, sent: Number(l.qty_checked ?? l.qty_expected), received: Number(r?.qty_received ?? NaN), damaged: Number(r?.qty_damaged ?? 0) };
-  });
-  const conforming = rows.length > 0 && rows.every(r => r.received === r.sent && r.damaged === 0);
-  const log = (row: { mode: string; ok: boolean; plan: any; error: string | null }) =>
-    supabase.from('lab_reception_odoo_runs').insert({ delivery_order_id: deliveryOrderId, order_ref: orderRef, action: 'validate_in', created_by_name: byName, ...row });
-  if (!conforming) {
-    await log({ mode: 'skipped', ok: false, plan: {}, error: 'needs_lab_check' });
-    return;
-  }
-  const res = await validateShopIn(orderRef, rows);
-  await log({
-    mode: res.live ? 'live' : 'simulated', ok: res.ok,
-    plan: { picking: res.pickingName ?? null, alreadyDone: !!res.alreadyDone, writes: res.plan },
-    error: res.error ?? res.skipped ?? null,
-  });
 }
 
 // Shop Losses tab, "Lab losses" part: units that arrived damaged (or went back broken) over the

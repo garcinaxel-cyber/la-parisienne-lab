@@ -206,6 +206,10 @@ export async function validateShopIn(
     }
     for (const [sku, ms] of Array.from(movesBySku.entries())) {
       const qty = good.get(sku) ?? 0;
+      // Never receive more than the Lab's OUT really moved into transit (2026-10-20, REP/02079:
+      // check edited 1 → 3 after the OUT was pushed at 1; the IN took 3 and transit went −2).
+      const demandAll = ms.reduce((t, m) => t + Number(m.product_uom_qty), 0);
+      if (qty > demandAll) return skip(`over_lab_out:${sku}`, { pickingName: picking.name });
       if (ms.length === 1) {
         plan.push({ sku, moveId: ms[0].id, note: null, expectedQty: Number(ms[0].product_uom_qty), deliverQty: qty });
         continue;
