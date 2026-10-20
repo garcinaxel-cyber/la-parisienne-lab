@@ -274,6 +274,19 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
 
   const TEAMS4 = ['baby_mama', 'hung', 'entremet', 'baker'];
   const { upsertProductionCard } = await import('@/lib/odoo-apply');
+  // Axel 2026-10-20 (BRD14EGP, Tây Hồ): rejecting REP/02092 for a 2nd cake created a card for
+  // REP/02092 although ANOTHER manual cake was already matched to it (and had its own card) →
+  // 3 Rosalie produced for 2 ordered. Only create what is not covered yet: minus the qty of other
+  // cakes matched to this order+sku+date, minus what existing cards already track for this order.
+  const { getManualCakeCoverage } = await import('@/lib/manual-cake-coverage');
+  const coverage = await getManualCakeCoverage(supabase, mc.delivery_date);
+  const variantIds = Object.values(vBySku).map((v: any) => v.id);
+  const { data: existingCards } = variantIds.length
+    ? await supabase.from('lab_assignments').select('variant_id, breakdown, cancelled').in('variant_id', variantIds).in('import_id', Array.from(new Set(oLines.map((l: any) => l.import_id))))
+    : { data: [] as any[] };
+  const trackedFor = (variantId: string) => (existingCards ?? []).filter((c: any) => !c.cancelled && c.variant_id === variantId)
+    .reduce((t: number, c: any) => t + (Array.isArray(c.breakdown) ? c.breakdown : []).filter((b: any) => b?.order_ref === orderRef).reduce((s: number, b: any) => s + (Number(b.qty) || 0), 0), 0);
+  const coveredLeft: Record<string, number> = {};
   // Sequential, not Promise.all — upsertProductionCard reads-then-writes the card, so two lines
   // that resolve to the SAME card (same import/team/variant/product) must run one after another
   // to accumulate correctly instead of racing on the same read.
@@ -283,14 +296,19 @@ export async function rejectMatchAction(manualCakeId: string, orderRef: string):
     if (!TEAMS4.includes(team)) continue;
     if (!l.qty || l.qty <= 0) continue;
     const variantLabel = v.label ?? l.variant_label ?? 'Standard';
-    const bEntry = { shop_name: l.shop_name, order_ref: orderRef, qty: l.qty, delivery_time: l.delivery_time ?? null };
+    const covKey = `${orderRef}||${l.product_sku}||${mc.delivery_date}`;
+    if (coveredLeft[covKey] === undefined) coveredLeft[covKey] = (coverage.coveredByRefSku.get(covKey) ?? 0) + trackedFor(v.id);
+    const qty = Math.max(0, l.qty - coveredLeft[covKey]);
+    coveredLeft[covKey] = Math.max(0, coveredLeft[covKey] - l.qty);
+    if (qty <= 0) continue;
+    const bEntry = { shop_name: l.shop_name, order_ref: orderRef, qty, delivery_time: l.delivery_time ?? null };
     // Best-effort: a card-write failure here shouldn't block the rejection itself (the refusal
     // is already recorded above, and re-clicking "Not this one" is harmless now that this path
     // is upsert-safe) — same non-fatal posture the rest of this file already uses.
     await upsertProductionCard(supabase, {
       importId: l.import_id, team, ficheId: v.fiche_id, variantId: v.id,
       name: l.product_name_vi, nameEn: f?.name_en ?? '', image: v.image_url ?? f?.image_url ?? null,
-      variantLabel, qty: l.qty, bEntry,
+      variantLabel, qty, bEntry,
     });
   }
 
