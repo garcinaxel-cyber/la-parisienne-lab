@@ -181,6 +181,16 @@ export function NamePicker({ value, onChange, names, onManage }: {
 // admin/shop-access/[shopName]/page.tsx, and /shop-manager/store/page.tsx for a shop_manager's
 // own login) but it now means "acting on behalf of `shopName` via a non-shop session" rather
 // than "cannot write".
+// Odoo's unit names come back in French for the API user — translate the generic ones.
+function uomLabel(name: string, L: (vi: string, en: string) => string): string {
+  const n = name.trim().toLowerCase();
+  if (n === 'unité(s)' || n === 'units' || n === 'pieces') return L('cái', 'pcs');
+  if (n === 'douzaines') return L('tá', 'dozen');
+  if (n === 'box') return L('hộp', 'box');
+  if (n === 'bag') return L('túi', 'bag');
+  return name;
+}
+
 export default function ShopView({ shopName, readOnly = false, initialTab = 'deliveries', viewerRole = 'admin', exitEventHref, initialEvent = null }: { shopName: string; readOnly?: boolean; initialTab?: 'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'; viewerRole?: 'admin' | 'manager'; exitEventHref?: string; initialEvent?: { name: string; start?: string | null; end?: string | null } | null }) {
   const router = useRouter();
   const [tab, setTab] = useState<'deliveries' | 'cakes' | 'losses' | 'stock' | 'report' | 'order' | 'transfer' | 'caisse' | 'official-inventory'>(initialTab);
@@ -473,6 +483,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
   const [orderSearching, setOrderSearching] = useState(false);
   // isBirthday / wish / noWish: birthday-cake message typed by the shop (Axel, 2026-10-17) — see src/lib/cake-wish.ts.
   const [orderCart, setOrderCart] = useState<{ sku: string; name: string; qty: number; note: string; imageUrl: string | null; priceB2c: number | null; isBirthday?: boolean; wish?: string; noWish?: boolean }[]>([]);
+  // Odoo unit of measure per basket SKU (Axel, 2026-10-21) — shown in a box next to the quantity
+  // so "2" on a kg-counted product (e.g. VTTH929 bags) reads as 2 kg, not 2 bags.
+  const [orderUom, setOrderUom] = useState<Record<string, string>>({});
+  const orderUomAskedRef = useRef<Set<string>>(new Set());
   const [orderDraftLoaded, setOrderDraftLoaded] = useState<ShopManagerOrderDraft | null>(null);
   const [orderDraftSaving, setOrderDraftSaving] = useState(false);
   const [orderPendingConfirm, setOrderPendingConfirm] = useState(false);
@@ -1157,6 +1171,15 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
       setReportExporting(false);
     }
   }
+
+  useEffect(() => {
+    const missing = orderCart.map(l => l.sku).filter(sku => sku && !orderUomAskedRef.current.has(sku));
+    if (!missing.length) return;
+    missing.forEach(sku => orderUomAskedRef.current.add(sku));
+    import('./actions').then(a => a.getOdooUomBySkuAction(missing)).then(map => {
+      if (map && Object.keys(map).length) setOrderUom(prev => ({ ...prev, ...map }));
+    }).catch(() => {});
+  }, [orderCart]);
 
   // ── Đặt hàng ──
   // Explicit "Lưu nháp" — any staff, no PIN. Also called implicitly right before the confirm
@@ -2739,6 +2762,13 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                               className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ border: `1px solid ${BORDER}` }}>
                               <Plus size={12} />
                             </button>
+                            {orderUom[l.sku] && (
+                              <span className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold"
+                                title={L('Đơn vị tính trên Odoo', 'Unit of measure in Odoo')}
+                                style={{ border: `1px solid ${BORDER}`, backgroundColor: GOLD_PALE, color: NAVY }}>
+                                {uomLabel(orderUom[l.sku], L)}
+                              </span>
+                            )}
                             <input type="text" value={l.note} onChange={e => updateOrderNote(l.sku, e.target.value)}
                               placeholder={l.isBirthday ? L('Ghi chú cho bếp (tuỳ chọn)', 'Note for the kitchen (optional)') : L('Ghi chú (tuỳ chọn)', 'Note (optional)')} className="flex-1 min-w-0 rounded-lg px-2.5 py-1 text-xs" style={{ border: `1px solid ${BORDER}` }} />
                           </div>

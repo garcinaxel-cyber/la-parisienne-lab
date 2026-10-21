@@ -2086,6 +2086,25 @@ async function findActiveDraft(shopName: string, deliveryDate: string) {
   return data?.[0] ?? null;
 }
 
+// Odoo unit of measure per SKU for the order basket (Axel, 2026-10-21: "make a box to show the
+// unit of measure for the product depend on odoo" — e.g. VTTH929 bags are counted in kg in Odoo,
+// so "2" means 2 kg, not 2 bags). Read-only, best-effort: an Odoo failure just hides the box.
+export async function getOdooUomBySkuAction(skus: string[]): Promise<Record<string, string>> {
+  const auth = await requireShopOrStaffSession();
+  if ('error' in auth) return {};
+  const list = Array.from(new Set(skus.filter(Boolean))).slice(0, 300);
+  if (!list.length || !odooConfigured()) return {};
+  try {
+    const prods = await odooExecute<any[]>('product.product', 'search_read',
+      [[['default_code', 'in', list]]], { fields: ['default_code', 'uom_id'], limit: 400 });
+    const out: Record<string, string> = {};
+    for (const p of prods) if (p.default_code && Array.isArray(p.uom_id)) out[p.default_code] = String(p.uom_id[1]);
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 // Loads whatever draft already exists for this shop+date, if any — lets staff/managers resume
 // or review whatever the last person left, regardless of who built it or on which device.
 export async function getManagerOrderDraftAction(deliveryDate: string, shopName?: string): Promise<{ draft?: ShopManagerOrderDraft | null; error?: string }> {
