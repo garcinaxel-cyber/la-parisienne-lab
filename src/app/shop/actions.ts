@@ -2090,7 +2090,9 @@ async function findActiveDraft(shopName: string, deliveryDate: string) {
 // unit of measure for the product depend on odoo" — e.g. VTTH929 bags are counted in kg in Odoo,
 // so "2" means 2 kg, not 2 bags). Read-only, best-effort: an Odoo failure just hides the box.
 export async function getOdooUomBySkuAction(skus: string[]): Promise<Record<string, string>> {
-  const auth = await requireShopOrStaffSession();
+  // Not shop-scoped (a unit is the same for every shop): requireShopOrStaffSession() without a
+  // shop name refuses admin/manager sessions, which hid the box for them (Axel, 2026-10-21).
+  const auth = await requireShopOrStaff();
   if ('error' in auth) return {};
   const list = Array.from(new Set(skus.filter(Boolean))).slice(0, 300);
   if (!list.length || !odooConfigured()) return {};

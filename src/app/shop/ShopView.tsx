@@ -1177,8 +1177,10 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     if (!missing.length) return;
     missing.forEach(sku => orderUomAskedRef.current.add(sku));
     import('./actions').then(a => a.getOdooUomBySkuAction(missing)).then(map => {
+      // SKUs with no answer are retried on the next basket change instead of staying blank.
+      missing.forEach(sku => { if (!map?.[sku]) orderUomAskedRef.current.delete(sku); });
       if (map && Object.keys(map).length) setOrderUom(prev => ({ ...prev, ...map }));
-    }).catch(() => {});
+    }).catch(() => { missing.forEach(sku => orderUomAskedRef.current.delete(sku)); });
   }, [orderCart]);
 
   // ── Đặt hàng ──
