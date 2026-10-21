@@ -3,7 +3,7 @@
 // are recorded in the app only; nothing goes to Odoo. Open to all 4 teams since 2026-10-17 (see RAW_TEAMS).
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
-import { TEAM_SHORT, TRANSFER_TEAMS, pieceUnit, piecesFromKg, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { TEAM_SHORT, TRANSFER_TEAMS, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { labDayUtcRange, vnTodayStr } from '@/lib/odoo';
 
 export async function getRawCatalogForChefAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
@@ -179,7 +179,9 @@ async function notifyPurchasing(db: NonNullable<ReturnType<typeof rawService>>, 
   await awaitPush(sendUsersPush(db, ids, payload, payload));
 }
 
-export type RequestLineInput = { tmplId: number; qty: number; brand?: string | null; brandStrict?: boolean; note?: string | null };
+// packLabel (Axel, 2026-10-21): the pack the chef ordered in. qty is already converted to the Odoo
+// unit by the client; the server re-checks the pack against the catalogue and stores its factor.
+export type RequestLineInput = { tmplId: number; qty: number; brand?: string | null; brandStrict?: boolean; note?: string | null; packLabel?: string | null };
 export type NewProductInput = { name: string; qty: number; uom: string; note?: string | null; photoUrl?: string | null };
 
 // A member's request waits for the team lead when the team has one; the lead's own requests and
@@ -199,7 +201,7 @@ export async function submitPurchaseRequestAction(team: string, requestedBy: str
   const news = (newItems ?? []).filter(n => String(n.name ?? '').trim() && Number(n.qty) > 0).slice(0, 10);
   if (!clean.length && !news.length) return { error: 'Empty' };
   const { data: mats } = clean.length
-    ? await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId))
+    ? await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name, packs').in('tmpl_id', clean.map(l => l.tmplId))
     : { data: [] as any[] };
   const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
@@ -215,9 +217,10 @@ export async function submitPurchaseRequestAction(team: string, requestedBy: str
       const m: any = byId.get(l.tmplId);
       return { request_id: r.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: Math.round(Number(l.qty) * 1000) / 1000,
         brand: txt(l.brand, 80), brand_strict: !!l.brandStrict && !!txt(l.brand, 80),
-        // Counted by the piece (eggs): purchasing sees the piece count in the note; the quantity itself stays in kg.
-        note: (() => { const pu = pieceUnit(m.sku); const base = txt(l.note, 300);
-          if (!pu) return base; const pc = `${piecesFromKg(Number(l.qty), pu)} ${pu.vi} (${Math.round(pu.kg * 1000)} g/${pu.vi})`; return base ? `${pc} · ${base}`.slice(0, 300) : pc; })(),
+        note: txt(l.note, 300),
+        // Pack shown to purchasing and on the Odoo PO line (eggs: "quả" = 0,05 kg replaces the old hard-coded piece unit).
+        ...(() => { const pk = l.packLabel ? (Array.isArray(m.packs) ? m.packs : []).find((p: any) => p?.label === l.packLabel && Number(p?.factor) > 0) : null;
+          return pk ? { pack_label: String(pk.label).slice(0, 60), pack_factor: Number(pk.factor) } : {}; })(),
         vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status };
     }),
     ...news.map(n => ({ request_id: r.id, tmpl_id: null, sku: null, name: txt(n.name, 120)!, uom: ['kg', 'L', 'Unit'].includes(n.uom) ? n.uom : 'kg',

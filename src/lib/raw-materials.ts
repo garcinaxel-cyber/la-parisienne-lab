@@ -162,7 +162,16 @@ export type PurchaseLine = {
   approvedAt: string | null; approvedBy: string | null; requestedQty: number | null; rejectedByLead: boolean; rejectReason: string | null; cancelledBy: string | null;
   /** Draft purchase order created in Odoo from the app (phase 2, 2026-10-09); the line stays 'pending' until it is confirmed. */
   poOdooId: number | null;
+  /** Pack the line was requested in (Axel, 2026-10-21: chefs order "3 hộp", Odoo keeps its own unit).
+   *  qty stays in the Odoo unit; the pack count is qty / packFactor. */
+  packLabel: string | null; packFactor: number | null;
 };
+
+/** "3 × hộp 2 kg" for a line requested in a pack, null otherwise. */
+export function packHint(l: { qty: number; packLabel?: string | null; packFactor?: number | null }): string | null {
+  if (!l.packLabel || !l.packFactor || l.packFactor <= 0) return null;
+  return `${fmtQty(l.qty / l.packFactor)} × ${l.packLabel}`;
+}
 
 export type WithdrawalLine = { id: string; tmplId: number | null; sku: string | null; name: string; uom: string; qty: number;
   packLabel: string | null; packCount: number | null; correctedQty: number | null; correctedBy: string | null;

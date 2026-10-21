@@ -95,7 +95,8 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
     const u = l.uom.toLowerCase(); const out: Unit[] = [{ label: l.uom, factor: 1 }];
     if (u === 'kg') out.push({ label: 'g', factor: 0.001 }); else if (u === 'l') out.push({ label: 'ml', factor: 0.001 });
     for (const p of catById.get(l.tmplId)?.packs ?? []) out.push({ label: p.label, factor: p.factor });
-    const pu = pieceUnit(l.sku); if (pu) out.push({ label: L(pu.vi, pu.en), factor: pu.kg });
+    // Eggs now carry a "quả" pack in the catalogue (2026-10-21) — don't list the piece unit twice.
+    const pu = pieceUnit(l.sku); if (pu && !out.some(x => Math.abs(x.factor - pu.kg) < 1e-9)) out.push({ label: L(pu.vi, pu.en), factor: pu.kg });
     return out;
   }, [catById, L]);
 

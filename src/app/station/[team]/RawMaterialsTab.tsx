@@ -9,7 +9,7 @@
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw, ClipboardCheck } from 'lucide-react';
-import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, piecesFromKg } from '@/lib/raw-materials';
+import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, packHint } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import RoomCountPanel from './RoomCountPanel';
 import {
@@ -19,7 +19,9 @@ import {
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
 const NAME_KEY = 'lab_raw_name';
-type CartLine = { tmplId: number; qty: number; brand: string; strict: boolean; note: string };
+// u (Axel, 2026-10-21): the unit the chef orders in — -1 = the Odoo unit, else an index in m.packs.
+// qty is always kept in the Odoo unit; the stepper works in the chosen unit.
+type CartLine = { tmplId: number; qty: number; brand: string; strict: boolean; note: string; u: number };
 type NewItem = { name: string; qty: number; uom: string; note: string; photoUrl: string | null };
 
 async function compressImage(file: File): Promise<Blob> {
@@ -165,7 +167,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     if (!name.trim()) { setEditName(true); setMsg({ ok: false, text: L('Nhập tên người yêu cầu trước.', 'Enter your name first.') }); return; }
     setBusy(true);
     const res = await submitPurchaseRequestAction(team, name.trim(),
-      cart.filter(c => c.qty > 0).map(c => ({ tmplId: c.tmplId, qty: c.qty, brand: c.brand || null, brandStrict: c.strict, note: c.note || null })),
+      cart.filter(c => c.qty > 0).map(c => ({ tmplId: c.tmplId, qty: c.qty, brand: c.brand || null, brandStrict: c.strict, note: c.note || null,
+        packLabel: c.u >= 0 ? byId.get(c.tmplId)?.packs[c.u]?.label ?? null : null })),
       newItems.map(n => ({ name: n.name, qty: n.qty, uom: n.uom, note: n.note || null, photoUrl: n.photoUrl })));
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
@@ -355,7 +358,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     <div className="text-[10px] mt-0.5" style={{ color: '#9CA3AF' }}>{unitLabel(m)}</div>
                   </div>
                 ) : (
-                  <button onClick={() => setCart(c => inCart(m.tmplId) ? c.filter(x => x.tmplId !== m.tmplId) : [...c, { tmplId: m.tmplId, qty: (() => { const pu = pieceUnit(m.sku); return pu ? kgFromPieces(pu.step, pu) : 1; })(), brand: '', strict: false, note: '' }])}
+                  <button onClick={() => setCart(c => inCart(m.tmplId) ? c.filter(x => x.tmplId !== m.tmplId) : [...c, (() => { const pu = pieceUnit(m.sku); const u = m.packs.length ? 0 : -1; const f = u >= 0 ? m.packs[0].factor : 1;
+                    return { tmplId: m.tmplId, qty: pu && u >= 0 && Math.abs(f - pu.kg) < 1e-9 ? kgFromPieces(pu.step, pu) : f, brand: '', strict: false, note: '', u }; })()])}
                     className="flex-none inline-flex items-center gap-1 rounded-lg px-3 py-2 text-[12.5px] font-extrabold" style={inCart(m.tmplId) ? { backgroundColor: NAVY, color: '#fff' } : { border: `1px solid ${NAVY}`, color: NAVY }}>
                     {inCart(m.tmplId) ? <><Check size={13} /> {L('Đã thêm', 'Added')}</> : <><Plus size={13} /> {L('Thêm', 'Add')}</>}
                   </button>
@@ -480,17 +484,21 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               {approveGroups.map(ls => { const keep = ls.filter(l => dec(l).keep).length; const rid = ls[0].requestId; return (
                 <div key={rid} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1.5px solid ${GOLD}` }}>
                   <div className="flex items-baseline gap-2 mb-1"><b className="text-[13px] tabular-nums">#{ls[0].requestNo}</b><span className="text-[11.5px] flex-1" style={{ color: '#6B7280' }}>{vnDayTime(ls[0].createdAt).day} {vnDayTime(ls[0].createdAt).time} · {ls[0].requestedBy}</span></div>
-                  {ls.map(l => { const d = dec(l); return (
+                  {ls.map(l => { const d = dec(l);
+                    // Requested in a pack (Axel, 2026-10-21): the lead adjusts in packs too; qty stays in the Odoo unit.
+                    const pf = l.packLabel && l.packFactor ? l.packFactor : 1; const dn = Math.round((d.qty / pf) * 1000) / 1000;
+                    const setDn = (n: number) => setDec(l, { qty: Math.round(Math.max(0, n) * pf * 1000) / 1000 }); return (
                     <div key={l.id} className="py-2" style={{ borderTop: `1px solid ${HAIR}`, opacity: d.keep ? 1 : 0.45 }}>
                       <div className="flex items-center gap-2">
                         <button onClick={() => setDec(l, { keep: !d.keep })} className="w-6 h-6 rounded-md flex items-center justify-center flex-none" style={d.keep ? { backgroundColor: NAVY, color: '#fff' } : { border: `1.5px solid ${BORDER}` }}>{d.keep && <Check size={14} />}</button>
                         <b className="flex-1 text-[13px] leading-snug" style={{ textDecoration: d.keep ? 'none' : 'line-through' }}>{lineName(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
                         <div className="flex items-center rounded-lg overflow-hidden flex-none" style={{ border: `1px solid ${BORDER}` }}>
-                          <button disabled={!d.keep} onClick={() => setDec(l, { qty: Math.max(0.5, d.qty - 1) })} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
-                          <input disabled={!d.keep} inputMode="decimal" value={fmtQty(d.qty)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setDec(l, { qty: isNaN(v) ? 0 : Math.max(0, v) }); }} className="w-11 h-8 text-center font-extrabold text-[13px] outline-none tabular-nums" />
-                          <button disabled={!d.keep} onClick={() => setDec(l, { qty: d.qty + 1 })} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
-                        </div><span className="text-[11.5px] w-6 flex-none" style={{ color: '#6B7280' }}>{l.uom}</span>
+                          <button disabled={!d.keep} onClick={() => setDn(pf !== 1 ? Math.max(1, dn - 1) : Math.max(0.5, dn - 1))} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
+                          <input disabled={!d.keep} inputMode="decimal" value={fmtQty(dn)} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setDn(isNaN(v) ? 0 : v); }} className="w-11 h-8 text-center font-extrabold text-[13px] outline-none tabular-nums" />
+                          <button disabled={!d.keep} onClick={() => setDn(dn + 1)} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
+                        </div><span className="text-[11.5px] max-w-[84px] truncate flex-none" style={{ color: '#6B7280' }}>{pf !== 1 ? l.packLabel : l.uom}</span>
                       </div>
+                      {pf !== 1 && <div className="text-[11px] mt-0.5 text-right font-semibold" style={{ color: GOLD_TEXT }}>= {fmtQty(d.qty)} {l.uom}</div>}
                       {(d.qty !== l.qty && d.keep) || l.brand || l.note ? <div className="text-[11px] mt-0.5 ml-8" style={{ color: '#6B7280' }}>
                         {d.qty !== l.qty && d.keep && <b style={{ color: GOLD_TEXT }}>{L(`chef xin ${fmtQty(l.qty)}`, `asked ${fmtQty(l.qty)}`)} </b>}{l.brand ? `${l.brand} (${l.brandStrict ? L('bắt buộc', 'required') : L('nếu có', 'if possible')}) ` : ''}{l.note ?? ''}</div> : null}
                     </div>); })}
@@ -513,7 +521,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{title}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{ls.length}</span></div>
               {ls.map(l => (
                 <div key={l.id} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
-                  <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px]">{fmtQty(l.qty)} {l.uom}</b></div>
+                  <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px] text-right">{fmtQty(l.qty)} {l.uom}{packHint(l) && <span className="block text-[11px] font-semibold" style={{ color: GOLD_TEXT }}>{packHint(l)}</span>}</b></div>
                   <div className="text-[11px] mb-2" style={{ color: '#6B7280' }}>{vnDayTime(l.createdAt).day} {vnDayTime(l.createdAt).time} · {l.requestedBy}{l.poRef ? ` · PO ${l.poRef}` : ''}{l.brand ? ` · ${l.brand}` : ''}
                     {l.approvedBy && <> · <b style={{ color: NAVY }}>✓ {l.approvedBy}</b>{l.requestedQty != null ? ` (${L('xin', 'asked')} ${fmtQty(l.requestedQty)})` : ''}</>}
                     {l.rejectedByLead && <> · <b style={{ color: LATE }}>{L(`${l.cancelledBy ?? lead} không duyệt`, `not approved by ${l.cancelledBy ?? lead}`)}</b>{l.rejectReason ? ` — ${l.rejectReason}` : ''}</>}</div>
@@ -589,18 +597,28 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="text-[15px] font-extrabold">{L('Yêu cầu mua', 'Purchase request')}</div>
               <div className="text-xs mb-2" style={{ color: '#6B7280' }}>{name} · {L('không hiển thị giá', 'prices are not shown')}</div>
               {cart.map((c, i) => { const m = byId.get(c.tmplId); if (!m) return null; const upd = (p: Partial<CartLine>) => setCart(xs => xs.map((x, j) => j === i ? { ...x, ...p } : x));
-                // Counted by the piece (eggs): typed in pieces, converted to kg for the request and for Odoo.
-                const pu = pieceUnit(m.sku); const shown = pu ? piecesFromKg(c.qty, pu) : c.qty; return (
+                // Ordered in the Odoo unit or in one of the product's packs (eggs: "quả" = 0,05 kg); qty stays in the Odoo unit.
+                const pk = c.u >= 0 ? m.packs[c.u] ?? null : null; const f = pk ? pk.factor : 1;
+                const shown = Math.round((c.qty / f) * 1000) / 1000; const setN = (n: number) => upd({ qty: Math.round(Math.max(0, n) * f * 1000) / 1000 }); return (
                 <div key={c.tmplId} className="py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
                   <div className="flex items-center gap-2"><b className="flex-1 text-[13px]">{rawName(m, lang)}</b>
                     <div className="flex items-center rounded-lg overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                      <button onClick={() => { dropTxt(`c${c.tmplId}`); upd({ qty: pu ? kgFromPieces(Math.max(0, shown - pu.step), pu) : Math.max(0, c.qty - 1) }); }} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
-                      <input inputMode={pu ? 'numeric' : 'decimal'} value={qtyTxt[`c${c.tmplId}`] ?? fmtQty(shown)} onBlur={() => dropTxt(`c${c.tmplId}`)}
-                        onChange={e => { const t = e.target.value.replace(/[^0-9.,]/g, ''); setQtyTxt(x => ({ ...x, [`c${c.tmplId}`]: t })); const n = parseQty(t); upd({ qty: pu ? kgFromPieces(Math.round(n), pu) : n }); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
-                      <button onClick={() => { dropTxt(`c${c.tmplId}`); upd({ qty: pu ? kgFromPieces(shown + pu.step, pu) : c.qty + 1 }); }} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
-                    </div><span className="text-[11.5px] w-6" style={{ color: '#6B7280' }}>{pu ? L(pu.vi, pu.en) : m.uom}</span>
+                      <button onClick={() => { dropTxt(`c${c.tmplId}`); setN(shown - 1); }} className="w-8 h-8 flex items-center justify-center"><Minus size={13} /></button>
+                      <input inputMode="decimal" value={qtyTxt[`c${c.tmplId}`] ?? fmtQty(shown)} onBlur={() => dropTxt(`c${c.tmplId}`)}
+                        onChange={e => { const t = e.target.value.replace(/[^0-9.,]/g, ''); setQtyTxt(x => ({ ...x, [`c${c.tmplId}`]: t })); setN(parseQty(t)); }} className="w-12 h-8 text-center font-extrabold text-[13px] outline-none" />
+                      <button onClick={() => { dropTxt(`c${c.tmplId}`); setN(shown + 1); }} className="w-8 h-8 flex items-center justify-center"><Plus size={13} /></button>
+                    </div><span className="text-[11.5px] max-w-[84px] truncate" style={{ color: '#6B7280' }}>{pk ? pk.label : m.uom}</span>
                     <button onClick={() => setCart(xs => xs.filter((_, j) => j !== i))} style={{ color: '#9CA3AF' }}><X size={14} /></button></div>
-                  {pu && <div className="text-[11px] mt-1 text-right font-semibold" style={{ color: GOLD_TEXT }}>{fmtQty(shown)} {L(pu.vi, pu.en)} × {Math.round(pu.kg * 1000)} g = {fmtQty(c.qty)} {m.uom}</div>}
+                  {m.packs.length > 0 && (
+                    <div className="flex gap-1 mt-1.5 flex-wrap justify-end">
+                      {[-1, ...m.packs.map((_, k) => k)].map(k => (
+                        // Switching unit keeps the number typed: "3" kg becomes "3" hộp.
+                        <button key={k} onClick={() => { dropTxt(`c${c.tmplId}`); const nf = k >= 0 ? m.packs[k].factor : 1; upd({ u: k, qty: Math.round(shown * nf * 1000) / 1000 }); }}
+                          className="text-[10.5px] font-bold rounded-md px-1.5 py-0.5"
+                          style={{ border: `1px solid ${c.u === k ? GOLD : HAIR}`, backgroundColor: c.u === k ? PALE : '#fff', color: c.u === k ? GOLD_TEXT : '#6B7280' }}>{k < 0 ? m.uom : m.packs[k].label}</button>))}
+                    </div>
+                  )}
+                  {pk && <div className="text-[11px] mt-1 text-right font-semibold" style={{ color: GOLD_TEXT }}>{fmtQty(shown)} × {pk.label} = {fmtQty(c.qty)} {m.uom}</div>}
                   <div className="flex gap-1.5 items-center mt-1.5 flex-wrap">
                     <input value={c.brand} onChange={e => upd({ brand: e.target.value })} placeholder={L('Thương hiệu mong muốn (tuỳ chọn)', 'Preferred brand (optional)')} className="flex-1 min-w-[150px] rounded-lg px-2 py-1.5 text-xs outline-none" style={{ border: `1px solid ${HAIR}` }} />
                     <div className="flex rounded-lg overflow-hidden text-[11px] font-bold" style={{ border: `1px solid ${HAIR}` }}>

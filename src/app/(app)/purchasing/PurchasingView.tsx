@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n';
 import {
   RAW_TYPES, subLabel, typeLabel, shortVendor, rawName, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
   type PurchaseLine, type RawMaterial, type Withdrawal, type RawType,
+  packHint,
 } from '@/lib/raw-materials';
 import {
   getPurchasingBoardAction, setVendorAction, markOrderedAction, cancelLinesAction, undoLineStepAction,
@@ -182,7 +183,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                   : <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FBEAE8', color: LATE }}>⚠ {L('Chưa có NCC — chưa được xác nhận', 'No vendor — do not confirm yet')}</span>}
                 <span className="ml-auto text-xs tabular-nums" style={{ color: '#6B7280' }}>{d.amountTotal ? `${Math.round(d.amountTotal).toLocaleString('vi-VN')} ₫` : L('chưa có giá', 'no price yet')}</span>
               </div>
-              <div className="text-[11.5px] mt-1" style={{ color: '#6B7280' }}>{dl.map(l => `${nm(l)} ${fmtQty(l.qty)} ${l.uom}`).join(' · ')}</div>
+              <div className="text-[11.5px] mt-1" style={{ color: '#6B7280' }}>{dl.map(l => `${nm(l)} ${fmtQty(l.qty)} ${l.uom}${packHint(l) ? ` (${packHint(l)})` : ''}`).join(' · ')}</div>
             </div>); })}
           <div className="px-4 py-2 text-[11px]" style={{ backgroundColor: PALE, color: '#6B7280' }}>{L('Xác nhận PO trên Odoo. App tự cập nhật “Đã đặt” khi PO được xác nhận, hoặc trả dòng về hàng chờ nếu PO bị huỷ.', 'Confirm the PO in Odoo. The app switches to “Ordered” once confirmed, or puts the lines back in the queue if the PO is cancelled.')}</div>
         </div>
@@ -198,7 +199,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.35)' }} onClick={() => !busy && setPoOpen(false)}>
           <div className="bg-white rounded-2xl p-4 w-full max-w-md space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-[15px] font-extrabold">{L('Tạo PO nháp trên Odoo', 'Create a draft PO in Odoo')}</div>
-            <div className="text-[12px] rounded-lg p-2 max-h-40 overflow-y-auto" style={{ backgroundColor: PALE }}>{selLines.map(l => <div key={l.id}>{nm(l)} · <b>{fmtQty(l.qty)} {l.uom}</b> <span style={{ color: '#9CA3AF' }}>#{l.requestNo}</span></div>)}</div>
+            <div className="text-[12px] rounded-lg p-2 max-h-40 overflow-y-auto" style={{ backgroundColor: PALE }}>{selLines.map(l => <div key={l.id}>{nm(l)} · <b>{fmtQty(l.qty)} {l.uom}</b>{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>} <span style={{ color: '#9CA3AF' }}>#{l.requestNo}</span></div>)}</div>
             <div><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Nhà cung cấp của PO', 'Vendor for this PO')}</span>
               <VendorPicker L={L} value={poVendor} onChange={setPoVendor} suggested={suggested} vendors={board.vendors} /></div>
             {!poVendor && <div className="text-[11.5px] rounded-lg px-2.5 py-2" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>{L('PO được lưu không có NCC. Chọn NCC trên Odoo trước khi xác nhận.', 'The PO is saved without a vendor. Set the vendor in Odoo before confirming.')}</div>}
@@ -231,7 +232,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}`, backgroundColor: group.every(l => sel.has(l.id)) ? '#FFFBEF' : undefined }}>
                         <td className="px-2 py-2 text-center">{f.tmplId != null && <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={group.every(l => sel.has(l.id))} onChange={e => toggle(group.map(l => l.id), e.target.checked)} aria-label="select" />}</td>
                         <td className="px-3 py-2"><b>{nm(f)}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.sku}{lang === 'vi' && nm(f) !== f.name ? ` · ${f.name}` : ''}</div></td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}{group.some(l => packHint(l)) && <div className="text-[10.5px] font-semibold" style={{ color: GOLD_TEXT }}>{group.map(l => packHint(l) ?? `${fmtQty(l.qty)} ${l.uom}`).join(' + ')}</div>}</td>
                         <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>)}</td>
                         <td className="px-3 py-2 text-[11.5px]">{group.map(l => (l.brand || l.note) ? <div key={l.id}>{l.brand && <span><b>{l.brand}</b> <span style={{ color: '#9CA3AF' }}>{l.brandStrict ? L('bắt buộc', 'required') : L('nếu có', 'if possible')}</span></span>}{l.brand && l.note ? ' · ' : ''}{l.note}</div> : null)}{!group.some(l => l.brand || l.note) && <span style={{ color: '#D0D5DD' }}>—</span>}</td>
                         <td className="px-3 py-2">
@@ -269,7 +270,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             <div key={l.id} className="flex gap-3 px-4 py-3 flex-wrap items-start" style={{ borderTop: `1px solid ${HAIR}` }}>
               {l.photoUrl ? <a href={l.photoUrl} target="_blank" rel="noreferrer"><img src={l.photoUrl} alt="" className="w-16 h-16 rounded-lg object-cover" /></a> : <div className="w-16 h-16 rounded-lg" style={{ backgroundColor: PALE }} />}
               <div className="flex-1 min-w-[200px] text-[12.5px]">
-                <b className="text-[13.5px]">{nm(l)}</b> · {fmtQty(l.qty)} {l.uom}
+                <b className="text-[13.5px]">{nm(l)}</b> · {fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>}
                 <div className="mt-0.5"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>
                 {l.note && <div className="mt-1">{l.note}</div>}
               </div>
@@ -398,7 +399,8 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
   L: LFn; lang: 'vi' | 'en'; catalogue: Board['catalogue']; onClose: () => void; onDone: (no: number) => void;
 }) {
   const [q, setQ] = useState('');
-  const [picks, setPicks] = useState<{ tmplId: number; qty: string; note: string }[]>([]);
+  // u (Axel, 2026-10-21): unit the quantity is typed in — -1 = Odoo unit, else an index in the product's packs.
+  const [picks, setPicks] = useState<{ tmplId: number; qty: string; note: string; u: number }[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Axel, 2026-10-19: Hiền could not add "Đế bánh vuông 9*9cm" (VTTH1025, "vật tư tiêu hao") — the
@@ -430,7 +432,8 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
   const valid = picks.filter(p => parseFloat(p.qty.replace(',', '.')) > 0);
   async function submit() {
     setBusy(true); setErr(null);
-    const r = await addStorageRequestAction(valid.map(p => ({ tmplId: p.tmplId, qty: parseFloat(p.qty.replace(',', '.')), note: p.note })));
+    const r = await addStorageRequestAction(valid.map(p => { const pk = p.u >= 0 ? byId.get(p.tmplId)?.packs?.[p.u] : undefined; const n = parseFloat(p.qty.replace(',', '.'));
+      return { tmplId: p.tmplId, qty: Math.round(n * (pk ? pk.factor : 1) * 1000) / 1000, note: p.note, packLabel: pk?.label ?? null }; }));
     setBusy(false);
     if (r.error) { setErr(r.error); return; }
     onDone(r.no!);
@@ -447,13 +450,13 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
           </div>
           {nq && <div className="max-h-48 overflow-y-auto p-1" style={{ borderTop: `1px solid ${HAIR}` }}>
             {results.map(c => (
-              <button key={c.tmplId} type="button" onClick={() => { setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '' }]); setQ(''); }}
+              <button key={c.tmplId} type="button" onClick={() => { setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '', u: c.packs?.length ? 0 : -1 }]); setQ(''); }}
                 className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
                 <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{label(c)}</span><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
               </button>
             ))}
             {odooOnly.map(c => (
-              <button key={`o${c.tmplId}`} type="button" onClick={() => { setExtra(m => new Map(m).set(c.tmplId, c)); setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '' }]); setQ(''); }}
+              <button key={`o${c.tmplId}`} type="button" onClick={() => { setExtra(m => new Map(m).set(c.tmplId, c)); setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '', u: -1 }]); setQ(''); }}
                 className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
                 <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{c.sku ? `[${c.sku}] ` : ''}{c.name}</span>
                 <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: '#EEF2FF', color: NAVY }}>Odoo</span>
@@ -471,9 +474,17 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
                 <span className="flex-1 text-[13px] font-bold leading-snug">{c ? label(c) : p.tmplId}</span>
                 <input inputMode="decimal" value={p.qty} placeholder="0" onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, qty: e.target.value } : x))}
                   className="w-20 rounded-md px-2 py-1 text-right text-[14px] font-extrabold" style={{ border: `1px solid ${GOLD}` }} />
-                <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{c?.uom}</span>
+                <span className="text-xs font-bold max-w-[90px] truncate" style={{ color: '#6B7280' }}>{p.u >= 0 && c?.packs?.[p.u] ? c.packs[p.u].label : c?.uom}</span>
                 <button type="button" onClick={() => setPicks(ps => ps.filter(x => x.tmplId !== p.tmplId))} aria-label="remove"><X size={15} style={{ color: '#9CA3AF' }} /></button>
               </div>
+              {!!c?.packs?.length && (() => { const pk = p.u >= 0 ? c.packs[p.u] : null; const n = parseFloat(p.qty.replace(',', '.')); return (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[-1, ...c.packs.map((_, k) => k)].map(k => (
+                    <button key={k} type="button" onClick={() => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, u: k } : x))}
+                      className="text-[10.5px] font-bold rounded-md px-1.5 py-0.5"
+                      style={{ border: `1px solid ${p.u === k ? GOLD : HAIR}`, backgroundColor: p.u === k ? PALE : '#fff', color: p.u === k ? GOLD_TEXT : '#6B7280' }}>{k < 0 ? c.uom : c.packs![k].label}</button>))}
+                  {pk && n > 0 && <span className="ml-auto text-[11px] font-semibold" style={{ color: GOLD_TEXT }}>= {fmtQty(n * pk.factor)} {c.uom}</span>}
+                </div>); })()}
               <input value={p.note} onChange={e => setPicks(ps => ps.map(x => x.tmplId === p.tmplId ? { ...x, note: e.target.value } : x))}
                 placeholder={L('Ghi chú / thương hiệu (tuỳ chọn)', 'Note / brand (optional)')} className="w-full rounded-md px-2 py-1 text-[12.5px]" style={{ border: `1px solid ${HAIR}` }} />
             </div>
@@ -593,7 +604,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                       </div>
                       <input inputMode="decimal" value={pv[l.id] ?? fmtQty(l.qty)} onChange={e => setPv(v => ({ ...v, [l.id]: e.target.value }))}
                         className="w-20 rounded-md px-2 py-1.5 text-right text-[14px] font-extrabold tabular-nums" style={{ border: `1px solid ${pv[l.id] != null && pv[l.id] !== fmtQty(l.qty) ? LATE : GOLD}` }} />
-                      <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>
+                      <span className="w-7 text-xs font-bold" style={{ color: '#6B7280' }}>{l.uom}</span>{packHint(l) && <span className="text-[11px] font-semibold whitespace-nowrap" style={{ color: GOLD_TEXT }}>{packHint(l)}</span>}
                     </div>
                   ))}
                 </div>
@@ -806,7 +817,7 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                   <button onClick={() => setOpen(s => ({ ...s, [l.id]: !s[l.id] }))} className="w-full text-left grid gap-3 items-center px-4 py-2.5 hover:bg-[#FFFDF6]" style={{ gridTemplateColumns: 'minmax(56px,70px) minmax(160px,1.4fr) minmax(120px,1fr) minmax(160px,200px) 18px' }}>
                     <div><b className="block text-[12.5px] tabular-nums">{dt.day}</b><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{dt.time}</span></div>
                     <div className="min-w-0"><b className="block text-[13px] truncate">{nm(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
-                      <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div>
+                      <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div>
                     <div className="text-[12px] min-w-0">{l.vendorName ? <span className="truncate block">{shortVendor(l.vendorName)}</span> : <span className="font-bold" style={{ color: LATE }}>{L('Chưa có NCC', 'No vendor yet')}</span>}
                       <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.poRef ? `PO ${l.poRef}` : l.status === 'pending' && age >= 2 ? <span className="font-extrabold rounded px-1" style={{ backgroundColor: '#FEF3F2', color: LATE }}>{L(`chờ ${age} ngày`, `waiting ${age} days`)}</span> : ''}</span></div>
                     <Track l={l} L={L} />
@@ -815,7 +826,7 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                   {o && (
                     <div className="px-4 pb-3 pt-1 text-[12.5px] grid sm:grid-cols-2 gap-x-6 gap-y-1" style={{ backgroundColor: '#FCFAF3' }}>
                       <div><span style={{ color: '#6B7280' }}>{L('Yêu cầu bởi', 'Requested by')}</span> {l.requestedBy} · {dt.day} {dt.time} · #{l.requestNo}</div>
-                      <div><span style={{ color: '#6B7280' }}>{L('Số lượng', 'Quantity')}</span> {fmtQty(l.qty)} {l.uom}</div>
+                      <div><span style={{ color: '#6B7280' }}>{L('Số lượng', 'Quantity')}</span> {fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>}</div>
                       {l.brand && <div><span style={{ color: '#6B7280' }}>{L('Thương hiệu', 'Brand')}</span> {l.brand} · {l.brandStrict ? L('bắt buộc', 'required') : L('nếu có', 'if possible')}</div>}
                       {l.note && <div><span style={{ color: '#6B7280' }}>{L('Ghi chú', 'Note')}</span> {l.note}</div>}
                       <div className="sm:col-span-2 mt-1 space-y-0.5">
@@ -1034,15 +1045,16 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                   <td className="px-3 py-2"><select value={m.sub} onChange={e => patch(m, { sub: e.target.value })} className="rounded-md px-1.5 py-1 text-xs bg-white" style={{ border: `1px solid ${HAIR}` }}>
                     {Object.keys(RAW_TYPES[m.type].subs).map(s => <option key={s} value={s}>{subLabel(m.type, s, lang)}</option>)}</select></td>
                   <td className="px-3 py-2 text-[11.5px]">
-                    {m.packs.map((p, i) => <div key={i} className="flex items-center gap-1">{p.label} <span style={{ color: '#9CA3AF' }}>= {fmtQty(p.factor)} {m.uom}</span>
+                    {/* Packs the chefs can order / take in (Axel, 2026-10-21) — "1 túi = 0,02 kg"; Odoo's own unit never changes. */}
+                    {m.packs.map((p, i) => <div key={i} className="flex items-center gap-1 whitespace-nowrap">1 <b>{p.label}</b> <span style={{ color: '#6B7280' }}>= {fmtQty(p.factor)} {m.uom}</span>
                       <button onClick={() => patch(m, { packs: m.packs.filter((_, j) => j !== i) })} style={{ color: '#9CA3AF' }}><X size={11} /></button></div>)}
                     {packFor === m.tmplId ? (
                       <div className="flex items-center gap-1 mt-1">
-                        <input value={packLabel} onChange={e => setPackLabel(e.target.value)} placeholder={L('vd bao 25 kg', 'e.g. bag 25 kg')} className="w-24 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
-                        <span>=</span><input value={packFactor} onChange={e => setPackFactor(e.target.value)} inputMode="decimal" placeholder="25" className="w-12 rounded px-1.5 py-0.5 text-[11px] text-right" style={{ border: `1px solid ${BORDER}` }} />{m.uom}
+                        <span>1</span><input autoFocus value={packLabel} onChange={e => setPackLabel(e.target.value)} placeholder={L('vd túi, hộp 2 kg', 'e.g. bag, box 2 kg')} className="w-24 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
+                        <span>=</span><input value={packFactor} onChange={e => setPackFactor(e.target.value)} inputMode="decimal" placeholder="0,5" className="w-14 rounded px-1.5 py-0.5 text-[11px] text-right" style={{ border: `1px solid ${BORDER}` }} />{m.uom}
                         <button onClick={() => { const f = parseFloat(packFactor.replace(',', '.')); if (packLabel.trim() && f > 0) patch(m, { packs: [...m.packs, { label: packLabel.trim(), factor: f }] }); setPackFor(null); setPackLabel(''); setPackFactor(''); }} style={{ color: NAVY }}><Check size={13} /></button>
                       </div>
-                    ) : <button onClick={() => { setPackFor(m.tmplId); setPackLabel(''); setPackFactor(''); }} className="text-[11px] font-bold" style={{ color: GOLD_TEXT }}>+ {L('quy cách', 'pack')}</button>}
+                    ) : <button onClick={() => { setPackFor(m.tmplId); setPackLabel(''); setPackFactor(''); }} className="text-[11px] font-bold rounded-md px-1.5 py-0.5 mt-0.5" style={{ color: GOLD_TEXT, border: `1px dashed ${GOLD}` }}>+ {L('quy cách / đơn vị', 'pack / unit')}</button>}
                     {/* Brands (2026-10-19): the chef picks one on the storage slip; Odoo keeps one product. */}
                     {(m.brands ?? []).length > 0 && <div className="flex flex-wrap gap-1 mt-1">{m.brands.map(b => (
                       <span key={b} className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10.5px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{b}

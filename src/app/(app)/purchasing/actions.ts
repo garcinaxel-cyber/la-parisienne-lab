@@ -3,7 +3,7 @@
 // admin. Phase 1: everything stays in the app; Odoo is only read (catalogue sync). The assistant still
 // creates the purchase order in Odoo by hand and types its number here.
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
-import { classifyRaw, parsePacks, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
+import { classifyRaw, parsePacks, packHint, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
@@ -19,7 +19,7 @@ const ids = (v: unknown) => (Array.isArray(v) ? v : []).map(String).filter(Boole
 export type DraftPo = { id: number; name: string; vendorId: number | null; vendorName: string | null; state: string; amountTotal: number };
 export type Board = {
   lines: PurchaseLine[]; vendors: { id: number; name: string }[];
-  catalogue: { tmplId: number; name: string; nameVi: string | null; visible: boolean; sku: string | null; uom: string; vendorIds: number[] }[];
+  catalogue: { tmplId: number; name: string; nameVi: string | null; visible: boolean; sku: string | null; uom: string; vendorIds: number[]; packs?: RawPack[] }[];
   drafts: DraftPo[];
 };
 
@@ -70,13 +70,13 @@ export async function getPurchasingBoardAction(): Promise<{ data?: Board; error?
   try {
     const drafts = await refreshDraftPos(g.db);
     const lines = await loadLines(g.db, q => q.eq('status', 'pending').order('created_at', { ascending: true }));
-    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, name_vi, sku, uom, vendors, visible').eq('active', true).order('name').limit(3000);
+    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, name, name_vi, sku, uom, vendors, visible, packs').eq('active', true).order('name').limit(3000);
     const vend = new Map<number, string>();
     for (const m of mats ?? []) for (const v of (m.vendors as any[]) ?? []) if (v?.id && !vend.has(v.id)) vend.set(v.id, v.name);
     return { data: {
       lines,
       vendors: Array.from(vend.entries()).map(([id, name]) => ({ id, name })).sort((x, y) => x.name.localeCompare(y.name)),
-      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, nameVi: (m as any).name_vi ?? null, visible: !!(m as any).visible, sku: m.sku, uom: m.uom, vendorIds: ((m.vendors as any[]) ?? []).map(v => Number(v?.id)).filter(Boolean) })),
+      catalogue: (mats ?? []).map(m => ({ tmplId: m.tmpl_id, name: m.name, nameVi: (m as any).name_vi ?? null, visible: !!(m as any).visible, sku: m.sku, uom: m.uom, vendorIds: ((m.vendors as any[]) ?? []).map(v => Number(v?.id)).filter(Boolean), packs: Array.isArray((m as any).packs) ? (m as any).packs : [] })),
       drafts,
     } };
   } catch (e: any) { return { error: e.message }; }
@@ -289,12 +289,12 @@ export async function refuseTransferAction(withdrawalId: string): Promise<{ ok?:
 
 // Storage's own needs (Axel, 2026-10-09: Hien adds requests straight from the purchasing screen).
 // Team 'kho', no approval: the lines land in the queue directly.
-export async function addStorageRequestAction(lines: { tmplId: number; qty: number; note?: string | null }[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
+export async function addStorageRequestAction(lines: { tmplId: number; qty: number; note?: string | null; packLabel?: string | null }[]): Promise<{ ok?: boolean; no?: number; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   const clean = (lines ?? []).filter(l => l.tmplId && Number(l.qty) > 0).slice(0, 80);
   if (!clean.length) return { error: 'Empty' };
-  let { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId));
+  let { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name, packs').in('tmpl_id', clean.map(l => l.tmplId));
   // Products picked from the live Odoo search (any purchasable product) are imported first.
   const missing = clean.map(l => l.tmplId).filter(id => !(mats ?? []).some((m: any) => m.tmpl_id === id));
   if (missing.length) {
@@ -304,7 +304,7 @@ export async function addStorageRequestAction(lines: { tmplId: number; qty: numb
         if ('error' in imp) return { error: imp.error };
       }
     } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
-    ({ data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name').in('tmpl_id', clean.map(l => l.tmplId)));
+    ({ data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name, packs').in('tmpl_id', clean.map(l => l.tmplId)));
   }
   const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
@@ -315,7 +315,10 @@ export async function addStorageRequestAction(lines: { tmplId: number; qty: numb
     const m: any = byId.get(l.tmplId);
     const note = String(l.note ?? '').trim().slice(0, 300) || null;
     return { request_id: r.id, tmpl_id: l.tmplId, sku: m.sku, name: m.name, uom: m.uom, qty: Math.round(Number(l.qty) * 1000) / 1000,
-      note, vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status: 'pending' };
+      note, vendor_id: m.vendor_id ?? null, vendor_name: m.vendor_name ?? null, status: 'pending',
+      // Pack picked in the dialog (Axel, 2026-10-21) — checked against the catalogue, qty already in the Odoo unit.
+      ...(() => { const pk = l.packLabel ? (Array.isArray(m.packs) ? m.packs : []).find((p: any) => p?.label === l.packLabel && Number(p?.factor) > 0) : null;
+        return pk ? { pack_label: String(pk.label).slice(0, 60), pack_factor: Number(pk.factor) } : {}; })() };
   });
   const { error: lErr } = await g.db.from('lab_purchase_request_lines').insert(rows);
   if (lErr) { await g.db.from('lab_purchase_requests').delete().eq('id', r.id); return { error: lErr.message }; }
@@ -463,7 +466,7 @@ export async function createDraftPoAction(lineIds: string[], vendorId: number | 
   const want = ids(lineIds);
   if (!want.length) return { error: 'Empty' };
   const { data: ls, error } = await g.db.from('lab_purchase_request_lines')
-    .select('id, request_id, tmpl_id, name, uom, qty, brand, brand_strict, note, status, po_odoo_id').in('id', want);
+    .select('id, request_id, tmpl_id, name, uom, qty, brand, brand_strict, note, status, po_odoo_id, pack_label, pack_factor').in('id', want);
   if (error) return { error: error.message };
   const lines = (ls ?? []).filter(l => l.status === 'pending' && !l.po_odoo_id && l.tmpl_id);
   if (!lines.length) return { error: 'Không có dòng hợp lệ (đã có PO hoặc sản phẩm chưa có trong Odoo)' };
@@ -486,7 +489,10 @@ export async function createDraftPoAction(lineIds: string[], vendorId: number | 
       e.qty += Number(l.qty);
       const r: any = reqNo.get(l.request_id);
       const bits = [l.brand ? `${l.brand}${l.brand_strict ? ' (bắt buộc)' : ' (nếu có)'}` : '', l.note ?? ''].filter(Boolean).join(' · ');
-      e.notes.push(`#${r?.no ?? '?'}${r?.team ? ` ${r.team}` : ''}: ${Number(l.qty)} ${l.uom}${bits ? ` — ${bits}` : ''}`);
+      // Pack ordered by the chef (Axel, 2026-10-21): product_qty stays in Odoo's own unit, the line
+      // text tells the buyer what that is in packs ("6 kg = 3 × hộp 2 kg").
+      const pk = packHint({ qty: Number(l.qty), packLabel: (l as any).pack_label, packFactor: (l as any).pack_factor == null ? null : Number((l as any).pack_factor) });
+      e.notes.push(`#${r?.no ?? '?'}${r?.team ? ` ${r.team}` : ''}: ${Number(l.qty)} ${l.uom}${pk ? ` = ${pk}` : ''}${bits ? ` — ${bits}` : ''}`);
       byProduct.set(pid, e);
     }
     const orderLines = Array.from(byProduct.entries()).map(([pid, e]) => {
