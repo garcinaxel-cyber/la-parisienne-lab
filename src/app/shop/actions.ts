@@ -2048,15 +2048,9 @@ export async function getManagerOrderCategoriesAction(shopName?: string): Promis
 export async function getManagerOrderContextAction(): Promise<{ minDate?: string; defaultDate?: string; tomorrowOrderingOpen?: boolean; error?: string }> {
   const minDate = tomorrowLabDate();
   const tomorrowOrderingOpen = isManagerOrderWindowOpenForTomorrow();
-  return { minDate, defaultDate: tomorrowOrderingOpen ? minDate : dayAfter(minDate), tomorrowOrderingOpen };
-}
-
-function dayAfter(date: string): string {
-  const [y, m, d] = date.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + 1);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+  // Default is always tomorrow, even after 14h00 (Axel, 2026-10-21: orders validated after 14h
+  // were silently landing on J+2 — REP/02113, 02126). The red "late" warning still shows.
+  return { minDate, defaultDate: minDate, tomorrowOrderingOpen };
 }
 
 // ── Đặt hàng draft (Axel, 2026-09-05 follow-up) ─────────────────────────────────────────────
