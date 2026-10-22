@@ -1,12 +1,32 @@
 'use client';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
-import { fmtQty, packHint, TEAM_SHORT, type PurchaseLine } from '@/lib/raw-materials';
+import { fmtQty, packHint, type PurchaseLine } from '@/lib/raw-materials';
 
 // Same layout as the purchasing manager's Excel template (___XU_T_MUA_H_NG.xlsx, 2026-10-22):
 // company header, title, "Người đề xuất / Team", "Ngày đề xuất", the 7-column table (unit price
 // incl. VAT and amount left blank to be filled by hand, as on the paper form), approval box.
 const MIN_ROWS = 8;
+
+// Print-only legal names (Axel, 2026-10-22): the app keeps the short names typed by the teams
+// ("Hung", "trung", "huong", "Thu Trang"…); the signed paper shows full name + team.
+const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().trim();
+const PEOPLE: { keys: string[]; team?: string; full: string; teamLabel: string }[] = [
+  { keys: ['hung', 'ta duy hung', 'chef hung'], team: 'hung', full: 'Tạ Duy Hưng', teamLabel: 'Team Macaron' },
+  { keys: ['trung', 'le cong trung'], full: 'Lê Công Trung', teamLabel: 'Team Macaron' },
+  { keys: ['huong', 'do thi huong'], team: 'entremet', full: 'Đỗ Thị Hường', teamLabel: 'Team Entremet' },
+  { keys: ['toan', 'hoang van toan'], full: 'Hoàng Văn Toàn', teamLabel: 'Team Baker' },
+  { keys: ['trang', 'thu trang', 'thuy trang', 'le thi thuy trang'], full: 'Lê Thị Thùy Trang', teamLabel: 'Team Baker' },
+  { keys: ['miss flavor', 'flavor', 'thu huong', 'nguyen thi thu huong'], team: 'kho', full: 'Nguyễn Thị Thu Hương', teamLabel: 'Kho' },
+];
+const TEAM_PRINT: Record<string, string> = { hung: 'Team Macaron', entremet: 'Team Entremet', baker: 'Team Baker', baby_mama: 'Team Baby Mama', kho: 'Kho' };
+function person(name: string | null, team: string): { full: string; teamLabel: string } {
+  const n = norm(name ?? '');
+  const hit = PEOPLE.find(p => p.keys.includes(n) && (!p.team || p.team === team || n.split(' ').length > 1))
+    ?? (team === 'kho' ? PEOPLE.find(p => p.team === 'kho') : undefined);
+  return hit ? { full: hit.full, teamLabel: hit.teamLabel } : { full: name ?? '', teamLabel: TEAM_PRINT[team] ?? team };
+}
+
 
 function vnDate(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -16,8 +36,9 @@ function vnDate(iso: string | null | undefined): string {
 
 export default function PurchasePrintView({ lines, printedBy }: { lines: PurchaseLine[]; printedBy: string }) {
   const sorted = [...lines].sort((a, b) => a.requestNo - b.requestNo || a.name.localeCompare(b.name));
-  const requesters = Array.from(new Set(sorted.map(l => l.requestedBy).filter(Boolean))) as string[];
-  const teams = Array.from(new Set(sorted.map(l => TEAM_SHORT[l.team]?.vi ?? l.team).filter(Boolean)));
+  const people = sorted.map(l => person(l.requestedBy, l.team));
+  const requesters = Array.from(new Set(people.map(p => p.full).filter(Boolean)));
+  const teams = Array.from(new Set(people.map(p => p.teamLabel).filter(Boolean)));
   const nos = Array.from(new Set(sorted.map(l => l.requestNo))).filter(Boolean);
   const firstDate = sorted.map(l => l.createdAt).filter(Boolean).sort()[0];
   const empty = Math.max(0, MIN_ROWS - sorted.length);
