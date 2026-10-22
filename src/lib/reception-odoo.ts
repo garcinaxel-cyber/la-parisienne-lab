@@ -180,6 +180,17 @@ export async function validateShopIn(
       [[['origin', '=', orderRef], ['location_dest_id', '=', TRANSIT_LOCATION_ID], ['state', '!=', 'cancel']]],
       { fields: ['id', 'state'] });
     if (!outs.length || outs.some(o => o.state !== 'done')) return skip('lab_out_not_validated', { pickingName: picking.name });
+    // What the Lab's OUT REALLY moved into transit, per product (done quantity, not the demand):
+    // an assistant may raise a line at the delivery check (REP/02103 BYK 2 → 3), Odoo then keeps
+    // demand 2 / done 3 on the OUT and the IN still asks for 2 (2026-10-22).
+    const outMoves = await odooExecute<any[]>('stock.move', 'search_read',
+      [[['picking_id', 'in', outs.map(o => o.id)], ['state', '=', 'done']]],
+      { fields: ['product_id', 'quantity'] });
+    const outDoneByPid = new Map<number, number>();
+    for (const m of outMoves) {
+      const pid = m.product_id?.[0];
+      if (pid) outDoneByPid.set(pid, (outDoneByPid.get(pid) ?? 0) + Number(m.quantity));
+    }
 
     const moves = await odooExecute<any[]>('stock.move', 'search_read',
       [[['picking_id', '=', picking.id], ['state', 'not in', ['done', 'cancel']]]],
@@ -208,9 +219,12 @@ export async function validateShopIn(
       const qty = good.get(sku) ?? 0;
       // Never receive more than the Lab's OUT really moved into transit (2026-10-20, REP/02079:
       // check edited 1 → 3 after the OUT was pushed at 1; the IN took 3 and transit went −2).
-      const demandAll = ms.reduce((t, m) => t + Number(m.product_uom_qty), 0);
-      if (qty > demandAll) return skip(`over_lab_out:${sku}`, { pickingName: picking.name });
+      // Cap = done quantity of the Lab's OUT (not the IN demand, which ignores upward adjustments).
+      const outDone = outDoneByPid.get(ms[0].product_id?.[0]) ?? 0;
+      if (qty > outDone) return skip(`over_lab_out:${sku}`, { pickingName: picking.name });
       if (ms.length === 1) {
+        // qty may exceed the IN demand when the Lab raised the line: writing quantity > demand lets
+        // Odoo validate the extra (no backorder, demand untouched).
         plan.push({ sku, moveId: ms[0].id, note: null, expectedQty: Number(ms[0].product_uom_qty), deliverQty: qty });
         continue;
       }

@@ -23,6 +23,9 @@ export async function GET(req: Request) {
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // produced more than 1h ago
+  // Only items produced in the last 24 h (2026-10-22): the route never ran before (middleware
+  // gap), so ~400 old rows since July would otherwise all fire at once on the first call.
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const { data: rows, error } = await supabase
     .from('lab_assignments')
@@ -30,6 +33,7 @@ export async function GET(req: Request) {
     .eq('transferred', false)
     .not('produced_at', 'is', null)
     .lte('produced_at', cutoff)
+    .gte('produced_at', since)
     .is('stock_reminder_sent_at', null)
     .or('cancelled.is.null,cancelled.eq.false');
   if (error) return NextResponse.json({ error: error.message }, { status: 502 });
