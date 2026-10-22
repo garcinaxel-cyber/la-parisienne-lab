@@ -8,6 +8,7 @@ import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo, DeliveryDest
 import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
 import { isStockFamily, type ProdStatus } from '@/lib/delivery-check-production';
 import { TEAM_LABELS, type Team } from '@/lib/types';
+import { SHOP_CONFIG } from '@/lib/shops';
 
 
 // "Bếp → kho" cell (Axel, 2026-10-19): what the kitchen produced / sent to stock for this SKU
@@ -238,6 +239,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
   const [savingLine, setSavingLine] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [validated, setValidated] = useState(header.status === 'validated');
+  const noPrintNeeded = header.source_type === 'replenishment' && SHOP_CONFIG[header.shop_name ?? '']?.docType === 'replenishment';
   const [validateError, setValidateError] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [hiddenFromPrint, setHiddenFromPrint] = useState<Record<string, boolean>>(() =>
@@ -406,6 +408,18 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
                     jamais livrer n'a souvent aucune raison d'être imprimée du tout (Axel,
                     2026-09-18 — le bouton n'apparaissait qu'après impression, ce qui ratait
                     exactement ce cas). */}
+                {/* Own La Paris shops (replenishment REP, not invoiced) — printing is no longer
+                    required to reach 100% (Axel, 2026-10-22): the Odoo validation button shows
+                    right away; printing stays available. Invoiced customers (SO: Moon Flower,
+                    B2B, Winmart…) keep the print → Odoo confirmation flow. */}
+                {!header.printed_at && noPrintNeeded && (
+                  <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
+                    className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5 text-white"
+                    style={{ backgroundColor: header.odoo_push_status === 'error' ? '#B91C1C' : '#16A34A' }}
+                    title={header.odoo_push_error ?? undefined}>
+                    <CheckCheck size={15} /> {vi ? 'Xác nhận giao hàng trên Odoo' : 'Valider la livraison Odoo'}
+                  </Link>
+                )}
                 {header.printed_at && (
                   <Link href={`/delivery-print?date=${header.delivery_date}&orderRef=${encodeURIComponent(header.order_ref)}&validate=1`}
                     className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-3 py-1.5"

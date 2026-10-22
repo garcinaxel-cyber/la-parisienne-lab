@@ -192,6 +192,9 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         <div className="sticky top-2 z-20 flex items-center gap-2 rounded-xl px-3 py-2.5 flex-wrap shadow-md" style={{ backgroundColor: NAVY, color: '#fff' }}>
           <b className="text-[13px] flex-1">{L(`Đã chọn ${selLines.length} dòng`, `${selLines.length} lines selected`)}</b>
           <button onClick={() => setSel(new Set())} className="text-xs font-bold px-2" style={{ color: '#F0D98A' }}>{L('Bỏ chọn', 'Clear')}</button>
+          <a href={`/purchase-print?lines=${selLines.map(l => l.id).join(',')}`} target="_blank" rel="noopener"
+            className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ border: '1px solid #F0D98A', color: '#F0D98A' }}>
+            🖨 {L('In phiếu đề xuất', 'Print purchase request')}</a>
           <button disabled={busy || !selLines.length} onClick={() => { setPoVendor(suggested.length === 1 ? String(suggested[0].id) : ''); setPoOpen(true); }} className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ backgroundColor: '#F0D98A', color: NAVY }}>{L('Tạo PO nháp trên Odoo', 'Create draft PO in Odoo')} ›</button>
         </div>
       )}
