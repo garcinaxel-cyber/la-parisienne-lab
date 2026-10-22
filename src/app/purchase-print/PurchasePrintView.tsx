@@ -105,7 +105,7 @@ export default function PurchasePrintView({ lines, printedBy }: { lines: Purchas
             <div style={{ fontWeight: 700 }}>Phê Duyệt</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
             <div style={{ height: 90 }} />
-            <div style={{ fontWeight: 700 }}>Dương Xuân Giang</div>
+            <div style={{ fontWeight: 700 }}>Nguyễn Thị Thu Hương</div>
           </div>
         </div>
         <div className="no-print" style={{ fontSize: 11, color: '#888', marginTop: 16 }}>In bởi {printedBy}</div>
