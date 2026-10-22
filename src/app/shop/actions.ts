@@ -5,7 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { ensureDeliveryOrderChecklist, normShopName, type CheckLine, type DeliveryOrderHeader } from '@/lib/delivery-check';
 import {
-  getScrapReasonTags, resolveProductsBySku, resolveShopWarehouseLocation, createShopScrap,
+  getScrapReasonTags, resolveProductsBySku, explainMissingSku, resolveShopWarehouseLocation, createShopScrap,
 } from '@/lib/odoo-scrap';
 import { prefillReplenishmentReceivedQty } from '@/lib/odoo-shop-receipt-sync';
 import { odooConfigured, odooExecute } from '@/lib/odoo';
@@ -772,7 +772,7 @@ export async function recordShopLossAction(input: {
       const products = await resolveProductsBySku([input.sku]);
       const product = products[input.sku];
       if (!product) {
-        odooSyncError = `SKU "${input.sku}" introuvable sur Odoo`;
+        odooSyncError = await explainMissingSku(input.sku);
       } else {
         const result = await createShopScrap({
           shopName: auth.shopName,

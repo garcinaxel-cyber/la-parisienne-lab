@@ -109,6 +109,19 @@ export async function resolveProductsBySku(skus: string[]): Promise<Record<strin
   return out;
 }
 
+/** Why a SKU did not resolve (Axel, 2026-10-22): losses entered on an old fiche variant whose
+ *  product is ARCHIVED in Odoo used to fail as "introuvable", which hid the real cause (the
+ *  product was replaced by a new code, e.g. S-BBMFB2 -> BMATCHAF). Read-only lookup including
+ *  archived products, used only to word the sync error. */
+export async function explainMissingSku(sku: string): Promise<string> {
+  try {
+    const rows = await tmo(odooExecuteWrite<any[]>('product.product', 'search_read',
+      [[['default_code', '=', sku], ['active', '=', false]]], { fields: ['id', 'name'], limit: 1 }), 15000, 'archived sku');
+    if (rows?.length) return `SKU "${sku}" archivé dans Odoo (${rows[0].name}) — produit remplacé ? Choisir le produit actuel dans la fiche`;
+  } catch { /* fall through */ }
+  return `SKU "${sku}" introuvable sur Odoo`;
+}
+
 export interface CreateShopScrapInput {
   shopName: string;
   productId: number;

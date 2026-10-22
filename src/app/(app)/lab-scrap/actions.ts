@@ -1,7 +1,7 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
-import { getScrapReasonTags, resolveProductsBySku, createLabScrap } from '@/lib/odoo-scrap';
+import { getScrapReasonTags, resolveProductsBySku, explainMissingSku, createLabScrap } from '@/lib/odoo-scrap';
 
 // LAB's own scrap/loss report — admin + assistant space (never the shop portal). Axel,
 // 2026-08-27: "une fonction de scrap similaire aux shops mais pour les produits casse du lab".
@@ -113,7 +113,7 @@ export async function recordLabLossAction(input: {
       const products = await resolveProductsBySku([input.sku]);
       const product = products[input.sku];
       if (!product) {
-        odooSyncError = `SKU "${input.sku}" introuvable sur Odoo`;
+        odooSyncError = await explainMissingSku(input.sku);
       } else {
         const result = await createLabScrap({
           productId: product.id,
