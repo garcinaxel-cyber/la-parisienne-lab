@@ -920,6 +920,18 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     const r = await updateMaterialAction(m.tmplId, p);
     if (r.error) { setMsg(r.error); load(); }
   }
+  async function savePack(m: RawMaterial) {
+    const f = parseFloat(packFactor.replace(',', '.'));
+    if (!packLabel.trim() || !(f > 0)) return;
+    await patch(m, { packs: [...m.packs, { label: packLabel.trim(), factor: f }] });
+    setMsg(L(`Đã lưu: 1 ${packLabel.trim()} = ${fmtQty(f)} ${m.uom} (${rawName(m, lang)})`, `Saved: 1 ${packLabel.trim()} = ${fmtQty(f)} ${m.uom} (${rawName(m, lang)})`));
+    setPackFor(null); setPackLabel(''); setPackFactor('');
+  }
+  async function saveBrand(m: RawMaterial) {
+    if (!brandText.trim()) return;
+    await patch(m, { brands: [...(m.brands ?? []), brandText.trim()] });
+    setBrandFor(null); setBrandText('');
+  }
   const all = items ?? [];
   // Names in the screen's language (Axel, 2026-10-12): Vietnamese name when the app is in VI, Odoo name
   // kept underneath; the search matches both names and the SKU, accents ignored.
@@ -1053,9 +1065,12 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                       <button onClick={() => patch(m, { packs: m.packs.filter((_, j) => j !== i) })} style={{ color: '#9CA3AF' }}><X size={11} /></button></div>)}
                     {packFor === m.tmplId ? (
                       <div className="flex items-center gap-1 mt-1">
-                        <span>1</span><input autoFocus value={packLabel} onChange={e => setPackLabel(e.target.value)} placeholder={L('vd túi, hộp 2 kg', 'e.g. bag, box 2 kg')} className="w-24 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
-                        <span>=</span><input value={packFactor} onChange={e => setPackFactor(e.target.value)} inputMode="decimal" placeholder="0,5" className="w-14 rounded px-1.5 py-0.5 text-[11px] text-right" style={{ border: `1px solid ${BORDER}` }} />{m.uom}
-                        <button onClick={() => { const f = parseFloat(packFactor.replace(',', '.')); if (packLabel.trim() && f > 0) patch(m, { packs: [...m.packs, { label: packLabel.trim(), factor: f }] }); setPackFor(null); setPackLabel(''); setPackFactor(''); }} style={{ color: NAVY }}><Check size={13} /></button>
+                        <span>1</span><input autoFocus value={packLabel} onChange={e => setPackLabel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') savePack(m); if (e.key === 'Escape') setPackFor(null); }} placeholder={L('vd túi, hộp 2 kg', 'e.g. bag, box 2 kg')} className="w-24 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
+                        <span>=</span><input value={packFactor} onChange={e => setPackFactor(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') savePack(m); if (e.key === 'Escape') setPackFor(null); }} inputMode="decimal" placeholder="0,5" className="w-14 rounded px-1.5 py-0.5 text-[11px] text-right" style={{ border: `1px solid ${BORDER}` }} />{m.uom}
+                        {/* Explicit Save button (Axel, 2026-10-23): the small ✓ was not seen as "save" and packs were lost. */}
+                        <button onClick={() => savePack(m)} disabled={!packLabel.trim() || !(parseFloat(packFactor.replace(',', '.')) > 0)}
+                          className="rounded-md px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>{L('Lưu', 'Save')}</button>
+                        <button onClick={() => setPackFor(null)} aria-label={L('Huỷ', 'Cancel')} style={{ color: '#9CA3AF' }}><X size={12} /></button>
                       </div>
                     ) : <button onClick={() => { setPackFor(m.tmplId); setPackLabel(''); setPackFactor(''); }} className="text-[11px] font-bold rounded-md px-1.5 py-0.5 mt-0.5" style={{ color: GOLD_TEXT, border: `1px dashed ${GOLD}` }}>+ {L('quy cách / đơn vị', 'pack / unit')}</button>}
                     {/* Brands (2026-10-19): the chef picks one on the storage slip; Odoo keeps one product. */}
@@ -1064,8 +1079,9 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                         <button onClick={() => patch(m, { brands: m.brands.filter(x => x !== b) })} aria-label={L('Xoá', 'Remove')} style={{ color: '#9CA3AF' }}><X size={10} /></button></span>))}</div>}
                     {brandFor === m.tmplId ? (
                       <div className="flex items-center gap-1 mt-1">
-                        <input value={brandText} onChange={e => setBrandText(e.target.value)} placeholder={L('vd Paysan Breton', 'e.g. Paysan Breton')} className="w-28 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
-                        <button onClick={() => { if (brandText.trim()) patch(m, { brands: [...(m.brands ?? []), brandText.trim()] }); setBrandFor(null); setBrandText(''); }} style={{ color: NAVY }} aria-label="OK"><Check size={13} /></button>
+                        <input autoFocus value={brandText} onChange={e => setBrandText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveBrand(m); if (e.key === 'Escape') setBrandFor(null); }} placeholder={L('vd Paysan Breton', 'e.g. Paysan Breton')} className="w-28 rounded px-1.5 py-0.5 text-[11px]" style={{ border: `1px solid ${BORDER}` }} />
+                        <button onClick={() => saveBrand(m)} disabled={!brandText.trim()} className="rounded-md px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>{L('Lưu', 'Save')}</button>
+                        <button onClick={() => setBrandFor(null)} aria-label={L('Huỷ', 'Cancel')} style={{ color: '#9CA3AF' }}><X size={12} /></button>
                       </div>
                     ) : <button onClick={() => { setBrandFor(m.tmplId); setBrandText(''); }} className="block text-[11px] font-bold mt-0.5" style={{ color: GOLD_TEXT }}>+ {L('thương hiệu', 'brand')}</button>}
                   </td>
