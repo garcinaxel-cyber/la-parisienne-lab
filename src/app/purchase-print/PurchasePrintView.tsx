@@ -26,6 +26,20 @@ function person(name: string | null, team: string): { full: string; teamLabel: s
     ?? (team === 'kho' ? PEOPLE.find(p => p.team === 'kho') : undefined);
   return hit ? { full: hit.full, teamLabel: hit.teamLabel } : { full: name ?? '', teamLabel: TEAM_PRINT[team] ?? team };
 }
+// Who is written as "Người đề xuất" (Axel, 2026-10-23): the team lead signs for the team, whoever typed it.
+// Team Macaron (hung): Tạ Duy Hưng for every member; when Hưng himself requests, Lê Công Trung.
+// Team Baker: everyone is a lead → the requester's own name. Kho: Nguyễn Thị Thu Hương.
+const TEAM_LEAD: Record<string, string> = { entremet: 'huong', baby_mama: 'thu trang', kho: 'miss flavor' };
+function signer(name: string | null, team: string): { full: string; teamLabel: string } {
+  if (team === 'hung') {
+    const self = person(name, team).full === 'Tạ Duy Hưng';
+    return { full: self ? 'Lê Công Trung' : 'Tạ Duy Hưng', teamLabel: 'Team Macaron' };
+  }
+  const lead = team === 'baker' ? undefined : TEAM_LEAD[team];
+  const p = person(lead ?? name, team);
+  return { full: p.full, teamLabel: TEAM_PRINT[team] ?? p.teamLabel };
+}
+const PURCHASER = 'Nguyễn Thị Thu Hương';
 
 
 function vnDate(iso: string | null | undefined): string {
@@ -34,9 +48,9 @@ function vnDate(iso: string | null | undefined): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
-export default function PurchasePrintView({ lines, printedBy }: { lines: PurchaseLine[]; printedBy: string }) {
+export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; printedBy?: string }) {
   const sorted = [...lines].sort((a, b) => a.requestNo - b.requestNo || a.name.localeCompare(b.name));
-  const people = sorted.map(l => person(l.requestedBy, l.team));
+  const people = sorted.map(l => signer(l.requestedBy, l.team));
   const requesters = Array.from(new Set(people.map(p => p.full).filter(Boolean)));
   const teams = Array.from(new Set(people.map(p => p.teamLabel).filter(Boolean)));
   const nos = Array.from(new Set(sorted.map(l => l.requestNo))).filter(Boolean);
@@ -121,7 +135,13 @@ export default function PurchasePrintView({ lines, printedBy }: { lines: Purchas
           </tbody>
         </table>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 22 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 22 }}>
+          <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700 }}>Người lập phiếu</div>
+            <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
+            <div style={{ height: 90 }} />
+            <div style={{ fontWeight: 700 }}>{PURCHASER}</div>
+          </div>
           <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700 }}>Phê Duyệt</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
@@ -129,7 +149,6 @@ export default function PurchasePrintView({ lines, printedBy }: { lines: Purchas
             <div style={{ fontWeight: 700 }}>Dương Xuân Giang</div>
           </div>
         </div>
-        <div className="no-print" style={{ fontSize: 11, color: '#888', marginTop: 16 }}>In bởi {printedBy}</div>
       </div>
     </div>
   );
