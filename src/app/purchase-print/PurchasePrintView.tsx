@@ -28,13 +28,13 @@ function person(name: string | null, team: string): { full: string; teamLabel: s
   return hit ? { full: hit.full, teamLabel: hit.teamLabel } : { full: name ?? '', teamLabel: TEAM_PRINT[team] ?? team };
 }
 // Who is written as "Người đề xuất" (Axel, 2026-10-23): the team lead signs for the team, whoever typed it.
-// Team Macaron (hung): Tạ Duy Hưng for every member; when Hưng himself requests, Lê Công Trung.
+// Team Macaron (hung): Tạ Duy Hưng for every member, except Lê Công Trung when Trung requests himself.
 // Team Baker: everyone is a lead → the requester's own name. Kho: Nguyễn Thị Thu Hương.
 const TEAM_LEAD: Record<string, string> = { entremet: 'huong', baby_mama: 'thu trang', kho: 'miss flavor' };
 function signer(name: string | null, team: string): { full: string; teamLabel: string } {
   if (team === 'hung') {
-    const self = person(name, team).full === 'Tạ Duy Hưng';
-    return { full: self ? 'Lê Công Trung' : 'Tạ Duy Hưng', teamLabel: 'Team Macaron' };
+    const trung = person(name, team).full === 'Lê Công Trung';
+    return { full: trung ? 'Lê Công Trung' : 'Tạ Duy Hưng', teamLabel: 'Team Macaron' };
   }
   const lead = team === 'baker' ? undefined : TEAM_LEAD[team];
   const p = person(lead ?? name, team);
