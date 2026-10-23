@@ -157,7 +157,7 @@ export async function receiveSaleToPartnerShop(soId: number, pickingId: number, 
 // ── Moon → shop ───────────────────────────────────────────────────────────────────────────────
 // refund=false → taken back on an UNPAID invoice (quantity lowered, no credit note).
 // refund=true  → the covering invoice is already paid: return + DRAFT credit note (Axel, 2026-10-23).
-type Allocation = { soId: number; soName: string; deliveryId: number; deliveryName: string; productId: number; sku: string; qty: number; refund: boolean };
+type Allocation = { soId: number; soName: string; deliveryId: number; deliveryName: string; productId: number; sku: string; qty: number; refund: boolean; adjust?: boolean };
 const REFUND_LOOKBACK_DAYS = 240;
 // Axel, 2026-10-23: credit notes stay the exception ("on essaie au max de pas faire d'avoir") —
 // OFF in the app: a product covered only by paid deliveries is still refused at send, and the
@@ -168,7 +168,7 @@ const ALLOW_CREDIT_NOTE = false;
 // Unpaid deliveries first (no credit note); what is left goes on paid ones (credit note).
 // 2026-10-23 fix: read the delivered MOVES of the requested products directly — the old
 // "150 latest Moon orders" cap missed older deliveries (Moon has ~4 orders a day).
-export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: string; qty: number }[], opts?: { allowCreditNote?: boolean }): Promise<{ ok: true; allocations: Allocation[] } | { ok: false; error: string; short?: { sku: string; missing: number }[] }> {
+export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: string; qty: number }[], opts?: { allowCreditNote?: boolean; allowStockAdjust?: boolean }): Promise<{ ok: true; allocations: Allocation[] } | { ok: false; error: string; short?: { sku: string; missing: number }[] }> {
   const allowCN = opts?.allowCreditNote ?? ALLOW_CREDIT_NOTE;
   const partner = await resolvePartnerId(fromShop);
   if (typeof partner !== 'number') return { ok: false, error: partner.error };
@@ -230,6 +230,12 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
       left -= q;
       allocations.push({ soId: c.so.id, soName: c.so.name, deliveryId: c.deliveryId, deliveryName: c.deliveryName, productId: pid, sku: l.sku, qty: q, refund: c.refund });
     }
+    // Admin-approved exception (Axel, 2026-10-23): what no unpaid delivery covers is simply ADDED
+    // to the receiving shop's stock (inventory adjustment) — Moon is not refunded, no credit note.
+    if (left > 0 && opts?.allowStockAdjust) {
+      allocations.push({ soId: 0, soName: '', deliveryId: 0, deliveryName: '', productId: pid, sku: l.sku, qty: left, refund: false, adjust: true });
+      left = 0;
+    }
     if (left > 0) short.push({ sku: l.sku, missing: left });
   }
   if (short.length) {
@@ -267,6 +273,24 @@ async function draftCreditNote(soId: number, soName: string, qtyByProduct: Map<n
     await odooExecuteWrite('account.move', 'message_post', [[rid]], { body: `Hoá đơn giảm (nháp) — tạo bởi trợ lý AI theo yêu cầu của Axel. Lý do: Moon Flower chuyển hàng sang ${toCode} (phiếu ${ref}). Hàng này nằm trong đơn ${soName}, hoá đơn ${inv.name} đã thanh toán nên không thể giảm số lượng trên hoá đơn; vì vậy tạo hoá đơn giảm cho Moon, hàng trả về kho ${toCode} (${returnName}). Kế toán kiểm tra và xác nhận giúp.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
   } catch { /* note is best effort */ }
   return { ok: true, label: `${cn?.name && cn.name !== '/' ? cn.name : 'credit note'} (draft, −${Math.round(Number(cn?.amount_total ?? 0)).toLocaleString('en-US')}) on ${inv.name}` };
+}
+
+// +qty on the shop's stock through a real inventory adjustment (stock.quant apply), with a
+// readable reason as the move reference.
+async function adjustShopStock(locationId: number, productId: number, qty: number, reason: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read', [[['location_id', '=', locationId], ['product_id', '=', productId]]], { fields: ['id', 'quantity'], limit: 5 });
+    let qid: number; let cur = 0;
+    if (quants.length) { qid = quants[0].id; cur = quants.reduce((t, x) => t + Number(x.quantity), 0); }
+    else qid = await odooExecuteWrite<number>('stock.quant', 'create', [{ location_id: locationId, product_id: productId, inventory_quantity: 0 }], { context: { inventory_mode: true, ...NO_MAIL } });
+    await odooExecuteWrite('stock.quant', 'write', [[qid], { inventory_quantity: cur + qty }], { context: { inventory_mode: true, ...NO_MAIL } });
+    await odooExecuteWrite('stock.quant', 'action_apply_inventory', [[qid]], { context: { inventory_mode: true, inventory_name: reason.slice(0, 250), ...NO_MAIL } });
+    const [after] = await odooExecuteWrite<any[]>('stock.quant', 'read', [[qid]], { fields: ['quantity'] });
+    if (Math.abs(Number(after?.quantity ?? 0) - (cur + qty)) > 1e-6) return { ok: false, error: `Stock adjustment not applied (now ${after?.quantity}, expected ${cur + qty})` };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: `Stock adjustment: ${e?.message ?? String(e)}` };
+  }
 }
 
 async function returnIntoLocation(deliveryId: number, qtyByProduct: Map<number, number>, destLocationId: number, origin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
@@ -311,7 +335,7 @@ async function returnIntoLocation(deliveryId: number, qtyByProduct: Map<number, 
 }
 
 // Reception at the shop of goods sent by Moon.
-export async function receiveReturnFromPartnerShop(input: { fromShop: string; toWarehouseCode: string; ref: string; lines: { sku: string; qty: number }[]; allowCreditNote?: boolean }): Promise<{ ok: true; docs: string[] } | { ok: false; error: string; docs: string[] }> {
+export async function receiveReturnFromPartnerShop(input: { fromShop: string; toWarehouseCode: string; ref: string; lines: { sku: string; qty: number }[]; allowCreditNote?: boolean; allowStockAdjust?: boolean }): Promise<{ ok: true; docs: string[] } | { ok: false; error: string; docs: string[] }> {
   const docs: string[] = [];
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured', docs };
   const lines = input.lines.filter(l => l.qty > 0);
@@ -319,8 +343,10 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
   try {
     const wh = await resolveWarehouse(input.toWarehouseCode);
     if ('error' in wh) return { ok: false, error: wh.error, docs };
-    const plan = await planReturnFromPartnerShop(input.fromShop, lines, { allowCreditNote: input.allowCreditNote });
+    const plan = await planReturnFromPartnerShop(input.fromShop, lines, { allowCreditNote: input.allowCreditNote, allowStockAdjust: input.allowStockAdjust });
     if (!plan.ok) return { ok: false, error: plan.error, docs };
+    const adjusts = plan.allocations.filter(x => x.adjust);
+    plan.allocations = plan.allocations.filter(x => !x.adjust);
     const byDelivery = new Map<number, Allocation[]>();
     for (const a of plan.allocations) byDelivery.set(a.deliveryId, [...(byDelivery.get(a.deliveryId) ?? []), a]);
     for (const [deliveryId, allocs] of Array.from(byDelivery.entries())) {
@@ -364,6 +390,13 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
         if (!noted) docs.push(`${allocs[0].soName}: ghi chú hóa đơn lỗi`);
       }
       docs.push(`${inv.name || allocs[0].soName}: −${allocs.map(a => `${a.sku}×${a.qty}`).join(', ')} (draft)`);
+    }
+    // Stock adjustments last: a failed return above never leaves an adjustment behind.
+    for (const a of adjusts) {
+      const r = await adjustShopStock(wh.stockLocationId, a.productId, a.qty,
+        `${input.ref} — Moon chuyển ${a.sku} ×${a.qty} sang ${input.toWarehouseCode}; hoá đơn Moon đã thanh toán nên không trả hàng trên hoá đơn, chỉ cộng tồn kho shop nhận (không hoá đơn giảm)`);
+      if (!r.ok) return { ok: false, error: r.error, docs };
+      docs.push(`${a.sku} +${a.qty}: điều chỉnh tồn kho ${input.toWarehouseCode} (không credit note)`);
     }
     return { ok: true, docs };
   } catch (e: any) {
