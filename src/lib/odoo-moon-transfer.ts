@@ -12,7 +12,7 @@
 //    a RETURN on Moon's latest UNPAID Lab deliveries that carry the product, newest first, split
 //    over several if needed, with the return's destination set to the receiving shop's stock.
 //    Each touched invoice goes back to draft with its quantity lowered — no credit note, and no
-//    negative line ever (Axel: if no unpaid delivery covers it, the transfer is refused at send).
+//    negative line ever. Credit-note path on PAID deliveries exists but is OFF (ALLOW_CREDIT_NOTE).
 //
 // Moon pays its invoices in monthly batches (checked live 2026-10-16: everything since 1/09 is
 // unpaid) and there is no accounting lock date, so an unpaid delivery is practically always there.
@@ -155,33 +155,42 @@ export async function receiveSaleToPartnerShop(soId: number, pickingId: number, 
 }
 
 // ── Moon → shop ───────────────────────────────────────────────────────────────────────────────
-type Allocation = { soId: number; soName: string; deliveryId: number; deliveryName: string; productId: number; sku: string; qty: number };
+// refund=false → taken back on an UNPAID invoice (quantity lowered, no credit note).
+// refund=true  → the covering invoice is already paid: return + DRAFT credit note (Axel, 2026-10-23).
+type Allocation = { soId: number; soName: string; deliveryId: number; deliveryName: string; productId: number; sku: string; qty: number; refund: boolean };
+const REFUND_LOOKBACK_DAYS = 240;
+// Axel, 2026-10-23: credit notes stay the exception ("on essaie au max de pas faire d'avoir") —
+// OFF in the app: a product covered only by paid deliveries is still refused at send, and the
+// rare case is handled by hand in Odoo. Flip to true only on his explicit decision.
+const ALLOW_CREDIT_NOTE = false;
 
-// Which unpaid Moon deliveries can take back these quantities (newest first). Read-only.
+// Which Moon deliveries can take back these quantities (newest first). Read-only.
+// Unpaid deliveries first (no credit note); what is left goes on paid ones (credit note).
+// 2026-10-23 fix: read the delivered MOVES of the requested products directly — the old
+// "150 latest Moon orders" cap missed older deliveries (Moon has ~4 orders a day).
 export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: string; qty: number }[]): Promise<{ ok: true; allocations: Allocation[] } | { ok: false; error: string; short?: { sku: string; missing: number }[] }> {
   const partner = await resolvePartnerId(fromShop);
   if (typeof partner !== 'number') return { ok: false, error: partner.error };
   const prods = await productsBySku(lines.map(l => l.sku));
   const unknown = lines.filter(l => !prods.has(l.sku)).map(l => l.sku);
   if (unknown.length) return { ok: false, error: `Sản phẩm không tìm thấy trên Odoo: ${unknown.join(', ')}` };
-  const since = new Date(Date.now() - LOOKBACK_DAYS * 86400 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-  const sos = await tmo(odooExecute<any[]>('sale.order', 'search_read',
-    [[['partner_id', '=', partner], ['state', '=', 'sale'], ['warehouse_id', '=', LAB_WAREHOUSE_ID], ['date_order', '>=', since]]],
-    { fields: ['id', 'name', 'invoice_ids', 'picking_ids', 'date_order'], order: 'date_order desc, id desc', limit: 150 }), 20000, 'moon orders');
-  // Unpaid only: every live customer invoice of the order must be not_paid.
+  const since = new Date(Date.now() - REFUND_LOOKBACK_DAYS * 86400 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const pids = Array.from(new Set(Array.from(prods.values()).map(p => p.id)));
+  const dMoves = await tmo(odooExecute<any[]>('stock.move', 'search_read',
+    [[['product_id', 'in', pids], ['state', '=', 'done'], ['location_id', '=', LAB_STOCK_LOCATION_ID], ['location_dest_id.usage', '=', 'customer'],
+      ['picking_id.partner_id', 'child_of', partner], ['picking_id.sale_id', '!=', false], ['date', '>=', since]]],
+    { fields: ['id', 'picking_id', 'product_id', 'quantity', 'date'], order: 'date desc, id desc', limit: 2000 }), 20000, 'moon moves');
+  const pickIds = Array.from(new Set(dMoves.map(m => m.picking_id[0]))) as number[];
+  const picks = pickIds.length ? await odooExecute<any[]>('stock.picking', 'read', [pickIds], { fields: ['id', 'name', 'sale_id'] }) : [];
+  const soIds = Array.from(new Set(picks.map(p => p.sale_id?.[0]).filter(Boolean))) as number[];
+  const sos = soIds.length ? await odooExecute<any[]>('sale.order', 'read', [soIds], { fields: ['id', 'name', 'state', 'invoice_ids', 'warehouse_id'] }) : [];
+  const soById = new Map(sos.filter(s => s.state === 'sale' && s.warehouse_id?.[0] === LAB_WAREHOUSE_ID).map(s => [s.id, s]));
   const invIds = Array.from(new Set(sos.flatMap(s => s.invoice_ids ?? []))) as number[];
   const invs = invIds.length ? await odooExecute<any[]>('account.move', 'read', [invIds], { fields: ['id', 'state', 'move_type', 'payment_state'] }) : [];
   const invById = new Map(invs.map(i => [i.id, i]));
-  const okSos = sos.filter(s => (s.invoice_ids ?? []).every((id: number) => {
-    const i = invById.get(id);
-    return !i || i.state === 'cancel' || i.move_type !== 'out_invoice' || i.payment_state === 'not_paid';
-  }));
-  const pickIds = Array.from(new Set(okSos.flatMap(s => s.picking_ids ?? []))) as number[];
-  const picks = pickIds.length ? await odooExecute<any[]>('stock.picking', 'read', [pickIds], { fields: ['id', 'name', 'state', 'location_id', 'sale_id'] }) : [];
-  const deliveries = picks.filter(p => p.state === 'done' && p.location_id?.[0] === LAB_STOCK_LOCATION_ID);
-  const pidSet = new Set(Array.from(prods.values()).map(p => p.id));
-  const dMoves = deliveries.length ? await odooExecute<any[]>('stock.move', 'search_read',
-    [[['picking_id', 'in', deliveries.map(d => d.id)], ['state', '=', 'done'], ['product_id', 'in', Array.from(pidSet)]]], { fields: ['id', 'picking_id', 'product_id', 'quantity'] }) : [];
+  const live = (s: any) => (s.invoice_ids ?? []).map((id: number) => invById.get(id)).filter((i: any) => i && i.state !== 'cancel' && i.move_type === 'out_invoice');
+  const unpaid = (s: any) => live(s).every((i: any) => i.payment_state === 'not_paid');
+  const recentCut = new Date(Date.now() - LOOKBACK_DAYS * 86400 * 1000).toISOString().slice(0, 19).replace('T', ' ');
   const returned = dMoves.length ? await odooExecute<any[]>('stock.move', 'search_read',
     [[['origin_returned_move_id', 'in', dMoves.map(m => m.id)], ['state', '!=', 'cancel']]], { fields: ['origin_returned_move_id', 'product_uom_qty', 'quantity', 'state'] }) : [];
   const retByMove = new Map<number, number>();
@@ -189,29 +198,36 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
     const q = r.state === 'done' ? Number(r.quantity) : Number(r.product_uom_qty);
     retByMove.set(r.origin_returned_move_id[0], (retByMove.get(r.origin_returned_move_id[0]) ?? 0) + q);
   }
-  // returnable per (delivery, product)
-  const avail = new Map<string, number>();
+  type Cand = { deliveryId: number; deliveryName: string; productId: number; so: any; refund: boolean; avail: number; date: string };
+  const cands: Cand[] = [];
   for (const m of dMoves) {
-    const k = `${m.picking_id[0]}:${m.product_id[0]}`;
-    avail.set(k, (avail.get(k) ?? 0) + Number(m.quantity) - (retByMove.get(m.id) ?? 0));
+    const pk = picks.find(p => p.id === m.picking_id[0]);
+    const so = pk?.sale_id ? soById.get(pk.sale_id[0]) : undefined;
+    if (!so) continue;
+    const isUnpaid = unpaid(so);
+    // Unpaid: recent window only (as before). Paid (credit note): needs a posted invoice.
+    if (isUnpaid && String(m.date) < recentCut) continue;
+    if (!isUnpaid && (!ALLOW_CREDIT_NOTE || !live(so).some((i: any) => i.state === 'posted'))) continue;
+    const avail = Number(m.quantity) - (retByMove.get(m.id) ?? 0);
+    if (avail <= 0) continue;
+    const ex = cands.find(c => c.deliveryId === pk.id && c.productId === m.product_id[0]);
+    if (ex) ex.avail += avail;
+    else cands.push({ deliveryId: pk.id, deliveryName: pk.name, productId: m.product_id[0], so, refund: !isUnpaid, avail, date: String(m.date) });
   }
-  const soOfDelivery = new Map(deliveries.map(d => [d.id, okSos.find(s => (s.picking_ids ?? []).includes(d.id))!]));
-  const orderedDeliveries = okSos.flatMap(s => deliveries.filter(d => (s.picking_ids ?? []).includes(d.id)).sort((a, b) => b.id - a.id));
+  // unpaid first, then paid; newest first inside each group
+  cands.sort((a, b) => Number(a.refund) - Number(b.refund) || (a.date < b.date ? 1 : a.date > b.date ? -1 : b.deliveryId - a.deliveryId));
   const allocations: Allocation[] = [];
   const short: { sku: string; missing: number }[] = [];
   for (const l of lines) {
     const pid = prods.get(l.sku)!.id;
     let left = l.qty;
-    for (const d of orderedDeliveries) {
+    for (const c of cands) {
       if (left <= 0) break;
-      const k = `${d.id}:${pid}`;
-      const a = Math.max(0, avail.get(k) ?? 0);
-      if (!a) continue;
-      const q = Math.min(a, left);
-      avail.set(k, a - q);
+      if (c.productId !== pid || c.avail <= 0) continue;
+      const q = Math.min(c.avail, left);
+      c.avail -= q;
       left -= q;
-      const so = soOfDelivery.get(d.id)!;
-      allocations.push({ soId: so.id, soName: so.name, deliveryId: d.id, deliveryName: d.name, productId: pid, sku: l.sku, qty: q });
+      allocations.push({ soId: c.so.id, soName: c.so.name, deliveryId: c.deliveryId, deliveryName: c.deliveryName, productId: pid, sku: l.sku, qty: q, refund: c.refund });
     }
     if (left > 0) short.push({ sku: l.sku, missing: left });
   }
@@ -219,6 +235,37 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
     return { ok: false, short, error: `Không tìm thấy giao hàng Moon chưa thanh toán đủ cho: ${short.map(s => `${s.sku} (thiếu ${s.missing})`).join(', ')} — liên hệ Lab` };
   }
   return { ok: true, allocations };
+}
+
+// Paid invoice → DRAFT credit note for the returned quantities, same price / discount / taxes,
+// linked to the sale lines (the order's invoiced qty follows the return). Never posted here.
+async function draftCreditNote(soId: number, soName: string, qtyByProduct: Map<number, number>, skuOf: (pid: number) => string, returnName: string, ref: string, toCode: string): Promise<{ ok: true; label: string } | { ok: false; error: string }> {
+  const [so] = await odooExecute<any[]>('sale.order', 'read', [[soId]], { fields: ['invoice_ids', 'partner_invoice_id'] });
+  const invs = so?.invoice_ids?.length ? await odooExecute<any[]>('account.move', 'read', [so.invoice_ids], { fields: ['id', 'name', 'state', 'move_type', 'partner_id', 'journal_id'] }) : [];
+  const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state === 'posted').sort((a, b) => b.id - a.id)[0];
+  if (!inv) return { ok: false, error: `${soName}: no posted invoice to credit` };
+  const iLines = await odooExecute<any[]>('account.move.line', 'search_read', [[['move_id', '=', inv.id], ['display_type', '=', 'product']]],
+    { fields: ['id', 'product_id', 'quantity', 'price_unit', 'discount', 'tax_ids', 'sale_line_ids', 'analytic_distribution', 'name'] });
+  const cmds: any[] = [];
+  for (const [pid, q] of Array.from(qtyByProduct.entries())) {
+    const il = iLines.find(l => l.product_id?.[0] === pid);
+    if (!il) return { ok: false, error: `${inv.name}: product ${skuOf(pid)} not on the invoice` };
+    cmds.push([0, 0, {
+      product_id: pid, name: il.name, quantity: q, price_unit: il.price_unit, discount: il.discount,
+      tax_ids: [[6, 0, il.tax_ids ?? []]], sale_line_ids: [[6, 0, il.sale_line_ids ?? []]],
+      ...(il.analytic_distribution ? { analytic_distribution: il.analytic_distribution } : {}),
+    }]);
+  }
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+  const rid = await odooExecuteWrite<number>('account.move', 'create', [{
+    move_type: 'out_refund', partner_id: inv.partner_id?.[0], journal_id: inv.journal_id?.[0], reversed_entry_id: inv.id,
+    invoice_origin: soName, ref: `${ref} — ${returnName} → ${toCode}`, invoice_date: today, invoice_line_ids: cmds,
+  }], { context: NO_MAIL });
+  const [cn] = await odooExecute<any[]>('account.move', 'read', [[rid]], { fields: ['name', 'amount_total', 'state'] });
+  try {
+    await odooExecuteWrite('account.move', 'message_post', [[rid]], { body: `Avoir brouillon créé par la lab-app — transfert ${ref} Moon → ${toCode}, retour ${returnName} sur ${soName} (${inv.name} déjà payée). À valider par la comptabilité. / Credit note nháp — chuyển kho ${ref}, hàng trả về ${toCode}.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+  } catch { /* note is best effort */ }
+  return { ok: true, label: `${cn?.name && cn.name !== '/' ? cn.name : 'credit note'} (draft, −${Math.round(Number(cn?.amount_total ?? 0)).toLocaleString('en-US')}) on ${inv.name}` };
 }
 
 async function returnIntoLocation(deliveryId: number, qtyByProduct: Map<number, number>, destLocationId: number, origin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
@@ -281,6 +328,12 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
       const r = await returnIntoLocation(deliveryId, qty, wh.stockLocationId, input.ref);
       if (!r.ok) return { ok: false, error: r.error, docs };
       docs.push(`${r.name} (${allocs[0].soName})`);
+      if (allocs[0].refund) {
+        const cn = await draftCreditNote(allocs[0].soId, allocs[0].soName, qty, pid => allocs.find(a => a.productId === pid)?.sku ?? String(pid), r.name, input.ref, input.toWarehouseCode);
+        if (!cn.ok) return { ok: false, error: `${r.name} validated but credit note failed: ${cn.error}`, docs };
+        docs.push(cn.label);
+        continue;
+      }
       // Invoice of that order: back to draft, quantity lowered. Left in DRAFT for accounting.
       const [so] = await odooExecute<any[]>('sale.order', 'read', [[allocs[0].soId]], { fields: ['invoice_ids'] });
       const invs = so?.invoice_ids?.length ? await odooExecute<any[]>('account.move', 'read', [so.invoice_ids], { fields: ['id', 'name', 'state', 'move_type'] }) : [];

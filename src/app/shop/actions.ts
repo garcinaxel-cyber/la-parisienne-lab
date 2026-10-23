@@ -2463,7 +2463,7 @@ export async function submitShopTransferAction(input: {
   } else if (isPartnerShop(auth.shopName)) {
     if (!transferWarehouseCode(toShop)) return { error: 'Kho nhận không có kho Odoo' };
     const r = await planReturnFromPartnerShop(auth.shopName, lines.map(l => ({ sku: l.sku, qty: l.qty })));
-    odoo = r.ok ? { ok: true, assigned: true, docs: `Trả hàng từ: ${Array.from(new Set(r.allocations.map(a => a.soName))).join(', ')} (khi nhận)` } : { ok: false, error: r.error };
+    odoo = r.ok ? { ok: true, assigned: true, docs: `Trả hàng từ: ${Array.from(new Set(r.allocations.map(a => a.soName + (a.refund ? ' (credit note)' : '')))).join(', ')} (khi nhận)` } : { ok: false, error: r.error };
   } else {
     odoo = await createInterShopTransfer(auth.shopName, toShop, lines, ref, note);
     if (odoo.ok && !odoo.pickingId) odoo = { ok: false, error: 'Lỗi Odoo không xác định' };
