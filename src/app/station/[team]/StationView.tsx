@@ -102,13 +102,19 @@ type Assignment = {
 // Delivered before declared (Axel, 2026-10-23): the delivery check already counted this product
 // for the card's order(s), but the chef has not declared it produced + sent to stock. The Lab
 // stock goes negative in Odoo until it is sent. 'skip' (taken from stock) is not a gap.
+// Storable families are served from the Lab stock: a delivery without a card is normal there.
+const STORABLE_CATS = ['Macaron', 'Biscuit Voyage', 'Tiramisu', 'Chocolate'];
 function isLate(a: Assignment): boolean {
+  if (STORABLE_CATS.includes(a.category_name_vi ?? '')) return false;
   return !!a.delivered && !a.cancelled && a.status !== 'skip' && (a.qty_sent_total ?? 0) < a.delivered.qty;
 }
+// "14:58" today, "22/10 14:58" otherwise (checks are often done the day before).
 function hhmm(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  const n = new Date(Date.now() + 7 * 3600 * 1000);
+  const t = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  return d.toISOString().slice(0, 10) === n.toISOString().slice(0, 10) ? t : `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')} ${t}`;
 }
 
 // Search result = a lab fiche (id is the fiche_id, variant_id its default variant)
