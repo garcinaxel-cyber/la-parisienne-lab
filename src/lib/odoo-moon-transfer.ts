@@ -205,10 +205,9 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
     const pk = picks.find(p => p.id === m.picking_id[0]);
     const so = pk?.sale_id ? soById.get(pk.sale_id[0]) : undefined;
     if (!so) continue;
-    const isUnpaid = unpaid(so);
-    // Unpaid: recent window only (as before). Paid (credit note): needs a posted invoice.
-    if (isUnpaid && String(m.date) < recentCut) continue;
-    if (!isUnpaid && (!allowCN || !live(so).some((i: any) => i.state === 'posted'))) continue;
+    // Axel, 2026-10-23: Moon → shop is a STOCK move only — Moon's invoices (VAT issued daily) are
+    // never changed. Any Moon delivery of the product can be returned from (newest first).
+    const isUnpaid = true; void unpaid; void recentCut; void allowCN;
     const avail = Number(m.quantity) - (retByMove.get(m.id) ?? 0);
     if (avail <= 0) continue;
     const ex = cands.find(c => c.deliveryId === pk.id && c.productId === m.product_id[0]);
@@ -232,7 +231,7 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
     }
     // Admin-approved exception (Axel, 2026-10-23): what no unpaid delivery covers is simply ADDED
     // to the receiving shop's stock (inventory adjustment) — Moon is not refunded, no credit note.
-    if (left > 0 && opts?.allowStockAdjust) {
+    if (left > 0 && (opts?.allowStockAdjust ?? true)) {
       allocations.push({ soId: 0, soName: '', deliveryId: 0, deliveryName: '', productId: pid, sku: l.sku, qty: left, refund: false, adjust: true });
       left = 0;
     }
@@ -306,7 +305,7 @@ async function returnIntoLocation(deliveryId: number, qtyByProduct: Map<number, 
     const mv = dMoves.find(m => m.id === rl.move_id?.[0]);
     const q = Math.min(want, Number(mv?.quantity ?? want));
     remaining.set(pid, want - q);
-    cmds.push([1, rl.id, { quantity: q, to_refund: q > 0 }]);
+    cmds.push([1, rl.id, { quantity: q, to_refund: false }]); // stock only — invoice never follows (2026-10-23)
   }
   const short = Array.from(remaining.entries()).filter(([, q]) => q > 0);
   if (short.length) return { ok: false, error: `Return: product(s) ${short.map(([p]) => p).join(', ')} not on the delivery` };
@@ -361,40 +360,12 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
         docs.push(cn.label);
         continue;
       }
-      // Invoice of that order: back to draft, quantity lowered. Left in DRAFT for accounting.
-      const [so] = await odooExecute<any[]>('sale.order', 'read', [[allocs[0].soId]], { fields: ['invoice_ids'] });
-      const invs = so?.invoice_ids?.length ? await odooExecute<any[]>('account.move', 'read', [so.invoice_ids], { fields: ['id', 'name', 'state', 'move_type'] }) : [];
-      const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
-      if (!inv) { docs.push(`${allocs[0].soName}: chưa có hóa đơn`); continue; }
-      if (inv.state === 'posted') await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL });
-      const iLines = await odooExecute<any[]>('account.move.line', 'search_read', [[['move_id', '=', inv.id], ['display_type', '=', 'product']]], { fields: ['id', 'product_id', 'quantity'] });
-      const cmds: any[] = [];
-      const changes: { code: string; name?: string; from: number; to: number }[] = [];
-      for (const [pid, q] of Array.from(qty.entries())) {
-        const il = iLines.find(l => l.product_id?.[0] === pid);
-        if (!il) continue;
-        const to = Math.max(0, Number(il.quantity) - q);
-        cmds.push([1, il.id, { quantity: to }]);
-        const label = String(il.product_id?.[1] ?? '');
-        const code = allocs.find(a => a.productId === pid)?.sku ?? (label.match(/^\[([^\]]+)\]/)?.[1] ?? String(pid));
-        changes.push({ code, name: label.replace(/^\[[^\]]*\]\s*/, ''), from: Number(il.quantity), to });
-      }
-      if (cmds.length) {
-        await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: cmds }], { context: NO_MAIL });
-        const { postInvoiceNote } = await import('@/lib/odoo-invoice-note');
-        const noted = await postInvoiceNote({
-          invoiceId: inv.id, orderRef: allocs[0].soName, changes, docs: [`return / trả hàng ${r.name} → ${input.toWarehouseCode}`, input.ref],
-          reasonEn: `stock transfer ${input.fromShop} → ${input.toWarehouseCode}, goods returned to the receiving shop`,
-          reasonVi: `chuyển hàng ${input.fromShop} → ${input.toWarehouseCode}, hàng trả về kho shop nhận`,
-        });
-        if (!noted) docs.push(`${allocs[0].soName}: ghi chú hóa đơn lỗi`);
-      }
-      docs.push(`${inv.name || allocs[0].soName}: −${allocs.map(a => `${a.sku}×${a.qty}`).join(', ')} (draft)`);
+      // Invoice NEVER touched (Axel 2026-10-23): stock move only, Moon is not refunded.
     }
     // Stock adjustments last: a failed return above never leaves an adjustment behind.
     for (const a of adjusts) {
       const r = await adjustShopStock(wh.stockLocationId, a.productId, a.qty,
-        `${input.ref} — Moon chuyển ${a.sku} ×${a.qty} sang ${input.toWarehouseCode}; hoá đơn Moon đã thanh toán nên không trả hàng trên hoá đơn, chỉ cộng tồn kho shop nhận (không hoá đơn giảm)`);
+        `${input.ref} — Moon chuyển ${a.sku} ×${a.qty} sang ${input.toWarehouseCode}; không còn phiếu giao Moon nào để trả lại nên cộng tồn kho shop nhận; hoá đơn Moon không thay đổi`);
       if (!r.ok) return { ok: false, error: r.error, docs };
       docs.push(`${a.sku} +${a.qty}: điều chỉnh tồn kho ${input.toWarehouseCode} (không credit note)`);
     }

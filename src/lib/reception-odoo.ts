@@ -341,11 +341,21 @@ export async function finalizeSalesOrderGaps(
     const soLines = soLinesFull;
     for (const pid of Array.from(extra.keys())) if (!soLines.some(l => l.product_id?.[0] === pid)) return { ok: false, live, error: `Extra product ${pid} is not on the order`, done };
 
-    if (!live) return { ok: true, live, done: [`return ${toReturn.size} product(s)`, `scrap ${toScrap.size}`, `extra ${extra.size}`, 'invoice back to draft, quantities adjusted'] };
+    // Axel, 2026-10-23: an invoice that already carries its e-invoice VAT number is NEVER changed.
+    //  • Moon (our shop, invoiced as a customer): missing / damaged → Moon pays (stock only, the
+    //    return is not "to refund"); extra → a small separate sale.
+    //  • other customers: stock as usual, invoice untouched, note "cần hoá đơn điều chỉnh".
+    const invIds0: number[] = so.invoice_ids ?? [];
+    const invs0 = invIds0.length ? await odooExecute<any[]>('account.move', 'read', [invIds0], { fields: ['id', 'name', 'state', 'move_type', 'l10n_vn_e_invoice_number'] }) : [];
+    const inv0 = invs0.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
+    const vatNo = inv0 && /vat/i.test(String(inv0.l10n_vn_e_invoice_number || '')) ? String(inv0.l10n_vn_e_invoice_number).trim() : null;
+    const isMoon = /moon\s*flower/i.test(String(so.partner_id?.[1] ?? ''));
+
+    if (!live) return { ok: true, live, done: [`return ${toReturn.size} product(s)`, `scrap ${toScrap.size}`, `extra ${extra.size}`, vatNo ? `invoice has ${vatNo} — not touched` : 'invoice back to draft, quantities adjusted'] };
 
     // 1. Return
     if (toReturn.size) {
-      const r = await returnFromDelivery(delivery.id, toReturn, true);
+      const r = await returnFromDelivery(delivery.id, toReturn, !(vatNo && isMoon));
       if (!r.ok) return { ok: false, live, error: r.error, done };
       done.push(`return ${r.name}`);
       docNames.push(`return / trả hàng ${r.name}`);
@@ -362,7 +372,16 @@ export async function finalizeSalesOrderGaps(
         docNames.push(`scrap ${scrapName}`);
       }
     }
-    // 3. Extra delivery
+    // 3. Extra delivery — after VAT: a small separate sale per product instead.
+    if (extra.size && vatNo) {
+      for (const [pid, q] of Array.from(extra.entries())) {
+        const p = prods.find(x => x.id === pid);
+        const r = await createExtraSalesOrder(orderRef, { id: pid, default_code: p.default_code }, q, new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date()));
+        done.push(...r.done);
+        if (!r.ok) return { ok: false, live, error: r.error, done };
+      }
+      extra.clear();
+    }
     if (extra.size) {
       const pickId = await odooExecuteWrite<number>('stock.picking', 'create', [{
         picking_type_id: delivery.picking_type_id?.[0], location_id: LAB_STOCK_LOCATION_ID, location_dest_id: delivery.location_dest_id?.[0],
@@ -385,9 +404,16 @@ export async function finalizeSalesOrderGaps(
     // 4. Invoice (Axel 2026-10-14: "pas d'avoir, faut passer la facture en draft et ajuster").
     // The existing customer invoice goes back to draft and its lines follow the quantities:
     // − returned / lost / damaged, + extra. Left in DRAFT: accounting re-posts it.
-    const invIds: number[] = so.invoice_ids ?? [];
-    const invs = invIds.length ? await odooExecute<any[]>('account.move', 'read', [invIds], { fields: ['id', 'name', 'state', 'move_type'] }) : [];
-    const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
+    if (vatNo && inv0) {
+      const lost = Array.from(toReturn.entries()).map(([pid, q]) => `${prods.find(x => x.id === pid)?.default_code ?? pid} ×${q}`).join(', ');
+      const body = isMoon
+        ? `App Lab: hoá đơn đã xuất ${vatNo} nên KHÔNG sửa hoá đơn. ${lost ? `Hàng thiếu/hỏng (${lost}) chỉ xử lý tồn kho — Moon vẫn trả tiền (quy định của Axel 23/10/2026). ` : ''}${docNames.length ? 'Chứng từ: ' + docNames.join(', ') + '.' : ''}`
+        : `App Lab: hoá đơn đã xuất ${vatNo} nên KHÔNG sửa hoá đơn. Chênh lệch khi nhận hàng${lost ? ` (${lost})` : ''} đã xử lý tồn kho — kế toán xem có cần hoá đơn điều chỉnh không. ${docNames.length ? 'Chứng từ: ' + docNames.join(', ') + '.' : ''}`;
+      try { await odooExecuteWrite('account.move', 'message_post', [[inv0.id]], { body, message_type: 'comment', subtype_xmlid: 'mail.mt_note' }); } catch { done.push('invoice note NOT posted'); }
+      done.push(`invoice ${inv0.name} has ${vatNo} — not changed${isMoon ? ' (Moon pays)' : ' (accounting: hoá đơn điều chỉnh?)'}`);
+      return { ok: true, live, done };
+    }
+    const inv = inv0;
     if (!inv) { done.push('no invoice yet — nothing to adjust'); return { ok: true, live, done }; }
     if (inv.state === 'posted') {
       await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL });
