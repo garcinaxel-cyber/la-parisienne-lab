@@ -84,6 +84,8 @@ type Assignment = {
   bc_shop_name?: string | null; // manual/exceptional cake's own shop — breakdown is always [] for these
   bc_order_ref?: string | null; // set once the manual cake is matched to a real Odoo order
   draft_odoo?: boolean;
+  // Delivery check already counted this product for one of the card's orders (page.tsx, 2026-10-23)
+  delivered?: { qty: number; at: string | null; shops: string[] } | null;
   sku: string | null;
   weight_grams: number | null;
   category_name_vi: string | null;
@@ -91,6 +93,18 @@ type Assignment = {
   breakdown: BreakdownItem[];
   lab_imports: { delivery_date: string; order_number: number; type: string; status: string; imported_at?: string };
 };
+
+// Delivered before declared (Axel, 2026-10-23): the delivery check already counted this product
+// for the card's order(s), but the chef has not declared it produced + sent to stock. The Lab
+// stock goes negative in Odoo until it is sent. 'skip' (taken from stock) is not a gap.
+function isLate(a: Assignment): boolean {
+  return !!a.delivered && !a.cancelled && a.status !== 'skip' && (a.qty_sent_total ?? 0) < a.delivered.qty;
+}
+function hhmm(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
 
 // Search result = a lab fiche (id is the fiche_id, variant_id its default variant)
 type SearchProduct = {
@@ -303,6 +317,7 @@ export default function StationView({
   // cards ('don'); orderFilter narrows the Production tab to one order's cards.
   const [orderView, setOrderView] = useState<'sp' | 'don'>('sp');
   const [orderFilter, setOrderFilter] = useState<string | null>(null);
+  const [lateOnly, setLateOnly] = useState(false);
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -778,6 +793,37 @@ export default function StationView({
     setUpdating(null);
   }
 
+  // One tap for a delivered-but-not-declared card: mark done (if needed) + send what is left to stock.
+  async function doneAndSend(a: Assignment) {
+    setUpdating(a.id);
+    const supabase = createClient();
+    let qtyProduced = a.qty_produced;
+    if (a.status !== 'done') {
+      const finalQty = a.status === 'partial' ? Math.max(a.qty_produced, a.delivered?.qty ?? 0) : a.qty_to_produce;
+      const update: any = {
+        status: 'done', updated_at: new Date().toISOString(), qty_produced: finalQty, produced_ahead: isAhead,
+        produced_by: userId, produced_by_name: userName, produced_at: new Date().toISOString(),
+        transferred: (a.qty_sent_total ?? 0) >= finalQty, blocked_reason: null,
+      };
+      const { error } = await supabase.from('lab_assignments').update(update).eq('id', a.id);
+      if (error) { setUpdating(null); return; }
+      qtyProduced = finalQty;
+      setAssignments(prev => prev.map(x => x.id === a.id ? { ...x, ...update } : x));
+    }
+    const left = Math.max(0, (qtyProduced || a.total_qty || 0) - (a.qty_sent_total ?? 0));
+    if (left > 0) {
+      const { submitStockTransferAction } = await import('./stock-actions');
+      const res = await submitStockTransferAction(team, [{
+        assignmentId: a.id, productNameVi: a.product_name_vi, productNameEn: a.product_name_en ?? '',
+        sku: a.sku ?? null, variantLabel: a.variant_label ?? 'Standard', imageUrl: a.image_url ?? null,
+        deliveryDate: a.lab_imports?.delivery_date ?? null, qtySent: left,
+      }]);
+      if (res.ok) setAssignments(prev => prev.map(x => x.id === a.id
+        ? { ...x, qty_sent_total: (x.qty_sent_total ?? 0) + left, transferred: true } : x));
+    }
+    setUpdating(null);
+  }
+
   async function markInStock(a: Assignment) {
     setUpdating(a.id);
     const supabase = createClient();
@@ -1208,6 +1254,7 @@ export default function StationView({
     updating,
     readOnly: isEmployee || isHistoryView,
     onAdvance: advanceStatus,
+    onDoneAndSend: doneAndSend,
     onMarkInStock: markInStock,
     onPartial: (a: Assignment) => { setQtyInput(a.qty_produced); setQtyModal(a); },
     onViewFiche: (a: Assignment) => a.fiche_id ? setFicheModal({ ficheId: a.fiche_id, productName: a.product_name_vi }) : null,
@@ -1461,11 +1508,35 @@ export default function StationView({
             .reduce((s, b) => s + (Number(b.qty) || 0), 0);
           return share > 0 ? share : a.qty_to_produce;
         };
-        const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder);
+        const lateCards = isHistoryView ? [] : assignments.filter(isLate).filter(matchesOrder);
+        const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder)
+          .filter(a => !lateOnly || isLate(a))
+          .sort((x, y) => Number(isLate(y)) - Number(isLate(x)));
+        const lateDone = lateCards.filter(a => a.status === 'done');
         const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
         const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
         return (
         <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+          {/* Delivered before declared (Axel, 2026-10-23) — one line, tap = only those cards */}
+          {lateCards.length > 0 && (
+            <button onClick={() => setLateOnly(v => !v)}
+              className="w-full flex items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left text-white text-sm font-bold active:scale-[0.99] transition-all"
+              style={{ backgroundColor: '#DC2626', boxShadow: lateOnly ? 'inset 0 0 0 2px #fff' : undefined }}>
+              <span className="flex items-center gap-2"><AlertCircle size={16} />
+                {lang === 'vi' ? 'Đã giao — chưa khai báo / chưa nhập kho' : 'Already delivered — not declared'}</span>
+              <span className="flex items-center gap-2 shrink-0">
+                {lateOnly && <span className="text-[11px] font-semibold opacity-90">{lang === 'vi' ? 'Bỏ lọc' : 'Show all'}</span>}
+                <span className="rounded-full px-2.5 py-0.5 text-xs font-black" style={{ backgroundColor: '#fff', color: '#DC2626' }}>{lateCards.length}</span>
+              </span>
+            </button>
+          )}
+          {lateOnly && lateDone.length > 0 && (
+            <button onClick={openStockModal}
+              className="w-full rounded-xl px-3 py-2 text-sm font-bold"
+              style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' }}>
+              📦 {lateDone.length} {lang === 'vi' ? 'thẻ đã xong nhưng chưa nhập kho → Nhập kho' : 'done but not sent → Send to stock'}
+            </button>
+          )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
           {orderGroups.length > 1 && (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
@@ -3099,13 +3170,14 @@ function NotesEditor({
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
 function ProductionCard({
-  a, lang, updating, readOnly, onAdvance, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo,
+  a, lang, updating, readOnly, onAdvance, onDoneAndSend, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
   updating: string | null;
   readOnly?: boolean;
   onAdvance: (a: Assignment) => void;
+  onDoneAndSend?: (a: Assignment) => void;
   onMarkInStock: (a: Assignment) => void;
   onPartial: (a: Assignment) => void;
   onViewFiche: (a: Assignment) => void;
@@ -3123,6 +3195,7 @@ function ProductionCard({
   const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
   const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
+  const late = isLate(a) && !readOnly && !!onDoneAndSend;
 
   const actionLabel: Record<string, string> = {
     pending: lang === 'vi' ? 'Bắt đầu' : 'Start',
@@ -3134,13 +3207,19 @@ function ProductionCard({
     <div className="rounded-2xl overflow-hidden"
       style={{
         backgroundColor: a.cancelled ? '#F9FAFB' : 'white',
-        border: a.cancelled ? '1px solid #E5E7EB' : '1px solid #E0D49A',
+        border: a.cancelled ? '1px solid #E5E7EB' : late ? '2px solid #DC2626' : '1px solid #E0D49A',
         boxShadow: a.cancelled ? 'none' : '0 1px 4px rgba(26,71,49,0.07)',
         opacity: a.cancelled ? 0.7 : 1,
       }}>
 
+      {late && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] sm:text-xs font-bold text-white" style={{ backgroundColor: '#DC2626' }}>
+          <span className="truncate">🚚 {lang === 'vi' ? 'Đã giao' : 'Delivered'} {hhmm(a.delivered?.at)}{a.delivered?.shops.length ? ` · ${a.delivered.shops.join(', ')}` : ''} · ×{a.delivered?.qty}</span>
+          <span className="shrink-0 opacity-90">{lang === 'vi' ? 'chưa nhập kho' : 'not in stock'}</span>
+        </div>
+      )}
       {/* Status stripe for in_progress */}
-      {a.status === 'in_progress' && !a.cancelled && (
+      {a.status === 'in_progress' && !a.cancelled && !late && (
         <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
       )}
 
@@ -3291,7 +3370,14 @@ function ProductionCard({
 
         {/* Action buttons — horizontal row below content on phones, column on the right from sm up */}
         <div className="flex w-full sm:w-auto sm:flex-col gap-2 shrink-0 order-last sm:order-none">
-          {canAdvance && (
+          {late && (
+            <button onClick={() => onDoneAndSend!(a)} disabled={isUpdating}
+              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
+              style={{ backgroundColor: '#DC2626', opacity: isUpdating ? 0.6 : 1 }}>
+              {isUpdating ? '…' : (lang === 'vi' ? '✓ Xong + nhập kho' : '✓ Done + send to stock')}
+            </button>
+          )}
+          {canAdvance && !late && (
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
               className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-bold text-white text-sm active:scale-95 transition-all"
               style={{ backgroundColor: '#1A4731', opacity: isUpdating ? 0.6 : 1 }}>

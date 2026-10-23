@@ -173,6 +173,46 @@ export default async function StationPage({ params }: { params: { team: string }
     }
     const shopFormRefs = new Set(formRows.map((r: any) => r.order_ref));
 
+    // Delivered before declared (Axel, 2026-10-23): a delivery check already counted this product
+    // for one of the card's orders while the card is not produced / not sent to stock yet. Chefs
+    // have no RLS on the delivery tables → service role, read only. Key = order_ref|sku.
+    const deliveredByKey: Record<string, { qty: number; at: string | null; shop: string }> = {};
+    if (allRefs.length && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const { createClient: createSb } = await import('@supabase/supabase-js');
+      const svc = createSb(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data: orders } = await svc.from('lab_delivery_orders')
+        .select('id, order_ref, shop_name, customer_name, marked_not_delivered')
+        .eq('delivery_date', date).in('order_ref', allRefs);
+      const live = (orders ?? []).filter((o: any) => !o.marked_not_delivered);
+      if (live.length) {
+        const byId: Record<string, any> = {};
+        for (const o of live) byId[o.id] = o;
+        const { data: lines } = await svc.from('lab_delivery_check_lines')
+          .select('delivery_order_id, sku, qty_checked, checked_at')
+          .in('delivery_order_id', live.map((o: any) => o.id)).gt('qty_checked', 0);
+        for (const l of lines ?? []) {
+          const o = byId[l.delivery_order_id]; if (!o || !l.sku) continue;
+          const k = `${o.order_ref}|${l.sku}`;
+          const e = deliveredByKey[k] ?? { qty: 0, at: null, shop: o.shop_name || o.customer_name || '' };
+          e.qty += Number(l.qty_checked) || 0;
+          if (l.checked_at && (!e.at || l.checked_at < e.at)) e.at = l.checked_at;
+          deliveredByKey[k] = e;
+        }
+      }
+    }
+    const deliveredFor = (sku: string | null, bds: any[]) => {
+      if (!sku) return null;
+      let qty = 0; let at: string | null = null; const shops: string[] = [];
+      for (const b of bds) {
+        const d = b?.order_ref ? deliveredByKey[`${b.order_ref}|${sku}`] : undefined;
+        if (!d) continue;
+        qty += Math.min(d.qty, Number(b.qty) || d.qty);
+        if (d.at && (!at || d.at < at)) at = d.at;
+        if (d.shop && !shops.includes(d.shop)) shops.push(d.shop);
+      }
+      return qty > 0 ? { qty, at, shops } : null;
+    };
+
     const mapped = (assignments ?? []).map((a: any) => {
       const bdsRaw: any[] = breakdownMap[a.id] ?? [];
       const bdsParsed = bdsRaw.map((b: any) => ({ b, w: parseWishNote(b?.note) }));
@@ -195,6 +235,7 @@ export default async function StationPage({ params }: { params: { team: string }
         bc_design_photo_url: manualByAsg[a.id]?.design_photo_url || null,
         bc_shop_name: manualByAsg[a.id]?.shop_name || null,
         bc_order_ref: manualByAsg[a.id]?.order_ref || null,
+        delivered: deliveredFor(variant?.sku ?? null, bdsRaw),
         draft_odoo: isDraftOdoo(((breakdownMap[a.id] ?? []) as any[]).map((b: any) => b.order_ref)),
         breakdown: bdsParsed.map(({ b, w }) => ({
           ...b,
