@@ -2565,7 +2565,7 @@ export async function receiveShopTransferAction(input: {
   if (fromPartner) {
     const code = transferWarehouseCode(t.to_shop);
     if (!code) return { error: 'Kho nhận không có kho Odoo' };
-    const r = await receiveReturnFromPartnerShop({ fromShop: t.from_shop, toWarehouseCode: code, ref: t.ref, lines: recvList });
+    const r = await receiveReturnFromPartnerShop({ fromShop: t.from_shop, toWarehouseCode: code, ref: t.ref, lines: recvList, allowCreditNote: t.credit_note_ok === true });
     // Partly done in Odoo (some returns validated) → never let a retry return them twice: the
     // transfer is closed as received and the Lab is alerted to finish the rest by hand.
     odoo = r.ok ? { ok: true, docs: r.docs }

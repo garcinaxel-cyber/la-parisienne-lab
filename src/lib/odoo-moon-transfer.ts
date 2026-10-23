@@ -161,14 +161,15 @@ type Allocation = { soId: number; soName: string; deliveryId: number; deliveryNa
 const REFUND_LOOKBACK_DAYS = 240;
 // Axel, 2026-10-23: credit notes stay the exception ("on essaie au max de pas faire d'avoir") —
 // OFF in the app: a product covered only by paid deliveries is still refused at send, and the
-// rare case is handled by hand in Odoo. Flip to true only on his explicit decision.
+// rare case is approved one transfer at a time (lab_shop_transfers.credit_note_ok, set by admin).
 const ALLOW_CREDIT_NOTE = false;
 
 // Which Moon deliveries can take back these quantities (newest first). Read-only.
 // Unpaid deliveries first (no credit note); what is left goes on paid ones (credit note).
 // 2026-10-23 fix: read the delivered MOVES of the requested products directly — the old
 // "150 latest Moon orders" cap missed older deliveries (Moon has ~4 orders a day).
-export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: string; qty: number }[]): Promise<{ ok: true; allocations: Allocation[] } | { ok: false; error: string; short?: { sku: string; missing: number }[] }> {
+export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: string; qty: number }[], opts?: { allowCreditNote?: boolean }): Promise<{ ok: true; allocations: Allocation[] } | { ok: false; error: string; short?: { sku: string; missing: number }[] }> {
+  const allowCN = opts?.allowCreditNote ?? ALLOW_CREDIT_NOTE;
   const partner = await resolvePartnerId(fromShop);
   if (typeof partner !== 'number') return { ok: false, error: partner.error };
   const prods = await productsBySku(lines.map(l => l.sku));
@@ -207,7 +208,7 @@ export async function planReturnFromPartnerShop(fromShop: string, lines: { sku: 
     const isUnpaid = unpaid(so);
     // Unpaid: recent window only (as before). Paid (credit note): needs a posted invoice.
     if (isUnpaid && String(m.date) < recentCut) continue;
-    if (!isUnpaid && (!ALLOW_CREDIT_NOTE || !live(so).some((i: any) => i.state === 'posted'))) continue;
+    if (!isUnpaid && (!allowCN || !live(so).some((i: any) => i.state === 'posted'))) continue;
     const avail = Number(m.quantity) - (retByMove.get(m.id) ?? 0);
     if (avail <= 0) continue;
     const ex = cands.find(c => c.deliveryId === pk.id && c.productId === m.product_id[0]);
@@ -263,7 +264,7 @@ async function draftCreditNote(soId: number, soName: string, qtyByProduct: Map<n
   }], { context: NO_MAIL });
   const [cn] = await odooExecute<any[]>('account.move', 'read', [[rid]], { fields: ['name', 'amount_total', 'state'] });
   try {
-    await odooExecuteWrite('account.move', 'message_post', [[rid]], { body: `Avoir brouillon créé par la lab-app — transfert ${ref} Moon → ${toCode}, retour ${returnName} sur ${soName} (${inv.name} déjà payée). À valider par la comptabilité. / Credit note nháp — chuyển kho ${ref}, hàng trả về ${toCode}.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    await odooExecuteWrite('account.move', 'message_post', [[rid]], { body: `Hoá đơn giảm (nháp) — tạo bởi trợ lý AI theo yêu cầu của Axel. Lý do: Moon Flower chuyển hàng sang ${toCode} (phiếu ${ref}). Hàng này nằm trong đơn ${soName}, hoá đơn ${inv.name} đã thanh toán nên không thể giảm số lượng trên hoá đơn; vì vậy tạo hoá đơn giảm cho Moon, hàng trả về kho ${toCode} (${returnName}). Kế toán kiểm tra và xác nhận giúp.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
   } catch { /* note is best effort */ }
   return { ok: true, label: `${cn?.name && cn.name !== '/' ? cn.name : 'credit note'} (draft, −${Math.round(Number(cn?.amount_total ?? 0)).toLocaleString('en-US')}) on ${inv.name}` };
 }
@@ -310,7 +311,7 @@ async function returnIntoLocation(deliveryId: number, qtyByProduct: Map<number, 
 }
 
 // Reception at the shop of goods sent by Moon.
-export async function receiveReturnFromPartnerShop(input: { fromShop: string; toWarehouseCode: string; ref: string; lines: { sku: string; qty: number }[] }): Promise<{ ok: true; docs: string[] } | { ok: false; error: string; docs: string[] }> {
+export async function receiveReturnFromPartnerShop(input: { fromShop: string; toWarehouseCode: string; ref: string; lines: { sku: string; qty: number }[]; allowCreditNote?: boolean }): Promise<{ ok: true; docs: string[] } | { ok: false; error: string; docs: string[] }> {
   const docs: string[] = [];
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured', docs };
   const lines = input.lines.filter(l => l.qty > 0);
@@ -318,7 +319,7 @@ export async function receiveReturnFromPartnerShop(input: { fromShop: string; to
   try {
     const wh = await resolveWarehouse(input.toWarehouseCode);
     if ('error' in wh) return { ok: false, error: wh.error, docs };
-    const plan = await planReturnFromPartnerShop(input.fromShop, lines);
+    const plan = await planReturnFromPartnerShop(input.fromShop, lines, { allowCreditNote: input.allowCreditNote });
     if (!plan.ok) return { ok: false, error: plan.error, docs };
     const byDelivery = new Map<number, Allocation[]>();
     for (const a of plan.allocations) byDelivery.set(a.deliveryId, [...(byDelivery.get(a.deliveryId) ?? []), a]);
