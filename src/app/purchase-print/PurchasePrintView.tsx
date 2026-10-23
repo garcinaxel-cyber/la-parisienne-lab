@@ -17,7 +17,9 @@ const PEOPLE: { keys: string[]; team?: string; full: string; teamLabel: string }
   { keys: ['huong', 'do thi huong'], team: 'entremet', full: 'Đỗ Thị Hường', teamLabel: 'Team Entremet' },
   { keys: ['toan', 'hoang van toan'], full: 'Hoàng Văn Toàn', teamLabel: 'Team Baker' },
   { keys: ['thu trang', 'nguyen thu trang', 'trang'], team: 'baby_mama', full: 'Nguyễn Thu Trang', teamLabel: 'Team Gato' },
-  { keys: ['trang', 'thuy trang', 'le thi thuy trang'], full: 'Lê Thị Thùy Trang', teamLabel: 'Team Baker' },
+  { keys: ['trang', 'thuy trang', 'le thuy trang', 'le thi thuy trang'], full: 'Lê Thùy Trang', teamLabel: 'Team Baker' },
+  { keys: ['quan bm', 'quan', 'ly van quan'], team: 'baker', full: 'Lý Văn Quân', teamLabel: 'Team Baker' },
+  { keys: ['lam anh', 'mai anh', 'lam mai anh'], full: 'Lâm Mai Anh', teamLabel: 'Team Baker' },
   { keys: ['miss flavor', 'flavor', 'thu huong', 'nguyen thi thu huong'], team: 'kho', full: 'Nguyễn Thị Thu Hương', teamLabel: 'Kho' },
 ];
 const TEAM_PRINT: Record<string, string> = { hung: 'Team Macaron', entremet: 'Team Entremet', baker: 'Team Baker', baby_mama: 'Team Gato', kho: 'Kho' };
