@@ -666,6 +666,44 @@ async function addLineToSalesOrder(soRef: string, p: { id: number; default_code:
   }
 }
 
+// 2026-10-23: Odoo refuses new lines on a confirmed order ("đơn đã rời trạng thái báo giá"),
+// even unlocked. So units kept off-slip by a partner shop (Moon) go on a SMALL NEW order for the
+// same customer, from the same warehouse: confirmed, delivery validated, invoice left in DRAFT.
+// No commitment_date, so the production sync never imports it.
+async function createExtraSalesOrder(soRef: string, p: { id: number; default_code: string }, qty: number, deliveryDate: string): Promise<{ ok: boolean; error?: string; done: string[] }> {
+  const done: string[] = [];
+  const [so] = await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', '=', soRef]]], { fields: ['id', 'name', 'partner_id', 'partner_shipping_id', 'partner_invoice_id', 'pricelist_id', 'warehouse_id'] });
+  if (!so) return { ok: false, error: `${soRef} not found in Odoo`, done };
+  const ref = `${soRef} — ngoài phiếu`;
+  const newId = await odooExecuteWrite<number>('sale.order', 'create', [{
+    partner_id: so.partner_id[0], partner_shipping_id: so.partner_shipping_id?.[0], partner_invoice_id: so.partner_invoice_id?.[0],
+    pricelist_id: so.pricelist_id?.[0], warehouse_id: so.warehouse_id?.[0], client_order_ref: ref, origin: ref,
+    note: `Hàng giao thêm ngoài phiếu cùng ${soRef} (${deliveryDate}), shop giữ lại — tạo bởi app Lab.`,
+    order_line: [[0, 0, { product_id: p.id, product_uom_qty: qty }]],
+  }], { context: NO_MAIL });
+  await odooExecuteWrite('sale.order', 'action_confirm', [[newId]], { context: NO_MAIL });
+  const [nso] = await odooExecuteWrite<any[]>('sale.order', 'read', [[newId]], { fields: ['name', 'picking_ids'] });
+  done.push(`${nso.name} created for ${p.default_code} ×${qty} (${ref})`);
+  const picks = nso.picking_ids?.length ? await odooExecuteWrite<any[]>('stock.picking', 'read', [nso.picking_ids], { fields: ['id', 'name', 'state'] }) : [];
+  const pick = picks.find(x => x.state !== 'cancel' && x.state !== 'done');
+  if (!pick) return { ok: false, error: `${nso.name}: no delivery created — validate by hand`, done };
+  const v = await validateWholePicking(pick.id);
+  if (!v.ok) return { ok: false, error: `${nso.name} delivery: ${v.error}`, done };
+  done.push(`${nso.name}: delivery ${pick.name} validated`);
+  try {
+    const wiz = await odooExecuteWrite<number>('sale.advance.payment.inv', 'create', [{ advance_payment_method: 'delivered', sale_order_ids: [[6, 0, [newId]]] }], { context: { active_ids: [newId], active_model: 'sale.order', ...NO_MAIL } });
+    await odooExecuteWrite('sale.advance.payment.inv', 'create_invoices', [[wiz]], { context: { active_ids: [newId], active_model: 'sale.order', ...NO_MAIL } });
+    const [after] = await odooExecuteWrite<any[]>('sale.order', 'read', [[newId]], { fields: ['invoice_ids'] });
+    if (after?.invoice_ids?.length) {
+      await odooExecuteWrite('account.move', 'write', [after.invoice_ids, { invoice_date: deliveryDate, delivery_date: deliveryDate }], { context: NO_MAIL }).catch(() => {});
+      done.push(`${nso.name}: invoice created in DRAFT — accounting posts it`);
+    } else done.push(`${nso.name}: no invoice created — invoice by hand`);
+  } catch (e: any) {
+    done.push(`${nso.name}: invoice NOT created (${e?.message ?? e}) — invoice by hand`);
+  }
+  return { ok: true, done };
+}
+
 export async function finalizeOffSlip(input: {
   shopName: string; sku: string; qty: number; sourceSoRef: string | null; origin: string;
   deliveryDate: string; receivingOrderRef: string | null;
@@ -698,12 +736,12 @@ export async function finalizeOffSlip(input: {
     if (!live) {
       done.push(repWh
         ? `new adjustment REP → ${repWh}: ${input.sku} ×${input.qty} (OUT + IN validated, marked done)`
-        : `${recvSo}: + line ${input.sku} ×${input.qty}, delivery validated, invoice adjusted`);
+        : `new order for ${recvSo}'s customer: ${input.sku} ×${input.qty}, delivery validated, draft invoice`);
       return { ok: true, live, done };
     }
     const r = repWh
       ? await createAdjustmentRep({ whCode: repWh, deliveryDate: input.deliveryDate, note: input.origin, items: [{ pid: p.id, code: input.sku, qty: input.qty }] })
-      : await addLineToSalesOrder(recvSo!, p, input.qty);
+      : await createExtraSalesOrder(recvSo!, p, input.qty, input.deliveryDate);
     done.push(...r.done);
     if (!r.ok) return { ok: false, live, error: r.error, done };
     return { ok: true, live, done };
