@@ -13,6 +13,11 @@ import { TEAM_LABELS, STATUS_META, type Team, type AssignmentStatus } from '@/li
 import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
+import StockProductionPanel from './StockProductionPanel';
+import type { StockProduct } from './actions';
+// Teams on the stock-production screen (Axel, 2026-10-23): all their products are storable and
+// recorded as extra production — the Production tab shows product cards instead of order cards.
+const STOCK_PROD_TEAMS = ['hung'];
 import { thumb } from '@/lib/img-thumb';
 import { armNotifySound, playNewOrderChime } from '@/lib/notify-sound';
 import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsubscribeCurrentPush } from '@/lib/push-client';
@@ -824,6 +829,38 @@ export default function StationView({
     setUpdating(null);
   }
 
+  // Stock-production screen: same row as saveExtra (non-OEM path), from a catalogue card.
+  async function recordStockExtra(p: StockProduct, qty: number): Promise<boolean> {
+    const importId = assignments[0]?.import_id;
+    if (!importId || !(qty > 0)) return false;
+    const supabase = createClient();
+    const row = {
+      import_id: importId, team,
+      product_name_vi: p.nameVi, product_name_en: p.nameEn ?? '',
+      image_url: p.imageUrl, fiche_id: p.ficheId, variant_id: p.variantId,
+      variant_label: 'Standard',
+      total_qty: qty, qty_to_produce: qty, qty_produced: qty,
+      status: 'done' as AssignmentStatus, sort_order: 9999, is_extra: true,
+      produced_by: userId, produced_by_name: userName, produced_at: new Date().toISOString(),
+      breakdown: [] as BreakdownItem[],
+    };
+    const { data, error } = await supabase.from('lab_assignments').insert(row).select('id').single();
+    if (error || !data) return false;
+    setAssignments(prev => [...prev, {
+      ...row, id: data.id, notes: '', blocked_reason: null, sku: p.sku, weight_grams: p.weightG,
+      category_name_vi: p.category, category_name_en: p.category,
+      lab_imports: prev[0]?.lab_imports ?? { delivery_date: today, order_number: 1, type: 'daily', status: 'published' },
+    }]);
+    return true;
+  }
+  async function undoStockExtra(id: string): Promise<boolean> {
+    const supabase = createClient();
+    const { data } = await supabase.from('lab_assignments').delete().eq('id', id).eq('is_extra', true).eq('transferred', false).select('id');
+    if (!data?.length) return false;
+    setAssignments(prev => prev.filter(x => x.id !== id));
+    return true;
+  }
+
   async function markInStock(a: Assignment) {
     setUpdating(a.id);
     const supabase = createClient();
@@ -1536,6 +1573,14 @@ export default function StationView({
               style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5' }}>
               📦 {lateDone.length} {lang === 'vi' ? 'thẻ đã xong nhưng chưa nhập kho → Nhập kho' : 'done but not sent → Send to stock'}
             </button>
+          )}
+          {STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && !isHistoryView && (
+            <StockProductionPanel team={team} lang={lang} readOnly={isEmployee}
+              extras={assignments.filter(a => a.is_extra && !a.cancelled && a.status === 'done')
+                .sort((x, y) => String(x.produced_at ?? '').localeCompare(String(y.produced_at ?? '')))
+                .map(a => ({ id: a.id, name: lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi), qty: a.qty_produced, transferred: !!a.transferred || (a.qty_sent_total ?? 0) > 0 }))}
+              onRecord={recordStockExtra} onUndo={undoStockExtra} onSendStock={openStockModal}
+              sendableCount={assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred).length} />
           )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
           {orderGroups.length > 1 && (

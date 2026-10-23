@@ -1,3 +1,4 @@
+import { autoStockStatus } from '@/lib/stock-production';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConsolidatedLine } from '@/lib/excel-parser';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
@@ -48,7 +49,7 @@ export async function persistImportsFromLines(
   for (const v of variantRows ?? []) if (v.sku) vBySku[v.sku] = v;
   const ficheIds = Array.from(new Set((variantRows ?? []).map(v => v.fiche_id).filter(Boolean)));
   const { data: ficheRows } = ficheIds.length
-    ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url').in('id', ficheIds)
+    ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url, category').in('id', ficheIds)
     : { data: [] as any[] };
   const fById: Record<string, any> = {};
   for (const f of ficheRows ?? []) fById[f.id] = f;
@@ -198,7 +199,7 @@ export async function persistImportsFromLines(
           image_url: v?.image_url ?? f?.image_url ?? null,
           variant_label: line.variant_label,
           total_qty: line.total_qty, qty_to_produce: line.total_qty, qty_produced: 0,
-          status: 'pending', sort_order: idx, breakdown: line.breakdown ?? [],
+          status: autoStockStatus(line.team, f?.category, line.product_sku), sort_order: idx, breakdown: line.breakdown ?? [],
         };
       })).select('id, team, variant_label, product_name_vi');
       if (asgErr) {

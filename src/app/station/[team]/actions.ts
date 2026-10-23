@@ -249,3 +249,68 @@ export async function setStockThresholdAction(sku: string, threshold: number, us
   if (error) return { error: error.message };
   return { ok: true };
 }
+
+// ---- Stock production screen (Axel, 2026-10-23 — Team Hung first) -------------------------------
+// Teams that make only storable products record their work as EXTRA production; this feeds the new
+// Production-tab design: one card per product (photo, live Lab stock, safety level, last batch),
+// grouped by category. Read-only; OEM SKUs are left out (they keep their own OEM tab).
+const STOCK_PRODUCTION_TEAMS = ['hung'];
+export type StockProduct = {
+  ficheId: string; variantId: string | null; sku: string; nameVi: string; nameEn: string | null;
+  category: string; imageUrl: string | null; weightG: number | null;
+  stock: number | null; threshold: number | null; lastBatch: number | null;
+};
+export async function getStockProductionCatalogAction(team: string): Promise<{ products?: StockProduct[]; categories?: string[]; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Service role not configured' };
+  const categories = TEAM_STOCK_CATEGORIES[team];
+  if (!STOCK_PRODUCTION_TEAMS.includes(team) || !categories?.length) return { products: [], categories: [] };
+  const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const { data: fiches } = await service.from('lab_fiche_meta')
+    .select('id, name_vi, name_en, category, image_url, weight_grams').eq('is_active', true)
+    .in('category', categories).contains('teams', [team]);
+  const ficheById: Record<string, any> = {};
+  for (const f of fiches ?? []) ficheById[f.id] = f;
+  const ids = Object.keys(ficheById);
+  if (!ids.length) return { products: [], categories: [] };
+  const { data: variants } = await service.from('lab_fiche_variants')
+    .select('id, fiche_id, label, sku, weight_g, image_url, is_active, is_default, sort_order').in('fiche_id', ids);
+  const products: StockProduct[] = [];
+  for (const v of variants ?? []) {
+    if (v.is_active === false || !v.sku || isOemSku(v.sku)) continue;
+    const f = ficheById[v.fiche_id];
+    const label = v.label && v.label !== 'Standard' ? ` · ${v.label}` : '';
+    products.push({
+      ficheId: f.id, variantId: v.id, sku: v.sku, nameVi: (f.name_vi ?? '') + label, nameEn: f.name_en ? f.name_en + label : null,
+      category: f.category, imageUrl: v.image_url ?? f.image_url ?? null, weightG: v.weight_g ?? f.weight_grams ?? null,
+      stock: null, threshold: null, lastBatch: null,
+    });
+  }
+  const skus = Array.from(new Set(products.map(p => p.sku)));
+  try {
+    const { getLabStockLevels } = await import('@/lib/odoo-inventory');
+    const [levels, { data: thr }, { data: last }] = await Promise.all([
+      getLabStockLevels(skus),
+      service.from('lab_stock_safety_thresholds').select('sku, threshold').in('sku', skus),
+      service.from('lab_assignments').select('variant_id, qty_produced, produced_at').eq('team', team).eq('is_extra', true)
+        .in('variant_id', products.map(p => p.variantId).filter(Boolean) as string[]).order('produced_at', { ascending: false }).limit(1000),
+    ]);
+    const lv: Record<string, { qty: number; found: boolean }> = {};
+    for (const l of levels) lv[l.sku] = { qty: l.qty, found: l.found };
+    const th: Record<string, number> = {};
+    for (const t of thr ?? []) th[t.sku] = Number(t.threshold);
+    const lb: Record<string, number> = {};
+    for (const a of last ?? []) if (a.variant_id && lb[a.variant_id] == null && Number(a.qty_produced) > 0) lb[a.variant_id] = Number(a.qty_produced);
+    for (const p of products) {
+      p.stock = lv[p.sku]?.found ? lv[p.sku].qty : null;
+      p.threshold = th[p.sku] ?? null;
+      p.lastBatch = p.variantId ? lb[p.variantId] ?? null : null;
+    }
+  } catch { /* Odoo unreachable: cards still show, without stock */ }
+  // Products whose SKU is not an active Odoo product are hidden like on the stock card (2026-10-13 rule).
+  const shown = products.filter(p => p.stock !== null || p.lastBatch !== null)
+    .sort((a, b) => a.nameVi.localeCompare(b.nameVi, 'vi'));
+  return { products: shown, categories: categories.filter(c => shown.some(p => p.category === c)) };
+}

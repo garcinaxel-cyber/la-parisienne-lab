@@ -1,3 +1,4 @@
+import { autoStockStatus, STOCK_PRODUCTION_TEAMS } from '@/lib/stock-production';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
 import { nowLabStamp } from '@/lib/odoo';
@@ -343,11 +344,17 @@ export async function upsertProductionCard(supabase: SupabaseClient, args: {
       const totalProduced = recentCancelled.reduce((sum, r) => sum + (r.qty_produced ?? 0), 0);
       notes = `⚠ ${totalProduced} unité(s) déjà produite(s) pour une commande annulée récemment sur ce même produit (${nowLabStamp()}) — vérifier avant de reproduire, stock peut-être déjà disponible.`;
     }
+    // Stock production teams: storable products are served from stock → card born 'skip' (2026-10-23)
+    let initStatus: 'skip' | 'pending' = 'pending';
+    if (ficheId && STOCK_PRODUCTION_TEAMS.includes(team)) {
+      const { data: fm } = await supabase.from('lab_fiche_meta').select('category').eq('id', ficheId).maybeSingle();
+      initStatus = autoStockStatus(team, fm?.category, null);
+    }
     const { error } = await supabase.from('lab_assignments').insert({
       import_id: importId, team, fiche_id: ficheId, variant_id: variantId,
       product_name_vi: name, product_name_en: nameEn, image_url: image,
       variant_label: variantLabel, total_qty: qty, qty_to_produce: qty, qty_produced: 0,
-      status: 'pending', sort_order: 6000, breakdown: [bEntry], notes,
+      status: initStatus, sort_order: 6000, breakdown: [bEntry], notes,
     });
     if (error) return { error: `create card: ${error.message}` };
   }
