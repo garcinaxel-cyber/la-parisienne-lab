@@ -3359,6 +3359,20 @@ function ProductionCard({
             </div>
           )}
 
+          {/* Order notes — always visible right under the product name (Axel, 2026-10-23: chefs
+              missed notes hidden in the collapsed "Khách hàng" breakdown on phones). Shop prefix
+              only when several clients share the card, so each note stays attributable. */}
+          {breakdown.some(b => b.note?.trim()) && (
+            <div className="mt-1.5 flex flex-col gap-1 items-start">
+              {breakdown.filter(b => b.note?.trim()).map((b, i) => (
+                <div key={i} className="text-xs font-semibold rounded-lg px-2 py-1 whitespace-pre-line"
+                  style={{ backgroundColor: '#FFF7ED', color: '#B45309', border: '1px solid #FED7AA' }}>
+                  📝 {breakdown.length > 1 && <span className="font-bold">{b.shop_name}{b.order_ref ? ` ${b.order_ref}` : ''}: </span>}{b.note}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Birthday cake: ready-by deadline (red) + message on the cake */}
           {(a.bc_ready_time || a.bc_message || a.bc_notes || a.bc_shop_name || a.category_name_vi === 'Birthday cake') && (
             <div className="mt-1.5 flex flex-col gap-1 items-start">
@@ -3513,11 +3527,7 @@ function ProductionCard({
                   🎂 {b.wish}
                 </div>
               )}
-              {b.note && (
-                <div className="text-xs font-semibold mt-1 whitespace-pre-line" style={{ color: '#B45309' }}>
-                  📝 {b.note}
-                </div>
-              )}
+              {/* note now shown under the product name (above) — not repeated here */}
               {b.changed_at && (
                 <div className="text-[10px] font-semibold mt-1" style={{ color: '#92600A' }}>
                   🔄 {lang === 'vi' ? 'Odoo sửa' : 'Modifié'} {b.changed_at} ({(b.changed_delta ?? 0) > 0 ? '+' : ''}{b.changed_delta})
