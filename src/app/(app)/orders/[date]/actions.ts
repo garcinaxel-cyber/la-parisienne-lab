@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { sendZaloWebhook } from '@/lib/zalo';
 import { TEAM_LABELS } from '@/lib/types';
 import { getManualCakeCoverage, excessQty } from '@/lib/manual-cake-coverage';
+import { autoStockStatus } from '@/lib/stock-production';
 
 export async function publishImportAction(
   importId: string,
@@ -158,7 +159,7 @@ export async function generateMissingCardsAction(
   for (const v of variants ?? []) if (v.sku) vBySku[v.sku] = v;
   const ficheIds = Array.from(new Set((variants ?? []).map(v => v.fiche_id).filter(Boolean)));
   const { data: fiches } = ficheIds.length
-    ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url, teams').in('id', ficheIds)
+    ? await supabase.from('lab_fiche_meta').select('id, name_en, image_url, teams, category').in('id', ficheIds)
     : { data: [] as any[] };
   const fById: Record<string, any> = {};
   for (const f of fiches ?? []) fById[f.id] = f;
@@ -188,7 +189,7 @@ export async function generateMissingCardsAction(
   // portion of each line NOT already covered (by a manual cake, and/or by an existing card).
   type Group = { import_id: string; team: string; variant_label: string; name: string;
     fiche_id: string; variant_id: string; name_en: string; image_url: string | null;
-    total: number; breakdown: any[] };
+    total: number; breakdown: any[]; category: string | null; sku: string | null };
   const groups = new Map<string, Group>();
   for (const l of orderLines) {
     const v = l.product_sku ? vBySku[l.product_sku] : null;
@@ -209,7 +210,7 @@ export async function generateMissingCardsAction(
     if (!g) {
       g = { import_id: l.import_id, team, variant_label: variantLabel, name: l.product_name_vi,
         fiche_id: v.fiche_id, variant_id: v.id, name_en: f?.name_en ?? '',
-        image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [] };
+        image_url: v.image_url ?? f?.image_url ?? null, total: 0, breakdown: [], category: f?.category ?? null, sku: l.product_sku ?? null };
       groups.set(key, g);
     }
     g.total += gap;
@@ -222,7 +223,7 @@ export async function generateMissingCardsAction(
     import_id: g.import_id, team: g.team, fiche_id: g.fiche_id, variant_id: g.variant_id,
     product_name_vi: g.name, product_name_en: g.name_en, image_url: g.image_url,
     variant_label: g.variant_label, total_qty: g.total, qty_to_produce: g.total, qty_produced: 0,
-    status: 'pending', sort_order: 5000 + idx, breakdown: g.breakdown,
+    status: autoStockStatus(g.team, g.category, g.sku), sort_order: 5000 + idx, breakdown: g.breakdown,
   }));
   if (!toInsert.length) return { created: 0 };
 
