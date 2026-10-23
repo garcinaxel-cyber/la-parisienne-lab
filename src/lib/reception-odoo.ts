@@ -618,10 +618,18 @@ async function createAdjustmentRep(input: {
 
 async function addLineToSalesOrder(soRef: string, p: { id: number; default_code: string }, qty: number): Promise<{ ok: boolean; error?: string; done: string[] }> {
   const done: string[] = [];
-  const [so] = await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', '=', soRef]]], { fields: ['id', 'name', 'state', 'invoice_ids'] });
+  const [so] = await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', '=', soRef]]], { fields: ['id', 'name', 'state', 'invoice_ids', 'locked'] });
   if (!so) return { ok: false, error: `${soRef} not found in Odoo`, done };
   if (so.state !== 'sale') return { ok: false, error: `${soRef} is "${so.state}", not a confirmed order — settle by hand`, done };
-  const lineId = await odooExecuteWrite<number>('sale.order.line', 'create', [{ order_id: so.id, product_id: p.id, product_uom_qty: qty }], { context: NO_MAIL });
+  // 2026-10-23: a fully invoiced order is LOCKED in Odoo ("đơn đã rời trạng thái báo giá") —
+  // unlock just for the new line, lock it back right after.
+  if (so.locked) await odooExecuteWrite('sale.order', 'action_unlock', [[so.id]], { context: NO_MAIL });
+  let lineId: number;
+  try {
+    lineId = await odooExecuteWrite<number>('sale.order.line', 'create', [{ order_id: so.id, product_id: p.id, product_uom_qty: qty }], { context: NO_MAIL });
+  } finally {
+    if (so.locked) await odooExecuteWrite('sale.order', 'action_lock', [[so.id]], { context: NO_MAIL }).catch(() => {});
+  }
   done.push(`${soRef}: + line ${p.default_code} ×${qty}`);
   try {
     // A confirmed SO launches its procurement for the new line (a delivery move). Validate it,
