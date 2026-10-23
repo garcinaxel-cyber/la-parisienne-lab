@@ -57,7 +57,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
   }
 
   const toShop = (r: OffslipRow) => r.orderRef && !r.orderRef.startsWith('REP')
-    ? T(`thêm dòng +${r.qty} vào đơn ${r.orderRef} (giao + hoá đơn)`, `ligne +${r.qty} ajoutée à ${r.orderRef} (livraison validée, facture ajustée)`)
+    ? T(`xuất +${r.qty} từ Lab; thêm vào hoá đơn của ${r.orderRef} nếu chưa xuất VAT, nếu đã có VAT thì tạo đơn nhỏ riêng`, `sortie Lab +${r.qty} ; ajoutée à la facture de ${r.orderRef} si pas encore de VAT, sinon petite vente séparée`)
     : T(`tạo REP điều chỉnh +${r.qty} (xuất + nhận đã xác nhận, đóng REP)`, `nouvelle REP d'ajustement +${r.qty} (envoi + réception validés, REP clôturée)`);
   const causes: { k: Cause; t: string; d: (r: OffslipRow) => string }[] = [
     { k: 'customer_order', t: T('Đơn của khách, giao nhầm chỗ', "Commande d'un client, livrée au mauvais endroit"),

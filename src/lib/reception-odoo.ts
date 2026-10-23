@@ -666,6 +666,58 @@ async function addLineToSalesOrder(soRef: string, p: { id: number; default_code:
   }
 }
 
+// Axel, 2026-10-23: units a partner shop (Moon) kept off-slip.
+//  • the order's invoice has NO e-invoice VAT number yet → add the line straight onto that invoice
+//    (same price / discount / taxes as Moon's last sale of the product), back to draft if posted,
+//    + a Lab → customer delivery "<SO> ngoài phiếu". One invoice, right before the VAT.
+//  • a VAT number is already there → never touch that invoice: small new order (own invoice).
+async function addOffslipToPartnerInvoice(soRef: string, p: { id: number; default_code: string }, qty: number, deliveryDate: string): Promise<{ ok: boolean; error?: string; done: string[] }> {
+  const done: string[] = [];
+  const [so] = await odooExecuteWrite<any[]>('sale.order', 'search_read', [[['name', '=', soRef]]], { fields: ['id', 'name', 'partner_id', 'partner_shipping_id', 'warehouse_id', 'invoice_ids'] });
+  if (!so) return { ok: false, error: `${soRef} not found in Odoo`, done };
+  const invs = so.invoice_ids?.length ? await odooExecuteWrite<any[]>('account.move', 'read', [so.invoice_ids], { fields: ['id', 'name', 'state', 'move_type', 'l10n_vn_e_invoice_number'] }) : [];
+  const inv = invs.filter(i => i.move_type === 'out_invoice' && i.state !== 'cancel').sort((a, b) => b.id - a.id)[0];
+  const hasVat = !!inv && /vat/i.test(String(inv.l10n_vn_e_invoice_number || ''));
+  if (!inv || hasVat) {
+    done.push(!inv ? `${soRef}: no invoice yet → small new order` : `${inv.name} already has e-invoice ${String(inv.l10n_vn_e_invoice_number).trim()} → not touched, small new order`);
+    const r = await createExtraSalesOrder(soRef, p, qty, deliveryDate);
+    return { ok: r.ok, error: r.error, done: [...done, ...r.done] };
+  }
+  // Price: Moon's latest sale line of this product (pricelist price, discount, taxes).
+  const [ref] = await odooExecuteWrite<any[]>('sale.order.line', 'search_read', [[['order_id.partner_id', '=', so.partner_id[0]], ['product_id', '=', p.id], ['price_unit', '>', 0]]],
+    { fields: ['price_unit', 'discount', 'tax_id'], order: 'id desc', limit: 1 });
+  let price = ref?.price_unit, discount = ref?.discount ?? 0, taxes: number[] = ref?.tax_id ?? [];
+  if (price == null) {
+    const [prod] = await odooExecuteWrite<any[]>('product.product', 'read', [[p.id]], { fields: ['list_price', 'taxes_id'] });
+    price = prod?.list_price ?? 0; discount = 50; taxes = prod?.taxes_id ?? [];
+  }
+  // 1. Stock: Lab → customer delivery.
+  const [wh] = await odooExecuteWrite<any[]>('stock.warehouse', 'read', [[so.warehouse_id[0]]], { fields: ['out_type_id', 'lot_stock_id'] });
+  const [prodU] = await odooExecuteWrite<any[]>('product.product', 'read', [[p.id]], { fields: ['uom_id'] });
+  const custLoc = (await odooExecuteWrite<any[]>('stock.location', 'search_read', [[['usage', '=', 'customer']]], { fields: ['id'], limit: 1, order: 'id asc' }))[0]?.id;
+  const origin = `${soRef} ngoài phiếu`;
+  const pickId = await odooExecuteWrite<number>('stock.picking', 'create', [{
+    picking_type_id: wh.out_type_id[0], partner_id: (so.partner_shipping_id ?? so.partner_id)[0], location_id: wh.lot_stock_id[0], location_dest_id: custLoc, origin,
+    move_ids: [[0, 0, { name: p.default_code, product_id: p.id, product_uom: prodU.uom_id[0], product_uom_qty: qty, location_id: wh.lot_stock_id[0], location_dest_id: custLoc }]],
+  }], { context: NO_MAIL });
+  await odooExecuteWrite('stock.picking', 'action_confirm', [[pickId]], { context: NO_MAIL });
+  const v = await validateWholePicking(pickId);
+  if (!v.ok) return { ok: false, error: `delivery ${await recordName('stock.picking', pickId)}: ${v.error}`, done };
+  done.push(`delivery ${await recordName('stock.picking', pickId)} (${origin}) validated`);
+  // 2. Invoice: back to draft if posted, + the line (analytic copied from an existing line).
+  if (inv.state === 'posted') { await odooExecuteWrite('account.move', 'button_draft', [[inv.id]], { context: NO_MAIL }); done.push(`invoice ${inv.name} → draft`); }
+  const [anyLine] = await odooExecuteWrite<any[]>('account.move.line', 'search_read', [[['move_id', '=', inv.id], ['display_type', '=', 'product']]], { fields: ['analytic_distribution'], limit: 1 });
+  await odooExecuteWrite('account.move', 'write', [[inv.id], { invoice_line_ids: [[0, 0, {
+    product_id: p.id, quantity: qty, price_unit: price, discount, tax_ids: [[6, 0, taxes]],
+    ...(anyLine?.analytic_distribution ? { analytic_distribution: anyLine.analytic_distribution } : {}),
+  }]] }], { context: NO_MAIL });
+  try {
+    await odooExecuteWrite('account.move', 'message_post', [[inv.id]], { body: `App Lab: thêm ${p.default_code} ×${qty} — hàng giao thêm ngoài phiếu cùng ${soRef} (${deliveryDate}), shop giữ lại, Lab gửi thừa. Phiếu xuất ${await recordName('stock.picking', pickId)}. Dòng này không nằm trong đơn ${soRef}. Hoá đơn để nháp — kiểm tra rồi xuất VAT.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+  } catch { done.push('invoice note NOT posted'); }
+  done.push(`invoice ${inv.name}: + ${p.default_code} ×${qty} (${price} −${discount}%), left in DRAFT — xuất VAT after checking`);
+  return { ok: true, done };
+}
+
 // 2026-10-23: Odoo refuses new lines on a confirmed order ("đơn đã rời trạng thái báo giá"),
 // even unlocked. So units kept off-slip by a partner shop (Moon) go on a SMALL NEW order for the
 // same customer, from the same warehouse: confirmed, delivery validated, invoice left in DRAFT.
@@ -736,12 +788,12 @@ export async function finalizeOffSlip(input: {
     if (!live) {
       done.push(repWh
         ? `new adjustment REP → ${repWh}: ${input.sku} ×${input.qty} (OUT + IN validated, marked done)`
-        : `new order for ${recvSo}'s customer: ${input.sku} ×${input.qty}, delivery validated, draft invoice`);
+        : `${recvSo}: Lab → customer delivery ${input.sku} ×${input.qty}; line added to its invoice if no VAT yet, else a small new order`);
       return { ok: true, live, done };
     }
     const r = repWh
       ? await createAdjustmentRep({ whCode: repWh, deliveryDate: input.deliveryDate, note: input.origin, items: [{ pid: p.id, code: input.sku, qty: input.qty }] })
-      : await createExtraSalesOrder(recvSo!, p, input.qty, input.deliveryDate);
+      : await addOffslipToPartnerInvoice(recvSo!, p, input.qty, input.deliveryDate);
     done.push(...r.done);
     if (!r.ok) return { ok: false, live, error: r.error, done };
     return { ok: true, live, done };
