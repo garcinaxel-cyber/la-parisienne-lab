@@ -1,12 +1,15 @@
-// Stock production teams (Axel, 2026-10-23): Team Hung makes only storable products (macarons,
-// biscuits voyage, chocolate) and records its real work as EXTRA production. An order card for
-// those products has nothing to do — the order is served from the Lab stock, or not delivered —
-// so it is created directly as 'skip' ("in stock") instead of 'pending'. OEM SKUs are untouched.
-export const STOCK_PRODUCTION_TEAMS = ['hung'];
-export const STOCK_PRODUCTION_CATEGORIES = ['Macaron', 'Biscuit Voyage', 'Chocolate'];
+// Storable products served from the Lab stock (Axel, 2026-10-23): the team records its real work as
+// EXTRA production, so an order card for those products has nothing to do — the order is served
+// from stock, or not delivered. Such cards are created directly as 'skip' ("in stock").
+// Team Hung: macarons, biscuits voyage, chocolate. Team Gato (baby_mama): tiramisu only.
+// OEM SKUs are never touched.
+export const STOCK_PRODUCTION_BY_TEAM: Record<string, string[]> = {
+  hung: ['Macaron', 'Biscuit Voyage', 'Chocolate'],
+  baby_mama: ['Tiramisu'],
+};
+export const STOCK_PRODUCTION_TEAMS = Object.keys(STOCK_PRODUCTION_BY_TEAM);
 const isOem = (sku?: string | null) => !!sku && /^(MM-|OEM-)/i.test(sku);
 
 export function autoStockStatus(team: string, category: string | null | undefined, sku?: string | null): 'skip' | 'pending' {
-  return STOCK_PRODUCTION_TEAMS.includes(team) && !!category && STOCK_PRODUCTION_CATEGORIES.includes(category) && !isOem(sku)
-    ? 'skip' : 'pending';
+  return !!category && (STOCK_PRODUCTION_BY_TEAM[team] ?? []).includes(category) && !isOem(sku) ? 'skip' : 'pending';
 }
