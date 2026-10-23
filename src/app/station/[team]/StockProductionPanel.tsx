@@ -4,7 +4,7 @@
 // way, same Odoo MO) — only the screen changes: low-stock list, one category at a time, product
 // cards with photo + live Lab stock, and a number pad for the batch size (big batches).
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Package, Plus, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, Package, Plus, RotateCcw, X } from 'lucide-react';
 import type { StockProduct } from './actions';
 
 const GREEN = '#1A4731', GOLD = '#92600A', BORDER = '#E0D49A', RED = '#DC2626', AMBER = '#D97706';
@@ -32,6 +32,7 @@ export default function StockProductionPanel({
   const [val, setVal] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [lowOpen, setLowOpen] = useState(false); // collapsed by default (Axel, 2026-10-23: list too long at first sight)
 
   async function load() {
     try {
@@ -74,11 +75,19 @@ export default function StockProductionPanel({
       {/* Low stock — only products under their safety level */}
       {low.length > 0 && (
         <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: '#FEF3C7', border: '1px solid #F0C96A' }}>
-          <div className="flex items-center justify-between px-3 py-2.5 text-sm font-bold" style={{ color: GOLD }}>
-            <span className="flex items-center gap-1.5"><AlertTriangle size={15} /> {L('Tồn kho thấp', 'Low stock')}</span>
-            <span className="text-[11px]">{low.length} · {L('dưới mức an toàn', 'under safety level')}</span>
-          </div>
-          {low.map(p => {
+          <button onClick={() => setLowOpen(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-bold text-left" style={{ color: GOLD }}>
+            <span className="flex items-center gap-1.5"><AlertTriangle size={15} /> {L('Tồn kho thấp', 'Low stock')}
+              <span className="rounded-full px-2 py-0.5 text-[11px] font-black text-white" style={{ backgroundColor: RED }}>{low.length}</span></span>
+            <span className="flex items-center gap-1 text-[11px]">{lowOpen ? L('Thu gọn', 'Hide') : L('Xem tất cả', 'Show all')}
+              <ChevronDown size={15} className={`transition-transform ${lowOpen ? 'rotate-180' : ''}`} /></span>
+          </button>
+          {!lowOpen && (
+            <div className="px-3 pb-2.5 -mt-1 text-[12px] leading-snug" style={{ color: '#6B6455' }}>
+              {low.slice(0, 3).map((p, i) => <span key={p.sku}>{i ? ' · ' : ''}<b style={{ color: GREEN }}>{name(p)}</b> {Math.round(p.stock!)}/{Math.round(p.threshold!)}</span>)}
+              {low.length > 3 ? ` · +${low.length - 3}` : ''}
+            </div>
+          )}
+          {lowOpen && low.map(p => {
             const pct = Math.max(4, Math.min(100, (p.stock! / p.threshold!) * 100));
             return (
               <div key={p.sku} className="px-3 py-2" style={{ borderTop: '1px solid #F0EAD0' }}>
