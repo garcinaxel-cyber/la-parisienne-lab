@@ -1,3 +1,6 @@
+import ExceptionalTabs from './ExceptionalTabs';
+import OdooCakesTab, { type OdooCake } from './OdooCakesTab';
+import { loadBirthdayCakes } from '@/lib/birthday-cakes-data';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import ExceptionalOrdersView from './ExceptionalOrdersView';
@@ -8,7 +11,7 @@ export const revalidate = 0;
 // whether created by an assistant in the app or by a shop via the public link (phase 2).
 // The birthday-cakes tab stays the cake-specific operational view; this page is where
 // the "enter in Odoo" lifecycle is tracked and duplicates are reconciled.
-export default async function ExceptionalOrdersPage() {
+export default async function ExceptionalOrdersPage({ searchParams }: { searchParams?: { tab?: string } }) {
   const supabase = createClient();
   const { data: { session } } = await getSafeSession(supabase);
   if (!session) redirect('/login');
@@ -164,6 +167,13 @@ export default async function ExceptionalOrdersPage() {
   // Universal shop order link (manager RLS)
   const { data: linkRow } = await supabase.from('lab_shop_link').select('token, active').limit(1).maybeSingle();
 
-  return <ExceptionalOrdersView orders={list} candidates={candidates} productChoices={productChoices} today={today}
-    shopLinkToken={linkRow?.active ? linkRow.token : null} />;
+  // Birthday cakes from Odoo (Axel, 2026-10-24): the old tab moved here.
+  const bc = await loadBirthdayCakes(supabase as any);
+  const odooCakes = bc.cakes as unknown as OdooCake[];
+  const cakesBadge = odooCakes.filter(c => c.delivery_date >= today && !c.messageSaved).length;
+
+  return <ExceptionalTabs initial={searchParams?.tab === 'cakes' ? 'cakes' : 'orders'} cakesBadge={cakesBadge}
+    orders={<ExceptionalOrdersView orders={list} candidates={candidates} productChoices={productChoices} today={today}
+      shopLinkToken={linkRow?.active ? linkRow.token : null} />}
+    cakes={<OdooCakesTab cakes={odooCakes} today={today} />} />;
 }

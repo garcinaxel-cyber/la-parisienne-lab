@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, AlertTriangle, PackageCheck, Box, Pencil, Printer, Eye, EyeOff, RefreshCw, CheckCheck, ArrowRightLeft } from 'lucide-react';
 import type { CheckLine, DeliveryOrderHeader, OnlineOrderCheckInfo, DeliveryDestination } from '@/lib/delivery-check';
-import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
+import { reasonLabel } from '@/lib/delivery-check-reasons';
+import GapResolver from '@/components/GapResolver';
 import { isStockFamily, type ProdStatus } from '@/lib/delivery-check-production';
 import { TEAM_LABELS, type Team } from '@/lib/types';
 import { SHOP_CONFIG } from '@/lib/shops';
@@ -58,13 +59,11 @@ function ProdCell({ s, family, vi, leaving }: { s: ProdStatus | undefined; famil
   const otherLine = others.length
     ? (vi ? 'Đơn khác: ' : 'Autres cmd : ') + shown.join(' · ') + (others.length > 2 ? ` +${others.length - 2}` : '')
     : null;
-  const over = s.checked - (s.sent + s.stock);
   return (
     <div>
       {main}
       {sub('#6B7280', [teams, scope].filter(Boolean).join(' · ') || null)}
       {sub('#B45309', otherLine)}
-      {over > 0 && s.sent < s.checked && sub('#6D28D9', vi ? `Cả ngày: giao nhiều hơn chuyển kho +${over}` : `Journée : livré > transféré +${over}`)}
     </div>
   );
 }
@@ -191,28 +190,23 @@ function Section({ title, icon: Icon, items, state, checked, savingLine, validat
                         className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
                         style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
                       {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{fmtDiff(diff)}</span>}
-                      <button onClick={() => checkLine(l)} disabled={savingLine === l.id || (needsReason && !st.reason)}
+                      {!needsReason && <button onClick={() => checkLine(l)} disabled={savingLine === l.id}
                         className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
                         style={{ backgroundColor: '#16A34A' }}>
                         {savingLine === l.id ? '…' : (vi ? 'OK' : 'OK')}
-                      </button>
+                      </button>}
                     </>
                   )}
                 </div>
                 </div>
               </div>
-              {needsReason && !isChecked && (
-                <div className="mt-2 flex flex-col sm:flex-row gap-2">
-                  <select value={st.reason} onChange={e => upd(l.id, { reason: e.target.value })}
-                    className="rounded-lg px-2 py-1.5 text-sm sm:w-56"
-                    style={{ border: '1px solid', borderColor: st.reason ? '#D1D5DB' : '#F87171', backgroundColor: 'white' }}>
-                    <option value="">{vi ? '— Lý do —' : '— Raison —'}</option>
-                    {REASONS.map(r => <option key={r.v} value={r.v}>{vi ? r.vi : r.en}</option>)}
-                  </select>
-                  <input type="text" value={st.note} onChange={e => upd(l.id, { note: e.target.value })}
-                    placeholder={vi ? 'Ghi chú (tuỳ chọn)' : 'Note (optionnel)'}
-                    className="flex-1 rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                </div>
+              {needsReason && !isChecked && Number.isFinite(qty) && st.qty !== '' && (
+                <GapResolver lineId={l.id} expected={l.qty_expected} qty={qty} vi={vi}
+                  onSaved={(reason, note) => { upd(l.id, { reason, note }); setChecked(p => new Set(p).add(l.id)); }}
+                  onRecount={() => upd(l.id, { qty: String(l.qty_expected), reason: '', note: '' })} />
+              )}
+              {isChecked && isDiff && st.reason && (
+                <div className="mt-1 text-[11px] font-semibold" style={{ color: '#8A5A00' }}>{reasonLabel(st.reason, vi)}{st.note ? ` · ${st.note}` : ''}</div>
               )}
             </div>
           );
@@ -268,7 +262,11 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     const { checkLineAction } = await import('../../actions');
     const res = await checkLineAction(l.id, qty, st?.reason || null, st?.note || null);
     setSavingLine(null);
-    if (res.ok) setChecked(p => new Set(p).add(l.id));
+    if (res.ok) {
+      setChecked(p => new Set(p).add(l.id));
+      // Forgotten transfer is fixed by the app even when the quantity matches (Axel 2026-10-24).
+      if (l.category === 'production') import('../../actions').then(({ followUpLineAction }) => followUpLineAction(l.id).catch(() => {}));
+    }
   }
 
   async function validate() {

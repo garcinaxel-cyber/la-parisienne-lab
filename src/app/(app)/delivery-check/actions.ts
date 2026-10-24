@@ -6,6 +6,13 @@ import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
 import { validateDeliveryOnOdoo, type SplitInput, type DeliveryValidateResult } from '@/lib/odoo-delivery-validate';
+import { OTHER_NOTE_MIN } from '@/lib/delivery-check-reasons';
+import { computeDayPool, contextFor, followUpLine, type GapContext, type FollowUpResult } from '@/lib/delivery-gap';
+
+function serviceClient() {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+}
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
   const { data: { session } } = await getSafeSession(supabase);
@@ -48,6 +55,8 @@ export async function checkLineAction(
   if (hdr?.status === 'validated') return { error: 'Đơn đã khoá — bấm « Mở khoá » trước khi sửa. / Order locked — unlock it first.' };
   const isDiff = qtyChecked !== line.qty_expected;
   if (isDiff && !isWeighedEntry(qtyChecked) && !reason) return { error: 'Reason required' };
+  // "Lý do khác" needs a real explanation (Axel, 2026-10-24: no more silent "other").
+  if (isDiff && reason === 'other' && (note ?? '').trim().length < OTHER_NOTE_MIN) return { error: 'Ghi rõ lý do / Explain the reason' };
 
   const { error } = await supabase.from('lab_delivery_check_lines').update({
     qty_checked: qtyChecked,
@@ -334,4 +343,56 @@ export async function validateDeliveryOnOdooAction(
   }
 
   return result;
+}
+
+
+// ── Gap barriers (Axel, 2026-10-24) ─────────────────────────────────────────────────────────
+// What the assistant sees when the quantity she checks ≠ the order: the day's figures for this
+// product (all orders) and which question to ask. Read-only.
+export async function getGapContextAction(lineId: string, qty: number): Promise<{ ctx?: GapContext; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const sb = serviceClient() ?? supabase;
+  const { data: line } = await sb.from('lab_delivery_check_lines')
+    .select('delivery_date, sku, product_category, category, qty_expected').eq('id', lineId).maybeSingle();
+  if (!line) return { error: 'Line not found' };
+  if (!line.sku) return { ctx: { family: line.category === 'packaging' ? 'packaging' : 'mto', dir: qty < Number(line.qty_expected) ? 'short' : 'over', diff: Math.abs(qty - Number(line.qty_expected)), made: 0, sent: 0, otherLeft: 0, lost: 0, thisQty: qty, expected: Number(line.qty_expected), autoNotMade: false, autoNote: null, madeCovers: false } };
+  const { pool } = await computeDayPool(sb, line.delivery_date, line.sku, lineId, line.product_category, line.category);
+  return { ctx: contextFor(pool, Number(line.qty_expected), qty) };
+}
+
+// Called right after a line is saved, without making the assistant wait: recount alert, card
+// correction, forgotten transfer, Lab scrap, Odoo production up/down. Result kept on the line.
+export async function followUpLineAction(lineId: string, photoUrl?: string | null): Promise<{ ok?: boolean; result?: FollowUpResult; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const sb = serviceClient();
+  if (!sb) return { error: 'Server not configured' };
+  try {
+    const result = await followUpLine(sb, lineId, { photoUrl: photoUrl ?? null, byName: auth.profile?.full_name ?? null, byId: auth.session.user.id });
+    return { ok: true, result };
+  } catch (e: any) {
+    await sb.from('lab_delivery_check_lines').update({ resolution_odoo_status: 'error', resolution_odoo_error: String(e?.message ?? e).slice(0, 300) }).eq('id', lineId);
+    return { error: String(e?.message ?? e) };
+  }
+}
+
+// Photo of a broken product (delivery check or Lab scrap tab).
+export async function uploadLossPhotoAction(formData: FormData): Promise<{ url?: string; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const sb = serviceClient();
+  if (!sb) return { error: 'Server not configured' };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only images' };
+  if (file.size > 8 * 1024 * 1024) return { error: 'Image too large (max 8MB)' };
+  const ext = (file.type.split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';
+  const path = `lab-loss/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await sb.storage.from('lab-design-photos').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (error) return { error: error.message };
+  return { url: sb.storage.from('lab-design-photos').getPublicUrl(path).data.publicUrl };
 }

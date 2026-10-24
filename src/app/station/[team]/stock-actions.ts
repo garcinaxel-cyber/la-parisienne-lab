@@ -96,6 +96,29 @@ export async function submitStockTransferAction(
     return { error: lErr.message };
   }
 
+  // Made-to-order products need no stock reception (Axel, 2026-10-24): they leave with today's
+  // deliveries, the delivery check is their control. Only EXTRA production stays to be received
+  // in "Nhập kho". A mixed note is split: the made-to-order lines move to their own note, marked
+  // received at once. Odoo is unaffected either way (MOs follow what is SENT, not received).
+  try {
+    const ids = Array.from(new Set(clean.map(l => l.assignmentId)));
+    const { data: kinds } = await supabase.from('lab_assignments').select('id, is_extra').in('id', ids);
+    const extra = new Set((kinds ?? []).filter((k: any) => k.is_extra).map((k: any) => k.id));
+    const mtoIds = ids.filter(id => !extra.has(id));
+    if (mtoIds.length) {
+      const now = new Date().toISOString();
+      const recvBy = 'Tự động · hàng theo đơn';
+      if (mtoIds.length === ids.length) {
+        await supabase.from('lab_stock_transfers').update({ status: 'received', received_at: now, received_by_name: recvBy }).eq('id', transfer.id);
+      } else {
+        const { data: t2 } = await supabase.from('lab_stock_transfers')
+          .insert({ team, created_by: session.user.id, created_by_name: profile?.full_name ?? null, status: 'received', received_at: now, received_by_name: recvBy })
+          .select('id').single();
+        if (t2) await supabase.from('lab_stock_transfer_lines').update({ transfer_id: t2.id }).eq('transfer_id', transfer.id).in('assignment_id', mtoIds);
+      }
+    }
+  } catch { /* never block the chef */ }
+
   // Only flag a card "transferred" once EVERYTHING it produced has actually been sent —
   // a partial send (chef sends less than what's on the card) must leave the remainder
   // sendable later, otherwise it is stranded forever (never reaches stock/Odoo). qty_sent_total

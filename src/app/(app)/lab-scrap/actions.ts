@@ -1,7 +1,10 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
-import { getScrapReasonTags, resolveProductsBySku, explainMissingSku, createLabScrap } from '@/lib/odoo-scrap';
+import { getScrapReasonTags } from '@/lib/odoo-scrap';
+import { recordLabLoss } from '@/lib/lab-loss';
+import { computeDayPool } from '@/lib/delivery-gap';
+import { labDateOf } from '@/lib/odoo';
 
 // LAB's own scrap/loss report — admin + assistant space (never the shop portal). Axel,
 // 2026-08-27: "une fonction de scrap similaire aux shops mais pour les produits casse du lab".
@@ -68,6 +71,7 @@ export type LabLoss = {
   id: string; sku: string | null; productName: string; qty: number;
   reasonTagName: string; note: string | null; odooScrapId: number | null; odooSyncError: string | null;
   reportedByName: string; reportedAt: string;
+  source: string; orderRef: string | null; photoUrl: string | null;
 };
 
 export async function getLabLossesAction(): Promise<{ losses?: LabLoss[]; error?: string }> {
@@ -76,7 +80,7 @@ export async function getLabLossesAction(): Promise<{ losses?: LabLoss[]; error?
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
   const { data, error } = await supabase.from('lab_internal_losses')
-    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at')
+    .select('id, sku, product_name, qty, reason_tag_name, note, odoo_scrap_id, odoo_sync_error, reported_by_name, reported_at, source, order_ref, photo_url')
     .order('reported_at', { ascending: false })
     .limit(50);
   if (error) return { error: error.message };
@@ -85,61 +89,43 @@ export async function getLabLossesAction(): Promise<{ losses?: LabLoss[]; error?
       id: r.id, sku: r.sku, productName: r.product_name, qty: Number(r.qty),
       reasonTagName: r.reason_tag_name, note: r.note, odooScrapId: r.odoo_scrap_id, odooSyncError: r.odoo_sync_error,
       reportedByName: r.reported_by_name, reportedAt: r.reported_at,
+      source: r.source ?? 'lab_scrap', orderRef: r.order_ref ?? null, photoUrl: r.photo_url ?? null,
     })),
   };
 }
 
 export async function recordLabLossAction(input: {
   sku: string | null; productName: string; qty: number;
-  reasonTagId: number; reasonTagName: string; note: string | null;
+  reasonTagId: number; reasonTagName: string; note: string | null; photoUrl?: string | null;
 }): Promise<{ ok?: boolean; odooSynced?: boolean; odooError?: string; error?: string }> {
   const auth = await requireStaff();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
-
   const productName = (input.productName ?? '').trim().slice(0, 200);
   if (!productName) return { error: 'Product required' };
   const qty = Number(input.qty);
   if (!(qty > 0)) return { error: 'Quantity must be > 0' };
   if (!input.reasonTagId || !input.reasonTagName) return { error: 'Reason required' };
-
-  // Best-effort Odoo sync — never blocks or discards the local report (same guarantee as the
-  // shop portal's loss report).
-  let odooScrapId: number | null = null;
-  let odooSyncError: string | null = null;
-  try {
-    if (input.sku) {
-      const products = await resolveProductsBySku([input.sku]);
-      const product = products[input.sku];
-      if (!product) {
-        odooSyncError = await explainMissingSku(input.sku);
-      } else {
-        const result = await createLabScrap({
-          productId: product.id,
-          uomId: product.uom_id,
-          qty,
-          reasonTagIds: [input.reasonTagId],
-          origin: `Lab scrap ${new Date().toISOString().slice(0, 10)}`,
-        });
-        if (result.ok) odooScrapId = result.scrapId ?? null;
-        else odooSyncError = result.error ?? 'Odoo sync failed';
-      }
-    } else {
-      odooSyncError = 'Pas de SKU — non synchronisé sur Odoo';
-    }
-  } catch (e: any) {
-    odooSyncError = e?.message ?? 'Odoo sync failed';
-  }
-
-  const { error } = await supabase.from('lab_internal_losses').insert({
-    sku: input.sku, product_name: productName, qty,
-    reason_tag_id: input.reasonTagId, reason_tag_name: input.reasonTagName,
-    note: input.note ? input.note.slice(0, 300) : null,
-    odoo_scrap_id: odooScrapId, odoo_sync_error: odooSyncError,
-    reported_by_name: auth.name || 'Staff', reported_by_id: auth.id,
-    reported_at: new Date().toISOString(),
+  // Same function as the delivery check "Bánh bị hỏng / vỡ" (Axel, 2026-10-24) — lib/lab-loss.ts.
+  const r = await recordLabLoss(supabase, {
+    sku: input.sku, productName, qty, reasonTagId: input.reasonTagId, reasonTagName: input.reasonTagName,
+    note: input.note, reportedByName: auth.name || 'Staff', reportedById: auth.id, photoUrl: input.photoUrl ?? null, source: 'lab_scrap',
   });
-  if (error) return { error: error.message };
-  return { ok: true, odooSynced: !!odooScrapId, odooError: odooSyncError ?? undefined };
+  if (r.error) return { error: r.error };
+  return { ok: true, odooSynced: !!r.odooScrapId, odooError: r.odooError ?? undefined };
+}
+
+// "Còn có thể báo" (Axel, 2026-10-24): for a made-to-order product, what is still physically at
+// the Lab today = made − already delivered − already reported broken. Stock products: no limit.
+export async function getLabScrapAvailabilityAction(sku: string): Promise<{ family?: string; made?: number; delivered?: number; lost?: number; available?: number; error?: string }> {
+  const auth = await requireStaff();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase || !sku) return {};
+  const today = labDateOf(new Date().toISOString())!;
+  const { data: anyLine } = await supabase.from('lab_delivery_check_lines').select('product_category, category').eq('sku', sku).eq('delivery_date', today).limit(1).maybeSingle();
+  const { pool } = await computeDayPool(supabase, today, sku, null, anyLine?.product_category ?? null, anyLine?.category ?? 'production');
+  if (pool.family !== 'mto' || (pool.produced === 0 && pool.otherLeft === 0)) return { family: pool.family };
+  return { family: pool.family, made: pool.produced, delivered: pool.otherLeft, lost: pool.lost, available: Math.max(0, pool.produced + pool.fromStock - pool.otherLeft - pool.lost) };
 }

@@ -278,7 +278,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
       <div className="flex items-center gap-3">
         <Link href="/delivery-check" className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 bg-white"><ArrowLeft size={16} /></Link>
         <div>
-          <h1 className="font-serif text-2xl font-bold text-navy">{vi ? 'Lệch giao hàng' : 'Écarts de livraison'}</h1>
+          <h1 className="font-serif text-2xl font-bold text-navy">{vi ? 'Việc cần làm · Lệch giao hàng' : 'Tasks · Delivery gaps'}</h1>
           <p className="text-ink-light text-sm">{vi ? 'Shop nhận khác số Bếp — xử lý trong 48h' : 'Le shop a reçu ≠ du check Lab — à traiter sous 48h'}</p>
         </div>
       </div>

@@ -3,7 +3,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft, CheckCircle2, Pencil, ArrowLeftRight } from 'lucide-react';
-import { DELIVERY_CHECK_REASONS as REASONS } from '@/lib/delivery-check-reasons';
+import { reasonLabel } from '@/lib/delivery-check-reasons';
+import GapResolver from '@/components/GapResolver';
 
 type Row = {
   id: string; sku: string | null; product_name_vi: string; product_name_en: string | null;
@@ -36,7 +37,10 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
     const { checkLineAction } = await import('../actions');
     const res = await checkLineAction(r.id, qty, st?.reason || null, st?.note || null);
     setSavingLine(null);
-    if (res.ok) setChecked(p => new Set(p).add(r.id));
+    if (res.ok) {
+      setChecked(p => new Set(p).add(r.id));
+      if (r.category === 'production') import('../actions').then(({ followUpLineAction }) => followUpLineAction(r.id).catch(() => {}));
+    }
   }
 
   const dayRows = rows.filter(r => r.delivery_date === (day === 'today' ? today : tomorrow));
@@ -162,27 +166,22 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
                                 className="w-14 text-center rounded-lg px-2 py-1.5 text-sm font-bold"
                                 style={{ border: '1px solid', borderColor: isDiff ? '#F87171' : '#D1D5DB' }} />
                               {isDiff && <span className="text-xs font-bold shrink-0" style={{ color: '#DC2626' }}>{diff > 0 ? '+' : ''}{diff}</span>}
-                              <button onClick={() => checkRow(r)} disabled={savingLine === r.id || (isDiff && !st.reason)}
+                              {!isDiff && <button onClick={() => checkRow(r)} disabled={savingLine === r.id}
                                 className="text-xs font-bold px-2.5 py-1.5 rounded-lg text-white shrink-0 disabled:opacity-40"
                                 style={{ backgroundColor: '#16A34A' }}>
                                 {savingLine === r.id ? '…' : 'OK'}
-                              </button>
+                              </button>}
                             </>
                           )}
                         </div>
                       </div>
-                      {isDiff && !isChecked && (
-                        <div className="mt-2 flex flex-col sm:flex-row gap-2">
-                          <select value={st.reason} onChange={e => upd(r.id, { reason: e.target.value })}
-                            className="rounded-lg px-2 py-1.5 text-sm sm:w-56"
-                            style={{ border: '1px solid', borderColor: st.reason ? '#D1D5DB' : '#F87171', backgroundColor: 'white' }}>
-                            <option value="">{vi ? '— Lý do —' : '— Raison —'}</option>
-                            {REASONS.map(r2 => <option key={r2.v} value={r2.v}>{vi ? r2.vi : r2.en}</option>)}
-                          </select>
-                          <input type="text" value={st.note} onChange={e => upd(r.id, { note: e.target.value })}
-                            placeholder={vi ? 'Ghi chú (tuỳ chọn)' : 'Note (optionnel)'}
-                            className="flex-1 rounded-lg px-2 py-1.5 text-sm" style={{ border: '1px solid #D1D5DB' }} />
-                        </div>
+                      {isDiff && !isChecked && Number.isFinite(qty) && st.qty !== '' && (
+                        <GapResolver lineId={r.id} expected={r.qty_expected} qty={qty} vi={vi}
+                          onSaved={(reason, note) => { upd(r.id, { reason, note }); setChecked(p => new Set(p).add(r.id)); }}
+                          onRecount={() => upd(r.id, { qty: String(r.qty_expected), reason: '', note: '' })} />
+                      )}
+                      {isChecked && isDiff && st.reason && (
+                        <div className="mt-1 text-[11px] font-semibold" style={{ color: '#8A5A00' }}>{reasonLabel(st.reason, vi)}{st.note ? ` · ${st.note}` : ''}</div>
                       )}
                     </div>
                   );

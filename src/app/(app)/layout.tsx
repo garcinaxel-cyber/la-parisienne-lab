@@ -104,9 +104,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       + (lastRun?.production_stock_count ?? 0) + (lastRun?.stock_odoo_count ?? 0);
   }
 
+  // Delivery check badge (Axel, 2026-10-24): red production → delivery tasks still to settle.
+  let deliveryTasks = 0;
+  if (['admin', 'lab_manager', 'assistant'].includes(profile.role)) {
+    const db = rawService();
+    if (db) {
+      const { countOpenProductionTasks } = await import('@/lib/delivery-tasks');
+      deliveryTasks = await countOpenProductionTasks(db as any);
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} deliveryTasks={deliveryTasks} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>

@@ -224,6 +224,9 @@ export default async function DeliveryCheckPage() {
     // + products received that were on no slip, still to settle (Axel, 2026-10-16).
     const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
     deliveryGapsCount += offslipOpen ?? 0;
+    // + production → delivery tasks still red (Axel, 2026-10-24 — "Tasks · Delivery gaps").
+    const { countOpenProductionTasks } = await import('@/lib/delivery-tasks');
+    deliveryGapsCount += await countOpenProductionTasks(sb as any);
   } catch (e) { console.error('delivery gaps count failed:', e); }
 
   // Shop reception tracker (Axel, 2026-10-16) — today + the late days (never tomorrow: nothing

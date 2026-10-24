@@ -176,3 +176,21 @@ export async function retryShopInAction(deliveryOrderId: string, orderRef: strin
   revalidatePath('/delivery-check/gaps');
   return r;
 }
+
+// Stock recount alert raised at delivery check ("Hết hàng trong kho" on a stock product) —
+// the Lab recounts and closes it here (Axel, 2026-10-24). Never touches Odoo stock.
+export async function closeRecountAlertAction(id: string, note: string | null): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { error } = await sb.from('lab_stock_recount_alerts').update({
+    status: 'done', done_by_name: profile?.full_name ?? null, done_at: new Date().toISOString(), note: note ? note.slice(0, 300) : null,
+  }).eq('id', id).eq('status', 'open');
+  if (error) return { error: error.message };
+  revalidatePath('/delivery-check/gaps');
+  return { ok: true };
+}

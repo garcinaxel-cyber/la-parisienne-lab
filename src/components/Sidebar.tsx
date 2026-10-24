@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Cake, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory, Truck, Wheat } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory, Truck, Wheat } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
@@ -28,7 +28,6 @@ const NAV = [
   // visible to admin/lab_manager. Route + component untouched — visibility only.
   { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const, family: 'production', hideFor: ['assistant'] as UserRole[] },
   { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check', family: 'production' },
-  { href: '/birthday-cakes', icon: Cake,       labelVi: 'Bánh sinh nhật', labelEn: 'Birthday cakes', family: 'production' },
   { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders', family: 'production' },
   { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception', family: 'production' },
   { href: '/inventory', icon: Box,            labelVi: 'Kiểm kê', labelEn: 'Inventaire', family: 'production' },
@@ -88,7 +87,7 @@ const ADMIN_NAV = [
 ];
 const FAMILY_ORDER = ['today', 'production', 'shops', 'piloting'] as const;
 
-export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, pendingPurchasing = 0, reconciliationIssues = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; pendingPurchasing?: number; reconciliationIssues?: number }) {
+export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, pendingPurchasing = 0, reconciliationIssues = 0, deliveryTasks = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; pendingPurchasing?: number; reconciliationIssues?: number; deliveryTasks?: number }) {
   const { t, lang, setLang } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
@@ -149,6 +148,9 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
                           <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
                           {href === '/reception' && pendingTransfers > 0 && (
                             <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingTransfers}</span>
+                          )}
+                          {href === '/delivery-check' && deliveryTasks > 0 && (
+                            <span title="Delivery gaps to settle" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{deliveryTasks}</span>
                           )}
                           {href === '/exceptional-orders' && pendingExceptional > 0 && (
                             <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingExceptional}</span>

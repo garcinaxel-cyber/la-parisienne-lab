@@ -32,6 +32,14 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
+  const [avail, setAvail] = useState<{ made?: number; delivered?: number; lost?: number; available?: number } | null>(null);
+  useEffect(() => {
+    setAvail(null);
+    if (!product?.sku) return;
+    let alive = true;
+    import('./actions').then(a => a.getLabScrapAvailabilityAction(product.sku!)).then(r => { if (alive && r.available != null) setAvail(r); });
+    return () => { alive = false; };
+  }, [product?.sku]);
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -158,6 +166,12 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
           )}
         </div>
 
+        {avail && (
+          <div className="text-xs rounded-lg px-2.5 py-1.5" style={{ backgroundColor: Number(qty) > (avail.available ?? 0) ? '#FEF2F2' : '#F0FAF3', color: Number(qty) > (avail.available ?? 0) ? '#B42318' : '#166534' }}>
+            {vi ? `Hôm nay: bếp làm ${avail.made} · đã giao ${avail.delivered} · đã báo hỏng ${avail.lost} → còn có thể báo: ${avail.available}`
+                : `Today: made ${avail.made} · delivered ${avail.delivered} · reported ${avail.lost} → can still report: ${avail.available}`}
+          </div>
+        )}
         <div className="flex gap-2.5">
           <div className="flex-1">
             <div className="text-xs font-semibold mb-1" style={{ color: '#6B7280' }}>{vi ? 'Số lượng' : 'Quantity'}</div>
@@ -239,10 +253,16 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
                   {l.odooScrapId ? (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#059669' }}><CheckCircle2 size={12} /> Odoo</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0" style={{ color: '#D97706' }}><AlertTriangle size={12} /> {vi ? 'Chưa đồng bộ' : 'Not synced'}</span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold shrink-0 rounded-full px-2 py-0.5" style={{ color: '#B42318', backgroundColor: '#FDECEA' }} title={l.odooSyncError ?? undefined}><AlertTriangle size={12} /> {vi ? 'Odoo chưa xác nhận' : 'Not in Odoo yet'}</span>
                   )}
                 </div>
                 <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>{l.reasonTagName}{l.note ? ` · ${l.note}` : ''}</div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={l.source === 'delivery_check' ? { backgroundColor: '#FFF4D6', color: '#8A5A00' } : { backgroundColor: '#F3F4F6', color: '#4B5563' }}>
+                    {l.source === 'delivery_check' ? `${vi ? 'Kiểm giao hàng' : 'Delivery check'}${l.orderRef ? ` · ${l.orderRef}` : ''}` : (vi ? 'Báo tại tab này' : 'This tab')}
+                  </span>
+                  {l.photoUrl && <button onClick={() => setZoomImage(l.photoUrl!)} className="text-[10px] font-bold underline" style={{ color: '#1A4731' }}>📷 {vi ? 'Ảnh' : 'Photo'}</button>}
+                </div>
                 <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>{l.reportedByName} · {new Date(l.reportedAt).toLocaleString(vi ? 'vi-VN' : 'en-GB')}</div>
               </div>
             ))}

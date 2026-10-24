@@ -200,10 +200,10 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           <ArrowRightLeft size={20} className="shrink-0" style={{ color: deliveryGapsCount > 0 ? 'white' : '#9CA3AF' }} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold" style={{ color: deliveryGapsCount > 0 ? 'white' : '#6B7280' }}>
-              {vi ? 'Lệch giao hàng' : 'Écarts de livraison'}{deliveryGapsCount > 0 ? ` · ${deliveryGapsCount}` : ''}
+              {vi ? 'Việc cần làm · Lệch giao hàng' : 'Tasks · Delivery gaps'}{deliveryGapsCount > 0 ? ` · ${deliveryGapsCount}` : ''}
             </div>
             <div className="text-xs" style={{ color: deliveryGapsCount > 0 ? '#FECACA' : '#9CA3AF' }}>
-              {vi ? 'Shop nhận khác số Bếp' : 'Reçu par le shop ≠ check Lab'}
+              {vi ? 'Sản xuất → giao · giao → cửa hàng' : 'Production → delivery · delivery → shop'}
             </div>
           </div>
           <ChevronRight size={18} className="shrink-0" style={{ color: deliveryGapsCount > 0 ? '#FECACA' : '#9CA3AF' }} />
