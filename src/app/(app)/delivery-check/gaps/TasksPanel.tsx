@@ -9,6 +9,8 @@ import { reasonLabel } from '@/lib/delivery-check-reasons';
 import type { ProdTask, RecountTask, LeftoverTask, LeftoverDone } from '@/lib/delivery-tasks';
 import { RotateCcw, ChevronDown, ChevronRight, ExternalLink, Camera } from 'lucide-react';
 
+// Reasons from before 2026-10-24 have no automatic follow-up: the line must be re-checked.
+const LEGACY = new Set(['shortage', 'miscount']);
 const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647';
 
 export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null };
@@ -145,10 +147,12 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             </div>
             {(t.odooError || msg[t.id]) && <div className="mt-1 text-xs" style={{ color: RED }}>Odoo: {msg[t.id] ?? t.odooError}</div>}
             <div className="mt-2 flex flex-wrap gap-2">
-              {t.reason && (
+              {t.reason && !LEGACY.has(t.reason) ? (
                 <button onClick={() => retry(t)} disabled={busy === t.id} className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: RED }}>
-                  <RotateCcw size={13} className={busy === t.id ? 'animate-spin' : ''} />{vi ? 'Làm lại' : 'Do it again'}
+                  <RotateCcw size={13} className={busy === t.id ? 'animate-spin' : ''} />{t.odooStatus === 'error' ? (vi ? 'Làm lại' : 'Retry') : (vi ? 'Áp dụng' : 'Apply')}
                 </button>
+              ) : (
+                <span className="self-center text-xs font-semibold" style={{ color: RED }}>{vi ? 'Lý do cũ — mở đơn, bấm ✎ và chọn lại lý do' : 'Old reason — open the order, tap ✎ and pick the reason again'}</span>
               )}
               <Link href={`/delivery-check/${t.deliveryDate}/${encodeURIComponent(t.orderRef)}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold text-stone-700">
                 <ExternalLink size={13} />{vi ? 'Mở đơn' : 'Open order'}
