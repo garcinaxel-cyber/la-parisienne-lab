@@ -85,14 +85,17 @@ export async function syncStockToOdoo(
   const moDate = `${date} 02:00:00`;
 
   const existing = prodIds.length ? await tmo(odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name', 'unbuild_ids'], limit: 5000 }), 20000, 'existing') : [];
+    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name'], limit: 5000 }), 20000, 'existing') : [];
   // An mrp.unbuild does NOT lower the MO's quantity: subtract the done unbuilds, otherwise a day
   // that was corrected ("bếp chưa làm") looks still covered and later transfers never reach Odoo.
-  const ubIds = existing.flatMap((m: any) => m.unbuild_ids ?? []);
+  // The read-only Odoo account has no right on mrp.unbuild (24/10 incident: reading unbuild_ids
+  // broke every sync) — read them with the write account, and never let this block the sync.
   const unbuiltByMo: Record<number, number> = {};
-  if (ubIds.length) {
-    const ubs = await tmo(odooExecute<any[]>('mrp.unbuild', 'read', [ubIds], { fields: ['mo_id', 'product_qty', 'state'] }), 20000, 'unbuilds');
-    for (const u of ubs) if (u.state === 'done' && u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuiltByMo[mid] = (unbuiltByMo[mid] ?? 0) + Number(u.product_qty || 0); }
+  if (existing.length && odooWriteConfigured()) {
+    try {
+      const ubs = await tmo(odooExecuteWrite<any[]>('mrp.unbuild', 'search_read', [[['mo_id', 'in', existing.map((m: any) => m.id)], ['state', '=', 'done']]], { fields: ['mo_id', 'product_qty'] }), 20000, 'unbuilds');
+      for (const u of ubs) if (u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuiltByMo[mid] = (unbuiltByMo[mid] ?? 0) + Number(u.product_qty || 0); }
+    } catch { /* unknown unbuilds: behave as before */ }
   }
   const moByProd: Record<number, { confirmedSum: number; draft: { id: number; qty: number; name: string } | null }> = {};
   for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {

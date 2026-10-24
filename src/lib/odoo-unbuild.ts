@@ -22,13 +22,12 @@ export async function reduceDayProduction(day: string, sku: string, target: numb
     const p = prods[0];
     const mos = await tmo(odooExecute<any[]>('mrp.production', 'search_read',
       [[['origin', '=', `Lab ${day}`], ['product_id', '=', p.id], ['state', '!=', 'cancel']]],
-      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'product_uom_id', 'unbuild_ids'], order: 'id desc' }), 20000, 'mos');
+      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'product_uom_id'], order: 'id desc' }), 20000, 'mos');
     // Done unbuilds do not lower the MO's quantity: subtract them (else a second correction unbuilds again).
-    const ubIds = mos.flatMap((m: any) => m.unbuild_ids ?? []);
     const unbuilt: Record<number, number> = {};
-    if (ubIds.length) {
-      const ubs = await tmo(odooExecute<any[]>('mrp.unbuild', 'read', [ubIds], { fields: ['mo_id', 'product_qty', 'state'] }), 15000, 'unbuilds');
-      for (const u of ubs) if (u.state === 'done' && u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuilt[mid] = (unbuilt[mid] ?? 0) + Number(u.product_qty || 0); }
+    if (mos.length) {
+      const ubs = await tmo(odooExecuteWrite<any[]>('mrp.unbuild', 'search_read', [[['mo_id', 'in', mos.map((m: any) => m.id)], ['state', '=', 'done']]], { fields: ['mo_id', 'product_qty'] }), 15000, 'unbuilds');
+      for (const u of ubs) if (u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuilt[mid] = (unbuilt[mid] ?? 0) + Number(u.product_qty || 0); }
     }
     const qtyOf = (m: any) => m.state === 'done' ? Number(m.qty_produced || m.product_qty) - (unbuilt[m.id] ?? 0) : Number(m.product_qty);
     let total = mos.reduce((s, m) => s + qtyOf(m), 0);
