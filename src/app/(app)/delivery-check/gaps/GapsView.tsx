@@ -225,7 +225,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
     const on = (e: Event) => {
       const key = (e as CustomEvent).detail as string | null;
       setDetailOpen(true);
-      if (key && key !== 'offslip') { setTab('decide'); setSelected(key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
+      if (key === 'closed') { setTab('closed'); setSelected(null); }
+      else if (key && key !== 'offslip') { setTab('decide'); setSelected(key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
       setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     };
     window.addEventListener('lp-open-gap', on);

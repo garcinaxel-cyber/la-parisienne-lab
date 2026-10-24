@@ -14,7 +14,7 @@ export type ProdTask = {
   sku: string | null; product: string; family: string;
   expected: number; checked: number; reason: string | null; note: string | null;
   resolution: string | null; odooStatus: string | null; odooError: string | null; ref: string | null;
-  resolvedBy: string | null;
+  resolvedBy: string | null; resolvedAt: string | null;
 };
 export type RecountTask = { id: string; sku: string; product: string; deliveryDate: string | null; orderRef: string | null; missing: number; raisedBy: string | null; raisedAt: string };
 
@@ -85,7 +85,7 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
 
 export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: ProdTask[]; resolved: ProdTask[]; recounts: RecountTask[] }> {
   const { data: lines } = await sb.from('lab_delivery_check_lines')
-    .select('id, delivery_order_id, delivery_date, sku, product_name_vi, product_category, category, qty_expected, qty_checked, discrepancy_reason, discrepancy_note, resolution, resolution_odoo_status, resolution_odoo_error, resolution_ref, resolution_by_name')
+    .select('id, delivery_order_id, delivery_date, sku, product_name_vi, product_category, category, qty_expected, qty_checked, discrepancy_reason, discrepancy_note, resolution, resolution_odoo_status, resolution_odoo_error, resolution_ref, resolution_by_name, resolution_at')
     .in('status', ['ok', 'adjusted']).gte('delivery_date', since()).limit(5000);
   const diff = (lines ?? []).filter((l: any) => Number(l.qty_checked ?? 0) !== Number(l.qty_expected ?? 0));
   const orderIds = Array.from(new Set(diff.map((l: any) => l.delivery_order_id).filter(Boolean)));
@@ -101,7 +101,7 @@ export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: P
       sku: l.sku, product: l.product_name_vi ?? l.sku ?? '', family: l.product_category || l.category || '—',
       expected: Number(l.qty_expected ?? 0), checked: Number(l.qty_checked ?? 0),
       reason: l.discrepancy_reason, note: l.discrepancy_note, resolution: l.resolution,
-      odooStatus: l.resolution_odoo_status, odooError: l.resolution_odoo_error, ref: l.resolution_ref, resolvedBy: l.resolution_by_name,
+      odooStatus: l.resolution_odoo_status, odooError: l.resolution_odoo_error, ref: l.resolution_ref, resolvedBy: l.resolution_by_name, resolvedAt: l.resolution_at,
     };
   });
   const isOpen = (t: ProdTask) => !t.resolution || t.odooStatus === 'error';
@@ -120,4 +120,32 @@ export async function countOpenProductionTasks(sb: SupabaseClient): Promise<numb
     const [a, b] = await Promise.all([loadProductionTasks(sb), loadMadeWithoutOrder(sb)]);
     return a.open.length + b.open.length + b.done.filter(d => d.odooStatus === 'error').length;
   } catch { return 0; }
+}
+
+// Amber "waiting for shops to confirm receipt" (Axel's mockup, 2026-10-24): La Paris shop orders
+// of the last 7 days that left the Lab but have no receipt confirmed yet, counted per shop.
+export async function loadShopsNotConfirmed(sb: SupabaseClient): Promise<{ shop: string; orders: number }[]> {
+  const to = vnToday();
+  const from = new Date(new Date(`${to}T00:00:00Z`).getTime() - 7 * 86400000).toISOString().slice(0, 10);
+  const { data: orders } = await sb.from('lab_delivery_orders').select('id, shop_name, customer_name, marked_not_delivered')
+    .gte('delivery_date', from).lte('delivery_date', to).limit(2000);
+  const shopOrders = (orders ?? []).filter((o: any) => !o.marked_not_delivered && /^(la paris|moon)/i.test(String(o.shop_name ?? o.customer_name ?? '')));
+  const ids = shopOrders.map((o: any) => o.id);
+  if (!ids.length) return [];
+  const left = new Set<string>(); const received = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const [{ data: lines }, { data: rec }] = await Promise.all([
+      sb.from('lab_delivery_check_lines').select('delivery_order_id').in('delivery_order_id', chunk).gt('qty_checked', 0).limit(5000),
+      sb.from('lab_shop_receipt_lines').select('delivery_order_id').in('delivery_order_id', chunk).not('qty_received', 'is', null).limit(5000),
+    ]);
+    for (const l of lines ?? []) left.add(l.delivery_order_id);
+    for (const r of rec ?? []) received.add(r.delivery_order_id);
+  }
+  const by: Record<string, number> = {};
+  for (const o of shopOrders) if (left.has(o.id) && !received.has(o.id)) {
+    const name = String(o.shop_name ?? o.customer_name).replace(/^La Paris\s*/i, '');
+    by[name] = (by[name] ?? 0) + 1;
+  }
+  return Object.entries(by).map(([shop, orders]) => ({ shop, orders })).sort((a, b) => b.orders - a.orders);
 }
