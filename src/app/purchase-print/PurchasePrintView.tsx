@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { fmtQty, packHint, type PurchaseLine } from '@/lib/raw-materials';
@@ -60,14 +61,36 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
   const firstDate = sorted.map(l => l.createdAt).filter(Boolean).sort()[0];
   const empty = Math.max(0, MIN_ROWS - sorted.length);
 
+  // One sheet = one page (Axel, 2026-10-24: the signature names were spilling onto a 2nd page).
+  // Print styles are compacted below, and right before printing the sheet is scaled down to the
+  // printable height of an A4 landscape page (210mm - 2×8mm margins) if it is still taller.
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const PRINTABLE_PX = (194 / 25.4) * 96; // 194mm at 96 dpi
+    const fit = () => {
+      const el = sheetRef.current; if (!el) return;
+      (el.style as any).zoom = '';
+      const h = el.scrollHeight;
+      if (h > PRINTABLE_PX) (el.style as any).zoom = String(Math.max(0.6, (PRINTABLE_PX - 4) / h));
+    };
+    const reset = () => { const el = sheetRef.current; if (el) (el.style as any).zoom = ''; };
+    window.addEventListener('beforeprint', fit);
+    window.addEventListener('afterprint', reset);
+    return () => { window.removeEventListener('beforeprint', fit); window.removeEventListener('afterprint', reset); };
+  }, []);
+
   return (
     <div>
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          @page { margin: 10mm 12mm; size: A4 landscape; }
+          @page { margin: 8mm 12mm; size: A4 landscape; }
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .prprint-sheet { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
+          .prprint-table th, .prprint-table td { padding: 3px 6px !important; }
+          .prprint-sign-gap { height: 60px !important; }
         }
+        .prprint-sign { break-inside: avoid; page-break-inside: avoid; }
         .prprint-table { border-collapse: collapse; width: 100%; }
         .prprint-table th, .prprint-table td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
         .prprint-table th { font-weight: 700; text-align: center; vertical-align: middle; }
@@ -83,7 +106,7 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
         </button>
       </div>
 
-      <div style={{ background: '#fff', color: '#111', maxWidth: '1040px', margin: '24px auto', padding: '20px 28px', fontFamily: "'Times New Roman', serif", fontSize: 13.5 }}>
+      <div ref={sheetRef} className="prprint-sheet" style={{ background: '#fff', color: '#111', maxWidth: '1040px', margin: '24px auto', padding: '20px 28px', fontFamily: "'Times New Roman', serif", fontSize: 13.5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-print.png" alt="La Paris" style={{ height: 56 }} />
@@ -138,17 +161,17 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
           </tbody>
         </table>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 22 }}>
+        <div className="prprint-sign" style={{ display: 'flex', justifyContent: 'space-between', marginTop: 22 }}>
           <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700 }}>Người lập phiếu</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
-            <div style={{ height: 90 }} />
+            <div className="prprint-sign-gap" style={{ height: 90 }} />
             <div style={{ fontWeight: 700 }}>{PURCHASER}</div>
           </div>
           <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700 }}>Phê Duyệt</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
-            <div style={{ height: 90 }} />
+            <div className="prprint-sign-gap" style={{ height: 90 }} />
             <div style={{ fontWeight: 700 }}>Dương Xuân Giang</div>
           </div>
         </div>
