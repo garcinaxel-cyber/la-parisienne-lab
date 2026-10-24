@@ -56,6 +56,7 @@ export default async function StationPage({ params }: { params: { team: string }
         variant_label, total_qty, qty_to_produce, qty_produced,
         status, is_extra, produced_ahead, cancelled, transferred, qty_sent_total, notes, sort_order, import_id,
         produced_by_name, produced_at,
+        corrected_at, corrected_by_name, corrected_reason, corrected_from, corrected_qty, corrected_ref,
         lab_imports!inner(delivery_date, order_number, type, status, imported_at)
       `)
       .eq('team', team)

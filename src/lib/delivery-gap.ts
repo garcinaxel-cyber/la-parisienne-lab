@@ -197,7 +197,7 @@ function cardForOrder(cards: Card[], orderRef: string): Card | null {
 // Lower the kitchen count by `qty` (cards of one product, one day), take back what was sent to
 // stock beyond it, and bring the Odoo production of each transfer day down to match. Shared by
 // "Bếp chưa làm" (delivery check) and "made without order → never made" (tasks tab).
-export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: string, qty: number, note: string, preferOrderRef: string | null): Promise<{ refs: string[]; errs: string[] }> {
+export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: string, qty: number, note: string, preferOrderRef: string | null, mark?: { by: string | null; reason: string; ref: string | null }): Promise<{ refs: string[]; errs: string[] }> {
   const refs: string[] = []; const errs: string[] = [];
   let left = qty;
   const ordered = [preferOrderRef ? cardForOrder(cards, preferOrderRef) : null, ...cards].filter((c, i, a) => c && a.indexOf(c) === i) as Card[];
@@ -230,6 +230,8 @@ export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: str
         refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
       }
     }
+    // Lock the card for the kitchen (v133): who corrected it, why, from → to.
+    if (mark) Object.assign(upd, { corrected_at: new Date().toISOString(), corrected_by_name: mark.by, corrected_reason: mark.reason, corrected_from: p, corrected_qty: np, corrected_ref: mark.ref });
     await sb.from('lab_assignments').update(upd).eq('id', c.id);
     c.qty_produced = np; if (upd.qty_sent_total != null) c.qty_sent_total = upd.qty_sent_total;
   }
@@ -255,7 +257,7 @@ export async function resolveMadeWithoutOrder(sb: SupabaseClient, date: string, 
   const today = labDateOf(new Date().toISOString())!;
   const tag = `Lab ${date} · ${sku}`;
   if (choice === 'not_made') {
-    const r = await removeProduced(sb, cards, sku, qty, `${opts.productName} — làm dư không có đơn: bếp báo sai ${qty} (${opts.byName ?? ''})`, null);
+    const r = await removeProduced(sb, cards, sku, qty, `${opts.productName} — làm dư không có đơn: bếp báo sai ${qty} (${opts.byName ?? ''})`, null, { by: opts.byName, reason: 'made_without_order_not_made', ref: null });
     refs.push(...r.refs); errs.push(...r.errs);
   } else {
     const usable = cards.filter(c => c.status !== 'skip' && c.status !== 'blocked');
@@ -355,7 +357,8 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
       const c = cardForOrder(cards, orderRef);
       if (c && need > 0) {
         const np = (Number(c.qty_produced) || 0) + need;
-        await sb.from('lab_assignments').update({ qty_produced: np, transferred: (Number(c.qty_sent_total) || 0) >= np, updated_at: new Date().toISOString() }).eq('id', c.id);
+        await sb.from('lab_assignments').update({ qty_produced: np, transferred: (Number(c.qty_sent_total) || 0) >= np, updated_at: new Date().toISOString(),
+          corrected_at: new Date().toISOString(), corrected_by_name: opts.byName, corrected_reason: 'undeclared', corrected_from: Number(c.qty_produced) || 0, corrected_qty: np, corrected_ref: orderRef }).eq('id', c.id);
         c.qty_produced = np; pool.produced += need;
       }
       resolution = 'undeclared'; resQty = need;
@@ -367,7 +370,7 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
     if (reason === 'not_made' && already !== 'not_made') {
       const phantom = Math.min(Math.max(0, expected - qty), pool.produced - (pool.otherLeft + pool.pendingLeft + qty + pool.lost));
       if (phantom > 0) {
-        const r = await removeProduced(sb, cards, line.sku, phantom, `${line.product_name_vi} — bếp chưa làm, ${orderRef} giao ${qty}/${expected} (kiểm giao hàng ${opts.byName ?? ''})`, orderRef);
+        const r = await removeProduced(sb, cards, line.sku, phantom, `${line.product_name_vi} — bếp chưa làm, ${orderRef} giao ${qty}/${expected} (kiểm giao hàng ${opts.byName ?? ''})`, orderRef, { by: opts.byName, reason: 'not_made', ref: orderRef });
         res.refs.push(...r.refs); errs.push(...r.errs);
       }
       resolution = 'not_made'; resQty = Math.max(0, phantom);

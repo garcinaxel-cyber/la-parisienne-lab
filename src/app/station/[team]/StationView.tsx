@@ -78,6 +78,8 @@ type Assignment = {
   produced_at?: string | null;
   produced_ahead?: boolean;
   cancelled?: boolean;
+  corrected_at?: string | null; corrected_by_name?: string | null; corrected_reason?: string | null;
+  corrected_from?: number | null; corrected_qty?: number | null; corrected_ref?: string | null;
   transferred?: boolean;
   qty_sent_total?: number;
   bc_message?: string | null;
@@ -3220,6 +3222,28 @@ function NotesEditor({
 
 // ─── PRODUCTION CARD ─────────────────────────────────────────────────────────
 
+// Card corrected at the delivery check (Axel, 2026-10-24): locked for the kitchen, with who, why
+// and from → to. The database keeps the quantity even if someone taps "done" again (v133 trigger).
+const CORRECTION_REASON: Record<string, { vi: string; en: string }> = {
+  not_made: { vi: 'Kiểm giao hàng đếm thiếu — bếp chưa làm', en: 'Delivery check counted fewer — not made' },
+  undeclared: { vi: 'Kiểm giao hàng đếm dư — bếp làm thêm nhưng chưa báo', en: 'Delivery check counted more — made but not declared' },
+  made_without_order_not_made: { vi: 'Làm dư không có đơn — bếp báo sai số', en: 'Made without order — kitchen count was wrong' },
+};
+function CorrectionLock({ a, lang }: { a: Assignment; lang: 'vi' | 'en' }) {
+  if (!a.corrected_at) return null;
+  const vi = lang === 'vi';
+  const r = CORRECTION_REASON[a.corrected_reason ?? ''];
+  const when = new Date(a.corrected_at).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return (
+    <div className="mx-3 mt-2 rounded-lg px-2.5 py-1.5 text-[12px] leading-snug" style={{ backgroundColor: '#FFF7E6', border: '1px solid #F3D19C', color: '#7A4A00' }}>
+      <div className="font-bold">🔒 {vi ? 'Đã chỉnh — không sửa số được' : 'Corrected — quantity locked'}: {a.corrected_from ?? '?'} → {a.corrected_qty ?? a.qty_produced}</div>
+      <div>{r ? (vi ? r.vi : r.en) : (a.corrected_reason ?? '')}</div>
+      <div className="opacity-80">{vi ? 'Bởi' : 'By'} {a.corrected_by_name || '—'} · {when}{a.corrected_ref ? ` · ${a.corrected_ref}` : ''}</div>
+      <div className="opacity-80">{vi ? 'Sai? Báo quản lý Lab.' : 'Wrong? Tell the Lab manager.'}</div>
+    </div>
+  );
+}
+
 function ProductionCard({
   a, lang, updating, readOnly, onAdvance, onDoneAndSend, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo,
 }: {
@@ -3262,6 +3286,7 @@ function ProductionCard({
         boxShadow: a.cancelled ? 'none' : '0 1px 4px rgba(26,71,49,0.07)',
         opacity: a.cancelled ? 0.7 : 1,
       }}>
+      <CorrectionLock a={a} lang={lang} />
 
       {late && (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] sm:text-xs font-bold text-white" style={{ backgroundColor: '#DC2626' }}>
@@ -3457,7 +3482,7 @@ function ProductionCard({
               {lang === 'vi' ? 'Có sẵn' : 'In stock'}
             </button>
           )}
-          {a.status === 'in_progress' && !readOnly && (
+          {a.status === 'in_progress' && !readOnly && !a.corrected_at && (
             <button onClick={() => onPartial(a)}
               className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors text-center"
               style={{ borderColor: '#E0D49A', color: '#6B7280' }}>
@@ -3588,7 +3613,7 @@ function TermineCard({
 }) {
   const isSkip = a.status === 'skip';
   // Editable until sent to stock — after that the card is frozen (bon already issued)
-  const editable = !isSkip && !a.transferred && !a.cancelled && !readOnly;
+  const editable = !isSkip && !a.transferred && !a.cancelled && !readOnly && !a.corrected_at;
   const ahead = !!a.produced_ahead && !isSkip; // done in advance of the delivery day
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
 
@@ -3599,6 +3624,7 @@ function TermineCard({
         border: isSkip ? '1.5px solid #C4B5FD' : ahead ? '1.5px solid #93C5FD' : '1px solid #E0D49A',
         opacity: isSkip ? 1 : ahead ? 1 : 0.75,
       }}>
+      <CorrectionLock a={a} lang={lang} />
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
           <img src={thumb(a.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
