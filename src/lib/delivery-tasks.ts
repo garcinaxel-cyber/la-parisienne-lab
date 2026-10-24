@@ -18,6 +18,17 @@ export type ProdTask = {
 };
 export type RecountTask = { id: string; sku: string; product: string; deliveryDate: string | null; orderRef: string | null; missing: number; raisedBy: string | null; raisedAt: string };
 
+// Supabase caps every request at 1000 rows: read page by page.
+async function all(q: (from: number, to: number) => PromiseLike<{ data: any[] | null }>): Promise<any[]> {
+  const out: any[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data } = await q(f, f + 999);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
 function vnToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
@@ -39,7 +50,7 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
   for (const i of imports ?? []) dateByImport[i.id] = i.delivery_date;
   const iids = Object.keys(dateByImport);
   if (!iids.length) return { open: [], done: [] };
-  const { data: cards } = await sb.from('lab_assignments').select('import_id, variant_id, status, cancelled, is_extra, qty_produced, product_name_vi').in('import_id', iids).limit(10000);
+  const cards = await all((f, t) => sb.from('lab_assignments').select('id, import_id, variant_id, status, cancelled, is_extra, qty_produced, product_name_vi').in('import_id', iids).order('id').range(f, t));
   const vids = Array.from(new Set((cards ?? []).map((c: any) => c.variant_id).filter(Boolean)));
   const { data: vars } = vids.length ? await sb.from('lab_fiche_variants').select('id, sku, fiche_id').in('id', vids) : { data: [] as any[] };
   const fids = Array.from(new Set((vars ?? []).map((v: any) => v.fiche_id).filter(Boolean)));
@@ -58,8 +69,8 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
     a.made += Number(c.qty_produced) || 0;
   }
   if (!Object.keys(agg).length) return { open: [], done: [] };
-  const { data: lines } = await sb.from('lab_delivery_check_lines').select('delivery_date, sku, qty_checked, status, delivery_order_id')
-    .gte('delivery_date', from).lte('delivery_date', to).eq('category', 'production').limit(10000);
+  const lines = await all((f, t) => sb.from('lab_delivery_check_lines').select('id, delivery_date, sku, qty_checked, status, delivery_order_id')
+    .gte('delivery_date', from).lte('delivery_date', to).eq('category', 'production').order('id').range(f, t));
   const oids = Array.from(new Set((lines ?? []).map((l: any) => l.delivery_order_id)));
   const { data: hdrs } = oids.length ? await sb.from('lab_delivery_orders').select('id, marked_not_delivered').in('id', oids) : { data: [] as any[] };
   const notDelivered = new Set((hdrs ?? []).filter((h: any) => h.marked_not_delivered).map((h: any) => h.id));
@@ -67,7 +78,7 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
     const a = agg[`${l.delivery_date}|${l.sku}`]; if (!a || notDelivered.has(l.delivery_order_id)) continue;
     if (l.status === 'pending' || l.qty_checked == null) a.unchecked = true; else a.delivered += Number(l.qty_checked) || 0;
   }
-  const { data: losses } = await sb.from('lab_internal_losses').select('sku, qty, delivery_date, reported_at').gte('reported_at', `${from}T00:00:00+07:00`).limit(5000);
+  const losses = await all((f, t) => sb.from('lab_internal_losses').select('id, sku, qty, delivery_date, reported_at').gte('reported_at', `${from}T00:00:00+07:00`).order('id').range(f, t));
   for (const r of losses ?? []) {
     const d = r.delivery_date ?? labDateOf(r.reported_at); const a = agg[`${d}|${r.sku}`]; if (a) a.lost += Number(r.qty) || 0;
   }
@@ -84,9 +95,9 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
 }
 
 export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: ProdTask[]; resolved: ProdTask[]; recounts: RecountTask[] }> {
-  const { data: lines } = await sb.from('lab_delivery_check_lines')
+  const lines = await all((f, t) => sb.from('lab_delivery_check_lines')
     .select('id, delivery_order_id, delivery_date, sku, product_name_vi, product_category, category, qty_expected, qty_checked, discrepancy_reason, discrepancy_note, resolution, resolution_odoo_status, resolution_odoo_error, resolution_ref, resolution_by_name, resolution_at')
-    .in('status', ['ok', 'adjusted']).gte('delivery_date', since()).limit(5000);
+    .in('status', ['ok', 'adjusted']).gte('delivery_date', since()).order('id').range(f, t));
   const diff = (lines ?? []).filter((l: any) => Number(l.qty_checked ?? 0) !== Number(l.qty_expected ?? 0));
   const orderIds = Array.from(new Set(diff.map((l: any) => l.delivery_order_id).filter(Boolean)));
   const { data: orders } = orderIds.length
@@ -133,8 +144,9 @@ export async function loadShopsNotConfirmed(sb: SupabaseClient): Promise<{ shop:
   const ids = shopOrders.map((o: any) => o.id);
   if (!ids.length) return [];
   const left = new Set<string>(); const received = new Set<string>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
+  // Small chunks: Supabase returns at most 1000 rows per request (a big REP has 30+ lines).
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
     const [{ data: lines }, { data: rec }] = await Promise.all([
       sb.from('lab_delivery_check_lines').select('delivery_order_id').in('delivery_order_id', chunk).gt('qty_checked', 0).limit(5000),
       sb.from('lab_shop_receipt_lines').select('delivery_order_id').in('delivery_order_id', chunk).not('qty_received', 'is', null).limit(5000),
