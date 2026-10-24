@@ -205,7 +205,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
   );
 }
 
-export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra, extraClosed }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode; extraClosed?: React.ReactNode }) {
+export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra, extraClosed, top }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode; extraClosed?: React.ReactNode; top?: React.ReactNode }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -279,9 +279,12 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
         <Link href="/delivery-check" className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 bg-white"><ArrowLeft size={16} /></Link>
         <div>
           <h1 className="font-serif text-2xl font-bold text-navy">{vi ? 'Việc cần làm · Lệch giao hàng' : 'Tasks · Delivery gaps'}</h1>
-          <p className="text-ink-light text-sm">{vi ? 'Shop nhận khác số Bếp — xử lý trong 48h' : 'Le shop a reçu ≠ du check Lab — à traiter sous 48h'}</p>
+          <p className="text-ink-light text-sm">{vi ? 'Sản xuất → giao hàng · giao hàng → cửa hàng' : 'Production → delivery · delivery → shop'}</p>
         </div>
       </div>
+
+      {/* Tasks panel (Axel, 2026-10-24): counter, ① production → delivery, waiting, done. */}
+      {top}
 
       <div className="rounded-xl px-4 py-2.5 text-xs flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#4C1D95' }}>
         <FlaskConical size={14} className="shrink-0 mt-0.5" />

@@ -24,9 +24,6 @@ export default async function DeliveryGapsPage() {
   const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
   const waitingShop = gaps.filter(g => g.status === 'waiting_shop').length;
   const damagedNotBack = gaps.filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt).length;
-  return <div className="space-y-2">
-    <div className="px-4 pt-4 lg:px-8"><TasksPanel open={prod.open} resolved={prod.resolved} recounts={prod.recounts}
-      receptionOpen={gaps.filter(g => g.kind !== 'damaged' && g.status === 'open').length + (offslipOpen ?? 0)} waitingShop={waitingShop} damagedNotBack={damagedNotBack} today={today} /></div>
-    <GapsView initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />
-  </div>;
+  return <GapsView top={<TasksPanel open={prod.open} resolved={prod.resolved} recounts={prod.recounts}
+      receptionOpen={gaps.filter(g => g.kind !== 'damaged' && g.status === 'open').length + (offslipOpen ?? 0)} waitingShop={waitingShop} damagedNotBack={damagedNotBack} today={today} />} initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />;
 }

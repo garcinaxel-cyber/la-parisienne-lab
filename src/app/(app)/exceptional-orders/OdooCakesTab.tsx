@@ -59,7 +59,7 @@ export default function OdooCakesTab({ cakes, today }: { cakes: OdooCake[]; toda
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="font-semibold text-stone-800">{c.qty > 1 ? `${c.qty} × ` : ''}{c.name}</span>
           <span className="inline-flex items-center gap-1 text-stone-500"><Store size={13} />{c.shop ?? '—'}</span>
-          <span className="inline-flex items-center gap-1 text-stone-500"><Clock size={13} />{fmt(c.delivery_date)}{c.delivery_time ? ` · ${c.delivery_time}` : ''}</span>
+          <span className="inline-flex items-center gap-1 text-stone-500"><Clock size={13} />{fmt(c.delivery_date)}{c.delivery_time ? ` · ${c.delivery_time.slice(0, 5)}` : ''}</span>
           <span className="inline-flex items-center gap-1 text-xs text-stone-400"><FileText size={12} />{c.order_ref}</span>
           {c.messageSaved
             ? <span className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 size={13} />{vi ? 'Đã lưu' : 'Saved'}</span>
