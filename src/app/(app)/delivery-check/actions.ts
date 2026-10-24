@@ -370,17 +370,11 @@ export async function getGapContextAction(lineId: string, qty: number): Promise<
   if (!line.sku) return { ctx: { family: line.category === 'packaging' ? 'packaging' : 'mto', dir: qty < Number(line.qty_expected) ? 'short' : 'over', diff: Math.abs(qty - Number(line.qty_expected)), made: 0, sent: 0, otherLeft: 0, lost: 0, thisQty: qty, expected: Number(line.qty_expected), autoNotMade: false, autoNote: null, madeCovers: false } };
   const { pool } = await computeDayPool(sb, line.delivery_date, line.sku, lineId, line.product_category, line.category);
   const ctx = contextFor(pool, Number(line.qty_expected), qty);
-  // "Taken from Lab stock" is only possible if the Lab really has some (Axel, 2026-10-24: a
-  // Charlotte Passion was declared "from Lab stock" while Odoo LAB/Stock was at −1).
+  // Over a made-to-order product: the app shows the Lab reserve of extra production (its own
+  // count, not Odoo stock) and decides itself between "from the reserve" and "made, not declared".
   if (ctx.dir === 'over' && ctx.family === 'mto' && !ctx.madeCovers) {
-    try {
-      const { odooExecute } = await import('@/lib/odoo');
-      const q = await Promise.race([
-        odooExecute<any[]>('stock.quant', 'search_read', [[['product_id.default_code', '=', line.sku], ['location_id.complete_name', '=', 'LAB/Stock']]], { fields: ['quantity'] }),
-        new Promise<any[]>((_, r) => setTimeout(() => r(new Error('timeout')), 8000)),
-      ]);
-      ctx.labStock = (q ?? []).reduce((s: number, x: any) => s + Number(x.quantity || 0), 0);
-    } catch { ctx.labStock = null; }
+    const { labReserve } = await import('@/lib/delivery-gap');
+    try { ctx.reserve = await labReserve(sb, line.sku, line.delivery_date, lineId); } catch { ctx.reserve = 0; }
   }
   return { ctx };
 }

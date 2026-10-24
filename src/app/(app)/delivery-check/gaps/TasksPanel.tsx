@@ -155,7 +155,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             () => setOpenKey(k),
             <div className="space-y-2">
               <div className="grid gap-1.5">
-                {opt('to_stock', 'Còn ở Lab — cho vào kho', 'Still at the Lab — keep in Lab stock', vi ? 'App tự chuyển kho nếu chưa chuyển' : 'The app sends it to stock if not done')}
+                {opt('to_stock', 'Còn ở Lab — vào kho hàng làm dư', 'Still at the Lab — goes to the extra-production reserve', vi ? 'Lần sau kiểm giao hàng có thể lấy từ kho này' : 'A next delivery check can take it from this reserve')}
                 {opt('lost', 'Bị hỏng / bỏ đi', 'Broken / thrown away', vi ? 'Chụp 1 ảnh — ghi vào hao hụt Lab' : 'Take 1 photo — goes to Lab scrap')}
                 {opt('not_made', 'Bếp báo sai — thực tế không làm', 'Kitchen over-declared — never made', vi ? 'App tự sửa số bếp đã làm và Odoo' : 'The app corrects the kitchen count and Odoo')}
               </div>

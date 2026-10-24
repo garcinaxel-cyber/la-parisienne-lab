@@ -177,13 +177,17 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
       <div className="font-bold text-[15px] text-navy">{vi ? `Gửi ${qty} — bếp mới báo làm ${ctx.made}. ${diff} cái thêm lấy từ đâu?` : `You send ${qty} — kitchen declared ${ctx.made}. Where do the +${diff} come from?`}</div>
       <div className="text-xs text-gray-400 mb-2">{vi ? 'Tính cho cả ngày, tất cả các đơn' : 'Whole day, all orders'}</div>
       {tiles}
-      {radio({ code: 'undeclared', vi: 'Bếp đã làm nhưng chưa báo', en: 'Made but not declared', sub: 'App tự cộng vào số bếp đã làm', subEn: 'The app adds it to the kitchen count' })}
-      {ctx.labStock != null && ctx.labStock < diff
-        ? <div className="w-full rounded-xl px-3 py-2 mb-1.5 text-xs" style={{ border: '1px dashed #D1D5DB', color: '#6B7280' }}>
-            {vi ? `Lấy từ kho Lab — không được: Odoo chỉ còn ${ctx.labStock} ở kho Lab. Nếu bếp làm thêm, chọn « Bếp đã làm nhưng chưa báo ».`
-                : `Taken from Lab stock — not possible: Odoo has only ${ctx.labStock} in Lab stock. If the kitchen made more, pick « Made but not declared ».`}
-          </div>
-        : radio({ code: 'from_lab_stock', vi: 'Lấy từ kho Lab (hàng hôm trước)', en: 'Taken from Lab stock', sub: ctx.labStock != null ? `Odoo: kho Lab còn ${ctx.labStock} · không thêm sản xuất` : 'Không thêm sản xuất', subEn: ctx.labStock != null ? `Odoo: ${ctx.labStock} in Lab stock · no production added` : 'No production added' })}
+      {(() => {
+        // One question only (Axel, 2026-10-24): is the cake really there? The app then takes it
+        // from the Lab reserve of extra production if there is some, otherwise adds it to the
+        // kitchen count (made but not declared). The assistant never chooses between the two.
+        const need = Math.max(0, qty - Math.max(0, ctx.made - ctx.otherLeft - ctx.lost));
+        const r = ctx.reserve ?? 0; const fromR = Math.min(need, r); const add = need - fromR;
+        const sub = vi
+          ? (fromR > 0 && add === 0 ? `Lấy ${fromR} từ kho hàng làm dư (còn ${r})` : fromR > 0 ? `Lấy ${fromR} từ kho hàng làm dư, app cộng ${add} vào số bếp đã làm` : `Kho hàng làm dư: 0 → app cộng ${add || diff} vào số bếp đã làm`)
+          : (fromR > 0 && add === 0 ? `${fromR} taken from the extra-production reserve (${r} left)` : fromR > 0 ? `${fromR} from the reserve, the app adds ${add} to the kitchen count` : `Reserve: 0 → the app adds ${add || diff} to the kitchen count`);
+        return radio({ code: 'over_real', vi: 'Bánh có thật — đã đếm lại', en: 'The cakes are really there — recounted', sub, subEn: sub });
+      })()}
       {radio({ code: 'recount', vi: 'Mình đếm sai', en: 'I counted wrong', sub: 'Quay lại đếm lại', subEn: 'Go back and count again' })}
       {radio({ code: 'other', vi: 'Lý do khác', en: 'Other', sub: 'Ghi rõ lý do', subEn: 'Explain' })}
       {extras}

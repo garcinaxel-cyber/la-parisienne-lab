@@ -75,6 +75,53 @@ export async function computeDayPool(sb: SupabaseClient, date: string, sku: stri
   return { pool: { sku, date, family, planned, produced, fromStock, sent, lost, otherLeft, pendingLeft, blockedReasons, partial }, cards };
 }
 
+// Lab reserve of a made-to-order product (Axel, 2026-10-24): the ONLY stock of such cakes is extra
+// production. Counted by the app, never from Odoo stock (Odoo can be wrong):
+//   + extra production sent to stock (received or not yet), last 3 days (fresh products)
+//   + "made without order → kept at the Lab" answers, same window
+//   − units served from it: cards "Có sẵn" (skip) and delivery-check lines settled "from_lab_stock"
+//   − Lab losses of that product in the window
+export const RESERVE_DAYS = 3;
+export async function labReserve(sb: SupabaseClient, sku: string, date: string, excludeLineId: string | null = null): Promise<number> {
+  const from = new Date(new Date(`${date}T00:00:00Z`).getTime() - (RESERVE_DAYS - 1) * 86400000).toISOString().slice(0, 10);
+  const startUtc = labDayUtcRange(from).start; const endUtc = labDayUtcRange(date).end;
+  const { data: variants } = await sb.from('lab_fiche_variants').select('id').eq('sku', sku);
+  const vids = (variants ?? []).map((v: any) => v.id);
+  // extra received
+  let added = 0;
+  // Extra SENT to stock counts even if not received yet: its Odoo MO already exists (MOs follow
+  // what is sent), so counting it as 'not declared' would create it twice.
+  const { data: trs } = await sb.from('lab_stock_transfers').select('id').neq('status', 'cancelled').is('cancelled_at', null).gte('created_at', startUtc).lt('created_at', endUtc);
+  const tids = (trs ?? []).map((t: any) => t.id);
+  for (let i = 0; i < tids.length; i += 100) {
+    const { data: tls } = await sb.from('lab_stock_transfer_lines').select('assignment_id, qty_sent, qty_received').eq('sku', sku).in('transfer_id', tids.slice(i, i + 100));
+    const aids = Array.from(new Set((tls ?? []).map((t: any) => t.assignment_id).filter(Boolean)));
+    if (!aids.length) continue;
+    const { data: ex } = await sb.from('lab_assignments').select('id').in('id', aids).eq('is_extra', true);
+    const extra = new Set((ex ?? []).map((a: any) => a.id));
+    for (const t of tls ?? []) if (extra.has(t.assignment_id)) added += Number(t.qty_received ?? t.qty_sent) || 0;
+  }
+  const { data: kept } = await sb.from('lab_made_without_order').select('qty').eq('sku', sku).eq('resolution', 'to_stock').gte('delivery_date', from).lte('delivery_date', date);
+  for (const k of kept ?? []) added += Number(k.qty) || 0;
+  // used
+  let used = 0;
+  if (vids.length) {
+    const { data: imps } = await sb.from('lab_imports').select('id').gte('delivery_date', from).lte('delivery_date', date);
+    const iids = (imps ?? []).map((i: any) => i.id);
+    if (iids.length) {
+      const { data: skips } = await sb.from('lab_assignments').select('qty_to_produce, total_qty').in('import_id', iids).in('variant_id', vids).eq('status', 'skip').eq('cancelled', false);
+      for (const c of skips ?? []) used += Number(c.qty_to_produce ?? c.total_qty) || 0;
+    }
+  }
+  let q = sb.from('lab_delivery_check_lines').select('id, resolution_qty').eq('sku', sku).eq('resolution', 'from_lab_stock').gte('delivery_date', from).lte('delivery_date', date);
+  if (excludeLineId) q = q.neq('id', excludeLineId);
+  const { data: fromStock } = await q;
+  for (const l of fromStock ?? []) used += Number(l.resolution_qty) || 0;
+  const { data: losses } = await sb.from('lab_internal_losses').select('qty').eq('sku', sku).gte('reported_at', startUtc).lt('reported_at', endUtc);
+  for (const l of losses ?? []) used += Number(l.qty) || 0;
+  return Math.max(0, added - used);
+}
+
 export interface GapContext {
   family: Family; dir: 'short' | 'over'; diff: number;
   made: number; sent: number; otherLeft: number; lost: number; thisQty: number; expected: number;
@@ -82,8 +129,8 @@ export interface GapContext {
   autoNotMade: boolean; autoNote: string | null;
   // over + made-to-order: production covers it → just a confirmation
   madeCovers: boolean;
-  // Odoo LAB/Stock on hand for this product (over + made-to-order only; null = unknown)
-  labStock?: number | null;
+  // Lab reserve of EXTRA production for this product, counted by the app (over + made-to-order)
+  reserve?: number;
 }
 
 export function contextFor(pool: DayPool, expected: number, qty: number): GapContext {
@@ -279,9 +326,18 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
   }
 
   if (pool.family === 'mto') {
-    // 2. Made but not declared (more left than the kitchen declared) → add it to the card.
-    if (reason === 'undeclared' && already !== 'undeclared') {
+    // 2a. "The cake is really there" (Axel, 2026-10-24): the app decides — first from the Lab
+    //     reserve of extra production, the rest was made by the kitchen but not declared.
+    let fromReserve = 0;
+    if (reason === 'over_real' && !already) {
       const need = Math.max(0, qty + pool.otherLeft + pool.lost - pool.produced - pool.fromStock);
+      fromReserve = Math.min(need, await labReserve(sb, line.sku, date, lineId));
+      if (need === 0) { resolution = 'extra_made'; resQty = 0; }
+      else if (need - fromReserve <= 0) { resolution = 'from_lab_stock'; resQty = fromReserve; res.refs.push(`kho hàng dư −${fromReserve}`); }
+    }
+    // 2. Made but not declared (more left than the kitchen declared) → add it to the card.
+    if ((reason === 'undeclared' && already !== 'undeclared') || (reason === 'over_real' && !already && !resolution)) {
+      const need = Math.max(0, qty + pool.otherLeft + pool.lost - pool.produced - pool.fromStock) - fromReserve;
       const c = cardForOrder(cards, orderRef);
       if (c && need > 0) {
         const np = (Number(c.qty_produced) || 0) + need;
@@ -289,6 +345,7 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
         c.qty_produced = np; pool.produced += need;
       }
       resolution = 'undeclared'; resQty = need;
+      if (fromReserve > 0) res.refs.push(`kho hàng dư −${fromReserve}, bếp +${need}`);
     }
     const broken = reason === 'casse' && already !== 'casse' && !opts.alreadyReported ? Math.max(0, expected - qty) : 0;
 
