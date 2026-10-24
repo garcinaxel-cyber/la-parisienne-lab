@@ -106,17 +106,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   // Delivery check badge (Axel, 2026-10-24): red production → delivery tasks still to settle.
   let deliveryTasks = 0;
+  let cakesNoMessage = 0;
   if (['admin', 'lab_manager', 'assistant'].includes(profile.role)) {
     const db = rawService();
     if (db) {
       const { countOpenProductionTasks } = await import('@/lib/delivery-tasks');
-      deliveryTasks = await countOpenProductionTasks(db as any);
+      const { countCakesWithoutMessage } = await import('@/lib/birthday-cakes-data');
+      [deliveryTasks, cakesNoMessage] = await Promise.all([countOpenProductionTasks(db as any), countCakesWithoutMessage(db as any)]);
     }
   }
 
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} deliveryTasks={deliveryTasks} />
+      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} deliveryTasks={deliveryTasks} cakesNoMessage={cakesNoMessage} />
       <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
         <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
       </main>

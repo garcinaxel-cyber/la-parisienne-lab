@@ -11,10 +11,15 @@ import { RotateCcw, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react
 
 const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647';
 
-export default function TasksPanel({ open, resolved, recounts, receptionOpen, waitingShop, damagedNotBack, today }: {
+export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null };
+
+export default function TasksPanel({ open, resolved, recounts, reception, offslipOpen, waitingShop, damagedNotBack, today }: {
   open: ProdTask[]; resolved: ProdTask[]; recounts: RecountTask[];
-  receptionOpen: number; waitingShop: number; damagedNotBack: number; today: string;
+  reception: ReceptionTask[]; offslipOpen: number; waitingShop: number; damagedNotBack: number; today: string;
 }) {
+  const receptionOpen = reception.length + offslipOpen;
+  const openGap = (key: string) => { try { window.dispatchEvent(new CustomEvent('lp-open-gap', { detail: key })); } catch {} };
+  const hLeft = (d: string | null) => d ? Math.round((new Date(d).getTime() - Date.now()) / 3600_000) : null;
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -123,9 +128,39 @@ export default function TasksPanel({ open, resolved, recounts, receptionOpen, wa
         </section>
       )}
 
-      <h2 className="pt-2 text-sm font-bold uppercase tracking-wide" style={{ color: receptionOpen ? RED : GREEN }}>
-        ② {vi ? 'Giao hàng → cửa hàng' : 'Delivery → shop'} · {receptionOpen}
-      </h2>
+      {/* ② Delivery → shop: one red line per gap, "Do it" opens the decision screen below. */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: receptionOpen ? RED : GREEN }}>
+          ② {vi ? 'Giao hàng → cửa hàng' : 'Delivery → shop'} · {receptionOpen}
+        </h2>
+        {receptionOpen === 0 && <div className="text-sm text-stone-500">{vi ? 'Cửa hàng nhận đúng số.' : 'Shops received the right quantities.'}</div>}
+        {reception.map(g => {
+          const h = hLeft(g.deadlineAt);
+          return (
+            <div key={g.key} className="rounded-xl border-l-4 bg-white p-3 shadow-sm" style={{ borderLeftColor: RED }}>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {g.deliveryDate < today && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{fmt(g.deliveryDate)}</span>}
+                <span className="font-semibold text-stone-800">{g.product}</span>
+                <span className="text-stone-500">{g.shop} · {g.orderRef}</span>
+                <span className="ml-auto font-mono text-sm">{vi ? 'gửi' : 'sent'} <b>{g.sent}</b> · {vi ? 'nhận' : 'recv.'} <b style={{ color: RED }}>{g.received}</b></span>
+              </div>
+              <div className="mt-1 text-xs text-stone-600">
+                {g.kind === 'extra' ? (vi ? `Cửa hàng nhận dư ${g.qty}` : `Shop received ${g.qty} extra`) : (vi ? `Cửa hàng thiếu ${g.qty}` : `Shop is missing ${g.qty}`)}
+                {h != null && <span style={{ color: h < 12 ? RED : undefined }}> · {h > 0 ? (vi ? `còn ${h}h` : `${h}h left`) : (vi ? 'quá hạn' : 'late')}</span>}
+              </div>
+              <button onClick={() => openGap(g.key)} className="mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: RED }}>
+                {vi ? 'Xử lý' : 'Do it'}
+              </button>
+            </div>
+          );
+        })}
+        {offslipOpen > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border-l-4 bg-white p-3 text-sm shadow-sm" style={{ borderLeftColor: RED }}>
+            <span><b>{offslipOpen}</b> {vi ? 'sản phẩm cửa hàng nhận ngoài phiếu' : 'products received that were on no slip'}</span>
+            <button onClick={() => openGap('offslip')} className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: RED }}>{vi ? 'Xử lý' : 'Do it'}</button>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

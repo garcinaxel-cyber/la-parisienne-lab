@@ -166,3 +166,30 @@ export async function loadBirthdayCakes(supabase: SupabaseClient) {
 
   return { cakes: cakes.filter(c => c.source === 'odoo'), productChoices, today };
 }
+
+// Sidebar badge (Axel, 2026-10-24): Odoo birthday cakes from today on whose message nobody has
+// checked yet. Light version of loadBirthdayCakes (same matching, no product choices).
+export async function countCakesWithoutMessage(supabase: SupabaseClient): Promise<number> {
+  try {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const { data: f } = await supabase.from('lab_fiche_meta').select('id').eq('category', 'Birthday cake').eq('is_active', true);
+    const ids = (f ?? []).map((x: any) => x.id);
+    if (!ids.length) return 0;
+    const { data: v } = await supabase.from('lab_fiche_variants').select('sku').in('fiche_id', ids);
+    const skus = Array.from(new Set((v ?? []).map((x: any) => x.sku).filter(Boolean)));
+    const [a, b] = await Promise.all([
+      supabase.from('lab_order_lines').select('id, order_ref, product_sku').in('fiche_id', ids).gte('delivery_date', today),
+      skus.length ? supabase.from('lab_order_lines').select('id, order_ref, product_sku').in('product_sku', skus).gte('delivery_date', today) : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const lines = new Map<string, any>();
+    for (const l of [...(a.data ?? []), ...(b.data ?? [])]) lines.set(l.id, l);
+    if (!lines.size) return 0;
+    const { data: d } = await supabase.from('lab_birthday_details').select('order_line_id, message').in('order_line_id', Array.from(lines.keys()));
+    const has = new Set((d ?? []).filter((x: any) => x.message && x.message.trim()).map((x: any) => x.order_line_id));
+    const { data: m } = await supabase.from('lab_manual_cakes').select('matched_order_ref, product_sku, message').not('matched_order_ref', 'is', null).gte('delivery_date', today);
+    const manual = new Set((m ?? []).filter((x: any) => x.message && x.message.trim()).map((x: any) => `${x.matched_order_ref}||${x.product_sku ?? ''}`));
+    let n = 0;
+    for (const l of Array.from(lines.values())) if (!has.has(l.id) && !manual.has(`${l.order_ref}||${l.product_sku ?? ''}`)) n++;
+    return n;
+  } catch { return 0; }
+}

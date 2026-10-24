@@ -87,7 +87,7 @@ const ADMIN_NAV = [
 ];
 const FAMILY_ORDER = ['today', 'production', 'shops', 'piloting'] as const;
 
-export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, pendingPurchasing = 0, reconciliationIssues = 0, deliveryTasks = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; pendingPurchasing?: number; reconciliationIssues?: number; deliveryTasks?: number }) {
+export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, pendingPurchasing = 0, reconciliationIssues = 0, deliveryTasks = 0, cakesNoMessage = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; pendingPurchasing?: number; reconciliationIssues?: number; deliveryTasks?: number; cakesNoMessage?: number }) {
   const { t, lang, setLang } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
@@ -151,6 +151,9 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
                           )}
                           {href === '/delivery-check' && deliveryTasks > 0 && (
                             <span title="Delivery gaps to settle" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{deliveryTasks}</span>
+                          )}
+                          {href === '/exceptional-orders' && cakesNoMessage > 0 && (
+                            <span title="Birthday cakes without a message" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{cakesNoMessage}</span>
                           )}
                           {href === '/exceptional-orders' && pendingExceptional > 0 && (
                             <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingExceptional}</span>

@@ -52,28 +52,28 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
     setBusy(r.id);
     const res = await settleOffslipAction({ id: r.id, cause: s.cause, sourceOrderRef: s.cause === 'customer_order' ? s.ref : null });
     setBusy(null);
-    setMsg(m => ({ ...m, [r.id]: res.ok ? { ok: true, text: (res.done ?? []).join(' · ') || T('Xong', 'Fait') } : { ok: false, text: `${res.error}${res.done?.length ? ` — ${T('đã làm', 'déjà fait')}: ${res.done.join(' · ')}` : ''}` } }));
+    setMsg(m => ({ ...m, [r.id]: res.ok ? { ok: true, text: (res.done ?? []).join(' · ') || T('Xong', 'Done') } : { ok: false, text: `${res.error}${res.done?.length ? ` — ${T('đã làm', 'already done')}: ${res.done.join(' · ')}` : ''}` } }));
     if (res.ok) load();
   }
 
   const toShop = (r: OffslipRow) => r.orderRef && !r.orderRef.startsWith('REP')
-    ? T(`xuất +${r.qty} từ Lab; thêm vào hoá đơn của ${r.orderRef} nếu chưa xuất VAT, nếu đã có VAT thì tạo đơn nhỏ riêng`, `sortie Lab +${r.qty} ; ajoutée à la facture de ${r.orderRef} si pas encore de VAT, sinon petite vente séparée`)
-    : T(`tạo REP điều chỉnh +${r.qty} (xuất + nhận đã xác nhận, đóng REP)`, `nouvelle REP d'ajustement +${r.qty} (envoi + réception validés, REP clôturée)`);
+    ? T(`xuất +${r.qty} từ Lab; thêm vào hoá đơn của ${r.orderRef} nếu chưa xuất VAT, nếu đã có VAT thì tạo đơn nhỏ riêng`, `Lab out +${r.qty}; added to the invoice of ${r.orderRef} if no VAT yet, otherwise a small separate sale`)
+    : T(`tạo REP điều chỉnh +${r.qty} (xuất + nhận đã xác nhận, đóng REP)`, `new adjustment REP +${r.qty} (sending + receipt validated, REP closed)`);
   const causes: { k: Cause; t: string; d: (r: OffslipRow) => string }[] = [
     { k: 'customer_order', t: T('Đơn của khách, giao nhầm chỗ', "Commande d'un client, livrée au mauvais endroit"),
       d: r => T(`Odoo: trả hàng ${r.qty} trên phiếu giao của đơn → hoá đơn về nháp, bớt ${r.qty} → ${toShop(r)}. Khách không bị tính tiền, shop giữ bánh.`,
-        `Odoo : retour de ${r.qty} sur la livraison de la commande → facture remise en brouillon sans ces ${r.qty} (la compta la reposte) → ${toShop(r)}. Le client n'est pas facturé, le shop garde les gâteaux.`) },
-    { k: 'lab_extra', t: T('Lab gửi dư / không rõ nguồn', 'Envoyé en trop par le Lab / origine inconnue'),
-      d: r => r.orderRef && !r.orderRef.startsWith('REP') ? T(`Odoo: ${toShop(r)}.`, `Odoo : ${toShop(r)}.`) : T(`Odoo: ${toShop(r)}. Không đụng hoá đơn.`, `Odoo : ${toShop(r)}. Aucune facture touchée.`) },
-    { k: 'shop_error', t: T('Shop nhầm (không có hàng thừa)', 'Erreur du shop (rien en plus)'),
-      d: () => T('Không làm gì trên Odoo.', 'Rien dans Odoo.') },
+        `Odoo: return of ${r.qty} on the order's delivery → invoice back to draft without these ${r.qty} (accounting re-posts it) → ${toShop(r)}. The customer is not invoiced, the shop keeps the cakes.`) },
+    { k: 'lab_extra', t: T('Lab gửi dư / không rõ nguồn', 'Sent extra by the Lab / unknown origin'),
+      d: r => r.orderRef && !r.orderRef.startsWith('REP') ? T(`Odoo: ${toShop(r)}.`, `Odoo: ${toShop(r)}.`) : T(`Odoo: ${toShop(r)}. Không đụng hoá đơn.`, `Odoo: ${toShop(r)}. No invoice touched.`) },
+    { k: 'shop_error', t: T('Shop nhầm (không có hàng thừa)', 'Shop mistake (nothing extra)'),
+      d: () => T('Không làm gì trên Odoo.', 'Nothing in Odoo.') },
   ];
 
   return (
     <section className="bg-white rounded-2xl p-4 sm:p-5 space-y-3" style={{ border: '1.5px solid #C9A84C' }}>
       <div className="flex items-center gap-2">
         <PackagePlus size={18} style={{ color: '#8A6D14' }} />
-        <h2 className="text-base font-bold text-navy flex-1">{T('Hàng ngoài phiếu', 'Produits hors livraison')} · {mode === 'closed' ? `${T('đã xử lý', 'réglés')} · ${closed.length}` : open.length}</h2>
+        <h2 className="text-base font-bold text-navy flex-1">{T('Hàng ngoài phiếu', 'Products not on the slip')} · {mode === 'closed' ? `${T('đã xử lý', 'settled')} · ${closed.length}` : open.length}</h2>
       </div>
       {mode === 'open' && <p className="text-xs text-ink-light">{T('Shop nhận được sản phẩm không có trên phiếu nào. Shop giữ lại; chọn nguyên nhân để cập nhật Odoo.', "Le shop a reçu un produit qui n'est sur aucun bon. Il le garde ; choisir la cause pour mettre Odoo à jour.")}</p>}
 
@@ -85,22 +85,22 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex gap-1.5">
                 {r.photoUrls.map(u => (
-                  <button key={u} type="button" onClick={() => setZoom(u)} className="w-16 h-16 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }} aria-label={T('Xem ảnh', 'Voir la photo')}>
+                  <button key={u} type="button" onClick={() => setZoom(u)} className="w-16 h-16 rounded-lg overflow-hidden" style={{ border: '1px solid #E5E7EB' }} aria-label={T('Xem ảnh', 'See the photo')}>
                     <img src={u} alt="" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-bold">{r.productName} <span className="font-semibold" style={{ color: '#8A6D14' }}>+{r.qty}</span></div>
-                <div className="text-xs text-ink-light">{r.shopName} · {T('nhận cùng', 'reçu avec')} {r.orderRef} · {r.deliveryDate.slice(8, 10)}/{r.deliveryDate.slice(5, 7)} · {r.declaredBy}</div>
+                <div className="text-xs text-ink-light">{r.shopName} · {T('nhận cùng', 'received with')} {r.orderRef} · {r.deliveryDate.slice(8, 10)}/{r.deliveryDate.slice(5, 7)} · {r.declaredBy}</div>
                 {r.note && <div className="text-xs mt-0.5" style={{ color: '#374151' }}>“{r.note}”</div>}
-                {r.overdue && <div className="text-[11px] font-bold mt-0.5" style={{ color: '#B91C1C' }}>{T('Quá 48h', 'Plus de 48 h')}</div>}
+                {r.overdue && <div className="text-[11px] font-bold mt-0.5" style={{ color: '#B91C1C' }}>{T('Quá 48h', 'Over 48 h')}</div>}
               </div>
             </div>
 
             {r.suggestions.length > 0 && (
               <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A' }}>
-                <b style={{ color: '#8A6D14' }}>{T('Gợi ý', 'Piste trouvée')} :</b>{' '}
+                <b style={{ color: '#8A6D14' }}>{T('Gợi ý', 'Lead found')} :</b>{' '}
                 {r.suggestions.map(x => `${x.orderRef} · ${x.customer} · ${x.qty} (${x.deliveryDate.slice(8, 10)}/${x.deliveryDate.slice(5, 7)})`).join(' — ')}
               </div>
             )}
@@ -122,11 +122,11 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                           <span className="block text-sm font-bold">{c.t}</span>
                           {c.k === 'customer_order' && on && (
                             <span className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
-                              {T('Đơn', 'Commande')} :
+                              {T('Đơn', 'Order')} :
                               {r.suggestions.length > 0 ? (
                                 <select value={s.ref} onChange={e => setSel(m => ({ ...m, [r.id]: { ...s, ref: e.target.value } }))} className="rounded-md px-2 py-1 font-semibold" style={{ border: '1px solid #D1D5DB' }}>
                                   {r.suggestions.map(x => <option key={x.orderRef} value={x.orderRef}>{x.orderRef} · {x.customer} · {x.qty}</option>)}
-                                  <option value="">{T('Khác…', 'Autre…')}</option>
+                                  <option value="">{T('Khác…', 'Other…')}</option>
                                 </select>
                               ) : null}
                               {(!r.suggestions.length || !s.ref || !r.suggestions.some(x => x.orderRef === s.ref)) && (
@@ -143,9 +143,9 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                 <div className="flex flex-wrap items-center gap-3">
                   <button disabled={busy === r.id || !s.cause || (s.cause === 'customer_order' && !/^S\d+/.test(s.ref.trim())) || (s.cause !== 'shop_error' && !canSend)}
                     onClick={() => settle(r)} className="rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
-                    {busy === r.id ? <Loader2 size={14} className="animate-spin inline" /> : s.cause === 'shop_error' ? T('Xác nhận', 'Valider') : T('Xác nhận và gửi Odoo', 'Valider et envoyer à Odoo')}
+                    {busy === r.id ? <Loader2 size={14} className="animate-spin inline" /> : s.cause === 'shop_error' ? T('Xác nhận', 'Validate') : T('Xác nhận và gửi Odoo', 'Validate and send to Odoo')}
                   </button>
-                  {s.cause && s.cause !== 'shop_error' && !canSend && <span className="text-xs text-ink-light">{T('Chỉ Trish / admin gửi được Odoo.', 'Seuls Trish / un admin peuvent envoyer à Odoo.')}</span>}
+                  {s.cause && s.cause !== 'shop_error' && !canSend && <span className="text-xs text-ink-light">{T('Chỉ Trish / admin gửi được Odoo.', 'Only Trish / an admin can send to Odoo.')}</span>}
                 </div>
               </>
             )}
@@ -161,8 +161,8 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
           <span className="text-ink-light">{r.shopName} · {r.orderRef}</span>
           <span className="flex-1" />
           <span style={{ color: '#374151' }}>
-            {r.labCause === 'customer_order' ? `${T('Đơn khách', 'Commande client')} ${r.sourceOrderRef}` : r.labCause === 'lab_extra' ? T('Lab gửi dư', 'Envoyé en trop') : T('Shop nhầm', 'Erreur shop')}
-            {r.odooMode === 'simulated' ? ` · ${T('mô phỏng', 'simulé')}` : ''} · {r.decidedBy}
+            {r.labCause === 'customer_order' ? `${T('Đơn khách', 'Customer order')} ${r.sourceOrderRef}` : r.labCause === 'lab_extra' ? T('Lab gửi dư', 'Sent extra') : T('Shop nhầm', 'Shop mistake')}
+            {r.odooMode === 'simulated' ? ` · ${T('mô phỏng', 'simulated')}` : ''} · {r.decidedBy}
           </span>
           {Array.isArray(r.odooLog?.done) && r.odooLog.done.length > 0 && (
             <div className="w-full font-mono text-[11px] leading-relaxed rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#EEF3EF', color: '#374151' }}>
