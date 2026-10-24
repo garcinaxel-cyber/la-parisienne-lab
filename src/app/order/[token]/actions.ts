@@ -1,6 +1,6 @@
 'use server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { SHOP_ODOO_MAP } from '@/lib/odoo-shop-order-sync';
+import { SHOP_ODOO_MAP, createOdooOrderForSelection } from '@/lib/odoo-shop-order-sync';
 import { sendTeamPush, type PushPayload, awaitPush } from '@/lib/push-notify';
 import { canonicalizePhone } from '@/lib/phone-format';
 import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
@@ -226,6 +226,7 @@ export async function submitShopOrderAction(token: string, input: {
 
   // ── Insert every line; roll back this submission's rows on any failure ──
   const createdAsg: string[] = [];
+  const createdCakeIds: string[] = [];
   for (const r of resolved) {
     const { data: asg, error: asgErr } = await supabase.from('lab_assignments').insert({
       import_id: importId, team: r.team, fiche_id: r.ficheId, variant_id: r.variantId,
@@ -240,7 +241,7 @@ export async function submitShopOrderAction(token: string, input: {
       }
       return { error: 'Could not create the production card' };
     }
-    const { error: mcErr } = await supabase.from('lab_manual_cakes').insert({
+    const { data: mcRow, error: mcErr } = await supabase.from('lab_manual_cakes').insert({
       fiche_id: r.ficheId, variant_id: r.variantId, product_sku: r.sku,
       product_name_vi: r.nameVi, product_name_en: r.nameEn, image_url: r.imageUrl,
       team: r.team, qty: r.qty, delivery_date: input.deliveryDate,
@@ -252,7 +253,7 @@ export async function submitShopOrderAction(token: string, input: {
       shop_name: input.shop, created_by_name: `${input.shop} (shop)`,
       needs_odoo: true, assignment_id: asg.id, import_id: importId,
       order_batch_id: orderBatchId,
-    });
+    }).select('id').single();
     if (mcErr) {
       await supabase.from('lab_assignments').delete().eq('id', asg.id);
       if (createdAsg.length) {
@@ -262,13 +263,27 @@ export async function submitShopOrderAction(token: string, input: {
       return { error: 'Could not save the order' };
     }
     createdAsg.push(asg.id);
+    if (mcRow?.id) createdCakeIds.push(mcRow.id as string);
   }
 
-  // The Odoo document is NOT created automatically anymore (the auto-queue caused
-  // duplicate creations — see git history for lab_odoo_sync_queue). The chef's production
-  // card above is unaffected either way. An admin now creates the matching Odoo document
-  // manually from /exceptional-orders, optionally grouping several exceptional orders
-  // (e.g. multiple same-day Moon Flower cakes) into a single quotation/replenishment.
+  // Odoo document created right away (Axel, 2026-10-24): same synchronous path as online
+  // orders — createOdooOrderForSelection claims every row first (atomic matched_order_ref
+  // sentinel), so a retry or a concurrent admin click can never create a second document
+  // (the old async lab_odoo_sync_queue had no such guard — that's what caused the duplicates).
+  // One document per submission: Moon Flower / Lab -> quotation, La Paris shops ->
+  // replenishment (SHOP_ODOO_MAP). Any failure is non-fatal: the production card already
+  // exists and the order stays unlinked on /exceptional-orders, where staff can still create
+  // or attach it by hand exactly as before.
+  let odooRef: string | null = null;
+  if (createdCakeIds.length) {
+    try {
+      const res = await createOdooOrderForSelection(supabase, createdCakeIds);
+      if (res.ok && res.order_ref) odooRef = res.order_ref;
+      else console.error('[shop-order] Odoo auto-create failed:', res.error);
+    } catch (e: any) {
+      console.error('[shop-order] Odoo auto-create threw:', String(e?.message ?? e));
+    }
+  }
 
   // Phase-4 push notification (Axel, 2026-09-05): these orders bypass the normal Odoo-first
   // sync entirely (see file header) — the station's "new order" push above never fires for
@@ -286,8 +301,8 @@ export async function submitShopOrderAction(token: string, input: {
   for (const [team, items] of Array.from(itemsByTeam.entries())) {
     const shown = items.slice(0, 3).join(', ');
     const rest = items.length > 3 ? ` +${items.length - 3}` : '';
-    const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Đơn đặc biệt: ${shown}${rest}`, url: `/station/${team}` };
-    const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Exceptional order: ${shown}${rest}`, url: `/station/${team}` };
+    const viPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Đơn đặc biệt${odooRef ? ` ${odooRef}` : ''}: ${shown}${rest}`, url: `/station/${team}` };
+    const enPayload: PushPayload = { title: 'La Parisienne Lab', body: `🚨 Exceptional order${odooRef ? ` ${odooRef}` : ''}: ${shown}${rest}`, url: `/station/${team}` };
     await awaitPush(sendTeamPush(supabaseForPush, team, viPayload, enPayload));
   }
 
