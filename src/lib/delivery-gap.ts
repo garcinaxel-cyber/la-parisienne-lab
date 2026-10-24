@@ -82,6 +82,8 @@ export interface GapContext {
   autoNotMade: boolean; autoNote: string | null;
   // over + made-to-order: production covers it → just a confirmation
   madeCovers: boolean;
+  // Odoo LAB/Stock on hand for this product (over + made-to-order only; null = unknown)
+  labStock?: number | null;
 }
 
 export function contextFor(pool: DayPool, expected: number, qty: number): GapContext {

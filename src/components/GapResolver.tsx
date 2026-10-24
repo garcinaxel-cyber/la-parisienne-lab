@@ -178,7 +178,12 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
       <div className="text-xs text-gray-400 mb-2">{vi ? 'Tính cho cả ngày, tất cả các đơn' : 'Whole day, all orders'}</div>
       {tiles}
       {radio({ code: 'undeclared', vi: 'Bếp đã làm nhưng chưa báo', en: 'Made but not declared', sub: 'App tự cộng vào số bếp đã làm', subEn: 'The app adds it to the kitchen count' })}
-      {radio({ code: 'from_lab_stock', vi: 'Lấy từ kho Lab (hàng hôm trước)', en: 'Taken from Lab stock', sub: 'Không thêm sản xuất', subEn: 'No production added' })}
+      {ctx.labStock != null && ctx.labStock < diff
+        ? <div className="w-full rounded-xl px-3 py-2 mb-1.5 text-xs" style={{ border: '1px dashed #D1D5DB', color: '#6B7280' }}>
+            {vi ? `Lấy từ kho Lab — không được: Odoo chỉ còn ${ctx.labStock} ở kho Lab. Nếu bếp làm thêm, chọn « Bếp đã làm nhưng chưa báo ».`
+                : `Taken from Lab stock — not possible: Odoo has only ${ctx.labStock} in Lab stock. If the kitchen made more, pick « Made but not declared ».`}
+          </div>
+        : radio({ code: 'from_lab_stock', vi: 'Lấy từ kho Lab (hàng hôm trước)', en: 'Taken from Lab stock', sub: ctx.labStock != null ? `Odoo: kho Lab còn ${ctx.labStock} · không thêm sản xuất` : 'Không thêm sản xuất', subEn: ctx.labStock != null ? `Odoo: ${ctx.labStock} in Lab stock · no production added` : 'No production added' })}
       {radio({ code: 'recount', vi: 'Mình đếm sai', en: 'I counted wrong', sub: 'Quay lại đếm lại', subEn: 'Go back and count again' })}
       {radio({ code: 'other', vi: 'Lý do khác', en: 'Other', sub: 'Ghi rõ lý do', subEn: 'Explain' })}
       {extras}
