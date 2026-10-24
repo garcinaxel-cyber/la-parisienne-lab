@@ -132,6 +132,97 @@ function cardForOrder(cards: Card[], orderRef: string): Card | null {
   return mine ?? usable.sort((a, b) => String(b.produced_at ?? '').localeCompare(String(a.produced_at ?? '')))[0] ?? null;
 }
 
+// Lower the kitchen count by `qty` (cards of one product, one day), take back what was sent to
+// stock beyond it, and bring the Odoo production of each transfer day down to match. Shared by
+// "Bếp chưa làm" (delivery check) and "made without order → never made" (tasks tab).
+export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: string, qty: number, note: string, preferOrderRef: string | null): Promise<{ refs: string[]; errs: string[] }> {
+  const refs: string[] = []; const errs: string[] = [];
+  let left = qty;
+  const ordered = [preferOrderRef ? cardForOrder(cards, preferOrderRef) : null, ...cards].filter((c, i, a) => c && a.indexOf(c) === i) as Card[];
+  for (const c of ordered) {
+    if (left <= 0) break;
+    if (c.status === 'skip' || c.status === 'blocked') continue;
+    const p = Number(c.qty_produced) || 0; if (p <= 0) continue;
+    const d = Math.min(p, left); left -= d;
+    const np = p - d; const sent = Number(c.qty_sent_total) || 0;
+    const upd: any = { qty_produced: np, updated_at: new Date().toISOString() };
+    if (sent > np) {
+      let back = sent - np;
+      const { data: tls } = await sb.from('lab_stock_transfer_lines').select('id, qty_sent, transfer_id, lab_stock_transfers(created_at, cancelled_at)').eq('assignment_id', c.id).order('id', { ascending: false });
+      const days = new Set<string>();
+      for (const tl of (tls ?? []) as any[]) {
+        if (back <= 0) break;
+        if (tl.lab_stock_transfers?.cancelled_at) continue;
+        const q = Math.min(Number(tl.qty_sent) || 0, back); if (q <= 0) continue;
+        await sb.from('lab_stock_transfer_lines').update({ qty_sent: (Number(tl.qty_sent) || 0) - q }).eq('id', tl.id);
+        back -= q;
+        const d2 = labDateOf(tl.lab_stock_transfers?.created_at); if (d2) days.add(d2);
+      }
+      upd.qty_sent_total = np; upd.transferred = true;
+      for (const d2 of Array.from(days)) {
+        if (!odooWriteConfigured()) break;
+        const target = (await sentToStockBySku(sb, d2)).bySku[sku] ?? 0;
+        const r = await reduceDayProduction(d2, sku, target, note);
+        refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
+      }
+    }
+    await sb.from('lab_assignments').update(upd).eq('id', c.id);
+    c.qty_produced = np; if (upd.qty_sent_total != null) c.qty_sent_total = upd.qty_sent_total;
+  }
+  return { refs, errs };
+}
+
+// Made without order (Axel, 2026-10-24): after the delivery check, the kitchen declared more of a
+// made-to-order product than left the Lab (orders + losses). Three answers:
+//   to_stock  — still at the Lab: make sure it is sent to stock (auto transfer → Odoo MO follows);
+//   lost      — thrown away / broken: same, then Lab scrap (photo);
+//   not_made  — kitchen over-declared: lower the cards and Odoo (removeProduced).
+export async function resolveMadeWithoutOrder(sb: SupabaseClient, date: string, sku: string, qty: number, choice: 'to_stock' | 'lost' | 'not_made',
+  opts: { photoUrl?: string | null; byName: string | null; byId: string | null; productName: string }): Promise<{ odooStatus: 'none' | 'done' | 'error'; refs: string[]; error?: string }> {
+  const cards = await loadCards(sb, date, sku);
+  const refs: string[] = []; const errs: string[] = [];
+  const today = labDateOf(new Date().toISOString())!;
+  const tag = `Lab ${date} · ${sku}`;
+  if (choice === 'not_made') {
+    const r = await removeProduced(sb, cards, sku, qty, `${opts.productName} — làm dư không có đơn: bếp báo sai ${qty} (${opts.byName ?? ''})`, null);
+    refs.push(...r.refs); errs.push(...r.errs);
+  } else {
+    const usable = cards.filter(c => c.status !== 'skip' && c.status !== 'blocked');
+    const produced = usable.reduce((s, c) => s + (Number(c.qty_produced) || 0), 0);
+    const sent = usable.reduce((s, c) => s + (Number(c.qty_sent_total) || 0), 0);
+    if (produced > sent) {
+      const n = await addAutoTransfer(sb, usable, produced - sent, sku, date, tag, opts.byName);
+      if (n > 0 && odooWriteConfigured()) {
+        try {
+          const s = await syncStockToOdoo(sb, today, { commit: true, skus: [sku] });
+          if (s.errors?.length) errs.push(...s.errors.map(e => e.error));
+          for (const c of s.created ?? []) if (c.mo) refs.push(`${c.mo} +${c.qty}`);
+        } catch (e: any) { errs.push(String(e?.message ?? e)); }
+      }
+    }
+    if (choice === 'lost') {
+      const t = await brokenReasonTag();
+      if (!t) errs.push('No "broken" scrap reason in Odoo');
+      else {
+        const r = await recordLabLoss(sb, {
+          sku, productName: opts.productName, qty, reasonTagId: t.id, reasonTagName: t.name, note: 'Làm dư không có đơn',
+          reportedByName: opts.byName ?? 'Staff', reportedById: opts.byId, photoUrl: opts.photoUrl ?? null,
+          source: 'delivery_check', deliveryDate: date, orderRef: null, checkLineId: null,
+        });
+        if (r.error) errs.push(r.error); else if (r.odooError) errs.push(r.odooError);
+        if (r.odooScrapId) refs.push(`scrap #${r.odooScrapId}`);
+      }
+    }
+  }
+  const odooStatus = errs.length ? 'error' : refs.length ? 'done' : 'none';
+  await sb.from('lab_made_without_order').upsert({
+    delivery_date: date, sku, product_name: opts.productName, qty, resolution: choice,
+    resolved_by_name: opts.byName, resolved_at: new Date().toISOString(),
+    odoo_status: odooStatus, odoo_error: errs.length ? errs.join(' · ').slice(0, 300) : null, ref: refs.length ? refs.join(' · ').slice(0, 300) : null,
+  }, { onConflict: 'delivery_date,sku' });
+  return { odooStatus, refs, error: errs.length ? errs.join(' · ') : undefined };
+}
+
 export interface FollowUpResult { resolution: string | null; odooStatus: 'none' | 'done' | 'error'; refs: string[]; error?: string; autoTransferred: number }
 
 export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { photoUrl?: string | null; byName: string | null; byId: string | null }): Promise<FollowUpResult> {
@@ -178,39 +269,8 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
     if (reason === 'not_made' && already !== 'not_made') {
       const phantom = Math.min(Math.max(0, expected - qty), pool.produced - (pool.otherLeft + qty + pool.lost));
       if (phantom > 0) {
-        let left = phantom;
-        const ordered = [cardForOrder(cards, orderRef), ...cards].filter((c, i, a) => c && a.indexOf(c) === i) as Card[];
-        for (const c of ordered) {
-          if (left <= 0) break;
-          if (c.status === 'skip' || c.status === 'blocked') continue;
-          const p = Number(c.qty_produced) || 0; if (p <= 0) continue;
-          const d = Math.min(p, left); left -= d;
-          const np = p - d; const sent = Number(c.qty_sent_total) || 0;
-          const upd: any = { qty_produced: np, updated_at: new Date().toISOString() };
-          if (sent > np) {
-            // take back the transfer lines of this card, newest first
-            let back = sent - np;
-            const { data: tls } = await sb.from('lab_stock_transfer_lines').select('id, qty_sent, transfer_id, lab_stock_transfers(created_at, cancelled_at)').eq('assignment_id', c.id).order('id', { ascending: false });
-            const days = new Set<string>();
-            for (const tl of (tls ?? []) as any[]) {
-              if (back <= 0) break;
-              if (tl.lab_stock_transfers?.cancelled_at) continue;
-              const q = Math.min(Number(tl.qty_sent) || 0, back); if (q <= 0) continue;
-              await sb.from('lab_stock_transfer_lines').update({ qty_sent: (Number(tl.qty_sent) || 0) - q }).eq('id', tl.id);
-              back -= q;
-              const d2 = labDateOf(tl.lab_stock_transfers?.created_at); if (d2) days.add(d2);
-            }
-            upd.qty_sent_total = np; upd.transferred = true;
-            for (const d2 of Array.from(days)) {
-              if (!odooWriteConfigured()) break;
-              const target = (await sentToStockBySku(sb, d2)).bySku[line.sku] ?? 0;
-              const r = await reduceDayProduction(d2, line.sku, target, `${line.product_name_vi} — bếp chưa làm, ${orderRef} giao ${qty}/${expected} (kiểm giao hàng ${opts.byName ?? ''})`);
-              res.refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
-            }
-          }
-          await sb.from('lab_assignments').update(upd).eq('id', c.id);
-          c.qty_produced = np; if (upd.qty_sent_total != null) c.qty_sent_total = upd.qty_sent_total;
-        }
+        const r = await removeProduced(sb, cards, line.sku, phantom, `${line.product_name_vi} — bếp chưa làm, ${orderRef} giao ${qty}/${expected} (kiểm giao hàng ${opts.byName ?? ''})`, orderRef);
+        res.refs.push(...r.refs); errs.push(...r.errs);
       }
       resolution = 'not_made'; resQty = Math.max(0, phantom);
     }

@@ -184,7 +184,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
           <button onClick={() => setShowRecap(v => !v)} className="flex items-center gap-2 text-sm font-bold text-navy">
             <ChevronRight size={16} className={`transition-transform ${showRecap ? 'rotate-90' : ''}`} />
             <CalendarDays size={16} />
-            {vi ? 'Tổng hợp theo ngày gửi' : "Récap par jour d'envoi"}
+            {vi ? 'Tổng hợp hàng làm dư theo ngày gửi' : 'Extra production by send day'}
           </button>
           <span className="text-sm font-semibold text-navy capitalize">
             {recapDateLabel} · {vi ? 'hôm nay' : "aujourd'hui"}

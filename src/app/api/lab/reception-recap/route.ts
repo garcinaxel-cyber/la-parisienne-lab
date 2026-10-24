@@ -29,9 +29,14 @@ export async function GET(req: NextRequest) {
 
   const { data: lines } = ids.length
     ? await supabase.from('lab_stock_transfer_lines')
-        .select('transfer_id, product_name_vi, product_name_en, sku, variant_label, qty_sent, qty_received')
+        .select('transfer_id, assignment_id, product_name_vi, product_name_en, sku, variant_label, qty_sent, qty_received')
         .in('transfer_id', ids)
     : { data: [] as any[] };
+  // Only EXTRA production is received in this tab since 2026-10-24 (Axel): made-to-order lines
+  // are received automatically when sent, so they are left out of the recap too.
+  const aIds = Array.from(new Set((lines ?? []).map((l: any) => l.assignment_id).filter(Boolean)));
+  const { data: kinds } = aIds.length ? await supabase.from('lab_assignments').select('id, is_extra').in('id', aIds) : { data: [] as any[] };
+  const extraIds = new Set((kinds ?? []).filter((k: any) => k.is_extra).map((k: any) => k.id));
 
   type Row = {
     team: string; name: string; sku: string | null; variant: string | null;
@@ -41,6 +46,7 @@ export async function GET(req: NextRequest) {
   for (const l of lines ?? []) {
     const t = transferById[l.transfer_id];
     if (!t) continue;
+    if (l.assignment_id && !extraIds.has(l.assignment_id)) continue;
     const key = `${t.team}||${l.sku ?? ''}||${l.variant_label ?? ''}||${l.product_name_vi}`;
     const r = map.get(key) ?? {
       team: t.team, name: l.product_name_vi, sku: l.sku ?? null, variant: l.variant_label ?? null,
@@ -48,6 +54,7 @@ export async function GET(req: NextRequest) {
     };
     r.sent += l.qty_sent ?? 0;
     if (l.qty_received != null) r.received += l.qty_received;
+    else if (t.status === 'received') r.received += l.qty_sent ?? 0; // received as a whole note
     else r.pending += l.qty_sent ?? 0;
     map.set(key, r);
   }
@@ -60,7 +67,7 @@ export async function GET(req: NextRequest) {
     totalSent: rows.reduce((s, r) => s + r.sent, 0),
     totalReceived: rows.reduce((s, r) => s + r.received, 0),
     totalPending: rows.reduce((s, r) => s + r.pending, 0),
-    notesCount: ids.length,
+    notesCount: new Set((lines ?? []).filter((l: any) => !l.assignment_id || extraIds.has(l.assignment_id)).map((l: any) => l.transfer_id)).size,
     rows,
   });
 }

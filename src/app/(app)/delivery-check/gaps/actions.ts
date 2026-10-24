@@ -194,3 +194,24 @@ export async function closeRecountAlertAction(id: string, note: string | null): 
   revalidatePath('/delivery-check/gaps');
   return { ok: true };
 }
+
+// "Made without order" answer (Axel, 2026-10-24) — see resolveMadeWithoutOrder in delivery-gap.ts.
+export async function resolveMadeWithoutOrderAction(input: { date: string; sku: string; qty: number; product: string; choice: 'to_stock' | 'lost' | 'not_made'; photoUrl?: string | null }):
+  Promise<{ ok?: boolean; odooStatus?: string; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+  if (!['to_stock', 'lost', 'not_made'].includes(input.choice) || !(input.qty > 0)) return { error: 'Invalid input' };
+  if (input.choice === 'lost' && !input.photoUrl) return { error: 'Photo required' };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { resolveMadeWithoutOrder } = await import('@/lib/delivery-gap');
+  try {
+    const r = await resolveMadeWithoutOrder(sb as any, input.date, input.sku, Math.round(input.qty), input.choice,
+      { photoUrl: input.photoUrl ?? null, byName: profile?.full_name ?? null, byId: session.user.id, productName: input.product });
+    revalidatePath('/delivery-check/gaps');
+    return { ok: true, odooStatus: r.odooStatus, error: r.error };
+  } catch (e: any) { return { error: String(e?.message ?? e) }; }
+}
