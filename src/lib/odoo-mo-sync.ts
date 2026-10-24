@@ -85,13 +85,21 @@ export async function syncStockToOdoo(
   const moDate = `${date} 02:00:00`;
 
   const existing = prodIds.length ? await tmo(odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name'], limit: 5000 }), 20000, 'existing') : [];
+    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name', 'unbuild_ids'], limit: 5000 }), 20000, 'existing') : [];
+  // An mrp.unbuild does NOT lower the MO's quantity: subtract the done unbuilds, otherwise a day
+  // that was corrected ("bếp chưa làm") looks still covered and later transfers never reach Odoo.
+  const ubIds = existing.flatMap((m: any) => m.unbuild_ids ?? []);
+  const unbuiltByMo: Record<number, number> = {};
+  if (ubIds.length) {
+    const ubs = await tmo(odooExecute<any[]>('mrp.unbuild', 'read', [ubIds], { fields: ['mo_id', 'product_qty', 'state'] }), 20000, 'unbuilds');
+    for (const u of ubs) if (u.state === 'done' && u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuiltByMo[mid] = (unbuiltByMo[mid] ?? 0) + Number(u.product_qty || 0); }
+  }
   const moByProd: Record<number, { confirmedSum: number; draft: { id: number; qty: number; name: string } | null }> = {};
   for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {
     const pid = Array.isArray(m.product_id) ? m.product_id[0] : m.product_id;
     const e = moByProd[pid] ??= { confirmedSum: 0, draft: null };
     if (m.state === 'draft') { if (!e.draft) e.draft = { id: m.id, qty: m.product_qty, name: m.name }; }
-    else e.confirmedSum += (m.product_qty ?? 0);
+    else e.confirmedSum += (m.product_qty ?? 0) - (unbuiltByMo[m.id] ?? 0);
   }
 
   for (const [sku, target] of entries) {

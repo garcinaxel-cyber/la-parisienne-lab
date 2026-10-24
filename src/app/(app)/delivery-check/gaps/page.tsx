@@ -10,6 +10,12 @@ import TasksPanel from './TasksPanel';
 import { loadProductionTasks, loadMadeWithoutOrder, loadShopsNotConfirmed } from '@/lib/delivery-tasks';
 
 export const revalidate = 0;
+export const maxDuration = 60;
+
+const CAUSE_EN: Record<string, string> = {
+  found_at_lab: 'found at the Lab', damaged_returned: 'damaged, brought back', lost_transport: 'lost in transport',
+  shop_miscount: 'shop miscounted', lab_sent_extra: 'Lab sent extra',
+};
 
 export default async function DeliveryGapsPage() {
   const supabase = createClient();
@@ -22,7 +28,7 @@ export default async function DeliveryGapsPage() {
   const [{ gaps, schemaReady }, prod, lo, notConfirmed] = await Promise.all([listDeliveryGaps(sb as any), loadProductionTasks(sb as any), loadMadeWithoutOrder(sb as any), loadShopsNotConfirmed(sb as any).catch(() => [])]);
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
-  const since7 = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const since7 = new Date(new Date(`${today}T00:00:00Z`).getTime() - 7 * 86400000).toISOString().slice(0, 10);
   // Damaged not back: last 7 days only (Axel, 2026-10-24).
   const damagedList = gaps.filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt && g.deliveryDate >= since7);
   const dmgByShop: Record<string, number> = {};
@@ -35,7 +41,7 @@ export default async function DeliveryGapsPage() {
   }
   const toSend = Object.values(sendMap);
   const receptionDoneToday = gaps.filter(g => g.status === 'closed' && g.decidedAt && new Date(g.decidedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) === today)
-    .map(g => `${g.orderRef} · ${g.shopName} · ${g.product} · ${g.kind === 'extra' ? '+' : '−'}${g.qty} · ${g.labCause ?? ''}${g.decidedBy ? ` · ${g.decidedBy}` : ''}`);
+    .map(g => `${g.orderRef} · ${g.shopName} · ${g.product} · ${g.kind === 'extra' ? '+' : '−'}${g.qty} · ${CAUSE_EN[g.labCause ?? ''] ?? g.labCause ?? ''}${g.decidedBy ? ` · ${g.decidedBy}` : ''}`);
   const reception = gaps.filter(g => g.kind !== 'damaged' && g.status === 'open')
     .sort((a, b) => (a.deadlineAt ?? '9').localeCompare(b.deadlineAt ?? '9'))
     .map(g => ({ key: g.key, product: g.product, shop: g.shopName, orderRef: g.orderRef, deliveryDate: g.deliveryDate, kind: g.kind, qty: g.qty, sent: g.sent, received: g.received, deadlineAt: g.deadlineAt }));

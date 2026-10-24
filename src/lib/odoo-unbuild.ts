@@ -22,8 +22,15 @@ export async function reduceDayProduction(day: string, sku: string, target: numb
     const p = prods[0];
     const mos = await tmo(odooExecute<any[]>('mrp.production', 'search_read',
       [[['origin', '=', `Lab ${day}`], ['product_id', '=', p.id], ['state', '!=', 'cancel']]],
-      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'product_uom_id'], order: 'id desc' }), 20000, 'mos');
-    const qtyOf = (m: any) => m.state === 'done' ? Number(m.qty_produced || m.product_qty) : Number(m.product_qty);
+      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'product_uom_id', 'unbuild_ids'], order: 'id desc' }), 20000, 'mos');
+    // Done unbuilds do not lower the MO's quantity: subtract them (else a second correction unbuilds again).
+    const ubIds = mos.flatMap((m: any) => m.unbuild_ids ?? []);
+    const unbuilt: Record<number, number> = {};
+    if (ubIds.length) {
+      const ubs = await tmo(odooExecute<any[]>('mrp.unbuild', 'read', [ubIds], { fields: ['mo_id', 'product_qty', 'state'] }), 15000, 'unbuilds');
+      for (const u of ubs) if (u.state === 'done' && u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuilt[mid] = (unbuilt[mid] ?? 0) + Number(u.product_qty || 0); }
+    }
+    const qtyOf = (m: any) => m.state === 'done' ? Number(m.qty_produced || m.product_qty) - (unbuilt[m.id] ?? 0) : Number(m.product_qty);
     let total = mos.reduce((s, m) => s + qtyOf(m), 0);
     let excess = total - target;
     if (excess <= 0) return { ok: true, refs };
@@ -41,7 +48,7 @@ export async function reduceDayProduction(day: string, sku: string, target: numb
     }
     for (const m of mos.filter(x => x.state === 'done')) {
       if (excess <= 0) break;
-      const q = Math.min(excess, Number(m.qty_produced || m.product_qty));
+      const q = Math.min(excess, qtyOf(m));
       if (q <= 0) continue;
       const loc = Array.isArray(m.location_dest_id) ? m.location_dest_id[0] : m.location_dest_id;
       const vals: any = {

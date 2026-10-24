@@ -29,6 +29,13 @@ async function all(q: (from: number, to: number) => PromiseLike<{ data: any[] | 
   return out;
 }
 
+// .in() over long id lists: chunks of 150 (URL length), each read page by page.
+async function inChunks(ids: string[], q: (chunk: string[], from: number, to: number) => PromiseLike<{ data: any[] | null }>): Promise<any[]> {
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += 150) { const c = ids.slice(i, i + 150); out.push(...await all((f, t) => q(c, f, t))); }
+  return out;
+}
+
 function vnToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
@@ -52,9 +59,9 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
   if (!iids.length) return { open: [], done: [] };
   const cards = await all((f, t) => sb.from('lab_assignments').select('id, import_id, variant_id, status, cancelled, is_extra, qty_produced, product_name_vi').in('import_id', iids).order('id').range(f, t));
   const vids = Array.from(new Set((cards ?? []).map((c: any) => c.variant_id).filter(Boolean)));
-  const { data: vars } = vids.length ? await sb.from('lab_fiche_variants').select('id, sku, fiche_id').in('id', vids) : { data: [] as any[] };
+  const vars = await inChunks(vids, (c, f, t) => sb.from('lab_fiche_variants').select('id, sku, fiche_id').in('id', c).order('id').range(f, t));
   const fids = Array.from(new Set((vars ?? []).map((v: any) => v.fiche_id).filter(Boolean)));
-  const { data: fiches } = fids.length ? await sb.from('lab_fiche_meta').select('id, category').in('id', fids) : { data: [] as any[] };
+  const fiches = await inChunks(fids, (c, f, t) => sb.from('lab_fiche_meta').select('id, category').in('id', c).order('id').range(f, t));
   const catByFiche: Record<string, string> = {}; for (const f of fiches ?? []) catByFiche[f.id] = f.category;
   const varById: Record<string, { sku: string; cat: string }> = {};
   for (const v of vars ?? []) if (v.sku) varById[v.id] = { sku: v.sku, cat: catByFiche[v.fiche_id] ?? '' };
@@ -72,7 +79,7 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
   const lines = await all((f, t) => sb.from('lab_delivery_check_lines').select('id, delivery_date, sku, qty_checked, status, delivery_order_id')
     .gte('delivery_date', from).lte('delivery_date', to).eq('category', 'production').order('id').range(f, t));
   const oids = Array.from(new Set((lines ?? []).map((l: any) => l.delivery_order_id)));
-  const { data: hdrs } = oids.length ? await sb.from('lab_delivery_orders').select('id, marked_not_delivered').in('id', oids) : { data: [] as any[] };
+  const hdrs = await inChunks(oids, (c, f, t) => sb.from('lab_delivery_orders').select('id, marked_not_delivered').in('id', c).order('id').range(f, t));
   const notDelivered = new Set((hdrs ?? []).filter((h: any) => h.marked_not_delivered).map((h: any) => h.id));
   for (const l of lines ?? []) {
     const a = agg[`${l.delivery_date}|${l.sku}`]; if (!a || notDelivered.has(l.delivery_order_id)) continue;
@@ -82,7 +89,7 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
   for (const r of losses ?? []) {
     const d = r.delivery_date ?? labDateOf(r.reported_at); const a = agg[`${d}|${r.sku}`]; if (a) a.lost += Number(r.qty) || 0;
   }
-  const { data: res } = await sb.from('lab_made_without_order').select('delivery_date, sku, product_name, qty, resolution, odoo_status, odoo_error, ref').gte('delivery_date', from);
+  const { data: res } = await sb.from('lab_made_without_order').select('delivery_date, sku, product_name, qty, resolution, odoo_status, odoo_error, ref, resolved_at').gte('delivery_date', from);
   const resolved = new Set((res ?? []).map((r: any) => `${r.delivery_date}|${r.sku}`));
   const open = Object.values(agg)
     .filter(a => !a.unchecked)
@@ -90,7 +97,9 @@ export async function loadMadeWithoutOrder(sb: SupabaseClient): Promise<{ open: 
     .filter(a => a.leftover > 0 && !resolved.has(`${a.date}|${a.sku}`))
     .map(({ unchecked: _u, ...a }) => a)
     .sort((x, y) => x.date.localeCompare(y.date));
-  const done = (res ?? []).map((r: any) => ({ date: r.delivery_date, sku: r.sku, product: r.product_name ?? r.sku, qty: Number(r.qty), resolution: r.resolution, odooStatus: r.odoo_status, odooError: r.odoo_error, ref: r.ref }));
+  // A claim left 'pending' for more than 10 minutes was interrupted: show it as an error to retry.
+  const stale = (r: any) => r.odoo_status === 'pending' && Date.now() - new Date(r.resolved_at).getTime() > 600_000;
+  const done = (res ?? []).map((r: any) => ({ date: r.delivery_date, sku: r.sku, product: r.product_name ?? r.sku, qty: Number(r.qty), resolution: r.resolution, odooStatus: stale(r) ? 'error' : r.odoo_status, odooError: stale(r) ? 'Interrupted' : r.odoo_error, ref: r.ref }));
   return { open, done };
 }
 
@@ -98,11 +107,10 @@ export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: P
   const lines = await all((f, t) => sb.from('lab_delivery_check_lines')
     .select('id, delivery_order_id, delivery_date, sku, product_name_vi, product_category, category, qty_expected, qty_checked, discrepancy_reason, discrepancy_note, resolution, resolution_odoo_status, resolution_odoo_error, resolution_ref, resolution_by_name, resolution_at')
     .in('status', ['ok', 'adjusted']).gte('delivery_date', since()).order('id').range(f, t));
-  const diff = (lines ?? []).filter((l: any) => Number(l.qty_checked ?? 0) !== Number(l.qty_expected ?? 0));
+  // Weighed entries (decimals) are saved without a reason on purpose: not a task.
+  const diff = (lines ?? []).filter((l: any) => Number(l.qty_checked ?? 0) !== Number(l.qty_expected ?? 0) && Number.isInteger(Number(l.qty_checked)) && Number.isInteger(Number(l.qty_expected)));
   const orderIds = Array.from(new Set(diff.map((l: any) => l.delivery_order_id).filter(Boolean)));
-  const { data: orders } = orderIds.length
-    ? await sb.from('lab_delivery_orders').select('id, order_ref, shop_name, customer_name, marked_not_delivered').in('id', orderIds)
-    : { data: [] as any[] };
+  const orders = await inChunks(orderIds, (c, f, t) => sb.from('lab_delivery_orders').select('id, order_ref, shop_name, customer_name, marked_not_delivered').in('id', c).order('id').range(f, t));
   const oById: Record<string, any> = {};
   for (const o of orders ?? []) oById[o.id] = o;
   const tasks: ProdTask[] = diff.filter((l: any) => !oById[l.delivery_order_id]?.marked_not_delivered).map((l: any) => {
@@ -119,18 +127,31 @@ export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: P
   const { data: rc } = await sb.from('lab_stock_recount_alerts')
     .select('id, sku, product_name, delivery_date, order_ref, missing_qty, raised_by_name, raised_at').eq('status', 'open').order('raised_at').limit(200);
   return {
-    open: tasks.filter(isOpen).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)),
+    open: tasks.filter(isOpen).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate) || a.orderRef.localeCompare(b.orderRef) || a.product.localeCompare(b.product)),
     resolved: tasks.filter(t => !isOpen(t)),
     recounts: (rc ?? []).map((r: any) => ({ id: r.id, sku: r.sku, product: r.product_name ?? r.sku, deliveryDate: r.delivery_date, orderRef: r.order_ref, missing: Number(r.missing_qty ?? 0), raisedBy: r.raised_by_name, raisedAt: r.raised_at })),
   };
 }
 
-// Cheap count for the sidebar badge (red tasks of section ① only — section ② has its own tabs).
+// ONE count for the sidebar badge, the delivery-check card and the tasks page (review 2026-10-24:
+// they disagreed). base = red tasks ① + ②; toSend = orders the Lab manager must still send to Odoo
+// (added for admin / lab manager only, like the cards on the tasks page). Cached 60 s: it runs on
+// every page.
+export async function computeDeliveryTaskCount(sb: SupabaseClient): Promise<{ base: number; toSend: number }> {
+  const { listDeliveryGaps } = await import('@/lib/reception-gaps');
+  const [a, b, g, off] = await Promise.all([
+    loadProductionTasks(sb), loadMadeWithoutOrder(sb), listDeliveryGaps(sb as any),
+    sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+  ]);
+  const gaps = g.gaps;
+  const loErr = b.done.filter(d => d.odooStatus === 'error').length;
+  const reception = gaps.filter(x => x.kind !== 'damaged' && x.status === 'open').length + (off.count ?? 0);
+  const send = new Set(gaps.filter(x => x.status === 'closed' && x.odooMode !== 'sent' && x.labCause !== 'shop_miscount' && !(x.kind === 'extra' && x.labCause !== 'lab_sent_extra')).map(x => x.deliveryOrderId)).size;
+  return { base: a.open.length + b.open.length + loErr + reception, toSend: send };
+}
+
 export async function countOpenProductionTasks(sb: SupabaseClient): Promise<number> {
-  try {
-    const [a, b] = await Promise.all([loadProductionTasks(sb), loadMadeWithoutOrder(sb)]);
-    return a.open.length + b.open.length + b.done.filter(d => d.odooStatus === 'error').length;
-  } catch { return 0; }
+  try { return (await computeDeliveryTaskCount(sb)).base; } catch { return 0; }
 }
 
 // Amber "waiting for shops to confirm receipt" (Axel's mockup, 2026-10-24): La Paris shop orders
@@ -147,9 +168,9 @@ export async function loadShopsNotConfirmed(sb: SupabaseClient): Promise<{ shop:
   // Small chunks: Supabase returns at most 1000 rows per request (a big REP has 30+ lines).
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
-    const [{ data: lines }, { data: rec }] = await Promise.all([
-      sb.from('lab_delivery_check_lines').select('delivery_order_id').in('delivery_order_id', chunk).gt('qty_checked', 0).limit(5000),
-      sb.from('lab_shop_receipt_lines').select('delivery_order_id').in('delivery_order_id', chunk).not('qty_received', 'is', null).limit(5000),
+    const [lines, rec] = await Promise.all([
+      all((f, t) => sb.from('lab_delivery_check_lines').select('id, delivery_order_id').in('delivery_order_id', chunk).gt('qty_checked', 0).order('id').range(f, t)),
+      all((f, t) => sb.from('lab_shop_receipt_lines').select('id, delivery_order_id').in('delivery_order_id', chunk).not('qty_received', 'is', null).order('id').range(f, t)),
     ]);
     for (const l of lines ?? []) left.add(l.delivery_order_id);
     for (const r of rec ?? []) received.add(r.delivery_order_id);

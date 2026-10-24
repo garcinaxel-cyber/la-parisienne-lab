@@ -1,7 +1,7 @@
 'use server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { odooConfigured } from '@/lib/odoo';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
@@ -34,25 +34,34 @@ function isWeighedEntry(qty: number): boolean {
 }
 
 export async function checkLineAction(
-  lineId: string, qtyChecked: number, reason: string | null, note: string | null,
+  lineId: string, qtyChecked: number, reason: string | null, note: string | null, fromTasks = false,
 ): Promise<{ ok?: boolean; error?: string }> {
   const supabase = createClient();
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
 
   const { data: line } = await supabase.from('lab_delivery_check_lines')
-    .select('qty_expected, delivery_order_id').eq('id', lineId).single();
+    .select('qty_expected, qty_checked, discrepancy_reason, resolution, delivery_order_id').eq('id', lineId).single();
   if (!line) return { error: 'Line not found' };
+  // A line the app already corrected (cards, Odoo unbuild, Lab scrap, auto transfer) cannot be
+  // re-counted or given another reason: the correction would stay and stack (review 2026-10-24).
+  const SIDE = ['not_made', 'undeclared', 'casse', 'auto_transfer', 'out_of_stock'];
+  if (line.resolution && SIDE.includes(line.resolution) && (Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason)) {
+    return { error: 'Dòng này app đã sửa (thẻ bếp / Odoo) — báo quản lý Lab. / Already corrected by the app — ask the Lab manager.' };
+  }
+  // From Tasks · Delivery gaps the quantity does not change, only the reason: allowed even on a
+  // validated order (nothing leaves differently, Odoo OUT is untouched).
+  const reasonOnly = fromTasks && line.qty_checked != null && Number(line.qty_checked) === qtyChecked;
   // Axel 2026-10-20 (REP/02079): a line changed 1 → 3 six minutes AFTER the order was validated
   // and its Lab OUT pushed to Odoo at 1 — the shop then received 3, Odoo transit went −2. A
   // validated order is locked: unlock first (re-validation re-pushes), and once Odoo holds the OUT
   // any extra goes through the gaps screen ("Lab gửi dư" = LAB → shop transfer).
   const { data: hdr } = await supabase.from('lab_delivery_orders')
     .select('status, odoo_push_status').eq('id', line.delivery_order_id).maybeSingle();
-  if (hdr?.odoo_push_status === 'validated' || hdr?.odoo_push_status === 'already_done') {
+  if (!reasonOnly && (hdr?.odoo_push_status === 'validated' || hdr?.odoo_push_status === 'already_done')) {
     return { error: 'Đơn đã xác nhận trên Odoo — không sửa được. Gửi thêm hàng: dùng « Lệch giao hàng » (Lab gửi dư). / Already validated on Odoo — use the gaps screen for extra units.' };
   }
-  if (hdr?.status === 'validated') return { error: 'Đơn đã khoá — bấm « Mở khoá » trước khi sửa. / Order locked — unlock it first.' };
+  if (!reasonOnly && hdr?.status === 'validated') return { error: 'Đơn đã khoá — bấm « Mở khoá » trước khi sửa. / Order locked — unlock it first.' };
   const isDiff = qtyChecked !== line.qty_expected;
   if (isDiff && !isWeighedEntry(qtyChecked) && !reason) return { error: 'Reason required' };
   // "Lý do khác" needs a real explanation (Axel, 2026-10-24: no more silent "other").
@@ -63,6 +72,7 @@ export async function checkLineAction(
     status: isDiff ? 'adjusted' : 'ok',
     discrepancy_reason: isDiff ? reason : null,
     discrepancy_note: isDiff ? (note || null) : null,
+    ...(line.resolution && !SIDE.includes(line.resolution) ? { resolution: null, resolution_odoo_status: null, resolution_odoo_error: null } : {}),
     checked_by: auth.session.user.id,
     checked_by_name: auth.profile?.full_name ?? null,
     checked_at: new Date().toISOString(),
@@ -364,19 +374,32 @@ export async function getGapContextAction(lineId: string, qty: number): Promise<
 
 // Called right after a line is saved, without making the assistant wait: recount alert, card
 // correction, forgotten transfer, Lab scrap, Odoo production up/down. Result kept on the line.
-export async function followUpLineAction(lineId: string, photoUrl?: string | null): Promise<{ ok?: boolean; result?: FollowUpResult; error?: string }> {
+export async function followUpLineAction(lineId: string, photoUrl?: string | null, alreadyReported = false): Promise<{ ok?: boolean; result?: FollowUpResult; error?: string }> {
   const supabase = createClient();
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
   const sb = serviceClient();
   if (!sb) return { error: 'Server not configured' };
   try {
-    const result = await followUpLine(sb, lineId, { photoUrl: photoUrl ?? null, byName: auth.profile?.full_name ?? null, byId: auth.session.user.id });
+    const result = await followUpLine(sb, lineId, { photoUrl: photoUrl ?? null, byName: auth.profile?.full_name ?? null, byId: auth.session.user.id, alreadyReported });
+  try { revalidateTag('delivery-tasks'); } catch {}
     return { ok: true, result };
   } catch (e: any) {
     await sb.from('lab_delivery_check_lines').update({ resolution_odoo_status: 'error', resolution_odoo_error: String(e?.message ?? e).slice(0, 300) }).eq('id', lineId);
     return { error: String(e?.message ?? e) };
   }
+}
+
+// Retry only the Odoo part of a correction that failed (Tasks · Delivery gaps, "Retry").
+export async function retryLineOdooAction(lineId: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const sb = serviceClient();
+  if (!sb) return { error: 'Server not configured' };
+  const { retryLineOdoo } = await import('@/lib/delivery-gap');
+  try { const r = await retryLineOdoo(sb, lineId); return r.error ? { error: r.error } : { ok: true }; }
+  catch (e: any) { return { error: String(e?.message ?? e) }; }
 }
 
 // Photo of a broken product (delivery check or Lab scrap tab).

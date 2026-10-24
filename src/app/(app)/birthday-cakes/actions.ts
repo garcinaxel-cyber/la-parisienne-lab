@@ -1,6 +1,6 @@
 'use server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 
 // Upsert the complementary info attached to ONE birthday-cake order line.
 // Never creates or duplicates an order — only the extra fields, keyed by order_line_id.
@@ -27,6 +27,7 @@ export async function saveBirthdayDetailAction(
 
   revalidatePath('/birthday-cakes');
   revalidatePath('/exceptional-orders');
+  try { revalidateTag('birthday-cakes'); } catch {}
   return { ok: true };
 }
 

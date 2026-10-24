@@ -18,7 +18,7 @@ export default async function ExceptionalOrdersPage({ searchParams }: { searchPa
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
   if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) redirect('/dashboard');
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // Vietnam day (review 2026-10-24)
   const since = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
 
   // 1. All manual orders of the last 30 days + upcoming (matched ones kept for history)

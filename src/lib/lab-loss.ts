@@ -8,6 +8,7 @@ import { getScrapReasonTags, resolveProductsBySku, explainMissingSku, createLabS
 
 export type LossReasonKind = 'broken' | 'expired' | 'test';
 
+const vnDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 function norm(s: string): string { return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
 const BROKEN = ['vo', 'hong', 'gay', 'be ', 'nut', 'casse', 'broken', 'damage'];
 const EXPIRED = ['het han', 'han su dung', 'perime', 'expired', 'expiry', 'qua han', 'het date'];
@@ -47,8 +48,8 @@ export async function recordLabLoss(supabase: SupabaseClient, input: RecordLabLo
       if (!product) odooSyncError = await explainMissingSku(input.sku);
       else {
         const origin = input.source === 'delivery_check'
-          ? `Lab scrap ${new Date().toISOString().slice(0, 10)} · delivery check ${input.orderRef ?? ''}`.trim()
-          : `Lab scrap ${new Date().toISOString().slice(0, 10)}`;
+          ? `Lab scrap ${vnDay()} · delivery check ${input.orderRef ?? ''}`.trim()
+          : `Lab scrap ${vnDay()}`;
         const result = await createLabScrap({ productId: product.id, uomId: product.uom_id, qty: input.qty, reasonTagIds: [input.reasonTagId], origin });
         if (result.ok) odooScrapId = result.scrapId ?? null;
         else odooSyncError = result.error ?? 'Odoo sync failed';
@@ -69,4 +70,21 @@ export async function recordLabLoss(supabase: SupabaseClient, input: RecordLabLo
   }).select('id').single();
   if (error) return { error: error.message };
   return { ok: true, id: data?.id, odooScrapId, odooError: odooSyncError };
+}
+
+// Retry the Odoo scrap of a loss row whose first attempt failed (no odoo_scrap_id yet).
+export async function retryLossScrap(supabase: SupabaseClient, lossId: string): Promise<{ ok: boolean; scrapId?: number; error?: string }> {
+  const { data: r } = await supabase.from('lab_internal_losses').select('id, sku, qty, reason_tag_id, odoo_scrap_id, source, order_ref').eq('id', lossId).maybeSingle();
+  if (!r) return { ok: false, error: 'Loss not found' };
+  if (r.odoo_scrap_id) return { ok: true, scrapId: r.odoo_scrap_id };
+  if (!r.sku) return { ok: false, error: 'No SKU' };
+  try {
+    const product = (await resolveProductsBySku([r.sku]))[r.sku];
+    if (!product) return { ok: false, error: await explainMissingSku(r.sku) };
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const res = await createLabScrap({ productId: product.id, uomId: product.uom_id, qty: Number(r.qty), reasonTagIds: [r.reason_tag_id], origin: `Lab scrap ${day}${r.order_ref ? ` · delivery check ${r.order_ref}` : ''} (retry)` });
+    if (!res.ok) { await supabase.from('lab_internal_losses').update({ odoo_sync_error: res.error ?? 'Odoo sync failed' }).eq('id', lossId); return { ok: false, error: res.error }; }
+    await supabase.from('lab_internal_losses').update({ odoo_scrap_id: res.scrapId ?? null, odoo_sync_error: null }).eq('id', lossId);
+    return { ok: true, scrapId: res.scrapId };
+  } catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; }
 }

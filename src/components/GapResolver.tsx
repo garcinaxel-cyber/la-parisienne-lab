@@ -11,8 +11,8 @@ import type { GapContext } from '@/lib/delivery-gap';
 
 type Opt = { code: string; vi: string; en: string; sub?: string; subEn?: string };
 
-export default function GapResolver({ lineId, expected, qty, vi, onSaved, onRecount, demoCtx }: {
-  lineId: string; expected: number; qty: number; vi: boolean;
+export default function GapResolver({ lineId, expected, qty, vi, onSaved, onRecount, demoCtx, fromTasks = false }: {
+  lineId: string; expected: number; qty: number; vi: boolean; fromTasks?: boolean;
   demoCtx?: GapContext; // staff poster / training screenshots only — never set in the app
   onSaved: (reason: string, note: string) => void;
   onRecount: () => void;
@@ -24,6 +24,8 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
   const [photo, setPhoto] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Broken units already declared in the Hao hụt Lab tab: no second scrap (review 2026-10-24).
+  const [alreadyReported, setAlreadyReported] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,10 +66,12 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
     if (!pick || saving) return;
     setSaving(true); setErr(null);
     const { checkLineAction, followUpLineAction } = await import('@/app/(app)/delivery-check/actions');
-    const r = await checkLineAction(lineId, qty, pick, note.trim() || null);
+    const r = await checkLineAction(lineId, qty, pick, note.trim() || null, fromTasks);
     if (!r.ok) { setSaving(false); setErr(r.error ?? 'Error'); return; }
-    // Background: the assistant moves on immediately (Odoo can take seconds).
-    followUpLineAction(lineId, photo).catch(() => {});
+    // At the delivery check the assistant moves on immediately (Odoo can take seconds); from the
+    // tasks tab we wait, so the card turns green (or shows the Odoo error) right away.
+    if (fromTasks) { const f = await followUpLineAction(lineId, photo, pick === 'casse' && alreadyReported); if (f.error) { setSaving(false); setErr(f.error); return; } }
+    else followUpLineAction(lineId, photo, pick === 'casse' && alreadyReported).catch(() => {});
     setSaving(false);
     onSaved(pick, note.trim());
   }
@@ -119,7 +123,7 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
       ))}
     </div>
   );
-  const needPhoto = pick === 'casse' && !photo;
+  const needPhoto = pick === 'casse' && !photo && !alreadyReported;
   const needNote = pick === 'other' && note.trim().length < OTHER_NOTE_MIN;
   const extras = (
     <>
@@ -131,6 +135,12 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
             <Camera size={14} /> {uploading ? '…' : photo ? (vi ? 'Đã có ảnh ✓' : 'Photo ✓') : (vi ? 'Chụp 1 ảnh (bắt buộc)' : 'Take a photo (required)')}
           </button>
           <span className="text-xs text-gray-500">{vi ? 'Ghi vào Hao hụt Lab' : 'Goes to Lab scrap'}</span>
+          {ctx && ctx.lost > 0 && (
+            <label className="flex w-full items-center gap-1.5 text-xs text-gray-700">
+              <input type="checkbox" checked={alreadyReported} onChange={e => setAlreadyReported(e.target.checked)} />
+              {vi ? `Bánh hỏng này đã báo ở tab Hao hụt Lab rồi (${ctx.lost}) — không ghi lại` : `Already reported in the Lab scrap tab (${ctx.lost}) — do not record again`}
+            </label>
+          )}
         </div>
       )}
       {pick === 'out_of_stock' && <div className="mt-1.5 text-xs rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#FFF4D6', color: '#8A5A00' }}>⚑ {vi ? 'App sẽ báo kho đếm lại sản phẩm này. Không cần sửa gì khác — cửa hàng sẽ đặt lại.' : 'The app asks the stock to recount this product. Nothing else to fix — the shop re-orders.'}</div>}

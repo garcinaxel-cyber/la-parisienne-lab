@@ -3,7 +3,7 @@ import { isStockFamily } from '@/lib/delivery-check-production';
 import { labDateOf, labDayUtcRange, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo, sentToStockBySku } from '@/lib/odoo-mo-sync';
 import { reduceDayProduction } from '@/lib/odoo-unbuild';
-import { recordLabLoss, brokenReasonTag } from '@/lib/lab-loss';
+import { recordLabLoss, brokenReasonTag, retryLossScrap } from '@/lib/lab-loss';
 
 // Delivery check gap barriers (Axel, 2026-10-24 — maquettes delivery-check-gap-barriers-v2 /
 // real-ui-1/2/3). Everything is counted per PRODUCT for the WHOLE delivery day (all orders),
@@ -16,7 +16,7 @@ export type Family = 'stock' | 'mto' | 'packaging';
 export interface DayPool {
   sku: string; date: string; family: Family;
   planned: number; produced: number; fromStock: number; sent: number; lost: number;
-  otherLeft: number; blockedReasons: string[]; partial: boolean;
+  otherLeft: number; pendingLeft: number; blockedReasons: string[]; partial: boolean;
 }
 
 type Card = {
@@ -43,7 +43,7 @@ export async function computeDayPool(sb: SupabaseClient, date: string, sku: stri
   const cards = await loadCards(sb, date, sku);
   const { start, end } = labDayUtcRange(date);
   const [{ data: lines }, { data: lossA }, { data: lossB }] = await Promise.all([
-    sb.from('lab_delivery_check_lines').select('id, qty_checked, delivery_order_id').eq('delivery_date', date).eq('sku', sku).eq('category', 'production'),
+    sb.from('lab_delivery_check_lines').select('id, qty_checked, qty_expected, status, delivery_order_id').eq('delivery_date', date).eq('sku', sku).eq('category', 'production'),
     sb.from('lab_internal_losses').select('id, qty').eq('sku', sku).eq('delivery_date', date),
     sb.from('lab_internal_losses').select('id, qty').eq('sku', sku).is('delivery_date', null).gte('reported_at', start).lt('reported_at', end),
   ]);
@@ -51,8 +51,14 @@ export async function computeDayPool(sb: SupabaseClient, date: string, sku: stri
   const orderIds = Array.from(new Set((lines ?? []).map((l: any) => l.delivery_order_id)));
   const { data: hdrs } = orderIds.length ? await sb.from('lab_delivery_orders').select('id, marked_not_delivered').in('id', orderIds) : { data: [] as any[] };
   const skip = new Set((hdrs ?? []).filter((h: any) => h.marked_not_delivered).map((h: any) => h.id));
-  let otherLeft = 0;
-  for (const l of lines ?? []) if (l.id !== excludeLineId && l.qty_checked != null && !skip.has(l.delivery_order_id)) otherLeft += Number(l.qty_checked) || 0;
+  // Lines not checked yet still need their units: reserve what they ordered (review 2026-10-24),
+  // otherwise the first order checked would take "not made" units the later ones need.
+  let otherLeft = 0, pendingLeft = 0;
+  for (const l of lines ?? []) {
+    if (l.id === excludeLineId || skip.has(l.delivery_order_id)) continue;
+    if (l.status === 'pending' || l.qty_checked == null) pendingLeft += Number(l.qty_expected) || 0;
+    else otherLeft += Number(l.qty_checked) || 0;
+  }
   const lost = [...(lossA ?? []), ...(lossB ?? [])].reduce((s, r: any) => s + (Number(r.qty) || 0), 0);
   let planned = 0, produced = 0, fromStock = 0, sent = 0; const blockedReasons: string[] = []; let partial = false;
   for (const c of cards) {
@@ -66,7 +72,7 @@ export async function computeDayPool(sb: SupabaseClient, date: string, sku: stri
   }
   const family: Family = lineCategory === 'packaging' ? 'packaging'
     : (isStockFamily(productCategory) || (fromStock > 0 && produced === 0)) ? 'stock' : 'mto';
-  return { pool: { sku, date, family, planned, produced, fromStock, sent, lost, otherLeft, blockedReasons, partial }, cards };
+  return { pool: { sku, date, family, planned, produced, fromStock, sent, lost, otherLeft, pendingLeft, blockedReasons, partial }, cards };
 }
 
 export interface GapContext {
@@ -81,7 +87,7 @@ export interface GapContext {
 export function contextFor(pool: DayPool, expected: number, qty: number): GapContext {
   const dir = qty < expected ? 'short' : 'over';
   const diff = Math.abs(qty - expected);
-  const available = pool.produced + pool.fromStock - pool.lost - pool.otherLeft;
+  const available = pool.produced + pool.fromStock - pool.lost - pool.otherLeft - pool.pendingLeft;
   const autoNotMade = pool.family === 'mto' && dir === 'short' && available <= qty;
   const autoNote = autoNotMade
     ? (pool.blockedReasons.length ? pool.blockedReasons.join(', ') : `${pool.produced}/${pool.planned}`)
@@ -96,8 +102,11 @@ export function contextFor(pool: DayPool, expected: number, qty: number): GapCon
 
 async function addAutoTransfer(sb: SupabaseClient, cards: Card[], qty: number, sku: string, date: string, orderRef: string, byName: string | null): Promise<number> {
   let left = Math.round(qty); if (left <= 0) return 0;
+  // Re-read the cards right before writing: another follow-up may have just sent the same units.
+  const { data: fresh } = await sb.from('lab_assignments').select('id, qty_produced, qty_sent_total').in('id', cards.map(c => c.id));
+  for (const f of fresh ?? []) { const c = cards.find(x => x.id === f.id); if (c) { c.qty_produced = f.qty_produced; c.qty_sent_total = f.qty_sent_total; } }
   const lines: any[] = []; const bumps: Record<string, number> = {};
-  for (const c of cards.filter(x => x.status !== 'skip' && x.status !== 'blocked')) {
+  for (const c of cards.filter(x => x.status !== 'skip' && x.status !== 'blocked' && !x.is_extra)) {
     const room = (Number(c.qty_produced) || 0) - (Number(c.qty_sent_total) || 0);
     if (room <= 0 || left <= 0) continue;
     const q = Math.min(room, left); left -= q; bumps[c.id] = q;
@@ -141,24 +150,26 @@ export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: str
   const ordered = [preferOrderRef ? cardForOrder(cards, preferOrderRef) : null, ...cards].filter((c, i, a) => c && a.indexOf(c) === i) as Card[];
   for (const c of ordered) {
     if (left <= 0) break;
-    if (c.status === 'skip' || c.status === 'blocked') continue;
+    if (c.status === 'skip' || c.status === 'blocked' || c.is_extra) continue;
     const p = Number(c.qty_produced) || 0; if (p <= 0) continue;
     const d = Math.min(p, left); left -= d;
     const np = p - d; const sent = Number(c.qty_sent_total) || 0;
     const upd: any = { qty_produced: np, updated_at: new Date().toISOString() };
     if (sent > np) {
       let back = sent - np;
-      const { data: tls } = await sb.from('lab_stock_transfer_lines').select('id, qty_sent, transfer_id, lab_stock_transfers(created_at, cancelled_at)').eq('assignment_id', c.id).order('id', { ascending: false });
+      const { data: tlsRaw } = await sb.from('lab_stock_transfer_lines').select('id, qty_sent, transfer_id, lab_stock_transfers(created_at, cancelled_at, status)').eq('assignment_id', c.id);
+      // newest transfer first (ids are uuids: sort on the transfer's date)
+      const tls = ((tlsRaw ?? []) as any[]).filter(t => !t.lab_stock_transfers?.cancelled_at && t.lab_stock_transfers?.status !== 'cancelled')
+        .sort((a, b) => String(b.lab_stock_transfers?.created_at ?? '').localeCompare(String(a.lab_stock_transfers?.created_at ?? '')));
       const days = new Set<string>();
-      for (const tl of (tls ?? []) as any[]) {
+      for (const tl of tls) {
         if (back <= 0) break;
-        if (tl.lab_stock_transfers?.cancelled_at) continue;
         const q = Math.min(Number(tl.qty_sent) || 0, back); if (q <= 0) continue;
         await sb.from('lab_stock_transfer_lines').update({ qty_sent: (Number(tl.qty_sent) || 0) - q }).eq('id', tl.id);
         back -= q;
         const d2 = labDateOf(tl.lab_stock_transfers?.created_at); if (d2) days.add(d2);
       }
-      upd.qty_sent_total = np; upd.transferred = true;
+      upd.qty_sent_total = sent - ((sent - np) - back); upd.transferred = upd.qty_sent_total >= np;
       for (const d2 of Array.from(days)) {
         if (!odooWriteConfigured()) break;
         const target = (await sentToStockBySku(sb, d2)).bySku[sku] ?? 0;
@@ -179,8 +190,15 @@ export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: str
 //   not_made  — kitchen over-declared: lower the cards and Odoo (removeProduced).
 export async function resolveMadeWithoutOrder(sb: SupabaseClient, date: string, sku: string, qty: number, choice: 'to_stock' | 'lost' | 'not_made',
   opts: { photoUrl?: string | null; byName: string | null; byId: string | null; productName: string }): Promise<{ odooStatus: 'none' | 'done' | 'error'; refs: string[]; error?: string }> {
+  // Claim the (day, product) first: a second device or a double tap must not run it twice.
+  const { error: claimErr } = await sb.from('lab_made_without_order').insert({
+    delivery_date: date, sku, product_name: opts.productName, qty, resolution: choice,
+    resolved_by_name: opts.byName, resolved_at: new Date().toISOString(), odoo_status: 'pending',
+  });
+  if (claimErr) return { odooStatus: 'error', refs: [], error: 'Đã có người trả lời rồi / Already answered — refresh' };
   const cards = await loadCards(sb, date, sku);
   const refs: string[] = []; const errs: string[] = [];
+  let lossId: string | null = null;
   const today = labDateOf(new Date().toISOString())!;
   const tag = `Lab ${date} · ${sku}`;
   if (choice === 'not_made') {
@@ -211,26 +229,33 @@ export async function resolveMadeWithoutOrder(sb: SupabaseClient, date: string, 
         });
         if (r.error) errs.push(r.error); else if (r.odooError) errs.push(r.odooError);
         if (r.odooScrapId) refs.push(`scrap #${r.odooScrapId}`);
+        lossId = r.id ?? null;
       }
     }
   }
   const odooStatus = errs.length ? 'error' : refs.length ? 'done' : 'none';
-  await sb.from('lab_made_without_order').upsert({
-    delivery_date: date, sku, product_name: opts.productName, qty, resolution: choice,
-    resolved_by_name: opts.byName, resolved_at: new Date().toISOString(),
-    odoo_status: odooStatus, odoo_error: errs.length ? errs.join(' · ').slice(0, 300) : null, ref: refs.length ? refs.join(' · ').slice(0, 300) : null,
-  }, { onConflict: 'delivery_date,sku' });
+  await sb.from('lab_made_without_order').update({
+    odoo_status: odooStatus, odoo_error: errs.length ? errs.join(' · ').slice(0, 300) : null, ref: refs.length ? refs.join(' · ').slice(0, 300) : null, loss_id: lossId,
+  }).eq('delivery_date', date).eq('sku', sku);
   return { odooStatus, refs, error: errs.length ? errs.join(' · ') : undefined };
 }
 
 export interface FollowUpResult { resolution: string | null; odooStatus: 'none' | 'done' | 'error'; refs: string[]; error?: string; autoTransferred: number }
 
-export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { photoUrl?: string | null; byName: string | null; byId: string | null }): Promise<FollowUpResult> {
+export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { photoUrl?: string | null; byName: string | null; byId: string | null; alreadyReported?: boolean }): Promise<FollowUpResult> {
   const res: FollowUpResult = { resolution: null, odooStatus: 'none', refs: [], autoTransferred: 0 };
   const { data: line } = await sb.from('lab_delivery_check_lines')
     .select('id, delivery_order_id, delivery_date, sku, product_name_vi, product_category, category, qty_expected, qty_checked, discrepancy_reason, discrepancy_note, resolution')
     .eq('id', lineId).maybeSingle();
-  if (!line || line.qty_checked == null || !line.sku) return res;
+  if (!line || line.qty_checked == null) return res;
+  if (!line.sku) {
+    // No SKU: nothing to correct anywhere — the reason is simply recorded.
+    if (line.discrepancy_reason && !line.resolution) {
+      await sb.from('lab_delivery_check_lines').update({ resolution: line.discrepancy_reason, resolution_qty: Math.abs(Number(line.qty_checked) - Number(line.qty_expected)), resolution_at: new Date().toISOString(), resolution_by_name: opts.byName, resolution_odoo_status: 'none' }).eq('id', lineId);
+      res.resolution = line.discrepancy_reason;
+    }
+    return res;
+  }
   const { data: hdr } = await sb.from('lab_delivery_orders').select('order_ref, shop_name').eq('id', line.delivery_order_id).maybeSingle();
   const orderRef = hdr?.order_ref ?? '';
   const date = line.delivery_date as string;
@@ -263,11 +288,11 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
       }
       resolution = 'undeclared'; resQty = need;
     }
-    const broken = reason === 'casse' && already !== 'casse' ? Math.max(0, expected - qty) : 0;
+    const broken = reason === 'casse' && already !== 'casse' && !opts.alreadyReported ? Math.max(0, expected - qty) : 0;
 
     // 3. Never made → lower the kitchen count, take back what was sent, and bring Odoo down.
     if (reason === 'not_made' && already !== 'not_made') {
-      const phantom = Math.min(Math.max(0, expected - qty), pool.produced - (pool.otherLeft + qty + pool.lost));
+      const phantom = Math.min(Math.max(0, expected - qty), pool.produced - (pool.otherLeft + pool.pendingLeft + qty + pool.lost));
       if (phantom > 0) {
         const r = await removeProduced(sb, cards, line.sku, phantom, `${line.product_name_vi} — bếp chưa làm, ${orderRef} giao ${qty}/${expected} (kiểm giao hàng ${opts.byName ?? ''})`, orderRef);
         res.refs.push(...r.refs); errs.push(...r.errs);
@@ -292,6 +317,7 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
       }
     }
 
+    if (reason === 'casse' && already !== 'casse' && opts.alreadyReported) { resolution = 'casse'; resQty = 0; res.refs.push('đã báo ở Hao hụt Lab'); }
     // 5. Broken at the Lab → Lab scrap (same function as the Hao hụt Lab tab), with the photo.
     if (broken > 0) {
       const tag = await brokenReasonTag();
@@ -307,9 +333,12 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
       }
       resolution = 'casse'; resQty = broken;
     }
-  } else if (pool.family === 'stock' && reason === 'casse' && already !== 'casse') {
-    const broken = Math.max(0, expected - qty);
-    const tag = await brokenReasonTag();
+  } else if (reason === 'casse' && already !== 'casse') {
+    // Stock products and packaging: Lab scrap too (packaging was left out before review 2026-10-24).
+    const broken = opts.alreadyReported ? 0 : Math.max(0, expected - qty);
+    const tag = broken > 0 ? await brokenReasonTag() : null;
+    if (broken > 0 && !tag) errs.push('No "broken" scrap reason in Odoo');
+    if (opts.alreadyReported) res.refs.push('đã báo ở Hao hụt Lab');
     if (tag && broken > 0) {
       const r = await recordLabLoss(sb, {
         sku: line.sku, productName: line.product_name_vi, qty: broken, reasonTagId: tag.id, reasonTagName: tag.name,
@@ -334,4 +363,57 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
     }).eq('id', lineId);
   }
   return res;
+}
+
+// Retry ONLY the Odoo part of a correction that failed (review 2026-10-24): the app-side changes
+// (cards, transfers, loss row) are already done and must not run twice.
+async function retryOdooPart(sb: SupabaseClient, kind: string, sku: string, date: string, note: string, lossId: string | null, cardIds: string[]): Promise<{ refs: string[]; errs: string[] }> {
+  const refs: string[] = []; const errs: string[] = [];
+  const today = labDateOf(new Date().toISOString())!;
+  if (kind === 'casse' || kind === 'lost') {
+    if (lossId) { const r = await retryLossScrap(sb, lossId); if (r.ok) refs.push(`scrap #${r.scrapId}`); else errs.push(r.error ?? 'scrap failed'); }
+    else errs.push('No Lab loss row to retry — declare it in the Lab scrap tab');
+  }
+  if (kind === 'not_made') {
+    const days = new Set<string>([date]);
+    if (cardIds.length) {
+      const { data: tls } = await sb.from('lab_stock_transfer_lines').select('lab_stock_transfers(created_at)').in('assignment_id', cardIds);
+      for (const t of (tls ?? []) as any[]) { const d = labDateOf(t.lab_stock_transfers?.created_at); if (d) days.add(d); }
+    }
+    for (const d of Array.from(days)) {
+      const target = (await sentToStockBySku(sb, d)).bySku[sku] ?? 0;
+      const r = await reduceDayProduction(d, sku, target, note);
+      refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
+    }
+  }
+  if (['not_made', 'auto_transfer', 'undeclared', 'to_stock', 'lost'].includes(kind)) {
+    try {
+      const s = await syncStockToOdoo(sb, today, { commit: true, skus: [sku] });
+      if (s.errors?.length) errs.push(...s.errors.map(e => e.error));
+      for (const c of s.created ?? []) if (c.mo) refs.push(`${c.mo} +${c.qty}`);
+      for (const u of s.updated ?? []) refs.push(`${u.mo} ${u.from}→${u.to}`);
+    } catch (e: any) { errs.push(String(e?.message ?? e)); }
+  }
+  return { refs, errs };
+}
+
+export async function retryLineOdoo(sb: SupabaseClient, lineId: string): Promise<{ odooStatus: 'done' | 'error' | 'none'; error?: string }> {
+  const { data: line } = await sb.from('lab_delivery_check_lines').select('id, sku, delivery_date, resolution, product_name_vi, product_category, category').eq('id', lineId).maybeSingle();
+  if (!line?.sku || !line.resolution) return { odooStatus: 'none' };
+  const { data: loss } = await sb.from('lab_internal_losses').select('id').eq('check_line_id', lineId).is('odoo_scrap_id', null).limit(1).maybeSingle();
+  const { cards } = await computeDayPool(sb, line.delivery_date, line.sku, lineId, line.product_category, line.category);
+  const { refs, errs } = await retryOdooPart(sb, line.resolution, line.sku, line.delivery_date, `${line.product_name_vi} — retry (kiểm giao hàng)`, loss?.id ?? null, cards.map(c => c.id));
+  const odooStatus = errs.length ? 'error' : 'done';
+  await sb.from('lab_delivery_check_lines').update({ resolution_odoo_status: odooStatus, resolution_odoo_error: errs.length ? errs.join(' · ').slice(0, 300) : null, ...(refs.length ? { resolution_ref: refs.join(' · ').slice(0, 300) } : {}) }).eq('id', lineId);
+  return { odooStatus, error: errs.length ? errs.join(' · ') : undefined };
+}
+
+export async function retryMadeWithoutOrderOdoo(sb: SupabaseClient, date: string, sku: string): Promise<{ odooStatus: 'done' | 'error' | 'none'; error?: string }> {
+  const { data: row } = await sb.from('lab_made_without_order').select('resolution, product_name, loss_id').eq('delivery_date', date).eq('sku', sku).maybeSingle();
+  if (!row) return { odooStatus: 'none' };
+  const cards = await loadCards(sb, date, sku);
+  const { refs, errs } = await retryOdooPart(sb, row.resolution, sku, date, `${row.product_name} — retry (làm dư không có đơn)`, row.loss_id, cards.map(c => c.id));
+  const odooStatus = errs.length ? 'error' : 'done';
+  await sb.from('lab_made_without_order').update({ odoo_status: odooStatus, odoo_error: errs.length ? errs.join(' · ').slice(0, 300) : null, ...(refs.length ? { ref: refs.join(' · ').slice(0, 300) } : {}) }).eq('delivery_date', date).eq('sku', sku);
+  return { odooStatus, error: errs.length ? errs.join(' · ') : undefined };
 }

@@ -10,6 +10,8 @@ import { fetchProductionGapsByOrder } from '@/lib/delivery-check-production';
 import { loadOrderReceptions, isPortalShop, type OrderReception } from '@/lib/reception-tracker';
 
 export const revalidate = 0;
+// Delivery-check follow-ups (Odoo unbuild / scrap / MO sync) can take > 10 s.
+export const maxDuration = 60;
 
 // Lab-local (Asia/Ho_Chi_Minh) today + tomorrow, matching the paper workflow: assistants
 // check what was produced yesterday for today's delivery, and print tomorrow's bons ahead.
@@ -214,19 +216,13 @@ export default async function DeliveryCheckPage() {
   }));
 
   // Reception gaps card (preview 2026-10-13) — read-only count, never blocks the page.
+  // Same count as the sidebar badge and the tasks page (review 2026-10-24).
   let deliveryGapsCount = 0;
   try {
     const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const { gaps } = await listDeliveryGaps(sb as any);
-    // Only what still needs a decision (Axel, 2026-10-19): a damaged unit already settled (photo →
-    // Lab loss, sent to Odoo) but not physically back yet is a bonus since 14/10, not a to-do.
-    deliveryGapsCount = gaps.filter(g => g.kind !== 'damaged' && g.status === 'open').length;
-    // + products received that were on no slip, still to settle (Axel, 2026-10-16).
-    const { count: offslipOpen } = await sb.from('lab_offslip_items').select('id', { count: 'exact', head: true }).eq('status', 'open');
-    deliveryGapsCount += offslipOpen ?? 0;
-    // + production → delivery tasks still red (Axel, 2026-10-24 — "Tasks · Delivery gaps").
-    const { countOpenProductionTasks } = await import('@/lib/delivery-tasks');
-    deliveryGapsCount += await countOpenProductionTasks(sb as any);
+    const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
+    const t = await computeDeliveryTaskCount(sb as any);
+    deliveryGapsCount = t.base + (['admin', 'lab_manager'].includes(profile?.role ?? '') ? t.toSend : 0);
   } catch (e) { console.error('delivery gaps count failed:', e); }
 
   // Shop reception tracker (Axel, 2026-10-16) — today + the late days (never tomorrow: nothing

@@ -35,8 +35,11 @@ export async function GET(req: NextRequest) {
   // Only EXTRA production is received in this tab since 2026-10-24 (Axel): made-to-order lines
   // are received automatically when sent, so they are left out of the recap too.
   const aIds = Array.from(new Set((lines ?? []).map((l: any) => l.assignment_id).filter(Boolean)));
-  const { data: kinds } = aIds.length ? await supabase.from('lab_assignments').select('id, is_extra').in('id', aIds) : { data: [] as any[] };
-  const extraIds = new Set((kinds ?? []).filter((k: any) => k.is_extra).map((k: any) => k.id));
+  const extraIds = new Set<string>();
+  for (let i = 0; i < aIds.length; i += 200) {
+    const { data: kinds } = await supabase.from('lab_assignments').select('id').in('id', aIds.slice(i, i + 200)).eq('is_extra', true);
+    for (const k of kinds ?? []) extraIds.add(k.id);
+  }
 
   type Row = {
     team: string; name: string; sku: string | null; variant: string | null;

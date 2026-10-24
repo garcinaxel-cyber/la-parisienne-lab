@@ -110,9 +110,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (['admin', 'lab_manager', 'assistant'].includes(profile.role)) {
     const db = rawService();
     if (db) {
-      const { countOpenProductionTasks } = await import('@/lib/delivery-tasks');
+      const { unstable_cache } = await import('next/cache');
+      const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
       const { countCakesWithoutMessage } = await import('@/lib/birthday-cakes-data');
-      [deliveryTasks, cakesNoMessage] = await Promise.all([countOpenProductionTasks(db as any), countCakesWithoutMessage(db as any)]);
+      const cachedTasks = unstable_cache(async () => { try { return await computeDeliveryTaskCount(db as any); } catch { return { base: 0, toSend: 0 }; } }, ['delivery-task-count'], { revalidate: 60, tags: ['delivery-tasks'] });
+      const cachedCakes = unstable_cache(async () => countCakesWithoutMessage(db as any), ['cakes-no-message'], { revalidate: 60, tags: ['birthday-cakes'] });
+      const [t, c] = await Promise.all([cachedTasks(), cachedCakes()]);
+      deliveryTasks = t.base + (['admin', 'lab_manager'].includes(profile.role) ? t.toSend : 0);
+      cakesNoMessage = c;
     }
   }
 

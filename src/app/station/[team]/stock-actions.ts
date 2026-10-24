@@ -2,6 +2,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { labDateOf, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 
 export interface TransferLineInput {
   assignmentId: string;
@@ -100,21 +101,25 @@ export async function submitStockTransferAction(
   // deliveries, the delivery check is their control. Only EXTRA production stays to be received
   // in "Nhập kho". A mixed note is split: the made-to-order lines move to their own note, marked
   // received at once. Odoo is unaffected either way (MOs follow what is SENT, not received).
+  // Chefs have no UPDATE right on transfer notes (RLS): this step runs with the service key,
+  // on the note this chef just created (review 2026-10-24 — notes stayed pending before).
+  const svc = process.env.SUPABASE_SERVICE_ROLE_KEY ? createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }) : null;
   try {
+    if (!svc) throw new Error('no service key');
     const ids = Array.from(new Set(clean.map(l => l.assignmentId)));
-    const { data: kinds } = await supabase.from('lab_assignments').select('id, is_extra').in('id', ids);
+    const { data: kinds } = await svc.from('lab_assignments').select('id, is_extra').in('id', ids);
     const extra = new Set((kinds ?? []).filter((k: any) => k.is_extra).map((k: any) => k.id));
     const mtoIds = ids.filter(id => !extra.has(id));
     if (mtoIds.length) {
       const now = new Date().toISOString();
       const recvBy = 'Tự động · hàng theo đơn';
       if (mtoIds.length === ids.length) {
-        await supabase.from('lab_stock_transfers').update({ status: 'received', received_at: now, received_by_name: recvBy }).eq('id', transfer.id);
+        await svc.from('lab_stock_transfers').update({ status: 'received', received_at: now, received_by_name: recvBy }).eq('id', transfer.id);
       } else {
-        const { data: t2 } = await supabase.from('lab_stock_transfers')
+        const { data: t2 } = await svc.from('lab_stock_transfers')
           .insert({ team, created_by: session.user.id, created_by_name: profile?.full_name ?? null, status: 'received', received_at: now, received_by_name: recvBy })
           .select('id').single();
-        if (t2) await supabase.from('lab_stock_transfer_lines').update({ transfer_id: t2.id }).eq('transfer_id', transfer.id).in('assignment_id', mtoIds);
+        if (t2) await svc.from('lab_stock_transfer_lines').update({ transfer_id: t2.id }).eq('transfer_id', transfer.id).in('assignment_id', mtoIds);
       }
     }
   } catch { /* never block the chef */ }

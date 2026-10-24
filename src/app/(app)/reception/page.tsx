@@ -23,11 +23,17 @@ export default async function ReceptionPage() {
 
   const allTransfers = [...(pending ?? []), ...(history ?? [])];
   const ids = allTransfers.map(t => t.id);
-  const { data: lines } = ids.length
-    ? await supabase.from('lab_stock_transfer_lines')
+  // Read by chunks of 50 notes, page by page (Supabase caps a request at 1000 rows).
+  const lines: any[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    for (let f = 0; ; f += 1000) {
+      const { data } = await supabase.from('lab_stock_transfer_lines')
         .select('id, transfer_id, assignment_id, product_name_vi, product_name_en, sku, variant_label, image_url, qty_sent, qty_received, discrepancy_reason, discrepancy_note')
-        .in('transfer_id', ids)
-    : { data: [] as any[] };
+        .in('transfer_id', ids.slice(i, i + 50)).order('id').range(f, f + 999);
+      lines.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+  }
 
   const linesByTransfer: Record<string, any[]> = {};
   for (const l of lines ?? []) (linesByTransfer[l.transfer_id] ??= []).push(l);

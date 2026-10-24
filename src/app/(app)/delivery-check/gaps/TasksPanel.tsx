@@ -43,10 +43,10 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
 
   async function retry(t: ProdTask) {
     setBusy(t.id);
-    const { followUpLineAction } = await import('../actions');
-    const r = await followUpLineAction(t.id);
+    const { retryLineOdooAction } = await import('../actions');
+    const r = await retryLineOdooAction(t.id);
     setBusy(null);
-    if (r.error || r.result?.odooStatus === 'error') setMsg(m => ({ ...m, [t.id]: r.error ?? r.result?.error ?? 'Odoo error' }));
+    if (r.error) setMsg(m => ({ ...m, [t.id]: r.error! }));
     router.refresh();
   }
   async function uploadPhoto(k: string, f: File | undefined) {
@@ -126,16 +126,13 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
           const short = t.checked < t.expected;
           const diff = Math.abs(t.checked - t.expected);
           const odooErr = t.odooStatus === 'error';
-          const label = odooErr ? (vi ? 'KIỂM GIAO HÀNG · ODOO LỖI' : 'DELIVERY CHECK · ODOO ERROR')
-            : short ? (vi ? 'KIỂM GIAO HÀNG · THIẾU' : 'DELIVERY CHECK · MISSING') : (vi ? 'KIỂM GIAO HÀNG · DƯ' : 'DELIVERY CHECK · MORE THAN ORDERED');
-          const title = odooErr ? (vi ? 'Odoo chưa nhận — làm lại' : 'Odoo refused — do it again')
-            : short ? (vi ? `${diff} cái thiếu — cái còn lại ở đâu?` : `Say where the missing ${diff > 1 ? 'items are' : 'item is'}`)
-            : (vi ? `${diff} cái thêm — lấy từ đâu?` : `Say where the extra ${diff > 1 ? 'items come' : 'item comes'} from`);
-          const line = `${t.orderRef} · ${t.shop ?? ''} · ${t.product} — ${t.expected} → ${t.checked}${t.reason ? ` · ${reasonLabel(t.reason, vi)}` : ''}${odooErr && t.odooError ? ` · ${t.odooError}` : ''}`;
+          const label = `${odooErr ? (vi ? 'ODOO LỖI' : 'ODOO ERROR') : short ? (vi ? `THIẾU ${diff}` : `${diff} MISSING`) : (vi ? `DƯ ${diff}` : `${diff} EXTRA`)} · ${t.orderRef} · ${(t.shop ?? '').replace(/^La Paris\s*/i, '')}`;
+          const title = t.product;
+          const line = `${vi ? 'Đặt' : 'Ordered'} ${t.expected} · ${vi ? 'giao' : 'delivered'} ${t.checked}${t.reason ? ` · ${vi ? 'lý do' : 'reason'}: ${reasonLabel(t.reason, vi)}` : ''}${t.note ? ` « ${t.note} »` : ''}${odooErr && t.odooError ? ` · Odoo: ${t.odooError}` : ''}`;
           return card(t.id, label, title, line,
             () => odooErr ? retry(t) : setOpenKey(t.id),
             odooErr ? undefined : (
-              <GapResolver lineId={t.id} expected={t.expected} qty={t.checked} vi={vi}
+              <GapResolver fromTasks lineId={t.id} expected={t.expected} qty={t.checked} vi={vi}
                 onSaved={() => { setOpenKey(null); router.refresh(); }} onRecount={() => setOpenKey(null)} />
             ),
             t.deliveryDate < today ? fmt(t.deliveryDate) : null,
@@ -151,10 +148,10 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             </label>
           );
           return card(k,
-            vi ? 'LÀM DƯ · KHÔNG CÓ ĐƠN' : 'MADE · NO ORDER TO DELIVER',
-            vi ? `Quyết định ${t.leftover} cái làm dư` : `Decide what to do with ${t.leftover > 1 ? `these ${t.leftover} items` : 'this item'}`,
-            vi ? `${t.product} — bếp làm ${t.made}, đã giao ${t.delivered}${t.lost ? `, báo hỏng ${t.lost}` : ''}`
-               : `${t.product} — made ${t.made}, delivered ${t.delivered}${t.lost ? `, reported broken ${t.lost}` : ''}`,
+            `${vi ? `LÀM DƯ ${t.leftover} · KHÔNG CÓ ĐƠN` : `${t.leftover} MADE WITHOUT ORDER`} · ${fmt(t.date)}`,
+            t.product,
+            vi ? `Bếp làm ${t.made} · đã giao ${t.delivered}${t.lost ? ` · báo hỏng ${t.lost}` : ''} → còn ${t.leftover} ở đâu?`
+               : `Made ${t.made} · delivered ${t.delivered}${t.lost ? ` · broken ${t.lost}` : ''} → where are the other ${t.leftover}?`,
             () => setOpenKey(k),
             <div className="space-y-2">
               <div className="grid gap-1.5">
@@ -177,9 +174,10 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             t.date < today ? fmt(t.date) : null);
         })}
 
-        {loErr.map(d => card(`e${d.date}${d.sku}`, vi ? 'LÀM DƯ · ODOO LỖI' : 'MADE · NO ORDER · ODOO ERROR',
-          vi ? 'Odoo chưa nhận — báo quản lý Lab' : 'Odoo refused — tell the Lab manager',
-          `${d.product} · ${fmt(d.date)} · +${d.qty} · ${d.odooError ?? ''}`, () => {}, undefined, null, '—'))}
+        {loErr.map(d => { const k = `e${d.date}${d.sku}`; return card(k, `${vi ? 'ODOO LỖI · LÀM DƯ' : 'ODOO ERROR · MADE WITHOUT ORDER'} · ${fmt(d.date)}`,
+          d.product, `+${d.qty} · ${d.resolution} · Odoo: ${d.odooError ?? ''}`,
+          async () => { setBusy(k); const { retryMadeWithoutOrderAction } = await import('./actions'); const r = await retryMadeWithoutOrderAction(d.date, d.sku); setBusy(null); if (r.error) setMsg(m => ({ ...m, [k]: r.error! })); router.refresh(); },
+          undefined, null, busy === k ? '…' : (vi ? 'Làm lại' : 'Retry')); })}
       </section>
 
       {/* ② Delivery → shop */}
@@ -191,18 +189,18 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
         {reception.map(g => {
           const h = hLeft(g.deadlineAt);
           return card(g.key,
-            `${vi ? 'LỆCH NHẬN HÀNG' : 'SHOP RECEIPT GAP'}${h != null ? ` · ${h > 0 ? (vi ? `CÒN ${h}H` : `${h}H LEFT`) : (vi ? 'QUÁ HẠN' : 'LATE')}` : ''}`,
-            vi ? 'Xử lý lệch nhận hàng của cửa hàng' : 'Settle a shop receipt gap',
-            `${g.orderRef} · ${g.shop} · ${g.qty} ${g.product} ${g.kind === 'extra' ? (vi ? 'dư khi nhận' : 'extra at reception') : (vi ? 'thiếu khi nhận' : 'missing at reception')}`,
+            `${g.kind === 'extra' ? (vi ? `CỬA HÀNG NHẬN DƯ ${g.qty}` : `SHOP GOT ${g.qty} EXTRA`) : (vi ? `CỬA HÀNG THIẾU ${g.qty}` : `SHOP MISSING ${g.qty}`)} · ${g.orderRef} · ${g.shop.replace(/^La Paris\s*/i, '')}${h != null ? ` · ${h > 0 ? (vi ? `còn ${h}h` : `${h}h left`) : (vi ? 'quá hạn' : 'late')}` : ''}`,
+            g.product,
+            `${vi ? 'Lab giao' : 'Lab sent'} ${g.sent} · ${vi ? 'cửa hàng nhận' : 'shop received'} ${g.received}`,
             () => openGap(g.key), undefined, g.deliveryDate < today ? fmt(g.deliveryDate) : null);
         })}
-        {offslipOpen > 0 && card('offslip', vi ? 'NGOÀI PHIẾU' : 'OFF-SLIP',
-          vi ? 'Chọn lý do sản phẩm không có trên phiếu' : 'Choose why an item was off the slip',
-          vi ? `${offslipOpen} sản phẩm cửa hàng nhận nhưng không có trên phiếu` : `${offslipOpen} item(s) received but not on the slip`,
+        {offslipOpen > 0 && card('offslip', vi ? `NGOÀI PHIẾU · ${offslipOpen}` : `OFF-SLIP · ${offslipOpen}`,
+          vi ? 'Cửa hàng nhận sản phẩm không có trên phiếu' : 'Shop received products not on the slip',
+          vi ? 'Chọn lý do cho từng sản phẩm' : 'Pick the reason for each product',
           () => openGap('offslip'))}
-        {canSendOdoo && toSend.map(o => card(`send${o.key}`, vi ? 'GỬI ODOO · QUẢN LÝ LAB' : 'SEND TO ODOO · LAB MANAGER',
-          vi ? 'Xác nhận cuối trên Odoo' : 'Final Odoo validation',
-          `${o.orderRef} · ${o.shop} · ${o.lines} ${vi ? 'dòng đã xử lý, chưa gửi Odoo' : (o.lines > 1 ? 'settled lines not sent to Odoo yet' : 'settled line not sent to Odoo yet')}`,
+        {canSendOdoo && toSend.map(o => card(`send${o.key}`, vi ? `GỬI ODOO · ${o.orderRef} · ${o.shop.replace(/^La Paris\s*/i, '')}` : `SEND TO ODOO · ${o.orderRef} · ${o.shop.replace(/^La Paris\s*/i, '')}`,
+          vi ? `${o.lines} dòng đã xử lý — xác nhận cuối trên Odoo` : `${o.lines} settled line${o.lines > 1 ? 's' : ''} — final Odoo validation`,
+          vi ? 'Chỉ quản lý Lab / admin' : 'Lab manager / admin only',
           () => openGap(`send:${o.key}`)))}
       </section>
 

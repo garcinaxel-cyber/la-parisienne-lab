@@ -236,7 +236,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
 
   // Damaged with a photo is settled automatically (Lab loss) and goes straight to "send".
   // The physical return is optional: the "return" tab only lists what has not come back yet.
-  const since7 = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const since7 = new Date(Date.now() + 7 * 3600_000 - 7 * 86400000).toISOString().slice(0, 10); // Vietnam day
   const byTab = useMemo(() => ({
     decide: initialGaps.filter(g => g.status === 'open'),
     shop: initialGaps.filter(g => g.status === 'waiting_shop'),

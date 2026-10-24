@@ -5,6 +5,8 @@ import { fetchProductionStatusBySku } from '@/lib/delivery-check-production';
 import DeliveryCheckOrderView from './DeliveryCheckOrderView';
 
 export const revalidate = 0;
+// Delivery-check follow-ups (Odoo unbuild / scrap / MO sync) can take > 10 s.
+export const maxDuration = 60;
 
 // Lab-local (Asia/Ho_Chi_Minh) "today" — used only to know whether this order's own date is
 // the "Aujourd'hui" or "Demain" tab, so the Retour link can send the assistant back to the

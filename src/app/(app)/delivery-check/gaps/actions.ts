@@ -3,7 +3,7 @@
 // Odoo is simulated only (src/lib/reception-odoo.ts); decisions are stored only once lab_v121 exists.
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { listDeliveryGaps, decideGap, confirmDamagedReturn, orderSendState, sendOrderToOdoo, type DeliveryGap, type GapKind, type LabCause, type OrderSendState } from '@/lib/reception-gaps';
 import type { SoFinalizeResult } from '@/lib/reception-odoo';
 import { validateShopIn, inValidationLive, type ReceptionPlan, type InValidationResult } from '@/lib/reception-odoo';
@@ -208,10 +208,25 @@ export async function resolveMadeWithoutOrderAction(input: { date: string; sku: 
   const sb = service();
   if (!sb) return { error: 'Server not configured' };
   const { resolveMadeWithoutOrder } = await import('@/lib/delivery-gap');
+  try { revalidateTag('delivery-tasks'); } catch {}
   try {
     const r = await resolveMadeWithoutOrder(sb as any, input.date, input.sku, Math.round(input.qty), input.choice,
       { photoUrl: input.photoUrl ?? null, byName: profile?.full_name ?? null, byId: session.user.id, productName: input.product });
     revalidatePath('/delivery-check/gaps');
     return { ok: true, odooStatus: r.odooStatus, error: r.error };
   } catch (e: any) { return { error: String(e?.message ?? e) }; }
+}
+
+export async function retryMadeWithoutOrderAction(date: string, sku: string): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const { data: { session } } = await getSafeSession(supabase);
+  if (!session) return { error: 'Not authenticated' };
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+  if (!['admin', 'lab_manager', 'assistant'].includes(profile?.role ?? '')) return { error: 'Not authorized' };
+  const sb = service();
+  if (!sb) return { error: 'Server not configured' };
+  const { retryMadeWithoutOrderOdoo } = await import('@/lib/delivery-gap');
+  try { revalidateTag('delivery-tasks'); } catch {}
+  try { const r = await retryMadeWithoutOrderOdoo(sb as any, date, sku); revalidatePath('/delivery-check/gaps'); return r.error ? { error: r.error } : { ok: true }; }
+  catch (e: any) { return { error: String(e?.message ?? e) }; }
 }

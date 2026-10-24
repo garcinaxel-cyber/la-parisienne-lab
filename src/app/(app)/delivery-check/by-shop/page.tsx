@@ -4,6 +4,8 @@ import { ensureDeliveryOrderChecklist, ensureDeliveryOrderChecklistsBatch, ensur
 import DeliveryCheckByShopView from './DeliveryCheckByShopView';
 
 export const revalidate = 0;
+// Delivery-check follow-ups (Odoo unbuild / scrap / MO sync) can take > 10 s.
+export const maxDuration = 60;
 
 function labTodayTomorrow(): [string, string] {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });

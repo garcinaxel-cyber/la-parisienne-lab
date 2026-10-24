@@ -4,10 +4,10 @@ import { normShop } from '@/lib/manual-cake-coverage';
 // Birthday cakes from Odoo orders (Axel, 2026-10-24): the "Bánh sinh nhật" tab is gone, its form
 // now lives in Exceptional orders › "Birthday cakes from Odoo". Same data as before, moved here.
 export async function loadBirthdayCakes(supabase: SupabaseClient) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); // Vietnam day (review 2026-10-24)
   // History window: the tab also shows the last 7 days (read-only), so assistants can
   // look up a delivered cake (message, phone, shop) without leaving the page.
-  const since7 = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  const since7 = new Date(new Date(`${today}T00:00:00Z`).getTime() - 7 * 86400000).toISOString().slice(0, 10);
 
   // 1. Which fiches are birthday cakes (by product category on the recipe card).
   // Only ACTIVE ones — a "deleted" fiche is archived (is_active=false) and must not appear in the
