@@ -1,0 +1,1 @@
+-- See migration applied 2026-10-24: lab_named_locks + lab_try_lock / lab_unlock + lab_add_sent (atomic card send).

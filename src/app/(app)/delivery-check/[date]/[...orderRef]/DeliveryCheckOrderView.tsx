@@ -265,7 +265,7 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     if (res.ok) {
       setChecked(p => new Set(p).add(l.id));
       // Forgotten transfer is fixed by the app even when the quantity matches (Axel 2026-10-24).
-      if (l.category === 'production') import('../../actions').then(({ followUpLineAction }) => followUpLineAction(l.id).catch(() => {}));
+      if (l.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(l.id));
     }
   }
 

@@ -49,9 +49,13 @@ export default async function DeliveryCheckByShopPage() {
 
   // qty > 0 only — see delivery-check index page for why: a cancelled order's lab_order_lines
   // rows are zeroed, never deleted (2026-08-11, REP/2026/01012).
-  const { data: orderLines } = importIds.length
-    ? await supabase.from('lab_order_lines').select('order_ref, delivery_date').in('import_id', importIds).gt('qty', 0)
-    : { data: [] as any[] };
+  // Page by page (Supabase caps a request at 1000 rows — orders could silently disappear).
+  const orderLines: any[] = [];
+  for (let f = 0; importIds.length; f += 1000) {
+    const { data } = await supabase.from('lab_order_lines').select('id, order_ref, delivery_date').in('import_id', importIds).gt('qty', 0).order('id').range(f, f + 999);
+    orderLines.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
   const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
     .select('order_ref, delivery_date').in('delivery_date', dates);
 

@@ -334,7 +334,15 @@ async function receptionLinesOf(sb: SupabaseClient, deliveryOrderId: string) {
   });
 }
 
+// One send per order at a time (named lock, review 2026-10-24): two clicks from two devices used
+// to both pass the "ready" check and send returns / scraps / transfers twice.
 export async function sendOrderToOdoo(sb: SupabaseClient, deliveryOrderId: string, byName: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
+  const { withLock } = await import('@/lib/named-lock');
+  return withLock(sb, `gapsend|${deliveryOrderId}`, () => sendOrderToOdooInner(sb, deliveryOrderId, byName), { seconds: 120, waitMs: 3000 })
+    .catch((e: any) => ({ error: String(e?.message ?? e) }));
+}
+
+async function sendOrderToOdooInner(sb: SupabaseClient, deliveryOrderId: string, byName: string): Promise<{ result?: SoFinalizeResult; error?: string }> {
   const st = await orderSendState(sb, deliveryOrderId);
   if ('error' in st) return { error: st.error };
   if (!st.ready) return { error: 'Every gap line must be settled first' };

@@ -104,6 +104,7 @@ export async function submitStockTransferAction(
   // Chefs have no UPDATE right on transfer notes (RLS): this step runs with the service key,
   // on the note this chef just created (review 2026-10-24 — notes stayed pending before).
   const svc = process.env.SUPABASE_SERVICE_ROLE_KEY ? createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }) : null;
+  let splitId: string | null = null;
   try {
     if (!svc) throw new Error('no service key');
     const ids = Array.from(new Set(clean.map(l => l.assignmentId)));
@@ -119,6 +120,7 @@ export async function submitStockTransferAction(
         const { data: t2 } = await svc.from('lab_stock_transfers')
           .insert({ team, created_by: session.user.id, created_by_name: profile?.full_name ?? null, status: 'received', received_at: now, received_by_name: recvBy })
           .select('id').single();
+        if (t2) splitId = t2.id;
         if (t2) await svc.from('lab_stock_transfer_lines').update({ transfer_id: t2.id }).eq('transfer_id', transfer.id).in('assignment_id', mtoIds);
       }
     }
@@ -134,10 +136,24 @@ export async function submitStockTransferAction(
   const { data: cards } = await supabase
     .from('lab_assignments').select('id, qty_produced, total_qty, qty_sent_total').in('id', assignmentIds);
   for (const c of cards ?? []) {
-    const newTotal = (c.qty_sent_total ?? 0) + (sentThisTransfer[c.id] ?? 0);
-    const target = c.qty_produced || c.total_qty || 0;
-    await supabase.from('lab_assignments')
-      .update({ qty_sent_total: newTotal, transferred: newTotal >= target }).eq('id', c.id);
+    const add = sentThisTransfer[c.id] ?? 0;
+    // Atomic add (lab_add_sent, v132): if the delivery check already sent these units to stock
+    // automatically in the meantime, the database refuses and this line is zeroed — no double MO.
+    const { data: n, error: rpcErr } = await supabase.rpc('lab_add_sent', { p_card: c.id, p_qty: add });
+    if (rpcErr) {
+      const newTotal = (c.qty_sent_total ?? 0) + add;
+      const target = c.qty_produced || c.total_qty || 0;
+      await supabase.from('lab_assignments').update({ qty_sent_total: newTotal, transferred: newTotal >= target }).eq('id', c.id);
+    } else if (n == null && svc) {
+      // Refused: part (or all) was already sent meanwhile. Keep only what is still left.
+      const { data: fresh } = await svc.from('lab_assignments').select('qty_produced, total_qty, qty_sent_total').eq('id', c.id).single();
+      const room = Math.max(0, (fresh?.qty_produced || fresh?.total_qty || 0) - (fresh?.qty_sent_total ?? 0));
+      const keep = Math.min(room, add);
+      if (keep > 0) await svc.rpc('lab_add_sent', { p_card: c.id, p_qty: keep });
+      const { data: myLines } = await svc.from('lab_stock_transfer_lines').select('id, qty_sent').in('transfer_id', [transfer.id, ...(splitId ? [splitId] : [])]).eq('assignment_id', c.id);
+      let left = keep;
+      for (const ml of myLines ?? []) { const q = Math.min(left, Number(ml.qty_sent) || 0); left -= q; await svc.from('lab_stock_transfer_lines').update({ qty_sent: q }).eq('id', ml.id); }
+    }
   }
 
   // Real-time: reflect what was just sent to stock in Odoo (create/update the day's draft MOs).

@@ -210,8 +210,9 @@ export async function resolveMadeWithoutOrderAction(input: { date: string; sku: 
   const { resolveMadeWithoutOrder } = await import('@/lib/delivery-gap');
   try { revalidateTag('delivery-tasks'); } catch {}
   try {
-    const r = await resolveMadeWithoutOrder(sb as any, input.date, input.sku, Math.round(input.qty), input.choice,
-      { photoUrl: input.photoUrl ?? null, byName: profile?.full_name ?? null, byId: session.user.id, productName: input.product });
+    const { withLock } = await import('@/lib/named-lock');
+    const r = await withLock(sb as any, `gap|${input.sku}|${input.date}`, () => resolveMadeWithoutOrder(sb as any, input.date, input.sku, Math.round(input.qty), input.choice,
+      { photoUrl: input.photoUrl ?? null, byName: profile?.full_name ?? null, byId: session.user.id, productName: input.product }));
     revalidatePath('/delivery-check/gaps');
     return { ok: true, odooStatus: r.odooStatus, error: r.error };
   } catch (e: any) { return { error: String(e?.message ?? e) }; }
@@ -227,6 +228,6 @@ export async function retryMadeWithoutOrderAction(date: string, sku: string): Pr
   if (!sb) return { error: 'Server not configured' };
   const { retryMadeWithoutOrderOdoo } = await import('@/lib/delivery-gap');
   try { revalidateTag('delivery-tasks'); } catch {}
-  try { const r = await retryMadeWithoutOrderOdoo(sb as any, date, sku); revalidatePath('/delivery-check/gaps'); return r.error ? { error: r.error } : { ok: true }; }
+  try { const { withLock } = await import('@/lib/named-lock'); const r = await withLock(sb as any, `gap|${sku}|${date}`, () => retryMadeWithoutOrderOdoo(sb as any, date, sku)); revalidatePath('/delivery-check/gaps'); return r.error ? { error: r.error } : { ok: true }; }
   catch (e: any) { return { error: String(e?.message ?? e) }; }
 }

@@ -39,7 +39,7 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
     setSavingLine(null);
     if (res.ok) {
       setChecked(p => new Set(p).add(r.id));
-      if (r.category === 'production') import('../actions').then(({ followUpLineAction }) => followUpLineAction(r.id).catch(() => {}));
+      if (r.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(r.id));
     }
   }
 

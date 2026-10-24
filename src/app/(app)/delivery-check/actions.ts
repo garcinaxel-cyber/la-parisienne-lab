@@ -155,6 +155,12 @@ export async function unlockOrderAction(deliveryOrderId: string): Promise<{ ok?:
   const supabase = createClient();
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
+  // Once Odoo holds the OUT, unlocking only hid the order from the shop reception and the gaps
+  // list (review 2026-10-24): refuse — extra or missing units go through the gaps screen.
+  const { data: h } = await supabase.from('lab_delivery_orders').select('odoo_push_status').eq('id', deliveryOrderId).maybeSingle();
+  if (h?.odoo_push_status === 'validated' || h?.odoo_push_status === 'already_done') {
+    return { error: 'Đơn đã xác nhận trên Odoo — không mở khoá được. Dùng « Việc cần làm · Lệch giao hàng ». / Already validated on Odoo — use Tasks · Delivery gaps.' };
+  }
 
   const { error } = await supabase.from('lab_delivery_orders').update({
     status: 'in_progress',
@@ -303,12 +309,23 @@ export async function validateDeliveryOnOdooAction(
     .filter((l: any) => l.sku && l.qty_checked != null && !(Number(l.qty_expected) === 0 && Number(l.qty_checked) === 0))
     .map((l: any) => ({ sku: l.sku as string, product_name_vi: l.product_name_vi as string, qty_checked: Number(l.qty_checked), qty_expected: Number(l.qty_expected) }));
 
+  // Claim the push (review 2026-10-24): two devices pressing at the same time must not create
+  // the missing moves twice, and a late failure must never overwrite a success.
+  if (!dryRun) {
+    const staleIso = new Date(Date.now() - 180_000).toISOString();
+    const { data: claim } = await supabase.from('lab_delivery_orders').update({ odoo_push_status: 'pushing', updated_at: new Date().toISOString() })
+      .eq('id', deliveryOrderId)
+      .or(`odoo_push_status.is.null,odoo_push_status.eq.error,and(odoo_push_status.eq.pushing,updated_at.lt.${staleIso})`)
+      .select('id');
+    if (!claim?.length) return { ok: false, dryRun, error: 'Đang gửi hoặc đã gửi Odoo — tải lại trang. / Already being sent or sent — reload.' } as any;
+  }
   const result = await validateDeliveryOnOdoo(
     supabase as any, header.order_ref, header.source_type, checklistLines, dryRun, splits,
   );
 
   // Only persist an outcome for a REAL attempt (not a dry-run preview, and not a needsSplit
   // pause — neither of those is a final state worth recording).
+  if (!dryRun && result.needsSplit) await supabase.from('lab_delivery_orders').update({ odoo_push_status: null }).eq('id', deliveryOrderId).eq('odoo_push_status', 'pushing');
   if (!dryRun && !result.needsSplit) {
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (result.ok) {
@@ -405,7 +422,12 @@ export async function retryLineOdooAction(lineId: string): Promise<{ ok?: boolea
   const sb = serviceClient();
   if (!sb) return { error: 'Server not configured' };
   const { retryLineOdoo } = await import('@/lib/delivery-gap');
-  try { const r = await retryLineOdoo(sb, lineId); return r.error ? { error: r.error } : { ok: true }; }
+  try {
+    const { withLock } = await import('@/lib/named-lock');
+    const { data: ln } = await sb.from('lab_delivery_check_lines').select('sku, delivery_date').eq('id', lineId).maybeSingle();
+    const r = await withLock(sb, `gap|${ln?.sku ?? lineId}|${ln?.delivery_date ?? ''}`, () => retryLineOdoo(sb, lineId));
+    return r.error ? { error: r.error } : { ok: true };
+  }
   catch (e: any) { return { error: String(e?.message ?? e) }; }
 }
 

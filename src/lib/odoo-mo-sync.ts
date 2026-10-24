@@ -21,8 +21,15 @@ export async function sentToStockBySku(supabase: SupabaseClient, date: string): 
     .select('id').gte('created_at', start).lt('created_at', end).neq('status', 'cancelled');
   const tids = (transfers ?? []).map((t: any) => t.id);
   if (!tids.length) return { bySku: {}, missingSku: [] };
-  const { data: lines } = await supabase.from('lab_stock_transfer_lines')
-    .select('sku, qty_sent, product_name_vi').in('transfer_id', tids);
+  // Page by page: a short read here would LOWER the day's MOs (Supabase caps at 1000 rows).
+  const lines: any[] = [];
+  for (let i = 0; i < tids.length; i += 100) {
+    for (let f = 0; ; f += 1000) {
+      const { data } = await supabase.from('lab_stock_transfer_lines').select('id, sku, qty_sent, product_name_vi').in('transfer_id', tids.slice(i, i + 100)).order('id').range(f, f + 999);
+      lines.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+  }
   const bySku: Record<string, number> = {};
   const missingSku: { productName: string; qty: number }[] = [];
   for (const l of lines ?? []) {
@@ -48,7 +55,17 @@ export interface MoSyncResult {
 // Sync Odoo MOs so that, per product for the day, SUM(non-cancelled MOs) == qty sent to stock.
 // Keeps ONE adjustable DRAFT MO; NEVER modifies validated (non-draft) MOs — creates a new draft
 // for the remaining delta instead. `skus` limits the sync to those products (real-time trigger).
+// Writes run one at a time per day (named lock, v132): two syncs at the same moment used to be able
+// to create two draft MOs for the same product (review 2026-10-24).
 export async function syncStockToOdoo(
+  supabase: SupabaseClient, date: string, opts: { commit: boolean; skus?: string[] },
+): Promise<MoSyncResult> {
+  if (!opts.commit) return syncStockToOdooInner(supabase, date, opts);
+  const { withLock } = await import('@/lib/named-lock');
+  return withLock(supabase, `mosync|${date}`, () => syncStockToOdooInner(supabase, date, opts), { seconds: 120, waitMs: 40000 });
+}
+
+async function syncStockToOdooInner(
   supabase: SupabaseClient, date: string, opts: { commit: boolean; skus?: string[] },
 ): Promise<MoSyncResult> {
   const origin = `Lab ${date}`;
@@ -101,7 +118,9 @@ export async function syncStockToOdoo(
   for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {
     const pid = Array.isArray(m.product_id) ? m.product_id[0] : m.product_id;
     const e = moByProd[pid] ??= { confirmedSum: 0, draft: null };
-    if (m.state === 'draft') { if (!e.draft) e.draft = { id: m.id, qty: m.product_qty, name: m.name }; }
+    // A second draft (left by an old race) counts like a confirmed one, so it is never forgotten.
+    if (m.state === 'draft' && !e.draft) e.draft = { id: m.id, qty: m.product_qty, name: m.name };
+    else if (m.state === 'draft') e.confirmedSum += (m.product_qty ?? 0);
     else e.confirmedSum += (m.product_qty ?? 0) - (unbuiltByMo[m.id] ?? 0);
   }
 

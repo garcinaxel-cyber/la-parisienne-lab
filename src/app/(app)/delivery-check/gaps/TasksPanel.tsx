@@ -52,11 +52,14 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
   async function uploadPhoto(k: string, f: File | undefined) {
     if (!f) return;
     setBusy(k);
-    const fd = new FormData(); fd.append('file', f);
+    try {
+    const { compressImage } = await import('@/lib/compress-image');
+    const fd = new FormData(); fd.append('file', await compressImage(f));
     const { uploadLossPhotoAction } = await import('../actions');
     const r = await uploadLossPhotoAction(fd);
     setBusy(null);
     if (r.url) setLoPhoto(p => ({ ...p, [k]: r.url! })); else setMsg(m => ({ ...m, [k]: r.error ?? 'Upload error' }));
+    } catch { setBusy(null); setMsg(m => ({ ...m, [k]: 'Upload error' })); }
   }
   async function resolveLeftover(t: LeftoverTask) {
     const k = `${t.date}|${t.sku}`; const choice = loPick[k] as any;

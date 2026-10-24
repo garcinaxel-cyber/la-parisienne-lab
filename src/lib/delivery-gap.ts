@@ -3,6 +3,7 @@ import { isStockFamily } from '@/lib/delivery-check-production';
 import { labDateOf, labDayUtcRange, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo, sentToStockBySku } from '@/lib/odoo-mo-sync';
 import { reduceDayProduction } from '@/lib/odoo-unbuild';
+import { withLock } from '@/lib/named-lock';
 import { recordLabLoss, brokenReasonTag, retryLossScrap } from '@/lib/lab-loss';
 
 // Delivery check gap barriers (Axel, 2026-10-24 — maquettes delivery-check-gap-barriers-v2 /
@@ -172,14 +173,17 @@ async function addAutoTransfer(sb: SupabaseClient, cards: Card[], qty: number, s
       is_auto: true, source_ref: orderRef, note: `Auto transfer at delivery check (${orderRef}) — kitchen forgot to send to stock${byName ? ` · ${byName}` : ''}`,
     }).select('id').single();
     if (error || !t) continue;
-    await sb.from('lab_stock_transfer_lines').insert(ls.map(({ team: _t, ...l }) => ({ ...l, transfer_id: t.id })));
+    // Reserve on the card atomically first (lab_add_sent refuses to go above what was produced):
+    // two follow-ups or a chef send at the same moment can never send the same units twice.
+    const okLines: any[] = [];
     for (const l of ls) {
-      const c = cards.find(x => x.id === l.assignment_id)!;
-      const nt = (Number(c.qty_sent_total) || 0) + l.qty_sent;
-      c.qty_sent_total = nt;
-      await sb.from('lab_assignments').update({ qty_sent_total: nt, transferred: nt >= (Number(c.qty_produced) || 0) }).eq('id', c.id);
-      total += l.qty_sent;
+      const { data: n, error: e2 } = await sb.rpc('lab_add_sent', { p_card: l.assignment_id, p_qty: l.qty_sent });
+      if (e2 || n == null) continue;
+      const c = cards.find(x => x.id === l.assignment_id); if (c) c.qty_sent_total = n;
+      okLines.push(l); total += l.qty_sent;
     }
+    if (okLines.length) await sb.from('lab_stock_transfer_lines').insert(okLines.map(({ team: _t, ...l }) => ({ ...l, transfer_id: t.id })));
+    else await sb.from('lab_stock_transfers').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by_name: 'auto (nothing left to send)' }).eq('id', t.id);
   }
   return total;
 }
@@ -222,7 +226,7 @@ export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: str
       for (const d2 of Array.from(days)) {
         if (!odooWriteConfigured()) break;
         const target = (await sentToStockBySku(sb, d2)).bySku[sku] ?? 0;
-        const r = await reduceDayProduction(d2, sku, target, note);
+        const r = await withLock(sb, `unbuild|${sku}|${d2}`, () => reduceDayProduction(d2, sku, target, note));
         refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
       }
     }
@@ -318,11 +322,21 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
 
   // 1. Out of stock (stock products) → recount alert.
   if (reason === 'out_of_stock' && already !== 'out_of_stock') {
-    await sb.from('lab_stock_recount_alerts').insert({
+    const { data: exA } = await sb.from('lab_stock_recount_alerts').select('id').eq('check_line_id', lineId).limit(1);
+    if (!exA?.length) await sb.from('lab_stock_recount_alerts').insert({
       sku: line.sku, product_name: line.product_name_vi, delivery_date: date, order_ref: orderRef, check_line_id: lineId,
       missing_qty: Math.max(0, expected - qty), raised_by_name: opts.byName,
     });
     resolution = 'out_of_stock'; resQty = Math.max(0, expected - qty);
+  }
+
+  // Claim the correction before any side effect: if this run is cut off (time limit), a re-run
+  // sees the resolution and does not cut / add / scrap a second time; Retry finishes the Odoo part.
+  if (!already && reason && ['not_made', 'undeclared', 'over_real', 'casse'].includes(reason)) {
+    const { data: claimed } = await sb.from('lab_delivery_check_lines')
+      .update({ resolution: reason === 'over_real' ? 'undeclared' : reason, resolution_odoo_status: 'pending', resolution_at: new Date().toISOString(), resolution_by_name: opts.byName })
+      .eq('id', lineId).is('resolution', null).select('id');
+    if (!claimed?.length) return res; // another run already took it
   }
 
   if (pool.family === 'mto') {
@@ -431,7 +445,8 @@ async function retryOdooPart(sb: SupabaseClient, kind: string, sku: string, date
   const today = labDateOf(new Date().toISOString())!;
   if (kind === 'casse' || kind === 'lost') {
     if (lossId) { const r = await retryLossScrap(sb, lossId); if (r.ok) refs.push(`scrap #${r.scrapId}`); else errs.push(r.error ?? 'scrap failed'); }
-    else errs.push('No Lab loss row to retry — declare it in the Lab scrap tab');
+    // no loss row: either 'already reported in Lab scrap' (nothing to redo) or it was never written
+    else if (kind === 'lost') errs.push('No Lab loss row to retry — declare it in the Lab scrap tab');
   }
   if (kind === 'not_made') {
     const days = new Set<string>([date]);
@@ -441,17 +456,25 @@ async function retryOdooPart(sb: SupabaseClient, kind: string, sku: string, date
     }
     for (const d of Array.from(days)) {
       const target = (await sentToStockBySku(sb, d)).bySku[sku] ?? 0;
-      const r = await reduceDayProduction(d, sku, target, note);
+      const r = await withLock(sb, `unbuild|${sku}|${d}`, () => reduceDayProduction(d, sku, target, note));
       refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
     }
   }
-  if (['not_made', 'auto_transfer', 'undeclared', 'to_stock', 'lost'].includes(kind)) {
-    try {
-      const s = await syncStockToOdoo(sb, today, { commit: true, skus: [sku] });
-      if (s.errors?.length) errs.push(...s.errors.map(e => e.error));
-      for (const c of s.created ?? []) if (c.mo) refs.push(`${c.mo} +${c.qty}`);
-      for (const u of s.updated ?? []) refs.push(`${u.mo} ${u.from}→${u.to}`);
-    } catch (e: any) { errs.push(String(e?.message ?? e)); }
+  if (['not_made', 'auto_transfer', 'undeclared', 'to_stock', 'lost', 'casse', 'from_lab_stock'].includes(kind)) {
+    // Sync every day on which these cards sent units to stock (MO origin = that day), not only today.
+    const days = new Set<string>([today]);
+    if (cardIds.length) {
+      const { data: tls } = await sb.from('lab_stock_transfer_lines').select('lab_stock_transfers(created_at)').in('assignment_id', cardIds);
+      for (const t of (tls ?? []) as any[]) { const d = labDateOf(t.lab_stock_transfers?.created_at); if (d) days.add(d); }
+    }
+    for (const d of Array.from(days)) {
+      try {
+        const s = await syncStockToOdoo(sb, d, { commit: true, skus: [sku] });
+        if (s.errors?.length) errs.push(...s.errors.map(e => e.error));
+        for (const c of s.created ?? []) if (c.mo) refs.push(`${c.mo} +${c.qty}`);
+        for (const u of s.updated ?? []) refs.push(`${u.mo} ${u.from}→${u.to}`);
+      } catch (e: any) { errs.push(String(e?.message ?? e)); }
+    }
   }
   return { refs, errs };
 }

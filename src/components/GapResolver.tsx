@@ -38,8 +38,11 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
         if (demoCtx.dir === 'over' && (demoCtx.family !== 'mto' || demoCtx.madeCovers)) setPick(demoCtx.family === 'mto' ? 'extra_made' : 'extra_stock');
         return;
       }
-      const { getGapContextAction } = await import('@/app/(app)/delivery-check/actions');
-      const r = await getGapContextAction(lineId, qty);
+      let r: { ctx?: GapContext; error?: string };
+      try {
+        const { getGapContextAction } = await import('@/app/(app)/delivery-check/actions');
+        r = await getGapContextAction(lineId, qty);
+      } catch (e: any) { r = { error: vi ? 'Mất kết nối — thử lại' : 'Connection lost — try again' }; }
       if (!alive) return;
       if (r.error || !r.ctx) { setErr(r.error ?? 'Error'); return; }
       setCtx(r.ctx);
@@ -55,25 +58,31 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
   async function onFile(f: File | undefined) {
     if (!f) return;
     setUploading(true);
-    const fd = new FormData(); fd.append('file', f);
-    const { uploadLossPhotoAction } = await import('@/app/(app)/delivery-check/actions');
-    const r = await uploadLossPhotoAction(fd);
-    setUploading(false);
-    if (r.url) setPhoto(r.url); else setErr(r.error ?? 'Upload error');
+    try {
+      const { compressImage } = await import('@/lib/compress-image');
+      const fd = new FormData(); fd.append('file', await compressImage(f));
+      const { uploadLossPhotoAction } = await import('@/app/(app)/delivery-check/actions');
+      const r = await uploadLossPhotoAction(fd);
+      if (r.url) setPhoto(r.url); else setErr(r.error ?? 'Upload error');
+    } catch (e: any) { setErr(vi ? 'Không gửi được ảnh — thử lại' : 'Photo upload failed — try again'); }
+    finally { setUploading(false); }
   }
 
   async function confirm() {
     if (!pick || saving) return;
     setSaving(true); setErr(null);
-    const { checkLineAction, followUpLineAction } = await import('@/app/(app)/delivery-check/actions');
+    try {
+    const { checkLineAction } = await import('@/app/(app)/delivery-check/actions');
+    const { startFollowUp } = await import('@/lib/follow-up-client');
     const r = await checkLineAction(lineId, qty, pick, note.trim() || null, fromTasks);
     if (!r.ok) { setSaving(false); setErr(r.error ?? 'Error'); return; }
     // At the delivery check the assistant moves on immediately (Odoo can take seconds); from the
     // tasks tab we wait, so the card turns green (or shows the Odoo error) right away.
-    if (fromTasks) { const f = await followUpLineAction(lineId, photo, pick === 'casse' && alreadyReported); if (f.error) { setSaving(false); setErr(f.error); return; } }
-    else followUpLineAction(lineId, photo, pick === 'casse' && alreadyReported).catch(() => {});
+    if (fromTasks) { const f = await startFollowUp(lineId, photo, pick === 'casse' && alreadyReported); if (f.error) { setSaving(false); setErr(f.error); return; } }
+    else startFollowUp(lineId, photo, pick === 'casse' && alreadyReported);
     setSaving(false);
     onSaved(pick, note.trim());
+    } catch (e: any) { setSaving(false); setErr(vi ? 'Mất kết nối — thử lại' : 'Connection lost — try again'); }
   }
 
   const box = (children: React.ReactNode, tone: 'red' | 'amber' | 'green' = 'red') => (

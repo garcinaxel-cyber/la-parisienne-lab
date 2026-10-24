@@ -123,6 +123,9 @@ export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: P
       odooStatus: l.resolution_odoo_status, odooError: l.resolution_odoo_error, ref: l.resolution_ref, resolvedBy: l.resolution_by_name, resolvedAt: l.resolution_at,
     };
   });
+  // 'pending' for more than 5 minutes = the follow-up was cut off: show it red (Retry).
+  const stalePending = (t: ProdTask) => t.odooStatus === 'pending' && (!t.resolvedAt || Date.now() - new Date(t.resolvedAt).getTime() > 300_000);
+  for (const t of tasks) if (stalePending(t)) { t.odooStatus = 'error'; t.odooError = t.odooError ?? 'Interrupted'; }
   const isOpen = (t: ProdTask) => !t.resolution || t.odooStatus === 'error';
   const { data: rc } = await sb.from('lab_stock_recount_alerts')
     .select('id, sku, product_name, delivery_date, order_ref, missing_qty, raised_by_name, raised_at').eq('status', 'open').order('raised_at').limit(200);
