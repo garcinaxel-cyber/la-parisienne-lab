@@ -226,6 +226,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
       const key = (e as CustomEvent).detail as string | null;
       setDetailOpen(true);
       if (key === 'closed') { setTab('closed'); setSelected(null); }
+      else if (key && key.startsWith('send:')) { setTab('send'); setSelected(key.slice(5)); setPlan(null); setInPlan(null); setErr(null); }
       else if (key && key !== 'offslip') { setTab('decide'); setSelected(key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
       setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     };
@@ -301,8 +302,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
       {/* Tasks panel (Axel, 2026-10-24): counter, ① production → delivery, waiting, done. */}
       {top}
 
-      <button type="button" onClick={() => setDetailOpen(o => !o)} className="text-sm font-semibold underline text-ink-light">
-        {detailOpen ? (vi ? 'Ẩn màn hình chi tiết' : 'Hide the detail screen') : (vi ? 'Mở màn hình chi tiết (tất cả tab)' : 'Open the detail screen (all tabs)')}
+      <button type="button" onClick={() => { if (!detailOpen) { setTab('closed'); setSelected(null); } setDetailOpen(o => !o); }} className="text-sm font-semibold underline text-ink-light">
+        {detailOpen ? (vi ? 'Ẩn lịch sử' : 'Hide history') : (vi ? 'Lịch sử lệch nhận hàng (đã đóng, 7 ngày)' : 'History of shop receipt gaps (closed)')}
       </button>
 
       <div ref={detailRef} hidden={!detailOpen} className="space-y-4">

@@ -25,11 +25,20 @@ export default async function DeliveryGapsPage() {
   const since7 = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   // Damaged not back: last 7 days only (Axel, 2026-10-24).
   const damagedList = gaps.filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt && g.deliveryDate >= since7);
-  const damaged = { shops: new Set(damagedList.map(g => g.shopName)).size, items: damagedList.length };
-  const receptionDoneToday = gaps.filter(g => g.status === 'closed' && g.decidedAt && new Date(g.decidedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) === today).length;
+  const dmgByShop: Record<string, number> = {};
+  for (const g of damagedList) dmgByShop[g.shopName] = (dmgByShop[g.shopName] ?? 0) + 1;
+  const damaged = { shops: Object.keys(dmgByShop).length, items: damagedList.length, byShop: Object.entries(dmgByShop).map(([shop, n]) => ({ shop, n })) };
+  // Settled gaps the Lab manager / admin still has to send to Odoo (final validation), one per order.
+  const sendMap: Record<string, { key: string; orderRef: string; shop: string; lines: number }> = {};
+  for (const g of gaps.filter(g => g.status === 'closed' && g.odooMode !== 'sent' && g.labCause !== 'shop_miscount' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra'))) {
+    const e = (sendMap[g.deliveryOrderId] ??= { key: g.key, orderRef: g.orderRef, shop: g.shopName, lines: 0 }); e.lines++;
+  }
+  const toSend = Object.values(sendMap);
+  const receptionDoneToday = gaps.filter(g => g.status === 'closed' && g.decidedAt && new Date(g.decidedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) === today)
+    .map(g => `${g.orderRef} · ${g.shopName} · ${g.product} · ${g.kind === 'extra' ? '+' : '−'}${g.qty} · ${g.labCause ?? ''}${g.decidedBy ? ` · ${g.decidedBy}` : ''}`);
   const reception = gaps.filter(g => g.kind !== 'damaged' && g.status === 'open')
     .sort((a, b) => (a.deadlineAt ?? '9').localeCompare(b.deadlineAt ?? '9'))
     .map(g => ({ key: g.key, product: g.product, shop: g.shopName, orderRef: g.orderRef, deliveryDate: g.deliveryDate, kind: g.kind, qty: g.qty, sent: g.sent, received: g.received, deadlineAt: g.deadlineAt }));
   return <GapsView top={<TasksPanel leftovers={lo.open} leftoverDone={lo.done} open={prod.open} resolved={prod.resolved} recounts={prod.recounts}
-      reception={reception} offslipOpen={offslipOpen ?? 0} shopsNotConfirmed={notConfirmed} damaged={damaged} receptionDoneToday={receptionDoneToday} today={today} />} initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />;
+      reception={reception} offslipOpen={offslipOpen ?? 0} shopsNotConfirmed={notConfirmed} damaged={damaged} receptionDoneToday={receptionDoneToday} toSend={toSend} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} today={today} />} initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />;
 }

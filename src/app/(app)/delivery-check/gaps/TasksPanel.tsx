@@ -15,10 +15,11 @@ const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647', NAVY = '#1A4731';
 export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null };
 
 export default function TasksPanel({ open, resolved, recounts, reception, offslipOpen, today, leftovers = [], leftoverDone = [],
-  shopsNotConfirmed = [], damaged = { shops: 0, items: 0 }, receptionDoneToday = 0 }: {
+  shopsNotConfirmed = [], damaged = { shops: 0, items: 0, byShop: [] }, receptionDoneToday = [], toSend = [], canSendOdoo = false }: {
   open: ProdTask[]; resolved: ProdTask[]; recounts: RecountTask[]; leftovers?: LeftoverTask[]; leftoverDone?: LeftoverDone[];
   reception: ReceptionTask[]; offslipOpen: number; today: string;
-  shopsNotConfirmed?: { shop: string; orders: number }[]; damaged?: { shops: number; items: number }; receptionDoneToday?: number;
+  shopsNotConfirmed?: { shop: string; orders: number }[]; damaged?: { shops: number; items: number; byShop: { shop: string; n: number }[] }; receptionDoneToday?: string[];
+  toSend?: { key: string; orderRef: string; shop: string; lines: number }[]; canSendOdoo?: boolean;
 }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
@@ -32,7 +33,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
 
   const loErr = leftoverDone.filter(d => d.odooStatus === 'error');
   const prodRed = open.length + leftovers.length + loErr.length;
-  const receptionOpen = reception.length + offslipOpen;
+  const receptionOpen = reception.length + offslipOpen + (canSendOdoo ? toSend.length : 0);
   const total = prodRed + receptionOpen;
   const fmt = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString(vi ? 'vi-VN' : 'en-GB', { day: '2-digit', month: '2-digit' });
   const hm = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
@@ -199,10 +200,14 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
           vi ? 'Chọn lý do sản phẩm không có trên phiếu' : 'Choose why an item was off the slip',
           vi ? `${offslipOpen} sản phẩm cửa hàng nhận nhưng không có trên phiếu` : `${offslipOpen} item(s) received but not on the slip`,
           () => openGap('offslip'))}
+        {canSendOdoo && toSend.map(o => card(`send${o.key}`, vi ? 'GỬI ODOO · QUẢN LÝ LAB' : 'SEND TO ODOO · LAB MANAGER',
+          vi ? 'Xác nhận cuối trên Odoo' : 'Final Odoo validation',
+          `${o.orderRef} · ${o.shop} · ${o.lines} ${vi ? 'dòng đã xử lý, chưa gửi Odoo' : (o.lines > 1 ? 'settled lines not sent to Odoo yet' : 'settled line not sent to Odoo yet')}`,
+          () => openGap(`send:${o.key}`)))}
       </section>
 
       {/* Waiting for someone else */}
-      {(shopsNotConfirmed.length > 0 || damaged.items > 0 || recounts.length > 0) && (
+      {(shopsNotConfirmed.length > 0 || damaged.items > 0 || recounts.length > 0 || (!canSendOdoo && toSend.length > 0)) && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold" style={{ color: AMBER }}>● {vi ? 'Đang chờ người khác — không cần làm gì' : 'Waiting for someone else — nothing to do'}</h2>
           {shopsNotConfirmed.length > 0 && (
@@ -214,7 +219,14 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
           {damaged.items > 0 && (
             <div className="rounded-xl bg-white p-3 shadow-sm" style={{ borderLeft: `4px solid ${AMBER}` }}>
               <div className="font-bold text-stone-900">{vi ? 'Hàng hỏng chưa mang về Lab' : 'Damaged items not back at the Lab yet'}</div>
-              <div className="text-xs text-stone-500">{damaged.shops} {vi ? 'cửa hàng' : (damaged.shops > 1 ? 'shops' : 'shop')} · {damaged.items} {vi ? 'dòng' : (damaged.items > 1 ? 'items' : 'item')} · {vi ? '7 ngày gần nhất' : 'last 7 days'}</div>
+              <div className="text-xs text-stone-600">{vi ? 'Đã ghi hao hụt rồi. Cửa hàng chỉ cần gửi bánh hỏng về Lab theo chuyến giao sau.' : 'Already recorded as Lab loss. The shop only has to send the broken items back with a next delivery.'}</div>
+              <div className="text-xs text-stone-500">{damaged.byShop.map(d => `${d.shop.replace(/^La Paris\s*/i, '')} ${d.n}`).join(' · ')} · {vi ? '7 ngày gần nhất' : 'last 7 days'}</div>
+            </div>
+          )}
+          {!canSendOdoo && toSend.length > 0 && (
+            <div className="rounded-xl bg-white p-3 shadow-sm" style={{ borderLeft: `4px solid ${AMBER}` }}>
+              <div className="font-bold text-stone-900">{vi ? 'Chờ quản lý Lab gửi Odoo' : 'Waiting for the Lab manager to send to Odoo'}</div>
+              <div className="text-xs text-stone-500">{toSend.map(o => o.orderRef).join(' · ')}</div>
             </div>
           )}
           {recounts.map(r => (
@@ -232,25 +244,24 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
         </section>
       )}
 
-      {/* Done today */}
+      {/* Done today — what was settled today, item by item (Axel: counts alone were unclear). */}
       <section className="space-y-2">
         <h2 className="text-sm font-bold" style={{ color: GREEN }}>● {vi ? 'Đã xong hôm nay' : 'Done today'}</h2>
-        {([
-          ['p', `① ${vi ? 'Sản xuất → giao hàng' : 'Production → delivery'} · ${doneProd.length + doneLo.length} ${vi ? 'xong' : 'done'}`,
-            autoT ? (vi ? `gồm ${autoT} lần tự chuyển kho` : `incl. ${autoT} forgotten transfer${autoT > 1 ? 's' : ''} added automatically`) : '',
-            [...doneProd.map(t => `${t.orderRef} · ${t.product} · ${t.expected}→${t.checked} · ${t.resolution === 'auto_transfer' ? (vi ? 'tự chuyển kho' : 'auto transfer') : reasonLabel(t.resolution, vi)}${t.ref ? ` · ${t.ref}` : ''}`),
-             ...doneLo.map(d => `${fmt(d.date)} · ${d.product} · +${d.qty} · ${d.resolution}${d.ref ? ` · ${d.ref}` : ''}`)]],
-          ['r', `② ${vi ? 'Giao hàng → cửa hàng' : 'Delivery → shop'} · ${receptionDoneToday} ${vi ? 'xong' : 'done'}`, '', []],
-        ] as [string, string, string, string[]][]).map(([k, label, extra, items]) => (
-          <div key={k} className="rounded-xl bg-white shadow-sm" style={{ borderLeft: `4px solid ${GREEN}` }}>
-            <button onClick={() => k === 'r' ? openGap('closed') : setGreenOpen(g => g === k ? null : k)} className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm">
-              <span className="font-bold" style={{ color: GREEN }}>✓ {label}</span>
-              <span className="ml-auto text-xs text-stone-500">{extra}</span>
-              {greenOpen === k ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {greenOpen === k && items.map((x, i) => <div key={i} className="px-8 pb-1 text-xs text-stone-600">{x}</div>)}
-          </div>
-        ))}
+        {(() => {
+          const items = [
+            ...doneProd.map(t => `① ${t.orderRef} · ${t.product} · ${t.expected}→${t.checked} · ${t.resolution === 'auto_transfer' ? (vi ? 'app tự chuyển kho' : 'transfer added by the app') : reasonLabel(t.resolution, vi)}${t.ref ? ` · Odoo ${t.ref}` : ''}`),
+            ...doneLo.map(d => `① ${d.product} · +${d.qty} ${vi ? 'không có đơn' : 'without order'} · ${d.resolution}${d.ref ? ` · Odoo ${d.ref}` : ''}`),
+            ...receptionDoneToday.map(x => `② ${x}`),
+          ];
+          if (!items.length) return <div className="text-sm text-stone-500">{vi ? 'Chưa có gì xong hôm nay.' : 'Nothing settled yet today.'}</div>;
+          const shown = greenOpen === 'all' ? items : items.slice(0, 5);
+          return (
+            <div className="rounded-xl bg-white p-3 shadow-sm space-y-1" style={{ borderLeft: `4px solid ${GREEN}` }}>
+              {shown.map((x, i) => <div key={i} className="text-xs text-stone-700">✓ {x}</div>)}
+              {items.length > 5 && <button onClick={() => setGreenOpen(g => g === 'all' ? null : 'all')} className="text-xs font-semibold underline" style={{ color: GREEN }}>{greenOpen === 'all' ? (vi ? 'Thu gọn' : 'Show less') : (vi ? `Xem tất cả (${items.length})` : `See all (${items.length})`)}</button>}
+            </div>
+          );
+        })()}
       </section>
     </div>
   );
