@@ -11,8 +11,9 @@ import type { GapContext } from '@/lib/delivery-gap';
 
 type Opt = { code: string; vi: string; en: string; sub?: string; subEn?: string };
 
-export default function GapResolver({ lineId, expected, qty, vi, onSaved, onRecount }: {
+export default function GapResolver({ lineId, expected, qty, vi, onSaved, onRecount, demoCtx }: {
   lineId: string; expected: number; qty: number; vi: boolean;
+  demoCtx?: GapContext; // staff poster / training screenshots only — never set in the app
   onSaved: (reason: string, note: string) => void;
   onRecount: () => void;
 }) {
@@ -29,6 +30,12 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
     let alive = true;
     setCtx(null); setErr(null); setPick('');
     const t = setTimeout(async () => {
+      if (demoCtx) {
+        setCtx(demoCtx);
+        if (demoCtx.family === 'mto' && demoCtx.dir === 'short' && demoCtx.autoNotMade) setPick('not_made');
+        if (demoCtx.dir === 'over' && (demoCtx.family !== 'mto' || demoCtx.madeCovers)) setPick(demoCtx.family === 'mto' ? 'extra_made' : 'extra_stock');
+        return;
+      }
       const { getGapContextAction } = await import('@/app/(app)/delivery-check/actions');
       const r = await getGapContextAction(lineId, qty);
       if (!alive) return;

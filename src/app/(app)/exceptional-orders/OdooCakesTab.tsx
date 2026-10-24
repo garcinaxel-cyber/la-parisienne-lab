@@ -82,17 +82,17 @@ export default function OdooCakesTab({ cakes, today }: { cakes: OdooCake[]; toda
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <label className="flex items-center gap-1 text-xs text-stone-500"><Clock size={13} />
-                <input type="time" value={e.ready_time} onChange={ev => upd(c, { ready_time: ev.target.value })} className="flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm" />
+              <label className="flex min-w-0 items-center gap-1 text-xs text-stone-500"><Clock size={13} />
+                <input type="time" value={e.ready_time} onChange={ev => upd(c, { ready_time: ev.target.value })} className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm" />
               </label>
-              <label className="flex items-center gap-1 text-xs text-stone-500"><Truck size={13} />
-                <select value={e.delivered_by} onChange={ev => upd(c, { delivered_by: ev.target.value })} className="flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm">
+              <label className="flex min-w-0 items-center gap-1 text-xs text-stone-500"><Truck size={13} />
+                <select value={e.delivered_by} onChange={ev => upd(c, { delivered_by: ev.target.value })} className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm">
                   <option value="">{vi ? 'Ai giao?' : 'Delivered by?'}</option>
                   {DELIVERERS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </label>
-              <label className="flex items-center gap-1 text-xs text-stone-500"><MapPin size={13} />
-                <input value={e.delivery_address} onChange={ev => upd(c, { delivery_address: ev.target.value })} placeholder={vi ? 'Địa chỉ (nếu giao khách)' : 'Address (if to customer)'} className="flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm" />
+              <label className="flex min-w-0 items-center gap-1 text-xs text-stone-500"><MapPin size={13} />
+                <input value={e.delivery_address} onChange={ev => upd(c, { delivery_address: ev.target.value })} placeholder={vi ? 'Địa chỉ (nếu giao khách)' : 'Address (if to customer)'} className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-sm" />
               </label>
             </div>
             {dirty(c) && (
