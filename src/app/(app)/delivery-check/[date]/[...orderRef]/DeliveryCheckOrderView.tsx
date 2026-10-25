@@ -262,6 +262,8 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     const { checkLineAction } = await import('../../actions');
     const res = await checkLineAction(l.id, qty, st?.reason || null, st?.note || null);
     setSavingLine(null);
+    // Never fail silently (Axel 2026-10-25: "j'arrive pas à mettre 5 et save").
+    if (res.error) window.alert(res.error);
     if (res.ok) {
       setChecked(p => new Set(p).add(l.id));
       // Forgotten transfer is fixed by the app even when the quantity matches (Axel 2026-10-24).

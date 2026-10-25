@@ -45,7 +45,11 @@ export async function checkLineAction(
   if (!line) return { error: 'Line not found' };
   // A line the app already corrected (cards, Odoo unbuild, Lab scrap, auto transfer) cannot be
   // re-counted or given another reason: the correction would stay and stack (review 2026-10-24).
-  const SIDE = ['not_made', 'undeclared', 'casse', 'auto_transfer', 'out_of_stock'];
+  // "Out of stock" only raised a recount alert (no card, no Odoo change): a re-count is allowed —
+  // the open alert is closed below (Axel 2026-10-25: CTM 4 → 5 refused, the 5th was found).
+  const SIDE = ['not_made', 'undeclared', 'casse', 'auto_transfer'];
+  const reopenOos = line.resolution === 'out_of_stock'
+    && (Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason);
   if (line.resolution && SIDE.includes(line.resolution) && (Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason)) {
     return { error: 'Dòng này app đã sửa (thẻ bếp / Odoo) — báo quản lý Lab. / Already corrected by the app — ask the Lab manager.' };
   }
@@ -72,13 +76,22 @@ export async function checkLineAction(
     status: isDiff ? 'adjusted' : 'ok',
     discrepancy_reason: isDiff ? reason : null,
     discrepancy_note: isDiff ? (note || null) : null,
-    ...(line.resolution && !SIDE.includes(line.resolution) ? { resolution: null, resolution_odoo_status: null, resolution_odoo_error: null } : {}),
+    ...(line.resolution && !SIDE.includes(line.resolution) && (line.resolution !== 'out_of_stock' || reopenOos)
+      ? { resolution: null, resolution_odoo_status: null, resolution_odoo_error: null, resolution_qty: null } : {}),
     checked_by: auth.session.user.id,
     checked_by_name: auth.profile?.full_name ?? null,
     checked_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', lineId);
   if (error) return { error: error.message };
+  if (reopenOos) {
+    const sb = serviceClient();
+    if (sb) await sb.from('lab_stock_recount_alerts').update({
+      status: 'done', done_by_name: auth.profile?.full_name ?? null, done_at: new Date().toISOString(),
+      note: `Đếm lại khi kiểm tra giao: ${qtyChecked} / Recounted at delivery check: ${qtyChecked}`,
+    }).eq('check_line_id', lineId).eq('status', 'open');
+    revalidateTag('delivery-tasks');
+  }
 
   // Invalidate the client Router Cache for this order's own page + the index/category lists.
   // Without this, checking a line here never told Next.js the page was stale, so navigating

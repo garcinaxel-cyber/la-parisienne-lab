@@ -22,6 +22,7 @@ export default function DeliveryCheckUnreconciledView({ lines }: { lines: Line[]
     const { checkLineAction } = await import('../actions');
     const res = await checkLineAction(l.id, l.qty_expected, null, null);
     setSaving(null);
+    if (res.error) window.alert(res.error);
     if (res.ok) setChecked(p => new Set(p).add(l.id));
   }
 

@@ -37,6 +37,8 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
     const { checkLineAction } = await import('../actions');
     const res = await checkLineAction(r.id, qty, st?.reason || null, st?.note || null);
     setSavingLine(null);
+    // Never fail silently (Axel 2026-10-25: "j'arrive pas à mettre 5 et save").
+    if (res.error) window.alert(res.error);
     if (res.ok) {
       setChecked(p => new Set(p).add(r.id));
       if (r.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(r.id));
