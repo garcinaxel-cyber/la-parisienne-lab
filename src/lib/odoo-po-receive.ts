@@ -70,7 +70,7 @@ export async function getReceipt(pickingId: number): Promise<ReceiptDetail | nul
     [[['picking_id', '=', pickingId], ['state', 'not in', ['done', 'cancel']]]],
     { fields: ['id', 'product_id', 'product_uom_qty', 'product_uom', 'purchase_line_id'], context: { lang: 'vi_VN' } });
   const plIds = Array.from(new Set(moves.map(m => m2oId(m.purchase_line_id)).filter(Boolean))) as number[];
-  const pls = plIds.length ? await odooExecute<any[]>('purchase.order.line', 'read', [plIds], { fields: ['product_qty', 'qty_received'] }) : [];
+  const pls = plIds.length ? await odooExecuteWrite<any[]>('purchase.order.line', 'read', [plIds], { fields: ['product_qty', 'qty_received'] }) : [];
   const plById = new Map(pls.map(l => [l.id, l]));
   return {
     pickingId: p.id, pickingName: p.name, state: p.state, poId: m2oId(p.purchase_id)!, poName: m2oName(p.purchase_id) ?? '',
