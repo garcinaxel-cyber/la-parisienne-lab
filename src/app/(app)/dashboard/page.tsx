@@ -12,8 +12,14 @@ export default async function DashboardPage() {
 
   // Load a day's assignments + order lines (assistants' by-team and by-order views)
   async function loadDay(date: string) {
+    // Import ids first → cards by import_id (index) instead of scanning all 17k cards (audit 2026-10-26).
+    const { data: dayImports } = await supabase.from('lab_imports').select('id')
+      .eq('delivery_date', date).eq('status', 'published');
+    const dayImportIds = (dayImports ?? []).map((i: any) => i.id);
+    if (!dayImportIds.length) return { assignments: [] as any[], orderLines: [] as any[] };
     const { data: asg } = await supabase.from('lab_assignments')
       .select('id,team,product_name_vi,variant_label,total_qty,qty_to_produce,qty_produced,status,produced_ahead,cancelled,is_extra,breakdown,import_id,lab_imports!inner(delivery_date,order_number,status)')
+      .in('import_id', dayImportIds)
       .eq('lab_imports.status', 'published')
       .eq('lab_imports.delivery_date', date)
       .order('team').order('sort_order').limit(500);

@@ -49,7 +49,12 @@ export default async function StationPage({ params }: { params: { team: string }
   // Load a full day's production (assignments enriched with fiche/variant/breakdown).
   // Lab fiches are the ONLY product reference — zero reads from the B2C catalogue tables.
   async function loadDay(date: string) {
-    const { data: assignments } = await supabase
+    // Day's import ids first, then cards by import_id (index): the embedded-filter form alone
+    // made Postgres read every card of the team (~4 000) on each load — 0.5 s+ (2026-10-26 audit).
+    const { data: dayImports } = await supabase.from('lab_imports').select('id')
+      .eq('delivery_date', date).eq('status', 'published');
+    const dayImportIds = (dayImports ?? []).map((i: any) => i.id);
+    const { data: assignments } = !dayImportIds.length ? { data: [] as any[] } : await supabase
       .from('lab_assignments')
       .select(`
         id, fiche_id, variant_id, product_name_vi, product_name_en, image_url,
@@ -60,6 +65,7 @@ export default async function StationPage({ params }: { params: { team: string }
         lab_imports!inner(delivery_date, order_number, type, status, imported_at)
       `)
       .eq('team', team)
+      .in('import_id', dayImportIds)
       .eq('lab_imports.status', 'published')
       .eq('lab_imports.delivery_date', date)
       .order('sort_order')
