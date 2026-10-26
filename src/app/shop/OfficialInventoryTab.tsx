@@ -255,7 +255,9 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
               {g.lines.map(l => (
                 <div key={l.sku} className="flex items-center gap-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
                   <div className="flex-1 min-w-0 text-sm font-semibold break-words" style={{ color: INK }}>{l.productName}</div>
-                  <div className="text-sm font-bold tabular-nums" style={{ color: NAVY }}>{l.qtyCounted}</div>
+                  <div className="text-sm font-bold tabular-nums" style={{ color: NAVY }}>
+                    {l.qtyCounted}{l.countUnit ? ` ${L(l.countUnit.vi, l.countUnit.en)}` : ''}
+                  </div>
                 </div>
               ))}
             </div>
@@ -308,6 +310,12 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: INK }}>{l.productName}</div>
                       <div className="text-[11px] break-all" style={{ color: '#8A9A8F' }}>{l.sku}</div>
+                      {l.countUnit && (
+                        <div className="text-[11px] font-semibold" style={{ color: NAVY }}>
+                          {L(`Đếm theo ${l.countUnit.vi} (${l.countUnit.perOdooUnit} ${l.countUnit.vi} = 1 ${l.countUnit.odooUom})`,
+                             `Count in ${l.countUnit.en} (${l.countUnit.perOdooUnit} ${l.countUnit.en} = 1 ${l.countUnit.odooUom})`)}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
@@ -315,6 +323,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
                         value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
                         onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
                         onBlur={v => commitDraft(l.sku, v)} />
+                      {l.countUnit && <span className="text-[11px] font-semibold" style={{ color: NAVY }}>{L(l.countUnit.vi, l.countUnit.en)}</span>}
                     </div>
                     {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
                   </div>
