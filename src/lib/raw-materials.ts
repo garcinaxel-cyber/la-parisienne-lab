@@ -165,6 +165,8 @@ export type PurchaseLine = {
   /** Pack the line was requested in (Axel, 2026-10-21: chefs order "3 hộp", Odoo keeps its own unit).
    *  qty stays in the Odoo unit; the pack count is qty / packFactor. */
   packLabel: string | null; packFactor: number | null;
+  /** Received so far through app receiving (lab_v134, 2026-10-26) and why it is short, if it is. */
+  receivedQty: number | null; shortfallReason: string | null;
 };
 
 /** "3 × hộp 2 kg" for a line requested in a pack, null otherwise. */

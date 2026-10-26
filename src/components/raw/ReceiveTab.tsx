@@ -54,7 +54,7 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
     const s = q.trim().toLowerCase();
     // Latest confirmed PO first (Axel, 26/10); same PO: the earlier receipt first.
     const ts = (v: string | null) => (v ? Date.parse(v.replace(' ', 'T') + 'Z') || 0 : 0);
-    return (list ?? []).filter(i => !s || (i.vendor ?? '').toLowerCase().includes(s) || i.poName.toLowerCase().includes(s))
+    return (list ?? []).filter(i => !s || (i.vendor ?? '').toLowerCase().includes(s) || i.poName.toLowerCase().includes(s) || [...i.productsVi, ...i.products.map(p => p.name)].some(n => n.toLowerCase().includes(s)))
       .sort((a, b) => ts(b.approvedAt) - ts(a.approvedAt) || b.poId - a.poId || a.pickingId - b.pickingId);
   }, [list, q]);
 
@@ -155,7 +155,7 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
   return (
     <div className="space-y-3 pb-24">
       <div className="flex gap-2">
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nhà cung cấp hoặc PO…', 'Search supplier or PO…')}
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm sản phẩm, nhà cung cấp, PO…', 'Search product, supplier, PO…')}
           className="flex-1 rounded-xl px-3 py-2.5 text-[13.5px] outline-none bg-white" style={{ border: `1px solid ${BORDER}` }} />
         <button onClick={() => { setList(null); loadList(); }} className="w-11 rounded-xl flex items-center justify-center bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><RefreshCw size={17} /></button>
       </div>
@@ -179,8 +179,10 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
             {head && <div className="pt-2 pb-1.5 px-1 text-[12px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>{head}</div>}
             <button onClick={() => openReceipt(i.pickingId)} className="w-full flex items-center gap-3 rounded-2xl p-3 text-left bg-white" style={{ border: `1.5px solid ${HAIR}` }}>
               <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[22px] flex-none" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>📦</div>
-              <div className="flex-1 min-w-0"><div className="font-extrabold text-[14.5px] truncate">{i.vendor}</div>
-                <div className="text-[12px] truncate" style={{ color: '#6B7280' }}>{i.poName} · {i.lines} {L('món', 'items')}{i.teams.length ? ` · ${i.teams.map(t => TEAM_SHORT[t]?.[lang] ?? t).join(', ')}` : ''}</div></div>
+              <div className="flex-1 min-w-0">
+                {/* Products first (team feedback 26/10): what arrives matters more than who sells it. */}
+                <div className="font-extrabold text-[14.5px] leading-snug line-clamp-2">{(lang === 'vi' ? i.productsVi : i.products.map(p => p.name)).slice(0, 3).join(' · ') || i.vendor}{i.products.length > 3 ? ` +${i.products.length - 3}` : ''}</div>
+                <div className="text-[12px] truncate" style={{ color: '#6B7280' }}>{i.vendor} · {i.poName}{i.teams.length ? ` · ${i.teams.map(t => TEAM_SHORT[t]?.[lang] ?? t).join(', ')}` : ''}</div></div>
               <span className="rounded-full px-2.5 py-1 text-[12px] font-extrabold whitespace-nowrap" style={{ color: pill.c, backgroundColor: pill.bg }}>{pill.t}</span>
             </button>
             </div>);

@@ -23,7 +23,7 @@ export async function receivingEnabledAction(): Promise<boolean> {
   return !!(await guard());
 }
 
-export type OpenReceiptRow = OpenReceipt & { requests: number; teams: string[] };
+export type OpenReceiptRow = OpenReceipt & { productsVi: string[]; requests: number; teams: string[] };
 
 export async function getOpenReceiptsAction(): Promise<{ items?: OpenReceiptRow[]; error?: string }> {
   const g = await guard();
@@ -35,10 +35,13 @@ export async function getOpenReceiptsAction(): Promise<{ items?: OpenReceiptRow[
     const reqIds = Array.from(new Set((ls ?? []).map((l: any) => l.request_id)));
     const { data: reqs } = reqIds.length ? await g.db.from('lab_purchase_requests').select('id, team').in('id', reqIds) : { data: [] as any[] };
     const teamOf = new Map((reqs ?? []).map((r: any) => [r.id, r.team]));
+    const pids = Array.from(new Set(items.flatMap(i => i.products.map(p => p.id))));
+    const { data: mats } = pids.length ? await g.db.from('lab_raw_materials').select('product_id, name_vi').in('product_id', pids) : { data: [] as any[] };
+    const vi = new Map((mats ?? []).filter((m: any) => m.name_vi).map((m: any) => [Number(m.product_id), String(m.name_vi)]));
     return {
       items: items.map(i => {
         const mine = (ls ?? []).filter((l: any) => Number(l.po_odoo_id) === i.poId);
-        return { ...i, requests: new Set(mine.map((l: any) => l.request_id)).size, teams: Array.from(new Set(mine.map((l: any) => teamOf.get(l.request_id)).filter(Boolean))) as string[] };
+        return { ...i, productsVi: i.products.map(p => vi.get(p.id) ?? p.name), requests: new Set(mine.map((l: any) => l.request_id)).size, teams: Array.from(new Set(mine.map((l: any) => teamOf.get(l.request_id)).filter(Boolean))) as string[] };
       }),
     };
   } catch (e: any) { return { error: `Odoo: ${e?.message ?? e}` }; }

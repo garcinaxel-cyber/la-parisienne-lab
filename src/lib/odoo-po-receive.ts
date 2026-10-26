@@ -29,6 +29,8 @@ export const SHORT_REASONS: Record<ShortReason, { vi: string; en: string; emoji:
 export type OpenReceipt = {
   pickingId: number; pickingName: string; poId: number; poName: string; vendor: string | null;
   scheduled: string | null; isBackorder: boolean; lines: number; approvedAt: string | null;
+  /** Products on this receipt (Odoo names; the action swaps in the Vietnamese name when known). */
+  products: { id: number; name: string }[];
 };
 export type ReceiptLine = {
   moveId: number; productId: number; poLineId: number | null; name: string; uom: string;
@@ -52,12 +54,24 @@ export async function listOpenReceipts(): Promise<OpenReceipt[]> {
   const poIds = Array.from(new Set(picks.map(p => m2oId(p.purchase_id)).filter(Boolean))) as number[];
   const pos = poIds.length ? await odooExecute<any[]>('purchase.order', 'read', [poIds], { fields: ['name', 'date_approve', 'partner_id'] }) : [];
   const poById = new Map(pos.map(p => [p.id, p]));
+  // Product names per receipt (one read for the whole list): the team needs WHAT arrives, not who sells it.
+  const moveIds = picks.flatMap(p => p.move_ids ?? []);
+  const mvs = moveIds.length ? await odooExecute<any[]>('stock.move', 'read', [moveIds], { fields: ['picking_id', 'product_id'] }) : [];
+  const prodOf = new Map<number, { id: number; name: string }[]>();
+  for (const m of mvs) {
+    const pid = m2oId(m.picking_id), prod = m2oId(m.product_id);
+    if (!pid || !prod) continue;
+    const arr = prodOf.get(pid) ?? [];
+    if (!arr.some(x => x.id === prod)) arr.push({ id: prod, name: (m2oName(m.product_id) ?? '').replace(/^\[[^\]]*\]\s*/, '') });
+    prodOf.set(pid, arr);
+  }
   return picks.map(p => {
     const po: any = poById.get(m2oId(p.purchase_id) ?? -1);
     return {
       pickingId: p.id, pickingName: p.name, poId: m2oId(p.purchase_id)!, poName: po?.name ?? m2oName(p.purchase_id) ?? '',
       vendor: m2oName(p.partner_id) ?? m2oName(po?.partner_id), scheduled: p.scheduled_date || null,
       isBackorder: !!p.backorder_id, lines: (p.move_ids ?? []).length, approvedAt: po?.date_approve ?? null,
+      products: prodOf.get(p.id) ?? [],
     };
   });
 }

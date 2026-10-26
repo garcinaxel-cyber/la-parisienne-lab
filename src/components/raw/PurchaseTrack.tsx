@@ -1,9 +1,9 @@
 'use client';
-// Progress of one purchase request line: Sent -> (Approved) -> Ordered (or -> Cancelled). Shared by the chef
-// station tab and the purchasing history. 'Received' is left out on purpose for now (Axel,
-// 2026-10-08: deliveries are confirmed long after the real delivery — to be solved later).
+// Progress of one purchase request line: Sent -> (Approved) -> Ordered -> Arrived (or -> Cancelled). Shared by
+// the chef station tab and the purchasing history. 'Arrived' came with app receiving (2026-10-26): the
+// receipt is validated when the goods are counted, so the date is the real one.
 import type { PurchaseLine } from '@/lib/raw-materials';
-import { vnDayTime } from '@/lib/raw-materials';
+import { vnDayTime, fmtQty } from '@/lib/raw-materials';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', HAIR = '#EFE9CF', LATE = '#B42318';
 type LFn = (vi: string, en: string) => string;
@@ -28,7 +28,10 @@ export function Track({ l, L }: { l: PurchaseLine; L: LFn }) {
     ...(withApproval ? [{ label: L('Duyệt', 'Approve'), date: l.approvedAt ? vnDayTime(l.approvedAt).day : '' }] : []),
     { label: L('Đã đặt', 'Ordered'), date: l.orderedAt ? vnDayTime(l.orderedAt).day : '' },
   ];
-  const idx = l.status === 'to_approve' ? 0 : l.status === 'pending' ? (withApproval ? 1 : 0) : steps.length - 1;
+  const part = l.status !== 'received' && (l.receivedQty ?? 0) > 0;
+  steps.push({ label: part ? L('Về 1 phần', 'Part arrived') : L('Đã về', 'Arrived'),
+    date: l.status === 'received' ? vnDayTime(l.receivedAt).day : part ? `${fmtQty(l.receivedQty!)}/${fmtQty(l.qty)}` : '' });
+  const idx = l.status === 'to_approve' ? 0 : l.status === 'pending' ? (withApproval ? 1 : 0) : l.status === 'received' ? steps.length - 1 : steps.length - 2;
   const st = (i: number): 'done' | 'cur' | 'late' | 'todo' => (i <= idx ? 'done' : i === idx + 1 ? (late ? 'late' : 'cur') : 'todo');
   return (
     <div className="flex items-start">

@@ -219,11 +219,13 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     loadMine();
   }
   const pending = mine.filter(l => l.status === 'pending');
-  const ordered0 = mine.filter(l => l.status === 'ordered' || l.status === 'received');
+  const ordered0 = mine.filter(l => l.status === 'ordered');
+  // Arrived (2026-10-26): goods counted in app receiving — newest first so the team sees what just came in.
+  const arrived0 = mine.filter(l => l.status === 'received').sort((a, b) => (b.receivedAt ?? '').localeCompare(a.receivedAt ?? ''));
   const cancelled0 = mine.filter(l => l.status === 'cancelled');
   const sections: [string, PurchaseLine[]][] = [
     ...(meta.canApprove ? [] : [[L(`Chờ ${lead} duyệt`, `Waiting for ${lead}`), toApprove] as [string, PurchaseLine[]]]),
-    [L('Đang chờ', 'Waiting'), pending], [L('Đã đặt', 'Ordered'), ordered0], [L('Đã huỷ', 'Cancelled'), cancelled0],
+    [L('Đang chờ', 'Waiting'), pending], [L('Đã đặt — chờ hàng về', 'Ordered — on the way'), ordered0], [L('📦 Đã về', '📦 Arrived'), arrived0], [L('Đã huỷ', 'Cancelled'), cancelled0],
   ];
   const ordered = mine.filter(l => l.status === 'ordered' || l.status === 'received');
   const cancelled = mine.filter(l => l.status === 'cancelled');
