@@ -33,16 +33,17 @@ export default function DeliveryCheckByShopView({ rows, today, tomorrow }: { row
   async function checkRow(r: Row) {
     const st = state[r.id]; const qty = Number(st?.qty);
     if (qty !== r.qty_expected && !st?.reason) return;
-    setSavingLine(r.id);
+    // Optimistic (perf 2026-10-26): the line turns green at once, the save runs behind; on a
+    // refusal it is un-ticked again and the reason is shown (never fails silently, 2026-10-25).
+    setChecked(p => new Set(p).add(r.id));
     const { checkLineAction } = await import('../actions');
-    const res = await checkLineAction(r.id, qty, st?.reason || null, st?.note || null);
-    setSavingLine(null);
-    // Never fail silently (Axel 2026-10-25: "j'arrive pas à mettre 5 et save").
-    if (res.error) window.alert(res.error);
-    if (res.ok) {
-      setChecked(p => new Set(p).add(r.id));
-      if (r.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(r.id));
+    const res = await checkLineAction(r.id, qty, st?.reason || null, st?.note || null).catch((e: any) => ({ error: String(e?.message ?? e) } as { ok?: boolean; error?: string }));
+    if (!res.ok) {
+      setChecked(p => { const n = new Set(p); n.delete(r.id); return n; });
+      window.alert(res.error ?? 'Error');
+      return;
     }
+    if (r.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(r.id));
   }
 
   const dayRows = rows.filter(r => r.delivery_date === (day === 'today' ? today : tomorrow));
