@@ -222,8 +222,10 @@ export async function validateReceipt(pickingId: number, input: ValidateLine[], 
   // 5. Notes (VI + EN) on the receipt and on the PO.
   const at = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
   const body = noteHtml(by, at, res.received, res.backorderName ?? null);
-  try { await odooExecuteWrite('stock.picking', 'message_post', [[pickingId]], { body, message_type: 'comment', subtype_xmlid: 'mail.mt_note' }); } catch (e: any) { res.log.push(`note picking: ${e?.message ?? e}`); }
-  try { await odooExecuteWrite('purchase.order', 'message_post', [[detail.poId]], { body, message_type: 'comment', subtype_xmlid: 'mail.mt_note' }); } catch (e: any) { res.log.push(`note PO: ${e?.message ?? e}`); }
+  // mail.message create (subtype Note, id 2) keeps the HTML; message_post over RPC escapes it.
+  const note = (model: string, id: number) => odooExecuteWrite('mail.message', 'create', [{ model, res_id: id, message_type: 'comment', subtype_id: 2, body }]);
+  try { await note('stock.picking', pickingId); } catch (e: any) { res.log.push(`note picking: ${e?.message ?? e}`); }
+  try { await note('purchase.order', detail.poId); } catch (e: any) { res.log.push(`note PO: ${e?.message ?? e}`); }
 
   res.ok = true;
   return res;
