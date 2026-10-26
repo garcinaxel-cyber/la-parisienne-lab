@@ -17,6 +17,8 @@ export type CountUnit = {
 
 export const COUNT_UNITS: Record<string, CountUnit> = {
   VTTH929: { vi: 'túi', en: 'bags', perOdooUnit: 100, odooUom: 'kg' },
+  // VTTH070 dĩa ăn bánh cho shop: bought by the kg (50 000/kg), about 650 plates = 1 kg (Axel, 2026-10-26).
+  VTTH070: { vi: 'đĩa', en: 'plates', perOdooUnit: 650, odooUom: 'kg' },
 };
 
 export function countUnitFor(sku: string | null | undefined): CountUnit | null {
