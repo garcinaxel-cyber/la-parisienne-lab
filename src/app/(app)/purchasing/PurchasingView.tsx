@@ -16,9 +16,11 @@ import {
   getPendingWithdrawalsAction, confirmWithdrawalAction, refuseTransferAction, addStorageRequestAction,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
+import ReceiveTab from '@/components/raw/ReceiveTab';
+import { receivingEnabledAction } from './receive-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
-type Tab = 'requests' | 'storage' | 'history' | 'catalogue';
+type Tab = 'requests' | 'storage' | 'history' | 'catalogue' | 'receive';
 
 // Who a slip concerns: the team for a storage withdrawal, "from → to" for a transfer (2026-10-16).
 function SlipWho({ w, lang }: { w: Withdrawal; lang: 'vi' | 'en' }) {
@@ -39,11 +41,15 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
   // spaces: Purchasing (requests + purchase history), Stock picking (the chefs' storage slips, any
   // day), Catalogue. Same tab ids as before, so ?tab= links keep working.
   // Axel, 2026-10-12: Catalogue moved inside Purchasing (3rd sub-tab next to Requests / history).
-  type Section = 'purchase' | 'picking';
-  const section: Section = tab === 'storage' ? 'picking' : 'purchase';
+  // Receiving purchase orders (Axel, 2026-10-26): its own section, shown when enabled (admin-only until PO_RECEIVING_OPEN=1).
+  type Section = 'purchase' | 'picking' | 'receive';
+  const section: Section = tab === 'storage' ? 'picking' : tab === 'receive' ? 'receive' : 'purchase';
+  const [canReceive, setCanReceive] = useState(false);
+  useEffect(() => { receivingEnabledAction().then(setCanReceive).catch(() => setCanReceive(false)); }, []);
   const sections: [Section, string, Tab][] = [
     ['purchase', L('Mua hàng', 'Purchasing'), 'requests'],
     ['picking', L('Lấy kho', 'Stock picking'), 'storage'],
+    ...(canReceive ? [['receive', L('Nhận hàng', 'Receiving'), 'receive'] as [Section, string, Tab]] : []),
   ];
   const purchaseTabs: [Tab, string][] = [['requests', L('Yêu cầu mua', 'Requests')], ['history', L('Lịch sử mua', 'Purchase history')], ['catalogue', L('Danh mục', 'Catalogue')]];
   // Slips waiting for storage's confirmation (Axel, 2026-10-09), shown as a badge on Stock picking.
@@ -86,6 +92,7 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
       {tab === 'storage' && <StorageTab L={L} lang={lang as any} onPending={setPendingCount} />}
       {tab === 'history' && <HistoryTab L={L} lang={lang as any} />}
       {tab === 'catalogue' && <CatalogueTab L={L} lang={lang as any} />}
+      {tab === 'receive' && canReceive && <ReceiveTab L={L} lang={lang as any} />}
     </div>
   );
 }
