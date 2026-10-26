@@ -17,7 +17,6 @@ import {
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
 import ReceiveTab from '@/components/raw/ReceiveTab';
-import { receivingEnabledAction } from './receive-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
 type Tab = 'requests' | 'storage' | 'history' | 'catalogue' | 'receive';
@@ -33,7 +32,7 @@ function TeamBadge({ team, lang }: { team: string; lang: 'vi' | 'en' }) {
   return <span className="inline-block text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: t?.bg ?? '#F2F4F7', color: t?.color ?? '#344054' }}>{t ? t[lang] : team}</span>;
 }
 
-export default function PurchasingView({ initialTab, userName }: { initialTab: Tab; userName: string }) {
+export default function PurchasingView({ initialTab, userName, canReceive }: { initialTab: Tab; userName: string; canReceive: boolean }) {
   const { lang } = useI18n();
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -44,8 +43,6 @@ export default function PurchasingView({ initialTab, userName }: { initialTab: T
   // Receiving purchase orders (Axel, 2026-10-26): its own section, shown when enabled (admin-only until PO_RECEIVING_OPEN=1).
   type Section = 'purchase' | 'picking' | 'receive';
   const section: Section = tab === 'storage' ? 'picking' : tab === 'receive' ? 'receive' : 'purchase';
-  const [canReceive, setCanReceive] = useState(false);
-  useEffect(() => { receivingEnabledAction().then(setCanReceive).catch(() => setCanReceive(false)); }, []);
   const sections: [Section, string, Tab][] = [
     ['purchase', L('Mua hàng', 'Purchasing'), 'requests'],
     ['picking', L('Lấy kho', 'Stock picking'), 'storage'],
