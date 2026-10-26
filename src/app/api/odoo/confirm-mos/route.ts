@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooConfigured, odooWriteConfigured, labDateOf } from '@/lib/odoo';
 import { confirmDoneMOs, produceMOs, inspectMO, testOnchange } from '@/lib/odoo-mo-confirm';
+import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
 
 export const dynamic = 'force-dynamic';
 // 2026-08-22 — bumped from 60s: at current volume (~70+ MOs/day), produceMOs() alone needs 2
@@ -74,6 +75,18 @@ export async function GET(req: Request) {
   // resulting ms-per-MO, returned in the JSON (visible in net._http_response for a few hours)
   // and logged (Vercel runtime logs) so a day of real runs can be read off without guessing.
   const t0 = Date.now();
+  // Safety net (2026-10-26): stock transfers now sync Odoo in the background. Before confirming,
+  // re-sync only the SKUs whose MO is still off from what was sent to stock (dry run first).
+  let catchUp: { skus: string[]; error?: string } = { skus: [] };
+  if (!isTestMode && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    try {
+      const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+      const dry = await syncStockToOdoo(sb, date, { commit: false });
+      const skus = Array.from(new Set([...dry.toCreate.map((c: any) => c.sku), ...dry.toUpdate.map((u: any) => u.sku)].filter(Boolean))) as string[];
+      if (skus.length) await syncStockToOdoo(sb, date, { commit: true, skus });
+      catchUp = { skus };
+    } catch (e: any) { catchUp = { skus: [], error: String(e?.message ?? e) }; }
+  }
   try {
     const confirmResult = isTestMode
       ? { date, origin: `Lab ${date}`, eligible: 0, bypassed: [], confirmed: [], errors: [] }
@@ -111,7 +124,7 @@ export async function GET(req: Request) {
       max_duration_s: maxDuration,
     };
     console.log(`[confirm-mos] ${date} timing ${JSON.stringify(timing)}`);
-    return NextResponse.json({ confirm: confirmResult, produce: produceResult, timing });
+    return NextResponse.json({ catchUp, confirm: confirmResult, produce: produceResult, timing });
   } catch (e: any) {
     console.error(`[confirm-mos] ${date} failed after ${Date.now() - t0}ms: ${e?.message ?? e}`);
     return NextResponse.json({ error: e?.message ?? 'MO confirm/produce failed' }, { status: 502 });

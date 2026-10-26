@@ -2,6 +2,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { labDateOf, odooWriteConfigured } from '@/lib/odoo';
 import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
+import { waitUntil } from '@vercel/functions';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 
 export interface TransferLineInput {
@@ -161,32 +162,40 @@ export async function submitStockTransferAction(
   // leave a trace instead of vanishing silently (2026-08-05: a sku-less line never reached Odoo
   // and nobody knew until a manual 446-vs-447 reconciliation caught it). Any error surfaces on
   // the dashboard the same way odoo-auto-sync.ts's write failures already do.
-  const day = labDateOf(new Date().toISOString());
-  try {
-    if (odooWriteConfigured()) {
-      const skus = Array.from(new Set(clean.map(l => l.sku).filter(Boolean))) as string[];
-      if (day) {
-        const syncRes = await syncStockToOdoo(supabase, day, { commit: true, skus });
-        if (syncRes.errors?.length) {
-          await supabase.from('lab_odoo_changes').insert({
-            order_ref: `stock-transfer:${transfer.id}`,
-            cancelled: false,
-            items: syncRes.errors.map(e => ({ sku: e.sku, name: e.sku, reason: e.error })),
-            delivery_date: day,
-            status: 'error',
-          });
+  // Perf (Axel 2026-10-26): the chef no longer waits for Odoo — the MO sync runs after the
+  // response (waitUntil keeps the function alive). Same sync, same error trace; the nightly
+  // confirm-mos run re-syncs any SKU still off before confirming (safety net).
+  // Service client: the request's cookie client must not be used once the response is sent.
+  const bg = svc ?? supabase;
+  const odooSync = (async () => {
+    const day = labDateOf(new Date().toISOString());
+    try {
+      if (odooWriteConfigured()) {
+        const skus = Array.from(new Set(clean.map(l => l.sku).filter(Boolean))) as string[];
+        if (day) {
+          const syncRes = await syncStockToOdoo(bg, day, { commit: true, skus });
+          if (syncRes.errors?.length) {
+            await bg.from('lab_odoo_changes').insert({
+              order_ref: `stock-transfer:${transfer.id}`,
+              cancelled: false,
+              items: syncRes.errors.map(e => ({ sku: e.sku, name: e.sku, reason: e.error })),
+              delivery_date: day,
+              status: 'error',
+            });
+          }
         }
       }
+    } catch (e: any) {
+      try {
+        await bg.from('lab_odoo_changes').insert({
+          order_ref: `stock-transfer:${transfer.id}`, cancelled: false,
+          items: [{ reason: `Odoo sync threw: ${String(e?.message ?? e)}` }],
+          delivery_date: day, status: 'error',
+        });
+      } catch { /* truly best-effort — never block the chef, even if logging itself fails */ }
     }
-  } catch (e: any) {
-    try {
-      await supabase.from('lab_odoo_changes').insert({
-        order_ref: `stock-transfer:${transfer.id}`, cancelled: false,
-        items: [{ reason: `Odoo sync threw: ${String(e?.message ?? e)}` }],
-        delivery_date: day, status: 'error',
-      });
-    } catch { /* truly best-effort — never block the chef, even if logging itself fails */ }
-  }
+  })();
+  try { waitUntil(odooSync); } catch { await odooSync; }
 
   return { ok: true, transferId: transfer.id, blocked: blocked.length ? blocked : undefined };
 }

@@ -48,9 +48,29 @@ export default async function DeliveryCheckPage() {
   const [today, tomorrow] = labTodayTomorrow();
   const dateWindow = labDateWindow(today, tomorrow);
 
-  const { data: imports } = await supabase.from('lab_imports')
-    .select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published')
-    .limit(5000);
+  // Perf (Axel 2026-10-26): the reads below used to run one after the other (~15 round trips,
+  // 4-5 s). Everything that only depends on the date window now starts at once; same queries.
+  const svcSb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+  const { unstable_cache } = await import('next/cache');
+  const [
+    { data: imports }, { data: packagingOnlyLines }, { data: headers }, { data: pendingCakes },
+    { data: gapRows }, { data: dateAlertRows }, taskCount, receptionsRes,
+  ] = await Promise.all([
+    supabase.from('lab_imports').select('id, delivery_date, status').in('delivery_date', dateWindow).eq('status', 'published').limit(5000),
+    supabase.from('lab_order_packaging_lines').select('order_ref, delivery_date, shop_name, qty').in('delivery_date', dateWindow).limit(5000),
+    supabase.from('lab_delivery_orders').select('id, order_ref, delivery_date, status, printed_at, odoo_push_status, marked_not_delivered').in('delivery_date', dateWindow).limit(5000),
+    // Pending manual cakes — same dates as /delivery-check/unreconciled (today + tomorrow, Axel 2026-10-20)
+    supabase.from('lab_manual_cakes').select('id').in('delivery_date', [today, tomorrow]).is('matched_order_ref', null).is('cancelled_at', null).limit(2000),
+    // Coverage check flagged by the 15-min cron (plain read, no Odoo call)
+    supabase.from('lab_sync_gaps').select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${dateWindow.join(',')}),delivery_date.is.null`),
+    // Date reassigned in Odoo after import — flag-only banner
+    supabase.from('lab_sync_date_alerts').select('order_ref, source_type, old_date, new_date'),
+    // Same cached count as the sidebar badge (60 s, invalidated by the gap actions)
+    unstable_cache(async () => { const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks'); try { return await computeDeliveryTaskCount(svcSb as any); } catch { return { base: 0, toSend: 0 }; } },
+      ['delivery-task-count'], { revalidate: 60, tags: ['delivery-tasks'] })(),
+    // Shop reception tracker (Axel 2026-10-16) — today + late days; never blocks the page
+    loadOrderReceptions(svcSb as any, dateWindow.filter(d => d <= today)).catch((e: any) => { console.error('reception tracker failed:', e); return [] as OrderReception[]; }),
+  ]);
   const importIds = (imports ?? []).map((i: any) => i.id);
 
   // qty > 0 only: a cancelled Odoo order isn't deleted from lab_order_lines, applyOdooChanges
@@ -82,9 +102,6 @@ export default async function DeliveryCheckPage() {
   // A 100%-packaging order (e.g. a pure supplies-restock replenishment) has NO lab_order_lines
   // rows at all — it only ever lives in lab_order_packaging_lines. Union both sources so it
   // still shows up as a bon to check, instead of being invisible (2026-08-10, REP/2026/01003).
-  const { data: packagingOnlyLines } = await supabase.from('lab_order_packaging_lines')
-    .select('order_ref, delivery_date, shop_name, qty').in('delivery_date', dateWindow)
-    .limit(5000);
 
   type Row = { order_ref: string; delivery_date: string; shop_name: string; lineCount: number };
   const byKey: Record<string, Row> = {};
@@ -112,65 +129,40 @@ export default async function DeliveryCheckPage() {
   //    Shanghai, mini cakes, etc.) — a handful of remaining ones are shops ordering straight in
   //    Odoo (no app trail at all), which neither source covers — left blank for those, on purpose.
   const orderRefs = orders.map(o => o.order_ref);
-  const [{ data: managerOrders }, { data: onlineMatches }] = orderRefs.length
-    ? await Promise.all([
-        supabase.from('lab_shop_manager_orders').select('order_ref, manager_name').in('order_ref', orderRefs),
-        supabase.from('lab_manual_cakes').select('matched_order_ref').in('matched_order_ref', orderRefs),
-      ])
-    : [{ data: [] as any[] }, { data: [] as any[] }];
+  const headerIds = (headers ?? []).map((h: any) => h.id);
+  // "Écart SX" tag (Axel, 2026-10-19) — display only, empty on failure.
+  const prodShortByKey: Record<string, string[]> = {};
+  // "Livré ailleurs que son shop" (Axel, 2026-09-22) + progress X/Y + Écart SX — all in parallel.
+  const [[{ data: managerOrders }, { data: onlineMatches }], deliveryDestByRef, prodGapsByKey, { data: checkLines }] = await Promise.all([
+    orderRefs.length
+      ? Promise.all([
+          supabase.from('lab_shop_manager_orders').select('order_ref, manager_name').in('order_ref', orderRefs),
+          supabase.from('lab_manual_cakes').select('matched_order_ref').in('matched_order_ref', orderRefs),
+        ])
+      : Promise.resolve([{ data: [] as any[] }, { data: [] as any[] }] as any),
+    fetchOrderDeliveryDestinationsBatch(supabase, orderRefs),
+    fetchProductionGapsByOrder(supabase, dateWindow,
+      Object.fromEntries((headers ?? []).map((h: any) => [h.id, { order_ref: h.order_ref, delivery_date: h.delivery_date }])), prodShortByKey),
+    // Chunked: PostgREST caps each response at 1000 rows (a 9-day window has more check lines).
+    (async () => {
+      const chunks: string[][] = [];
+      for (let i = 0; i < headerIds.length; i += 7) chunks.push(headerIds.slice(i, i + 7)); // ≤7 orders × ≤135 lines (max seen) < 1000
+      const parts = await Promise.all(chunks.map(c => supabase.from('lab_delivery_check_lines').select('delivery_order_id, qty_checked').in('delivery_order_id', c).limit(1000)));
+      return { data: parts.flatMap(p => p.data ?? []) };
+    })(),
+  ]);
   const managerNameByRef: Record<string, string> = {};
   for (const m of managerOrders ?? []) if (m.order_ref && m.manager_name) managerNameByRef[m.order_ref] = m.manager_name;
   const onlineOrderRefs = new Set((onlineMatches ?? []).map((m: any) => m.matched_order_ref).filter(Boolean));
 
-  // "Livré ailleurs que son shop" (Axel, 2026-09-22) — same shop-A-vs-shop-B mismatch the
-  // by-shop view already flags, surfaced here too so it's visible on the main check list an
-  // assistant actually works from, not only on the dedicated "Theo nơi giao hàng" screen.
-  const deliveryDestByRef = await fetchOrderDeliveryDestinationsBatch(supabase, orderRefs);
-
-  // Progress: any lab_delivery_orders header already started for these (date, ref)
-  const { data: headers } = orders.length
-    ? await supabase.from('lab_delivery_orders')
-        .select('id, order_ref, delivery_date, status, printed_at, odoo_push_status, marked_not_delivered')
-        .in('delivery_date', dateWindow)
-        .limit(5000)
-    : { data: [] as any[] };
   const headerByKey: Record<string, { id: string; status: string; printed_at: string | null; odoo_push_status: string | null; marked_not_delivered: boolean }> = {};
   for (const h of headers ?? []) headerByKey[`${h.delivery_date}||${h.order_ref}`] = { id: h.id, status: h.status, printed_at: h.printed_at ?? null, odoo_push_status: (h as any).odoo_push_status ?? null, marked_not_delivered: (h as any).marked_not_delivered ?? false };
-  const headerIds = (headers ?? []).map((h: any) => h.id);
-  // "Écart SX" tag (Axel, 2026-10-19) — display only, empty on failure.
-  const prodShortByKey: Record<string, string[]> = {};
-  const prodGapsByKey = await fetchProductionGapsByOrder(supabase, dateWindow,
-    Object.fromEntries((headers ?? []).map((h: any) => [h.id, { order_ref: h.order_ref, delivery_date: h.delivery_date }])), prodShortByKey);
 
-  // Lines checked so far, to show an "X/Y" progress badge without opening the order
-  const { data: checkLines } = headerIds.length
-    ? await supabase.from('lab_delivery_check_lines').select('delivery_order_id, qty_checked').in('delivery_order_id', headerIds).limit(20000)
-    : { data: [] as any[] };
   const linesByHeader: Record<string, { total: number; checked: number }> = {};
   for (const l of checkLines ?? []) {
     const e = linesByHeader[l.delivery_order_id] ??= { total: 0, checked: 0 };
     e.total++; if (l.qty_checked != null) e.checked++;
   }
-
-  // Pending manual cakes (3rd panier) for the badge count
-  // Same dates as the /delivery-check/unreconciled page (today + tomorrow): the late-grace window
-  // made the badge count a past cake the page never lists (Axel 2026-10-20: "1 non concilié" with
-  // nothing to reconcile — a 19/10 Léonie ×3 already produced).
-  const { data: pendingCakes } = await supabase.from('lab_manual_cakes')
-    .select('id').in('delivery_date', [today, tomorrow]).is('matched_order_ref', null).is('cancelled_at', null)
-    .limit(2000);
-
-  // Coverage check (see odoo-sync.ts's syncGaps doc comment): the 15-min cron already flags any
-  // Odoo order that ended up with zero representation in the app — this is a plain read of that,
-  // no Odoo call here. Axel asked for this after REP/2026/01006 turned out invisible with no warning.
-  const { data: gapRows } = await supabase.from('lab_sync_gaps')
-    .select('order_ref, source_type, delivery_date, reason').or(`delivery_date.in.(${dateWindow.join(',')}),delivery_date.is.null`);
-
-  // Date reassigned in Odoo after import (see odoo-sync.ts's OdooSyncResult.dateChanges doc
-  // comment, 2026-08-12 S03188/KAFEBEAN) — flag-only banner, not filtered to today/tomorrow since
-  // the OLD (wrong) date could be any day still in the sync window.
-  const { data: dateAlertRows } = await supabase.from('lab_sync_date_alerts')
-    .select('order_ref, source_type, old_date, new_date');
 
   const ordersWithProgress = orders.map(o => {
     const key = `${o.delivery_date}||${o.order_ref}`;
@@ -215,23 +207,8 @@ export default async function DeliveryCheckPage() {
     odoo_done_external: odooDoneExternalMap[`${o.delivery_date}||${o.order_ref}`] ?? false,
   }));
 
-  // Reception gaps card (preview 2026-10-13) — read-only count, never blocks the page.
-  // Same count as the sidebar badge and the tasks page (review 2026-10-24).
-  let deliveryGapsCount = 0;
-  try {
-    const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
-    const t = await computeDeliveryTaskCount(sb as any);
-    deliveryGapsCount = t.base + (['admin', 'lab_manager'].includes(profile?.role ?? '') ? t.toSend : 0);
-  } catch (e) { console.error('delivery gaps count failed:', e); }
-
-  // Shop reception tracker (Axel, 2026-10-16) — today + the late days (never tomorrow: nothing
-  // has left yet). Read only, never blocks the page.
-  let receptions: OrderReception[] = [];
-  try {
-    const sb = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-    receptions = await loadOrderReceptions(sb as any, dateWindow.filter(d => d <= today));
-  } catch (e) { console.error('reception tracker failed:', e); }
+  const deliveryGapsCount = taskCount.base + (['admin', 'lab_manager'].includes(profile?.role ?? '') ? taskCount.toSend : 0);
+  const receptions: OrderReception[] = receptionsRes as OrderReception[];
   // Today's portal-shop orders not sent yet (not counted, shown as "+N not sent yet").
   const notSentToday = ordersFinal.filter(o => o.delivery_date === today && isPortalShop(o.shop_name)
     && o.status !== 'validated' && !o.marked_not_delivered).length;

@@ -58,68 +58,52 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     const yesterday = fmt.format(new Date(Date.now() - 24 * 3600 * 1000));
     return new Date(`${yesterday}T00:00:00+07:00`).toISOString();
   }
-  const yesterdayVNIso = vnYesterdayStartIso();
-  const [
-    { count: pendingInternalTransfers },
-    { count: pendingShopLabTransfers },
-    { count: pendingShopLabLosses },
-    { count: pendingExceptional },
-    { count: pendingOemReceptions },
-  ] = await Promise.all([
-    supabase.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
-    supabase.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).is('cancelled_at', null).gte('reported_at', yesterdayVNIso),
-    supabase.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
-    // OEM Orders (Axel, 2026-09-28): batches Hưng declared that no assistant has received yet
-    supabase.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-  ]);
-  const pendingTransfers = (pendingInternalTransfers ?? 0) + (pendingShopLabTransfers ?? 0) + (pendingShopLabLosses ?? 0);
+  // Perf (Axel 2026-10-26: "quand je navigue c'est vraiment lent"): every page load AND every
+  // server action that revalidates re-renders this layout. All sidebar counts are now computed in
+  // ONE parallel batch with the service key and cached 20 s (shared by all staff; a badge may lag
+  // by up to 20 s). Who sees which badge is unchanged (role checks below).
+  const db = rawService();
+  const { unstable_cache } = await import('next/cache');
+  const badges = await unstable_cache(async () => {
+    if (!db) return null;
+    const yesterdayVNIso = vnYesterdayStartIso();
+    const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
+    const { countCakesWithoutMessage } = await import('@/lib/birthday-cakes-data');
+    const [a, b, c, d, e, f, g, h, tasks, cakes] = await Promise.all([
+      db.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      db.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
+      db.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).is('cancelled_at', null).gte('reported_at', yesterdayVNIso),
+      db.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
+      // OEM Orders (Axel, 2026-09-28): batches Hưng declared that no assistant has received yet
+      db.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      // Purchasing (Axel 2026-10-12/13): lines to order (not yet in a draft PO) + slips to confirm
+      db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('po_odoo_id', null),
+      db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm'),
+      // Check badge (admin only, shown below): sums all 4 checks (2026-08-20)
+      db.from('lab_reconciliation_runs').select('issue_count, delivery_coverage_count, production_stock_count, stock_odoo_count').order('run_at', { ascending: false }).limit(1).maybeSingle(),
+      computeDeliveryTaskCount(db as any).catch(() => ({ base: 0, toSend: 0 })),
+      countCakesWithoutMessage(db as any).catch(() => 0),
+    ]);
+    const run: any = h.data;
+    return {
+      pendingTransfers: (a.count ?? 0) + (b.count ?? 0) + (c.count ?? 0),
+      pendingExceptional: d.count ?? 0,
+      pendingOemReceptions: e.count ?? 0,
+      pendingPurchasing: (f.count ?? 0) + (g.count ?? 0),
+      reconciliationIssues: (run?.issue_count ?? 0) + (run?.delivery_coverage_count ?? 0) + (run?.production_stock_count ?? 0) + (run?.stock_odoo_count ?? 0),
+      tasksBase: tasks.base, tasksToSend: tasks.toSend, cakesNoMessage: cakes,
+    };
+  }, ['layout-badges-v1'], { revalidate: 20, tags: ['layout-badges', 'delivery-tasks', 'birthday-cakes'] })();
 
-  // Purchasing badge (Axel, 2026-10-12: "un voyant rouge ... comme l'OEM"): purchase request lines
-  // still to order + storage slips waiting for confirmation. Only for who can open /purchasing;
-  // counted with the service key, same as the purchasing screen itself (purchasing/actions.ts guard).
-  // Axel, 2026-10-13: lines already put in a draft Odoo PO (po_odoo_id set, status still 'pending'
-  // until the PO is confirmed) are not counted -- same as the 'Lines waiting' card on the screen.
-  let pendingPurchasing = 0;
-  if (profile.role === 'purchasing' || profile.role === 'admin' || (profile as any).can_purchase) {
-    const db = rawService();
-    if (db) {
-      const [{ count: toOrder }, { count: toConfirm }] = await Promise.all([
-        db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('po_odoo_id', null),
-        db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm'),
-      ]);
-      pendingPurchasing = (toOrder ?? 0) + (toConfirm ?? 0);
-    }
-  }
-
-  // Check badge: admin-only table (RLS), so only fetched for admins. Sums all 4 checks
-  // (2026-08-20) — issue_count alone used to mean "reconciliation only".
-  let reconciliationIssues = 0;
-  if (profile.role === 'admin') {
-    const { data: lastRun } = await supabase
-      .from('lab_reconciliation_runs')
-      .select('issue_count, delivery_coverage_count, production_stock_count, stock_odoo_count')
-      .order('run_at', { ascending: false }).limit(1).maybeSingle();
-    reconciliationIssues = (lastRun?.issue_count ?? 0) + (lastRun?.delivery_coverage_count ?? 0)
-      + (lastRun?.production_stock_count ?? 0) + (lastRun?.stock_odoo_count ?? 0);
-  }
-
-  // Delivery check badge (Axel, 2026-10-24): red production → delivery tasks still to settle.
-  let deliveryTasks = 0;
-  let cakesNoMessage = 0;
-  if (['admin', 'lab_manager', 'assistant'].includes(profile.role)) {
-    const db = rawService();
-    if (db) {
-      const { unstable_cache } = await import('next/cache');
-      const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
-      const { countCakesWithoutMessage } = await import('@/lib/birthday-cakes-data');
-      const cachedTasks = unstable_cache(async () => { try { return await computeDeliveryTaskCount(db as any); } catch { return { base: 0, toSend: 0 }; } }, ['delivery-task-count'], { revalidate: 60, tags: ['delivery-tasks'] });
-      const cachedCakes = unstable_cache(async () => countCakesWithoutMessage(db as any), ['cakes-no-message'], { revalidate: 60, tags: ['birthday-cakes'] });
-      const [t, c] = await Promise.all([cachedTasks(), cachedCakes()]);
-      deliveryTasks = t.base + (['admin', 'lab_manager'].includes(profile.role) ? t.toSend : 0);
-      cakesNoMessage = c;
-    }
-  }
+  const pendingTransfers = badges?.pendingTransfers ?? 0;
+  const pendingExceptional = badges?.pendingExceptional ?? 0;
+  const pendingOemReceptions = badges?.pendingOemReceptions ?? 0;
+  const canSeePurchasing = profile.role === 'purchasing' || profile.role === 'admin' || !!(profile as any).can_purchase;
+  const pendingPurchasing = canSeePurchasing ? (badges?.pendingPurchasing ?? 0) : 0;
+  const reconciliationIssues = profile.role === 'admin' ? (badges?.reconciliationIssues ?? 0) : 0;
+  const isDeliveryRole = ['admin', 'lab_manager', 'assistant'].includes(profile.role);
+  const deliveryTasks = isDeliveryRole ? (badges?.tasksBase ?? 0) + (['admin', 'lab_manager'].includes(profile.role) ? (badges?.tasksToSend ?? 0) : 0) : 0;
+  const cakesNoMessage = isDeliveryRole ? (badges?.cakesNoMessage ?? 0) : 0;
 
   return (
     <div className="flex min-h-screen bg-cream">
