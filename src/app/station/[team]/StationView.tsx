@@ -257,7 +257,10 @@ export default function StationView({
     { table: 'lab_imports' },
     { table: 'lab_order_lines', filter: `team=eq.${team}` },
     { table: 'lab_birthday_details' },
-    { table: 'lab_assignments', filter: `team=eq.${team}` },
+    // UPDATEs are patched in place by the 'station-${team}' channel below — no full page reload
+    // after each click (Axel 2026-10-26: "les clicks sont lents" — every click re-rendered the
+    // whole station, 2.5 s, on every tablet of the team). Only new / deleted cards reload.
+    { table: 'lab_assignments', filter: `team=eq.${team}`, events: ['INSERT', 'DELETE'] },
   ]);
   // New-order sound + visual alert (Axel, 2026-09-04: chefs get no cue when an order arrives —
   // the refresh above is silent). Arm the chime's AudioContext on the very first tap of the
@@ -484,7 +487,14 @@ export default function StationView({
     const importIds = Array.from(new Set([...initial, ...tomorrowAssignments].map(a => a.import_id)));
     if (importIds.length === 0) return;
 
-    const channel = supabase
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let stop = false;
+    (async () => {
+    // Same auth as useRealtimeRefresh: RLS-filtered changes are only delivered to an authed socket.
+    const { data } = await supabase.auth.getSession();
+    if (stop) return;
+    if (data.session?.access_token) supabase.realtime.setAuth(data.session.access_token);
+    channel = supabase
       .channel(`station-${team}`)
       .on('postgres_changes', {
         event: 'UPDATE',
@@ -497,8 +507,9 @@ export default function StationView({
         setTomorrowAsg(prev => prev.map(patch));
       })
       .subscribe();
+    })();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { stop = true; if (channel) supabase.removeChannel(channel); };
   }, [team, initial, tomorrowAssignments]);
 
   // Lazy-load upcoming / history dates
