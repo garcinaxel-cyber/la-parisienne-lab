@@ -52,7 +52,10 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return (list ?? []).filter(i => !s || (i.vendor ?? '').toLowerCase().includes(s) || i.poName.toLowerCase().includes(s));
+    // Latest confirmed PO first (Axel, 26/10); same PO: the earlier receipt first.
+    const ts = (v: string | null) => (v ? Date.parse(v.replace(' ', 'T') + 'Z') || 0 : 0);
+    return (list ?? []).filter(i => !s || (i.vendor ?? '').toLowerCase().includes(s) || i.poName.toLowerCase().includes(s))
+      .sort((a, b) => ts(b.approvedAt) - ts(a.approvedAt) || b.poId - a.poId || a.pickingId - b.pickingId);
   }, [list, q]);
 
   // ---------- 3. Done ----------
@@ -160,18 +163,27 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
       {loading && <div className="text-center py-3"><Loader2 size={20} className="inline animate-spin" style={{ color: NAVY }} /></div>}
       {!list ? <div className="text-center py-8"><Loader2 size={22} className="inline animate-spin" style={{ color: NAVY }} /></div>
         : rows.length === 0 ? <div className="bg-white rounded-2xl p-8 text-center text-[14px] font-bold" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>📭 {L('Không có hàng chờ nhận', 'Nothing to receive')}</div>
-        : rows.map(i => {
+        : rows.map((i, idx) => {
+          const conf = i.approvedAt ? vnDayTime(i.approvedAt.replace(' ', 'T') + 'Z') : null;
+          const prevConf = idx > 0 && rows[idx - 1].approvedAt ? vnDayTime(rows[idx - 1].approvedAt!.replace(' ', 'T') + 'Z').ymd : null;
+          const yest = new Date(Date.parse(ymd + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+          const head = conf && conf.ymd !== prevConf
+            ? (conf.ymd === ymd ? L('Xác nhận hôm nay', 'Confirmed today') : conf.ymd === yest ? L('Xác nhận hôm qua', 'Confirmed yesterday') : `${L('Xác nhận', 'Confirmed')} ${conf.day}`)
+            : null;
           const d = i.scheduled ? vnDayTime(i.scheduled.replace(' ', 'T') + 'Z') : null;
           const late = d && d.ymd < ymd;
           const today = d && d.ymd === ymd;
           const pill = i.isBackorder ? { t: '½', c: WARN, bg: WARNBG } : late ? { t: L('Trễ', 'Late'), c: BAD, bg: BADBG } : today ? { t: L('Hôm nay', 'Today'), c: GOLD_TEXT, bg: PALE } : { t: d?.day ?? '', c: GOLD_TEXT, bg: PALE };
           return (
-            <button key={i.pickingId} onClick={() => openReceipt(i.pickingId)} className="w-full flex items-center gap-3 rounded-2xl p-3 text-left bg-white" style={{ border: `1.5px solid ${HAIR}` }}>
+            <div key={i.pickingId}>
+            {head && <div className="pt-2 pb-1.5 px-1 text-[12px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>{head}</div>}
+            <button onClick={() => openReceipt(i.pickingId)} className="w-full flex items-center gap-3 rounded-2xl p-3 text-left bg-white" style={{ border: `1.5px solid ${HAIR}` }}>
               <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[22px] flex-none" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>📦</div>
               <div className="flex-1 min-w-0"><div className="font-extrabold text-[14.5px] truncate">{i.vendor}</div>
                 <div className="text-[12px] truncate" style={{ color: '#6B7280' }}>{i.poName} · {i.lines} {L('món', 'items')}{i.teams.length ? ` · ${i.teams.map(t => TEAM_SHORT[t]?.[lang] ?? t).join(', ')}` : ''}</div></div>
               <span className="rounded-full px-2.5 py-1 text-[12px] font-extrabold whitespace-nowrap" style={{ color: pill.c, backgroundColor: pill.bg }}>{pill.t}</span>
-            </button>);
+            </button>
+            </div>);
         })}
     </div>
   );
