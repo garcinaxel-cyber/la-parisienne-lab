@@ -6,6 +6,7 @@ import type { OfficialInventoryLine, OfficialInventorySession } from './official
 import { thumb } from '@/lib/img-thumb';
 import QtyExprInput from '@/components/QtyExprInput';
 import { evalQty } from '@/lib/qty-expr';
+import { countToOdoo, odooToCount } from '@/lib/count-units';
 import { NamePicker, NAVY, GOLD, GOLD_LIGHT, GOLD_PALE, INK, BORDER, GREEN, RED } from './ShopView';
 import { useShopL } from './shop-lang';
 
@@ -54,6 +55,12 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   const [savingSku, setSavingSku] = useState<string | null>(null);
   // typed-but-not-yet-committed field values (mini calculator, 2026-09-30: "12+3", "4×12+5")
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // Lines with a count unit (count-units.ts) can be counted in that unit (default) or in the Odoo unit
+  // (Axel, 2026-10-26). qtyCounted is always kept in the Odoo unit; only the input/display converts.
+  const [odooUnitSkus, setOdooUnitSkus] = useState<Record<string, boolean>>({});
+  const inPieces = (l: OfficialInventoryLine) => !!l.countUnit && !odooUnitSkus[l.sku];
+  const shownQty = (l: OfficialInventoryLine) => inPieces(l) ? odooToCount(l.sku, l.qtyCounted) : l.qtyCounted;
+  const unitLabel = (l: OfficialInventoryLine) => !l.countUnit ? '' : inPieces(l) ? L(l.countUnit.vi, l.countUnit.en) : l.countUnit.odooUom;
   const [certified, setCertified] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -99,8 +106,10 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   // Commit a field on blur/Enter: empty = 0 (uncounted counts as 0 here, see the server side);
   // an invalid expression stays in the field in red and is NOT saved.
   function commitDraft(sku: string, raw: string) {
-    const v = raw.trim() === '' ? 0 : evalQty(raw);
-    if (v === null || !Number.isFinite(v)) return;
+    const typed = raw.trim() === '' ? 0 : evalQty(raw);
+    if (typed === null || !Number.isFinite(typed)) return;
+    const line = lines.find(l => l.sku === sku);
+    const v = line && inPieces(line) ? countToOdoo(sku, typed) : typed;
     setDrafts(p => { const n = { ...p }; delete n[sku]; return n; });
     const current = lines.find(l => l.sku === sku)?.qtyCounted;
     if (current === v) return;
@@ -256,7 +265,8 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
                 <div key={l.sku} className="flex items-center gap-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
                   <div className="flex-1 min-w-0 text-sm font-semibold break-words" style={{ color: INK }}>{l.productName}</div>
                   <div className="text-sm font-bold tabular-nums" style={{ color: NAVY }}>
-                    {l.qtyCounted}{l.countUnit ? ` ${L(l.countUnit.vi, l.countUnit.en)}` : ''}
+                    {shownQty(l)}{l.countUnit ? ` ${unitLabel(l)}` : ''}
+                    {l.countUnit && inPieces(l) && <span className="text-[11px] font-normal" style={{ color: '#8A9A8F' }}> = {l.qtyCounted} {l.countUnit.odooUom}</span>}
                   </div>
                 </div>
               ))}
@@ -310,20 +320,35 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: INK }}>{l.productName}</div>
                       <div className="text-[11px] break-all" style={{ color: '#8A9A8F' }}>{l.sku}</div>
-                      {l.countUnit && (
-                        <div className="text-[11px] font-semibold" style={{ color: NAVY }}>
-                          {L(`Đếm theo ${l.countUnit.vi} (${l.countUnit.perOdooUnit} ${l.countUnit.vi} = 1 ${l.countUnit.odooUom})`,
-                             `Count in ${l.countUnit.en} (${l.countUnit.perOdooUnit} ${l.countUnit.en} = 1 ${l.countUnit.odooUom})`)}
+                      {l.countUnit && (() => { const u = l.countUnit; return (
+                        <div className="mt-1 space-y-0.5">
+                          <div className="inline-flex rounded-lg overflow-hidden text-[11px] font-semibold" style={{ border: `1px solid ${BORDER}` }}>
+                            {[true, false].map(pieces => {
+                              const active = inPieces(l) === pieces;
+                              return (
+                                <button key={String(pieces)} type="button"
+                                  onClick={() => { setDrafts(p => { const n = { ...p }; delete n[l.sku]; return n; }); setOdooUnitSkus(p => ({ ...p, [l.sku]: !pieces })); }}
+                                  className="px-2 py-1" style={{ backgroundColor: active ? NAVY : '#fff', color: active ? '#fff' : NAVY }}>
+                                  {pieces ? L(`Đếm theo ${u.vi}`, `Count in ${u.en}`) : L(`Cân ${u.odooUom}`, `Weigh in ${u.odooUom}`)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="text-[11px]" style={{ color: '#8A9A8F' }}>
+                            {L(`${u.perOdooUnit} ${u.vi} = 1 ${u.odooUom}`, `${u.perOdooUnit} ${u.en} = 1 ${u.odooUom}`)}
+                            {l.qtyCounted > 0 && inPieces(l) ? ` · = ${l.qtyCounted} ${u.odooUom}` : ''}
+                            {l.qtyCounted > 0 && !inPieces(l) ? ` · ≈ ${Math.round(odooToCount(l.sku, l.qtyCounted))} ${L(u.vi, u.en)}` : ''}
+                          </div>
                         </div>
-                      )}
+                      ); })()}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
                       <QtyExprInput width={56} borderColor={BORDER} filledBorderColor={GREEN}
-                        value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(l.qtyCounted) : '')}
+                        value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(shownQty(l)) : '')}
                         onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
                         onBlur={v => commitDraft(l.sku, v)} />
-                      {l.countUnit && <span className="text-[11px] font-semibold" style={{ color: NAVY }}>{L(l.countUnit.vi, l.countUnit.en)}</span>}
+                      {l.countUnit && <span className="text-[11px] font-semibold" style={{ color: NAVY }}>{unitLabel(l)}</span>}
                     </div>
                     {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
                   </div>

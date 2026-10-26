@@ -15,7 +15,7 @@ import {
   getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff,
   applyInventoryLines, tryCancelInventoryLine, type InventoryLineResult,
 } from '@/lib/odoo-inventory';
-import { countUnitFor, countToOdoo, odooToCount, type CountUnit } from '@/lib/count-units';
+import { countUnitFor, type CountUnit } from '@/lib/count-units';
 
 // Same local service-role-client pattern as every other 'use server' action file in this app
 // (actions.ts, shop-manager/actions.ts, station/[team]/actions.ts, …) — used only after the
@@ -44,8 +44,8 @@ export interface OfficialInventoryLine {
   category: string;
   /** true = finished product (category from the recipe card), false = raw material/packaging/… */
   categoryIsProduct: boolean;
-  /** Set when the shop counts this SKU in another unit than Odoo (src/lib/count-units.ts):
-   *  qtyCounted and qtyTheoretical are then in this unit; conversion happens only on submit. */
+  /** Set when the shop may count this SKU in another unit than Odoo (src/lib/count-units.ts).
+   *  qtyCounted and qtyTheoretical are always in the Odoo unit; the tab converts for display/input. */
   countUnit: CountUnit | null;
 }
 
@@ -139,8 +139,7 @@ async function categoriesBySku(skus: string[]): Promise<Record<string, { categor
 async function mapLine(row: any, imgBySku: Record<string, string | null>, catBySku: Record<string, { category: string; isProduct: boolean }> = {}): Promise<OfficialInventoryLine> {
   return {
     id: row.id, sku: row.sku, productName: row.product_name ?? row.sku,
-    // qty_theoretical is stored in the Odoo unit; shown in the shop's counting unit.
-    qtyTheoretical: row.qty_theoretical === null ? null : odooToCount(row.sku, Number(row.qty_theoretical)),
+    qtyTheoretical: row.qty_theoretical === null ? null : Number(row.qty_theoretical),
     qtyCounted: Number(row.qty_counted ?? 0),
     imageUrl: imgBySku[row.sku] ?? null,
     odooPushStatus: row.odoo_push_status ?? null, odooPushError: row.odoo_push_error ?? null,
@@ -323,8 +322,8 @@ export async function submitOfficialInventoryAction(
   const missing = (lineRows ?? []).filter((l: any) => !l.odoo_count_line_id);
   if (!withLine.length) return { error: 'Aucune ligne à envoyer' };
 
-  // qty_counted is what the shop typed, in its counting unit; Odoo gets its own unit (count-units.ts).
-  const res = await applyInventoryLines(withLine.map((l: any) => ({ odooCountLineId: l.odoo_count_line_id, qtyCounted: countToOdoo(l.sku, Number(l.qty_counted ?? 0)) })), { applyToStock: false });
+  // qty_counted is stored in the Odoo unit (the tab converts when the shop counts in pieces).
+  const res = await applyInventoryLines(withLine.map((l: any) => ({ odooCountLineId: l.odoo_count_line_id, qtyCounted: Number(l.qty_counted ?? 0) })), { applyToStock: false });
   if (!res.ok) {
     await supabase.from('lab_shop_official_inventory_sessions').update({
       odoo_push_status: 'error', odoo_push_error: res.error ?? 'Erreur inconnue', updated_at: new Date().toISOString(),
