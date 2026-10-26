@@ -96,7 +96,8 @@ export async function fetchProductionStatusBySku(
 }
 
 // Families made as extra production for stock, never on demand (Axel, 2026-10-19).
-export const STOCK_FAMILIES = new Set(['macaron', 'biscuit voyage', 'tiramisu']);
+// 'chocolate' added — Axel 2026-10-26: "chocolate est une famille produite pour faire du stock" (Choc Tablets made in batches).
+export const STOCK_FAMILIES = new Set(['macaron', 'biscuit voyage', 'tiramisu', 'chocolate']);
 export const isStockFamily = (cat: string | null | undefined) => !!cat && STOCK_FAMILIES.has(cat.trim().toLowerCase());
 
 // "Écart SX" tag on the delivery-check list (Axel, 2026-10-19). Per order: products already
