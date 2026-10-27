@@ -204,3 +204,44 @@ export async function uploadQuickReplyImageAction(formData: FormData): Promise<{
   if (error) return { error: error.message };
   return { url: db.storage.from('inbox-media').getPublicUrl(path).data.publicUrl };
 }
+
+// ── Sending (text + photos/files) ── through the Supabase Edge Function meta-send, which holds the
+// Meta tokens. Only online_sales + admin (shop_manager is read-only). Files go straight from the
+// browser to Storage with a one-time signed upload URL (no size limit from server actions).
+export type InboxOutAttachment = { type: 'image' | 'file' | 'video'; url: string; name?: string | null; mime_type?: string | null };
+
+export async function sendInboxMessageAction(conversationId: string, text: string, attachments: InboxOutAttachment[]): Promise<{ ok?: boolean; error?: string; sent?: number }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const secret = process.env.INBOX_SEND_SECRET;
+  if (!secret) return { error: 'Server not configured' };
+  const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/meta-send`;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ conversationId, text, attachments, userId: auth.userId }),
+      cache: 'no-store',
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { error: j.error ?? 'meta', sent: j.sent ?? 0 };
+    return { ok: true, sent: j.sent };
+  } catch {
+    return { error: 'network' };
+  }
+}
+
+const OUT_MIME = /^(image\/(jpeg|png|webp|gif)|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet)|application\/vnd\.ms-excel|text\/plain|video\/mp4)$/;
+
+export async function createInboxUploadAction(fileName: string, mime: string, size: number): Promise<{ path?: string; token?: string; publicUrl?: string; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  if (!OUT_MIME.test(mime)) return { error: 'type' };
+  if (size > 25 * 1024 * 1024) return { error: 'size' };
+  const ext = (fileName.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'bin';
+  const path = `outbound/${new Date().toISOString().slice(0, 7)}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const { data, error } = await db.storage.from('inbox-media').createSignedUploadUrl(path);
+  if (error || !data) return { error: error?.message ?? 'upload' };
+  return { path, token: data.token, publicUrl: db.storage.from('inbox-media').getPublicUrl(path).data.publicUrl };
+}

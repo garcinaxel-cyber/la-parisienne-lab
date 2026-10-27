@@ -2,10 +2,11 @@
 // Tin nhắn tab (Messenger inbox) — Axel, 2026-10-27. Three columns on a computer (conversations /
 // thread / customer), list -> thread on a phone. Data refreshes by light polling only while this
 // tab is open (list every 20 s, open thread every 10 s), so the rest of the app is untouched.
-// Sending is disabled until Meta approves pages_messaging (advanced access); replies sent from
-// Pancake / Business Suite still appear here.
+// Replies are sent through the Edge Function meta-send (until Meta approves pages_messaging, only
+// to people with a role on the Meta app). Replies sent from Pancake / Business Suite still appear here.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, Bell as AdIcon, Zap, X, Copy, Check } from 'lucide-react';
+import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, ImageIcon, Bell as AdIcon, Zap, X } from 'lucide-react';
+import { createClient as createBrowserSupabase } from '@/lib/supabase-browser';
 import * as inbox from './inbox-actions';
 import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint } from './inbox-actions';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
@@ -205,22 +206,26 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
     return () => { alive = false; };
   }, [conv.id]);
 
-  // Poll for newer messages only (cheap: index on conversation_id, sent_at).
+  // Poll for newer messages only (cheap: index on conversation_id, sent_at). Also called right
+  // after a reply is sent from here.
+  const msgsRef = useRef<InboxMessage[]>([]);
+  msgsRef.current = msgs;
+  const fetchNewer = useCallback(async (forceScroll = false) => {
+    const cur = msgsRef.current;
+    const last = cur[cur.length - 1]?.sentAt;
+    const r = await inbox.getInboxMessagesAction(conv.id, last ? { after: last } : undefined);
+    if (r.messages?.length) {
+      setMsgs(prev => {
+        const seen = new Set(prev.map(m => m.id));
+        return [...prev, ...r.messages!.filter(m => !seen.has(m.id))];
+      });
+      if (forceScroll || stickToBottom.current) requestAnimationFrame(() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; });
+    }
+  }, [conv.id]);
   useEffect(() => {
-    const t = setInterval(async () => {
-      if (document.visibilityState !== 'visible') return;
-      const last = msgs[msgs.length - 1]?.sentAt;
-      const r = await inbox.getInboxMessagesAction(conv.id, last ? { after: last } : undefined);
-      if (r.messages?.length) {
-        setMsgs(prev => {
-          const seen = new Set(prev.map(m => m.id));
-          return [...prev, ...r.messages!.filter(m => !seen.has(m.id))];
-        });
-        if (stickToBottom.current) requestAnimationFrame(() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; });
-      }
-    }, 10_000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') fetchNewer(); }, 10_000);
     return () => clearInterval(t);
-  }, [conv.id, msgs]);
+  }, [fetchNewer]);
 
   async function loadOlder() {
     const first = msgs[0]?.sentAt; if (!first) return;
@@ -306,8 +311,7 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
 
         <div className="px-3 lg:px-4 py-2.5 flex flex-col gap-2" style={{ backgroundColor: '#fff', borderTop: `1px solid ${HAIR}` }}>
           <div className="sm:hidden"><ReplyWindow lastInboundAt={conv.lastInboundAt} /></div>
-          <div style={{ fontSize: 11.5, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 8, padding: '6px 10px' }}>{tr('inboxReplySoon')}</div>
-          <Composer readOnly={readOnly} customerName={conv.customerName} />
+          <Composer readOnly={readOnly} conv={conv} onSent={() => fetchNewer(true)} />
           {!readOnly && (
             <button onClick={createOrder} className="lg:hidden flex items-center justify-center gap-2"
               style={{ height: 46, borderRadius: 12, backgroundColor: GOLD, color: NAVY, fontWeight: 700, fontSize: 14 }}>
@@ -357,19 +361,46 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
   );
 }
 
-// Reply box. "/" opens the team's quick replies (↑ ↓ Enter, or tap). Sending from the app opens once
-// Meta approves pages_messaging; until then the draft can be copied (e.g. to paste in Pancake).
-function Composer({ readOnly, customerName }: { readOnly: boolean; customerName: string | null }) {
+
+// Reply box. "/" opens the team's quick replies (↑ ↓ Enter, or tap). Photos and files go straight
+// to Storage (signed upload), then the Edge Function meta-send delivers text + attachments.
+// Enter sends on a computer (Shift+Enter = new line); on a phone the Send button sends.
+type PendingAtt = { id: string; kind: 'image' | 'file'; name: string; mime: string; status: 'uploading' | 'ready' | 'error'; url?: string; preview?: string };
+
+async function shrinkForSend(file: File): Promise<File> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1_500_000) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    const ctx = c.getContext('2d')!; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const blob: Blob | null = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.88));
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file;
+  } catch { return file; }
+}
+
+function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxConversation; onSent: () => void }) {
   const { tr } = useL();
   const { replies } = useQuickReplies();
   const [text, setText] = useState('');
-  const [images, setImages] = useState<string[]>([]);
+  const [atts, setAtts] = useState<PendingAtt[]>([]);
   const [slash, setSlash] = useState<{ start: number; q: string } | null>(null);
   const [idx, setIdx] = useState(0);
   const [manage, setManage] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const items = useMemo(() => (slash ? filterReplies(replies, slash.q).slice(0, 30) : []), [replies, slash]);
+
+  const hours = conv.lastInboundAt ? (Date.now() - new Date(conv.lastInboundAt).getTime()) / 3600_000 : Infinity;
+  const closed = hours >= 24 * 7;
+  const uploading = atts.some(a => a.status === 'uploading');
+  const ready = atts.filter(a => a.status === 'ready');
+  const canSend = !readOnly && !closed && !sending && !uploading && (text.trim().length > 0 || ready.length > 0);
 
   function autosize() {
     const el = ta.current; if (!el) return;
@@ -378,8 +409,7 @@ function Composer({ readOnly, customerName }: { readOnly: boolean; customerName:
   useEffect(autosize, [text]);
 
   function detect(value: string, caret: number) {
-    const before = value.slice(0, caret);
-    const m = before.match(/(^|\s)\/([^\s/]*)$/);
+    const m = value.slice(0, caret).match(/(^|\s)\/([^\s/]*)$/);
     if (m) { setSlash({ start: caret - m[2].length - 1, q: m[2] }); setIdx(0); } else setSlash(null);
   }
 
@@ -387,69 +417,124 @@ function Composer({ readOnly, customerName }: { readOnly: boolean; customerName:
     if (!slash) return;
     const el = ta.current;
     const caret = el?.selectionStart ?? text.length;
-    const first = (customerName ?? '').trim().split(/\s+/).pop() ?? '';
+    const first = (conv.customerName ?? '').trim().split(/\s+/).pop() ?? '';
     const body = r.body.replace(/\{ten\}/gi, first);
-    const next = text.slice(0, slash.start) + body + text.slice(caret);
-    setText(next);
-    setImages(prev => [...prev, ...r.images.filter(u => !prev.includes(u))].slice(0, 10));
+    setText(text.slice(0, slash.start) + body + text.slice(caret));
+    setAtts(prev => [...prev, ...r.images.filter(u => !prev.some(a => a.url === u)).map(u => ({ id: u, kind: 'image' as const, name: 'menu.jpg', mime: 'image/jpeg', status: 'ready' as const, url: u, preview: u }))].slice(0, 10));
+    const start = slash.start;
     setSlash(null);
     requestAnimationFrame(() => {
       if (!el) return;
       el.focus();
-      // jump to a "..." placeholder if the reply has one (e.g. /tt amount), else to the end
       const ph = body.indexOf('...');
-      const pos = ph >= 0 ? slash.start + ph : slash.start + body.length;
+      const pos = ph >= 0 ? start + ph : start + body.length;
       el.setSelectionRange(pos, ph >= 0 ? pos + 3 : pos);
     });
   }
 
+  async function addFiles(files: FileList | null, kind: 'image' | 'file') {
+    if (!files) return;
+    setErr(null);
+    const list = Array.from(files).slice(0, Math.max(0, 10 - atts.length));
+    const sb = createBrowserSupabase();
+    for (const raw of list) {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const isImg = raw.type.startsWith('image/');
+      const preview = isImg ? URL.createObjectURL(raw) : undefined;
+      setAtts(prev => [...prev, { id, kind: isImg ? 'image' : kind === 'image' ? 'image' : 'file', name: raw.name, mime: raw.type, status: 'uploading', preview }]);
+      (async () => {
+        const file = await shrinkForSend(raw);
+        const up = await inbox.createInboxUploadAction(file.name, file.type, file.size);
+        if (!up.path || !up.token) {
+          setAtts(prev => prev.map(a => a.id === id ? { ...a, status: 'error' } : a));
+          setErr(up.error === 'size' ? tr('sendErrSize') : up.error === 'type' ? tr('sendErrType') : tr('sendErrUpload'));
+          return;
+        }
+        const { error } = await sb.storage.from('inbox-media').uploadToSignedUrl(up.path, up.token, file, { contentType: file.type });
+        setAtts(prev => prev.map(a => a.id === id ? (error ? { ...a, status: 'error' } : { ...a, status: 'ready', url: up.publicUrl, mime: file.type }) : a));
+        if (error) setErr(tr('sendErrUpload'));
+      })();
+    }
+    if (photoRef.current) photoRef.current.value = '';
+    if (fileRef.current) fileRef.current.value = '';
+  }
+
+  async function send() {
+    if (!canSend) return;
+    setSending(true); setErr(null);
+    const payload = ready.map(a => ({ type: a.kind === 'image' ? 'image' as const : (a.mime === 'video/mp4' ? 'video' as const : 'file' as const), url: a.url!, name: a.name, mime_type: a.mime }));
+    const r = await inbox.sendInboxMessageAction(conv.id, text, payload);
+    setSending(false);
+    if (r.ok) {
+      atts.forEach(a => a.preview?.startsWith('blob:') && URL.revokeObjectURL(a.preview));
+      setText(''); setAtts([]); onSent();
+      requestAnimationFrame(() => ta.current?.focus());
+      return;
+    }
+    if ((r.sent ?? 0) > 0) onSent();
+    const map: Record<string, string> = {
+      window: tr('sendErrWindow'), unavailable: tr('sendErrUnavailable'), permission: tr('sendErrPermission'),
+      token: tr('sendErrToken'), disabled: tr('sendErrDisabled'),
+    };
+    setErr(map[r.error ?? ''] ?? tr('sendErrGeneric'));
+  }
+
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (!slash || items.length === 0) { if (e.key === 'Escape') setSlash(null); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => (i + 1) % items.length); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => (i - 1 + items.length) % items.length); }
-    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[idx]); }
-    else if (e.key === 'Escape') { e.preventDefault(); setSlash(null); }
+    if (slash && items.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => (i + 1) % items.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => (i - 1 + items.length) % items.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[idx]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSlash(null); return; }
+    }
+    if (e.key === 'Escape') setSlash(null);
+    const desktop = typeof window !== 'undefined' && window.matchMedia('(pointer: fine)').matches;
+    if (e.key === 'Enter' && !e.shiftKey && desktop && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
   }
 
-  async function copy() {
-    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* clipboard blocked */ }
-  }
-
+  if (readOnly) return null;
   const iconBtn: React.CSSProperties = { width: 38, height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: NAVY, flexShrink: 0 };
 
   return (
     <div className="flex flex-col gap-2">
-      {images.length > 0 && (
+      {closed && <div style={{ fontSize: 11.5, color: '#B42318', backgroundColor: '#FDECEA', borderRadius: 8, padding: '6px 10px' }}>{tr('sendWindowClosed')}</div>}
+      {!closed && hours >= 24 && <div style={{ fontSize: 11.5, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 8, padding: '6px 10px' }}>{tr('sendHumanAgent')}</div>}
+      {atts.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pt-1">
-          {images.map(u => (
-            <span key={u} className="relative flex-none">
-              <a href={u} target="_blank" rel="noreferrer">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={u} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: `1px solid ${HAIR}` }} />
-              </a>
-              <button onClick={() => setImages(images.filter(x => x !== u))} aria-label={tr('qrRemoveImage')} className="absolute flex items-center justify-center"
+          {atts.map(a => (
+            <span key={a.id} className="relative flex-none">
+              {a.kind === 'image' && a.preview
+                // eslint-disable-next-line @next/next/no-img-element
+                ? <img src={a.preview} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: `1px solid ${a.status === 'error' ? '#F2C6C2' : HAIR}`, opacity: a.status === 'uploading' ? 0.5 : 1 }} />
+                : <span className="flex flex-col items-center justify-center gap-0.5 px-1" style={{ width: 96, height: 56, borderRadius: 8, border: `1px solid ${a.status === 'error' ? '#F2C6C2' : BORDER}`, fontSize: 10, color: INK, opacity: a.status === 'uploading' ? 0.5 : 1 }}>
+                    <FileText size={15} color="#8A6D14" aria-hidden /><span className="truncate w-full text-center">{a.name}</span>
+                  </span>}
+              {a.status === 'uploading' && <span className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin" size={16} color={NAVY} /></span>}
+              <button onClick={() => setAtts(atts.filter(x => x.id !== a.id))} aria-label={tr('qrRemoveImage')} className="absolute flex items-center justify-center"
                 style={{ top: -5, right: -5, width: 20, height: 20, borderRadius: 10, backgroundColor: INK, color: '#fff' }}><X size={11} /></button>
             </span>
           ))}
         </div>
       )}
-      <div className="relative flex items-end gap-2">
+      {err && <div role="alert" style={{ fontSize: 12, color: '#B42318' }}>{err}</div>}
+      <div className="relative flex items-end gap-1.5">
         {slash && <QuickReplyPopup items={items} activeIndex={idx} onPick={pick} onHover={setIdx} />}
         <button onClick={() => setManage(true)} className="flex items-center justify-center" style={iconBtn} title={tr('qrTitle')} aria-label={tr('qrTitle')}><Zap size={17} aria-hidden /></button>
+        <button onClick={() => photoRef.current?.click()} disabled={closed} className="flex items-center justify-center" style={iconBtn} title={tr('sendPhoto')} aria-label={tr('sendPhoto')}><ImageIcon size={17} aria-hidden /></button>
+        <button onClick={() => fileRef.current?.click()} disabled={closed} className="hidden sm:flex items-center justify-center" style={iconBtn} title={tr('sendFile')} aria-label={tr('sendFile')}><FileText size={17} aria-hidden /></button>
+        <input ref={photoRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={e => addFiles(e.target.files, 'image')} />
+        <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.mp4,image/*" multiple hidden onChange={e => addFiles(e.target.files, 'file')} />
         <label className="flex-1 min-w-0">
           <span className="sr-only">{tr('qrComposerPh')}</span>
-          <textarea ref={ta} value={text} rows={1} placeholder={tr('qrComposerPh')}
+          <textarea ref={ta} value={text} rows={1} placeholder={tr('qrComposerPh')} disabled={closed}
             onChange={e => { setText(e.target.value); detect(e.target.value, e.target.selectionStart); }}
             onKeyDown={onKey} onBlur={() => setTimeout(() => setSlash(null), 150)}
             onClick={e => detect(e.currentTarget.value, e.currentTarget.selectionStart)}
-            className="w-full outline-none block" style={{ minHeight: 38, maxHeight: 140, resize: 'none', borderRadius: 10, border: `1px solid ${BORDER}`, padding: '8px 10px', fontSize: 13.5, lineHeight: 1.4, color: INK }} />
+            className="w-full outline-none block" style={{ minHeight: 38, maxHeight: 140, resize: 'none', borderRadius: 10, border: `1px solid ${BORDER}`, padding: '8px 10px', fontSize: 13.5, lineHeight: 1.4, color: INK, backgroundColor: closed ? PALE : '#fff' }} />
         </label>
-        <button onClick={copy} disabled={!text.trim()} className="flex items-center justify-center gap-1 px-2.5" title={tr('qrCopy')}
-          style={{ height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: copied ? '#1F7A3D' : NAVY, fontSize: 12.5, fontWeight: 600, opacity: text.trim() ? 1 : 0.5, flexShrink: 0 }}>
-          {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}<span className="hidden sm:inline">{copied ? tr('qrCopied') : tr('qrCopy')}</span>
+        <button onClick={send} disabled={!canSend} title={tr('sendBtn')} aria-label={tr('sendBtn')} className="flex items-center justify-center"
+          style={{ width: 42, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE', flexShrink: 0, opacity: canSend ? 1 : 0.4 }}>
+          {sending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} aria-hidden />}
         </button>
-        <span className="flex items-center justify-center opacity-40" aria-disabled title={tr('qrSendSoon')}
-          style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE', flexShrink: 0 }}><Send size={16} aria-hidden /></span>
       </div>
       {manage && <QuickReplyManager readOnly={readOnly} onClose={() => setManage(false)} />}
     </div>
