@@ -1,5 +1,6 @@
 'use client';
 import { Printer } from 'lucide-react';
+import { productRule, cartonBestBefore, DEFAULT_STORE, DEFAULT_STORE_EN } from '@/components/oem/labelRules';
 
 // Same design as the PDF templates validated by Axel (2026-10-14): soft brown / cream, Vietnamese
 // with English in small grey. Labels: 4 × A6 per A4 sheet, one per carton. Note: A4, one row per carton.
@@ -25,7 +26,7 @@ const CSS = `
 .oemp .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 3mm; row-gap: 1.6mm }
 .oemp .f { border-bottom: 0.6px solid #E4D9C8; padding-bottom: .8mm } .oemp .f.full { grid-column: span 2 }
 .oemp .f .k { font-size: 6.2pt; font-weight: 600; color: #9A8B7A; display: block } .oemp .f .v { font-size: 8.4pt; font-weight: 600; min-height: 4mm; display: block }
-.oemp .note { font-size: 6.2pt; line-height: 1.4; color: #9A8B7A; margin-top: auto } .oemp .note b { color: #5C4B3D }
+.oemp .note { font-size: 6.2pt; line-height: 1.4; color: #9A8B7A; margin-top: auto } .oemp .note b { color: #5C4B3D } .oemp .note.al { margin-top: 0; color: #5C4B3D }
 .oemp .resp { font-size: 6.4pt; line-height: 1.4; font-weight: 600; color: #5C4B3D; background: #FAF6EF; border-radius: 2.5mm; padding: 1.8mm 2.4mm } .oemp .resp .en { font-weight: 400 }
 .oemp .pg { width: 210mm; min-height: 297mm; padding: 11mm 14mm 10mm; margin: 0 auto; background: #fff; font-size: 8.4pt }
 .oemp .nhd { display: flex; justify-content: space-between; align-items: center; border-bottom: 0.6px solid #E4D9C8; padding-bottom: 4mm }
@@ -52,6 +53,7 @@ const CSS = `
 
 export default function OemPrintView({ doc, note, cartons, names, client }: { doc: 'labels' | 'note'; note: any; cartons: any[]; names: Record<string, string>; client: any }) {
   const total = cartons.length;
+  const perProduct = cartons.some(c => productRule(client, c.group_key)?.months);
   const kg = cartons.reduce((s, c) => s + Number(c.net_kg), 0); const bags = cartons.reduce((s, c) => s + Number(c.bags), 0);
   const F = (vi: string, en: string, v: string, full = false) => <div className={`f${full ? ' full' : ''}`}><span className="k">{vi} <span className="en">/ {en}</span></span><span className="v">{v}</span></div>;
   const pages: any[][] = []; for (let i = 0; i < cartons.length; i += 4) pages.push(cartons.slice(i, i + 4));
@@ -77,11 +79,14 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
                 {F('Sản phẩm', 'Product', names[c.sku] ?? c.sku, true)}
                 {F('Mã sản phẩm', 'SKU', c.sku)}{F('Số lô', 'Lot no.', c.lot_no)}
                 {F('Ngày sản xuất', 'Production date', dmy(c.prod_date))}{F('Ngày đóng gói', 'Packing date', dmy(note.pack_date))}
-                {F('Hạn sử dụng', 'Best before', dmy(note.best_before))}{F('Ngày giao hàng', 'Delivery date', dmy(note.delivery_date))}
+                {F('Hạn sử dụng', 'Best before', dmy(cartonBestBefore(client, c, note.best_before)))}{F('Ngày giao hàng', 'Delivery date', dmy(note.delivery_date))}
                 {F('Số túi × quy cách', 'Bags × size', `${c.bags} × ${n1(Number(c.bag_kg))} kg`)}{F('KL tịnh', 'Net weight', `${n1(Number(c.net_kg))} kg`)}
                 {F('Người đóng gói / KCS', 'Packed & checked by', note.prepared_by ?? '', true)}
               </div>
-              <div className="note"><b>Bảo quản:</b> nơi khô ráo, thoáng mát (&lt; 25 °C), tránh ánh nắng và côn trùng. <span className="en">Store dry &amp; cool, away from sunlight and pests.</span></div>
+              {(() => { const r = productRule(client, c.group_key); return (<>
+                <div className="note"><b>Bảo quản:</b> {r?.store ?? DEFAULT_STORE} <span className="en">{r?.store_en ?? DEFAULT_STORE_EN}</span></div>
+                {r?.allergens && <div className="note al"><b>Chất gây dị ứng:</b> {r.allergens} <span className="en">{r.allergens_en ?? ''}</span></div>}
+              </>); })()}
               <div className="resp">Thùng được dán kín. Sau khi mở bao, bên nhận chịu trách nhiệm bảo quản và đóng gói lại.<br /><span className="en">Carton taped closed. Once opened, storage and repacking are the receiver&apos;s responsibility.</span></div>
             </div>
           ))}
@@ -102,13 +107,13 @@ export default function OemPrintView({ doc, note, cartons, names, client }: { do
             <div className="m"><span className="lb">Mã đơn hàng (Odoo) / Order ref</span><span className="v">{note.order_ref}</span></div>
             <div className="m"><span className="lb">Ngày giao / Delivery date</span><span className="v">{dmy(note.delivery_date)}</span></div>
             <div className="m"><span className="lb">Ngày đóng gói / Packing date</span><span className="v">{dmy(note.pack_date)}</span></div>
-            <div className="m"><span className="lb">Hạn sử dụng / Best before</span><span className="v">{dmy(note.best_before)}</span></div>
+            <div className="m"><span className="lb">Hạn sử dụng / Best before</span><span className="v">{perProduct ? 'Theo từng sản phẩm (xem bảng)' : dmy(note.best_before)}</span></div>
             <div className="m"><span className="lb">Giờ giao / Time · Xe / Vehicle</span><span className="v">&nbsp;</span></div>
           </div>
           <table>
-            <thead><tr><th>STT<span className="en">No.</span></th><th>Số serial thùng<span className="en">Carton S/N</span></th><th>Sản phẩm<span className="en">Product</span></th><th>Số lô / Ngày SX<span className="en">Lot / prod. date</span></th><th className="r">Số túi<span className="en">Bags</span></th><th className="r">Quy cách<span className="en">Bag size</span></th><th className="r">KL tịnh (kg)<span className="en">Net kg</span></th><th>Ghi chú<span className="en">Notes</span></th></tr></thead>
+            <thead><tr><th>STT<span className="en">No.</span></th><th>Số serial thùng<span className="en">Carton S/N</span></th><th>Sản phẩm<span className="en">Product</span></th><th>Số lô / Ngày SX{perProduct ? ' · HSD' : ''}<span className="en">Lot / prod. date{perProduct ? ' · best before' : ''}</span></th><th className="r">Số túi<span className="en">Bags</span></th><th className="r">Quy cách<span className="en">Bag size</span></th><th className="r">KL tịnh (kg)<span className="en">Net kg</span></th><th>Ghi chú<span className="en">Notes</span></th></tr></thead>
             <tbody>{cartons.map(c => (
-              <tr key={c.id}><td>{c.line_no}</td><td className="mono">{c.serial}</td><td>{names[c.sku] ?? c.sku}</td><td className="nw">{c.lot_no}<br /><span style={{ color: '#9A8B7A' }}>{dmy(c.prod_date)}</span></td><td className="r">{c.bags}</td><td className="r">{n1(Number(c.bag_kg))} kg</td><td className="r">{n1(Number(c.net_kg))}</td><td></td></tr>
+              <tr key={c.id}><td>{c.line_no}</td><td className="mono">{c.serial}</td><td>{names[c.sku] ?? c.sku}</td><td className="nw">{c.lot_no}<br /><span style={{ color: '#9A8B7A' }}>{dmy(c.prod_date)}{perProduct ? ` · HSD ${dmy(cartonBestBefore(client, c, note.best_before))}` : ''}</span></td><td className="r">{c.bags}</td><td className="r">{n1(Number(c.bag_kg))} kg</td><td className="r">{n1(Number(c.net_kg))}</td><td></td></tr>
             ))}</tbody>
             <tfoot><tr><td colSpan={4} className="r">Tổng cộng / Total · {total} thùng</td><td className="r">{bags}</td><td></td><td className="r">{n1(kg)}</td><td></td></tr></tfoot>
           </table>

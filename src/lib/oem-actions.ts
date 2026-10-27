@@ -5,6 +5,7 @@ import { odooExecute } from '@/lib/odoo';
 import { createAndProduceOemMO, resumeOemMO } from '@/lib/odoo-oem-mo';
 import { getScrapReasonTags, resolveProductsBySku, createLabScrap, createScrapAtLocation } from '@/lib/odoo-scrap';
 import { PROD_EDITORS_KEY, editorIds } from '@/components/oem/plan';
+import { cartonBestBefore } from '@/components/oem/labelRules';
 
 // OEM Orders tracker — packaging entries (Axel, 2026-09-25). Assistants record what was packed
 // each day (+ scrap). Only lab_mm_* tables are written; Odoo is touched only when the admin
@@ -491,9 +492,12 @@ export async function createDeliveryNoteAction(input: {
     mine.forEach((c, k) => { (c as any).serial = `${prefix}-${String(Number(start) + k).padStart(3, '0')}`; });
   }
 
+  // per-product shelf life (client_info.products) → the note keeps the earliest carton date
+  const baseBB = addDaysIso(deliveryDate, Number(ci.shelf_days) || 120);
+  const noteBestBefore = cartons.map(c => cartonBestBefore(ci, c, baseBB)).sort()[0] ?? baseBB;
   const { data: note, error: e1 } = await svc.from('lab_mm_delivery_notes').insert({
     note_no: noteNo, client_name: clientName, order_ref: orderRef, delivery_date: deliveryDate,
-    pack_date: addDaysIso(deliveryDate, -1), best_before: addDaysIso(deliveryDate, Number(ci.shelf_days) || 120),
+    pack_date: addDaysIso(deliveryDate, -1), best_before: noteBestBefore,
     override_by_name: old.length ? auth.name : null, override_note: old.length ? override : null,
     created_by: auth.id, created_by_name: auth.name, prepared_by: preparedBy,
   }).select('id').single();
