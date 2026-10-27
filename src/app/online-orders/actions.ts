@@ -8,6 +8,7 @@ import { revalidatePath } from 'next/cache';
 import { canonicalizePhone } from '@/lib/phone-format';
 import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
 import { isOemSku } from '@/lib/oem';
+import { selectInChunks } from '@/lib/select-in-chunks';
 
 // district (Axel, 2026-09-15): optional, free client input validated against the known list —
 // never blocks the order if it's missing or garbage, just silently stored as null so a stale
@@ -595,12 +596,12 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // (never in lab_manual_cakes, see buildFeeLineRows) only live here.
   const [{ data: lines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
-      ? supabase.from('lab_manual_cake_ledger')
+      ? selectInChunks(labBatchIds, c => supabase.from('lab_manual_cake_ledger')
           .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
-          .in('order_batch_id', labBatchIds)
+          .in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
     allBatchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', allBatchIds)
+      ? selectInChunks(allBatchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -728,7 +729,7 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   const allBatchIds = Array.from(new Set([...Array.from(onlineBatchIds), ...(mcRows ?? []).map((l: any) => l.order_batch_id)]));
 
   const { data: saleLines } = onlineBatchIds.size
-    ? await supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', Array.from(onlineBatchIds))
+    ? await selectInChunks(Array.from(onlineBatchIds), c => supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', c))
     : { data: [] as any[] };
 
   const mcByBatch = new Map<string, any[]>();
@@ -1233,10 +1234,10 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
   // buildFeeLineRows), so its fee lines only show up via this table regardless of source.
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labIds.length
-      ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+      ? selectInChunks(labIds, c => supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, shop_name, channel, product_sku, product_name_vi, cancelled_at, created_at').in('order_batch_id', c).is('cancelled_at', null).limit(20000))
       : Promise.resolve({ data: [] as any[] }),
     batchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at, is_fee').in('order_batch_id', batchIds).limit(20000)
+      ? selectInChunks(batchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, category, product_name_vi, created_at, is_fee').in('order_batch_id', c).limit(20000))
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const orderById = new Map<string, any>();
@@ -1477,10 +1478,10 @@ export async function getChannelProductDetailsAction(channel: string, from: stri
     const labIds = matched.filter((o: any) => (o.source ?? 'lab') === 'lab').map((o: any) => o.order_batch_id);
     const [{ data: labLines }, { data: stockLines }] = await Promise.all([
       labIds.length
-        ? supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, product_sku, product_name_vi, cancelled_at').in('order_batch_id', labIds).is('cancelled_at', null).limit(20000)
+        ? selectInChunks(labIds, c => supabase.from('lab_manual_cake_ledger').select('order_batch_id, qty, unit_price, product_sku, product_name_vi, cancelled_at').in('order_batch_id', c).is('cancelled_at', null).limit(20000))
         : Promise.resolve({ data: [] as any[] }),
       batchIds.length
-        ? supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, product_name_vi, is_fee').in('order_batch_id', batchIds).limit(20000)
+        ? selectInChunks(batchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, qty, unit_price, sku, product_name_vi, is_fee').in('order_batch_id', c).limit(20000))
         : Promise.resolve({ data: [] as any[] }),
     ]);
     const products = new Map<string, ChannelProductDetail>();

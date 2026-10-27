@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
+import { selectInChunks } from '@/lib/select-in-chunks';
 
 // Tracking export by date range (Axel, 2026-09-11) — reproduces the columns of her old
 // Excel tracker ("QUẢN LÝ ĐƠN HÀNG ONLINE"), rebuilt from lab_online_orders + its line
@@ -83,12 +84,12 @@ export async function GET(req: NextRequest) {
   const labBatchIds = rows.filter(o => (o.source ?? 'lab') === 'lab').map(o => o.order_batch_id);
   const [{ data: labLines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
-      ? supabase.from('lab_manual_cake_ledger')
+      ? selectInChunks(labBatchIds, c => supabase.from('lab_manual_cake_ledger')
           .select('order_batch_id, product_name_vi, qty, unit_price, matched_order_ref, cancelled_at')
-          .in('order_batch_id', labBatchIds)
+          .in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
     batchIds.length
-      ? supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, is_fee').in('order_batch_id', batchIds)
+      ? selectInChunks(batchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, is_fee').in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
   ]);
   const linesByBatch = new Map<string, any[]>();
