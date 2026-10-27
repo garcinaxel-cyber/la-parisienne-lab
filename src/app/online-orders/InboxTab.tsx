@@ -154,7 +154,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   );
 
   return (
-    <div className="flex" style={{ height: 'calc(100vh - 62px - 58px)', minHeight: 420 }}>
+    <div className="flex h-full" style={{ minHeight: 360 }}>
       {/* Column 1 — on a phone it is hidden while a thread is open */}
       <div className={`${active ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-[330px] lg:flex-none`} style={{ borderRight: `1px solid ${HAIR}` }}>
         {list}

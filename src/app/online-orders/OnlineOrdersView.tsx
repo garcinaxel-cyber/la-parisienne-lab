@@ -267,10 +267,10 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: CREAM }}>
+    <div className={tab === 'inbox' && showInbox ? 'h-[100dvh] flex flex-col overflow-hidden' : 'min-h-screen flex flex-col'} style={{ backgroundColor: CREAM }}>
       <Header fullName={fullName} count={cart.length} tab={tab} />
       {tab === 'inbox' && showInbox ? (
-        <div className="flex-1">
+        <div className="flex-1 min-h-0" style={{ paddingBottom: 58 }}>
           <InboxTab readOnly={readOnly} onCreateOrder={prefillFromInbox} onUnreadChange={setInboxUnread} />
         </div>
       ) : (
@@ -395,7 +395,7 @@ function TabBar({ tab, setTab, readOnly = false, showInbox = false, inboxUnread 
       {items.map(it => (
         <button key={it.key} onClick={() => setTab(it.key)} className="flex-1 text-center py-2.5"
           style={{ color: tab === it.key ? GOLD : '#8FAE9E', fontWeight: tab === it.key ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${tab === it.key ? GOLD : 'transparent'}` }}>
-          <div className="relative inline-block">{it.icon}
+          <div className="relative w-fit mx-auto">{it.icon}
             {it.key === 'inbox' && inboxUnread > 0 && (
               <span className="absolute -top-1 -right-3" style={{ backgroundColor: GOLD, color: NAVY, fontSize: 9.5, fontWeight: 700, borderRadius: 8, padding: '0 5px', lineHeight: '15px' }}>{inboxUnread > 99 ? '99+' : inboxUnread}</span>
             )}
