@@ -9,6 +9,7 @@ import { pushSupport, getExistingPushSubscription, requestPushSubscription, unsu
 import * as actions from './actions';
 import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType, ChannelProductDetail } from './actions';
 import CustomersTab from './CustomersTab';
+import InboxTab, { type InboxOrderPrefill } from './InboxTab';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
 // Shops that can handle an online order. 'Lab' (Axel, 2026-10-10) is offered for Lab orders only,
@@ -41,11 +42,24 @@ type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: strin
 function netPrice(gross: number, pct: number): number {
   return pct > 0 ? Math.round(gross * (100 - Math.min(100, pct)) / 100) : gross;
 }
-type Tab = 'order' | 'track' | 'stats' | 'customers';
+type Tab = 'inbox' | 'order' | 'track' | 'stats' | 'customers';
 
 export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }: { fullName: string; isAdmin: boolean; readOnly?: boolean }) {
   const { tr } = useL();
   const [tab, setTab] = useState<Tab>(readOnly ? 'track' : 'order');
+  // Messenger inbox (Axel, 2026-10-27) — visible to admin only while it is being tested; the
+  // online-sales team keeps the current tabs until Axel switches it on for them.
+  const showInbox = isAdmin;
+  const [inboxUnread, setInboxUnread] = useState(0);
+  // Badge on the tab while she is on another tab: one tiny count query per minute.
+  useEffect(() => {
+    if (!showInbox || tab === 'inbox') return;
+    let alive = true;
+    const tick = () => import('./inbox-actions').then(m => m.getInboxUnreadCountAction()).then(r => { if (alive && typeof r.count === 'number') setInboxUnread(r.count); });
+    tick();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') tick(); }, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [showInbox, tab]);
   const today = new Date().toISOString().slice(0, 10);
   // ── Order form state ──
   const [shop, setShop] = useState(ONLINE_SHOPS[0]);
@@ -240,9 +254,26 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     setOrderDiscKind('pct'); setOrderDiscValue(''); setDiscountReason('');
   }
 
+  // "Tạo đơn" from a Messenger conversation: pre-fill the normal order form (nothing else changes —
+  // Lab / shop-stock choice, Odoo, delivery all stay exactly the existing flow).
+  function prefillFromInbox(p: InboxOrderPrefill) {
+    if (p.customerName) setCustomerName(p.customerName);
+    if (p.customerPhone) setCustomerPhone(p.customerPhone);
+    if (p.deliveryAddress) setDeliveryAddress(p.deliveryAddress);
+    if (p.district) setDistrict(p.district);
+    if (p.channel) setChannel(p.channel);
+    setSubmitMsg(null);
+    setTab('order');
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: CREAM }}>
       <Header fullName={fullName} count={cart.length} tab={tab} />
+      {tab === 'inbox' && showInbox ? (
+        <div className="flex-1">
+          <InboxTab readOnly={readOnly} onCreateOrder={prefillFromInbox} onUnreadChange={setInboxUnread} />
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto pb-20">
         <div className="max-w-xl mx-auto px-4 py-4">
           {tab === 'order' && !readOnly && (
@@ -281,7 +312,8 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
           {tab === 'customers' && <CustomersTab />}
         </div>
       </div>
-      <TabBar tab={tab} setTab={setTab} readOnly={readOnly} />
+      )}
+      <TabBar tab={tab} setTab={setTab} readOnly={readOnly} showInbox={showInbox} inboxUnread={inboxUnread} />
     </div>
   );
 }
@@ -316,7 +348,7 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
     if (result.ok) { await actions.subscribeOnlinePushAction(result.subscription); setBellState('on'); }
     else setBellState('off');
   }
-  const titles: Record<Tab, string> = { order: tr('titleOrder'), track: tr('titleTrack'), stats: tr('titleStats'), customers: tr('titleCustomers') };
+  const titles: Record<Tab, string> = { inbox: tr('titleInbox'), order: tr('titleOrder'), track: tr('titleTrack'), stats: tr('titleStats'), customers: tr('titleCustomers') };
   return (
     <div style={{ backgroundColor: NAVY, color: '#FFFAEE' }} className="px-4 pt-3.5 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-2.5">
@@ -349,9 +381,10 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
   );
 }
 
-function TabBar({ tab, setTab, readOnly = false }: { tab: Tab; setTab: (t: Tab) => void; readOnly?: boolean }) {
+function TabBar({ tab, setTab, readOnly = false, showInbox = false, inboxUnread = 0 }: { tab: Tab; setTab: (t: Tab) => void; readOnly?: boolean; showInbox?: boolean; inboxUnread?: number }) {
   const { tr } = useL();
   const items: { key: Tab; icon: string; label: string }[] = [
+    ...(showInbox ? [{ key: 'inbox' as const, icon: '💬', label: tr('tabInbox') }] : []),
     ...(readOnly ? [] : [{ key: 'order' as const, icon: '🧾', label: tr('tabOrder') }]),
     { key: 'track', icon: '📦', label: tr('tabTrack') },
     { key: 'stats', icon: '📊', label: tr('tabStats') },
@@ -362,7 +395,11 @@ function TabBar({ tab, setTab, readOnly = false }: { tab: Tab; setTab: (t: Tab) 
       {items.map(it => (
         <button key={it.key} onClick={() => setTab(it.key)} className="flex-1 text-center py-2.5"
           style={{ color: tab === it.key ? GOLD : '#8FAE9E', fontWeight: tab === it.key ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${tab === it.key ? GOLD : 'transparent'}` }}>
-          <div>{it.icon}</div>{it.label}
+          <div className="relative inline-block">{it.icon}
+            {it.key === 'inbox' && inboxUnread > 0 && (
+              <span className="absolute -top-1 -right-3" style={{ backgroundColor: GOLD, color: NAVY, fontSize: 9.5, fontWeight: 700, borderRadius: 8, padding: '0 5px', lineHeight: '15px' }}>{inboxUnread > 99 ? '99+' : inboxUnread}</span>
+            )}
+          </div>{it.label}
         </button>
       ))}
     </div>
