@@ -127,12 +127,12 @@ export async function loadProductionTasks(sb: SupabaseClient): Promise<{ open: P
   const stalePending = (t: ProdTask) => t.odooStatus === 'pending' && (!t.resolvedAt || Date.now() - new Date(t.resolvedAt).getTime() > 300_000);
   for (const t of tasks) if (stalePending(t)) { t.odooStatus = 'error'; t.odooError = t.odooError ?? 'Interrupted'; }
   const isOpen = (t: ProdTask) => !t.resolution || t.odooStatus === 'error';
-  const { data: rc } = await sb.from('lab_stock_recount_alerts')
-    .select('id, sku, product_name, delivery_date, order_ref, missing_qty, raised_by_name, raised_at').eq('status', 'open').order('raised_at').limit(200);
+  // Recount alerts removed from Tasks (Axel 2026-10-27: stock products are counted at the inventory).
+  const rc: any[] = [];
   return {
     open: tasks.filter(isOpen).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate) || a.orderRef.localeCompare(b.orderRef) || a.product.localeCompare(b.product)),
     resolved: tasks.filter(t => !isOpen(t)),
-    recounts: (rc ?? []).map((r: any) => ({ id: r.id, sku: r.sku, product: r.product_name ?? r.sku, deliveryDate: r.delivery_date, orderRef: r.order_ref, missing: Number(r.missing_qty ?? 0), raisedBy: r.raised_by_name, raisedAt: r.raised_at })),
+    recounts: rc.map((r: any) => ({ id: r.id, sku: r.sku, product: r.product_name ?? r.sku, deliveryDate: r.delivery_date, orderRef: r.order_ref, missing: Number(r.missing_qty ?? 0), raisedBy: r.raised_by_name, raisedAt: r.raised_at })),
   };
 }
 

@@ -322,13 +322,9 @@ export async function followUpLine(sb: SupabaseClient, lineId: string, opts: { p
   const errs: string[] = [];
   let resolution: string | null = null; let resQty: number | null = null;
 
-  // 1. Out of stock (stock products) → recount alert.
+  // 1. Out of stock (stock products): recorded on the line only. No recount alert any more —
+  // stock products are counted at the monthly inventory (Axel 2026-10-27).
   if (reason === 'out_of_stock' && already !== 'out_of_stock') {
-    const { data: exA } = await sb.from('lab_stock_recount_alerts').select('id').eq('check_line_id', lineId).limit(1);
-    if (!exA?.length) await sb.from('lab_stock_recount_alerts').insert({
-      sku: line.sku, product_name: line.product_name_vi, delivery_date: date, order_ref: orderRef, check_line_id: lineId,
-      missing_qty: Math.max(0, expected - qty), raised_by_name: opts.byName,
-    });
     resolution = 'out_of_stock'; resQty = Math.max(0, expected - qty);
   }
 
