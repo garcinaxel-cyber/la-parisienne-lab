@@ -15,19 +15,19 @@ const CSS = `
 .oemp { font-family: Lato, Carlito, Arial, sans-serif; color: #3A2E25; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #fff }
 .oemp .en { color: #9A8B7A; font-weight: 400 }
 .oemp .sheet { width: 210mm; height: 297mm; display: grid; grid-template-columns: 105mm 105mm; grid-template-rows: 148.5mm 148.5mm; page-break-after: always; margin: 0 auto; background: #fff }
-.oemp .lab { padding: 7mm 7mm 6mm; border-right: 0.4px dashed #E2DBD0; border-bottom: 0.4px dashed #E2DBD0; display: flex; flex-direction: column; gap: 2.2mm; font-size: 8pt; overflow: hidden }
-.oemp .hd { display: flex; align-items: center; gap: 3mm; border-bottom: 0.6px solid #E4D9C8; padding-bottom: 2.4mm }
+.oemp .lab { padding: 6mm 6.5mm 5mm; border-right: 0.4px dashed #E2DBD0; border-bottom: 0.4px dashed #E2DBD0; display: flex; flex-direction: column; gap: 1.5mm; font-size: 8pt; overflow: hidden }
+.oemp .hd { display: flex; align-items: center; gap: 3mm; border-bottom: 0.6px solid #E4D9C8; padding-bottom: 1.8mm }
 .oemp .hd img { height: 11mm }
 .oemp .co { font-size: 6.4pt; line-height: 1.4; color: #9A8B7A } .oemp .co b { color: #3A2E25; font-size: 6.8pt; font-weight: 600 }
 .oemp .ttl { font-size: 10.5pt; font-weight: 600; color: #8B6A4F; letter-spacing: 1.6px; display: flex; justify-content: space-between; align-items: baseline }
 .oemp .ttl .en { font-size: 7.4pt; letter-spacing: .3px }
-.oemp .serial { background: #FAF6EF; border: 0.8px solid #C9B48F; border-radius: 3mm; padding: 2mm 3mm }
-.oemp .serial .k { font-size: 6.6pt; color: #8B6A4F; font-weight: 600 } .oemp .serial .v { font-size: 13pt; font-weight: 700; letter-spacing: .6px; font-family: 'DejaVu Sans Mono', Menlo, monospace }
-.oemp .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 3mm; row-gap: 1.6mm }
-.oemp .f { border-bottom: 0.6px solid #E4D9C8; padding-bottom: .8mm } .oemp .f.full { grid-column: span 2 }
-.oemp .f .k { font-size: 6.2pt; font-weight: 600; color: #9A8B7A; display: block } .oemp .f .v { font-size: 8.4pt; font-weight: 600; min-height: 4mm; display: block }
-.oemp .note { font-size: 6.2pt; line-height: 1.4; color: #9A8B7A; margin-top: auto } .oemp .note b { color: #5C4B3D } .oemp .note.al { margin-top: 0; color: #5C4B3D }
-.oemp .resp { font-size: 6.4pt; line-height: 1.4; font-weight: 600; color: #5C4B3D; background: #FAF6EF; border-radius: 2.5mm; padding: 1.8mm 2.4mm } .oemp .resp .en { font-weight: 400 }
+.oemp .serial { background: #FAF6EF; border: 0.8px solid #C9B48F; border-radius: 3mm; padding: 1.3mm 3mm }
+.oemp .serial .k { font-size: 6.6pt; color: #8B6A4F; font-weight: 600 } .oemp .serial .v { font-size: 12pt; font-weight: 700; letter-spacing: .6px; font-family: 'DejaVu Sans Mono', Menlo, monospace }
+.oemp .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 3mm; row-gap: 1.1mm }
+.oemp .f { border-bottom: 0.6px solid #E4D9C8; padding-bottom: .6mm } .oemp .f.full { grid-column: span 2 }
+.oemp .f .k { font-size: 6.2pt; font-weight: 600; color: #9A8B7A; display: block } .oemp .f .v { font-size: 8.4pt; font-weight: 600; min-height: 3.6mm; display: block }
+.oemp .note { font-size: 6.2pt; line-height: 1.35; color: #9A8B7A; margin-top: auto } .oemp .note b { color: #5C4B3D } .oemp .note.al { margin-top: 0; color: #5C4B3D }
+.oemp .resp { font-size: 6.2pt; line-height: 1.35; font-weight: 600; color: #5C4B3D; background: #FAF6EF; border-radius: 2.5mm; padding: 1.4mm 2.4mm } .oemp .resp .en { font-weight: 400 }
 .oemp .pg { width: 210mm; min-height: 297mm; padding: 11mm 14mm 10mm; margin: 0 auto; background: #fff; font-size: 8.4pt }
 .oemp .nhd { display: flex; justify-content: space-between; align-items: center; border-bottom: 0.6px solid #E4D9C8; padding-bottom: 4mm }
 .oemp .nhd img { height: 14mm } .oemp .nco { text-align: right; font-size: 7.6pt; line-height: 1.55; color: #9A8B7A } .oemp .nco b { font-size: 8.6pt; color: #3A2E25; font-weight: 600 }
