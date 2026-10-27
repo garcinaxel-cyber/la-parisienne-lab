@@ -5,10 +5,12 @@
 // Sending is disabled until Meta approves pages_messaging (advanced access); replies sent from
 // Pancake / Business Suite still appear here.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, ImageIcon, Bell as AdIcon } from 'lucide-react';
+import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, Bell as AdIcon, Zap, X, Copy, Check } from 'lucide-react';
 import * as inbox from './inbox-actions';
 import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint } from './inbox-actions';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
+import type { InboxQuickReply } from './inbox-actions';
+import { useQuickReplies, filterReplies, QuickReplyPopup, QuickReplyManager } from './QuickReplies';
 
 const HAIR = '#EFE9CF';
 const PALE = '#FBF8EF';
@@ -305,12 +307,7 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
         <div className="px-3 lg:px-4 py-2.5 flex flex-col gap-2" style={{ backgroundColor: '#fff', borderTop: `1px solid ${HAIR}` }}>
           <div className="sm:hidden"><ReplyWindow lastInboundAt={conv.lastInboundAt} /></div>
           <div style={{ fontSize: 11.5, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 8, padding: '6px 10px' }}>{tr('inboxReplySoon')}</div>
-          <div className="flex items-center gap-2 opacity-50" aria-disabled>
-            <span className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: NAVY }}><ImageIcon size={17} aria-hidden /></span>
-            <span className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: NAVY }}><FileText size={17} aria-hidden /></span>
-            <span className="flex-1 flex items-center px-3" style={{ height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13, color: INK_LIGHT }}>…</span>
-            <span className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE' }}><Send size={16} aria-hidden /></span>
-          </div>
+          <Composer readOnly={readOnly} customerName={conv.customerName} />
           {!readOnly && (
             <button onClick={createOrder} className="lg:hidden flex items-center justify-center gap-2"
               style={{ height: 46, borderRadius: 12, backgroundColor: GOLD, color: NAVY, fontWeight: 700, fontSize: 14 }}>
@@ -357,5 +354,104 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
         )}
       </div>
     </>
+  );
+}
+
+// Reply box. "/" opens the team's quick replies (↑ ↓ Enter, or tap). Sending from the app opens once
+// Meta approves pages_messaging; until then the draft can be copied (e.g. to paste in Pancake).
+function Composer({ readOnly, customerName }: { readOnly: boolean; customerName: string | null }) {
+  const { tr } = useL();
+  const { replies } = useQuickReplies();
+  const [text, setText] = useState('');
+  const [images, setImages] = useState<string[]>([]);
+  const [slash, setSlash] = useState<{ start: number; q: string } | null>(null);
+  const [idx, setIdx] = useState(0);
+  const [manage, setManage] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const items = useMemo(() => (slash ? filterReplies(replies, slash.q).slice(0, 30) : []), [replies, slash]);
+
+  function autosize() {
+    const el = ta.current; if (!el) return;
+    el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+  useEffect(autosize, [text]);
+
+  function detect(value: string, caret: number) {
+    const before = value.slice(0, caret);
+    const m = before.match(/(^|\s)\/([^\s/]*)$/);
+    if (m) { setSlash({ start: caret - m[2].length - 1, q: m[2] }); setIdx(0); } else setSlash(null);
+  }
+
+  function pick(r: InboxQuickReply) {
+    if (!slash) return;
+    const el = ta.current;
+    const caret = el?.selectionStart ?? text.length;
+    const first = (customerName ?? '').trim().split(/\s+/).pop() ?? '';
+    const body = r.body.replace(/\{ten\}/gi, first);
+    const next = text.slice(0, slash.start) + body + text.slice(caret);
+    setText(next);
+    setImages(prev => [...prev, ...r.images.filter(u => !prev.includes(u))].slice(0, 10));
+    setSlash(null);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      // jump to a "..." placeholder if the reply has one (e.g. /tt amount), else to the end
+      const ph = body.indexOf('...');
+      const pos = ph >= 0 ? slash.start + ph : slash.start + body.length;
+      el.setSelectionRange(pos, ph >= 0 ? pos + 3 : pos);
+    });
+  }
+
+  function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!slash || items.length === 0) { if (e.key === 'Escape') setSlash(null); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => (i + 1) % items.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => (i - 1 + items.length) % items.length); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[idx]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setSlash(null); }
+  }
+
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* clipboard blocked */ }
+  }
+
+  const iconBtn: React.CSSProperties = { width: 38, height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: NAVY, flexShrink: 0 };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {images.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pt-1">
+          {images.map(u => (
+            <span key={u} className="relative flex-none">
+              <a href={u} target="_blank" rel="noreferrer">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, border: `1px solid ${HAIR}` }} />
+              </a>
+              <button onClick={() => setImages(images.filter(x => x !== u))} aria-label={tr('qrRemoveImage')} className="absolute flex items-center justify-center"
+                style={{ top: -5, right: -5, width: 20, height: 20, borderRadius: 10, backgroundColor: INK, color: '#fff' }}><X size={11} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative flex items-end gap-2">
+        {slash && <QuickReplyPopup items={items} activeIndex={idx} onPick={pick} onHover={setIdx} />}
+        <button onClick={() => setManage(true)} className="flex items-center justify-center" style={iconBtn} title={tr('qrTitle')} aria-label={tr('qrTitle')}><Zap size={17} aria-hidden /></button>
+        <label className="flex-1 min-w-0">
+          <span className="sr-only">{tr('qrComposerPh')}</span>
+          <textarea ref={ta} value={text} rows={1} placeholder={tr('qrComposerPh')}
+            onChange={e => { setText(e.target.value); detect(e.target.value, e.target.selectionStart); }}
+            onKeyDown={onKey} onBlur={() => setTimeout(() => setSlash(null), 150)}
+            onClick={e => detect(e.currentTarget.value, e.currentTarget.selectionStart)}
+            className="w-full outline-none block" style={{ minHeight: 38, maxHeight: 140, resize: 'none', borderRadius: 10, border: `1px solid ${BORDER}`, padding: '8px 10px', fontSize: 13.5, lineHeight: 1.4, color: INK }} />
+        </label>
+        <button onClick={copy} disabled={!text.trim()} className="flex items-center justify-center gap-1 px-2.5" title={tr('qrCopy')}
+          style={{ height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, color: copied ? '#1F7A3D' : NAVY, fontSize: 12.5, fontWeight: 600, opacity: text.trim() ? 1 : 0.5, flexShrink: 0 }}>
+          {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}<span className="hidden sm:inline">{copied ? tr('qrCopied') : tr('qrCopy')}</span>
+        </button>
+        <span className="flex items-center justify-center opacity-40" aria-disabled title={tr('qrSendSoon')}
+          style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE', flexShrink: 0 }}><Send size={16} aria-hidden /></span>
+      </div>
+      {manage && <QuickReplyManager readOnly={readOnly} onClose={() => setManage(false)} />}
+    </div>
   );
 }

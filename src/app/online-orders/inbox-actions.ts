@@ -143,3 +143,64 @@ export async function getInboxCustomerHintAction(conversationId: string): Promis
   }
   return { hint: { phones, known } };
 }
+
+// ── Quick replies ("/" shortcuts, like Pancake) ── Axel, 2026-10-27. Shared by the whole team;
+// online_sales + admin can edit, shop_manager reads. Images live in the public `inbox-media`
+// bucket (menus to send with the text once sending from the app is open).
+export type InboxQuickReply = { id: string; shortcut: string; body: string; images: string[]; needsImages: string | null; sort: number };
+
+export async function listQuickRepliesAction(): Promise<{ replies?: InboxQuickReply[]; error?: string }> {
+  const auth = await requireInboxSession();
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const { data, error } = await db.from('inbox_quick_replies').select('id, shortcut, body, images, needs_images, sort').eq('active', true).order('sort').order('shortcut');
+  if (error) return { error: error.message };
+  return { replies: (data ?? []).map((r: any) => ({ id: r.id, shortcut: r.shortcut, body: r.body, images: Array.isArray(r.images) ? r.images : [], needsImages: r.needs_images, sort: r.sort })) };
+}
+
+export async function saveQuickReplyAction(input: { id?: string | null; shortcut: string; body: string; images: string[] }): Promise<{ reply?: InboxQuickReply; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const shortcut = input.shortcut.trim().replace(/^\/+/, '').replace(/\s+/g, '').slice(0, 20);
+  const body = input.body.trim().slice(0, 2000);
+  if (!shortcut || /[^0-9A-Za-z\u00C0-\u1EF9_-]/.test(shortcut)) return { error: 'shortcut' };
+  if (!body) return { error: 'body' };
+  const images = (input.images ?? []).filter(u => typeof u === 'string' && u.startsWith('https://')).slice(0, 10);
+  const { data: clash } = await db.from('inbox_quick_replies').select('id').eq('active', true).ilike('shortcut', shortcut.replace(/[%_]/g, '\\$&'));
+  if ((clash ?? []).some((c: any) => c.id !== input.id)) return { error: 'duplicate' };
+  const row: any = { shortcut, body, images, updated_at: new Date().toISOString(), updated_by: auth.userId };
+  if (images.length) row.needs_images = null;
+  const q = input.id
+    ? db.from('inbox_quick_replies').update(row).eq('id', input.id)
+    : db.from('inbox_quick_replies').insert({ ...row, sort: 500 });
+  const { data, error } = await q.select('id, shortcut, body, images, needs_images, sort').single();
+  if (error) return { error: error.message };
+  return { reply: { id: data.id, shortcut: data.shortcut, body: data.body, images: data.images ?? [], needsImages: data.needs_images, sort: data.sort } };
+}
+
+export async function deleteQuickReplyAction(id: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  // soft delete: frees the shortcut, keeps history
+  const { error } = await db.from('inbox_quick_replies').update({ active: false, updated_at: new Date().toISOString(), updated_by: auth.userId }).eq('id', id);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// The browser shrinks photos to ≤1600 px JPEG before calling this (keeps under the 1 MB action limit).
+export async function uploadQuickReplyImageAction(formData: FormData): Promise<{ url?: string; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return { error: 'Only images' };
+  if (file.size > 5 * 1024 * 1024) return { error: 'Too large' };
+  const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const path = `quick-replies/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const { error } = await db.storage.from('inbox-media').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (error) return { error: error.message };
+  return { url: db.storage.from('inbox-media').getPublicUrl(path).data.publicUrl };
+}
