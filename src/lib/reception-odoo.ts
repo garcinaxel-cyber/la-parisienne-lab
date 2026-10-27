@@ -539,7 +539,30 @@ export async function finalizeReplenishmentGaps(
         [[['origin', '=', orderRef], ['location_id', '=', LAB_STOCK_LOCATION_ID], ['location_dest_id', '=', TRANSIT_LOCATION_ID], ['state', '=', 'done']]], { fields: ['id', 'name'] });
       if (outs.length !== 1) return { ok: false, live, error: outs.length ? 'Several validated LAB/OUT for this order — return by hand' : 'No validated LAB/OUT for this order', done };
       // The units must still be in transit (nothing else moved them), otherwise stop before writing.
-      const quants = await odooExecute<any[]>('stock.quant', 'search_read', [[['location_id', '=', TRANSIT_LOCATION_ID], ['product_id', 'in', backToLab.map(i => i.pid)]]], { fields: ['product_id', 'quantity'] });
+      let quants = await odooExecute<any[]>('stock.quant', 'search_read', [[['location_id', '=', TRANSIT_LOCATION_ID], ['product_id', 'in', backToLab.map(i => i.pid)]]], { fields: ['product_id', 'quantity'] });
+      // Shop IN validated BEFORE the shop recounted (2026-10-27, REP/02217 BMSTBR: IN took 10 at
+      // 11:48, the shop then said 9): the missing units sit in the shop's stock, not in transit.
+      // Return them on the shop IN first (shop → transit), only for what the IN received above the
+      // good quantity, then the usual return of the LAB/OUT brings them back to the Lab.
+      if (shopIn.state === 'done') {
+        const inMoves = await odooExecute<any[]>('stock.move', 'search_read', [[['picking_id', '=', shopIn.id], ['state', '=', 'done']]], { fields: ['product_id', 'quantity'] });
+        const fromShop = new Map<number, number>();
+        for (const i of backToLab) {
+          const inTransit = quants.filter(q => q.product_id?.[0] === i.pid).reduce((t, q) => t + Number(q.quantity), 0);
+          const deficit = i.qty - Math.max(0, inTransit);
+          if (deficit <= 0) continue;
+          const inDone = inMoves.filter(m => m.product_id?.[0] === i.pid).reduce((t, m) => t + Number(m.quantity), 0);
+          const rl = receptionLines.filter(l => l.sku === i.code);
+          const good = rl.reduce((t, l) => t + Math.max(0, Math.min(l.sent, l.received - l.damaged)), 0);
+          if (inDone - deficit >= good) fromShop.set(i.pid, deficit);
+        }
+        if (fromShop.size) {
+          const r0 = await returnFromDelivery(shopIn.id, fromShop, false);
+          if (!r0.ok) return { ok: false, live, error: `Return of shop IN: ${r0.error}`, done };
+          done.push(`return ${r0.name} (of ${shopIn.name}, received before the recount)`);
+          quants = await odooExecute<any[]>('stock.quant', 'search_read', [[['location_id', '=', TRANSIT_LOCATION_ID], ['product_id', 'in', backToLab.map(i => i.pid)]]], { fields: ['product_id', 'quantity'] });
+        }
+      }
       for (const i of backToLab) {
         const inTransit = quants.filter(q => q.product_id?.[0] === i.pid).reduce((t, q) => t + Number(q.quantity), 0);
         if (inTransit < i.qty) return { ok: false, live, error: `${i.code}: only ${inTransit} in transit, ${i.qty} to return — check Odoo`, done };
