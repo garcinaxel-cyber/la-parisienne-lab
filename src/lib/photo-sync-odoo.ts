@@ -26,12 +26,18 @@ export type PhotoSyncResult = { ok: boolean; commit: boolean; error?: string; it
 
 function chunks<T>(a: T[], n: number): T[][] { const out: T[][] = []; for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n)); return out; }
 
+// Converted to JPEG (max 1200 px) before sending: Odoo 18 stores a webp as-is and does not
+// derive its small thumbnails from it (checked 28/10: image_128 = 100 KB), which would slow
+// down Odoo's product lists. From a JPEG Odoo builds light 128/256/512 versions itself.
 async function fetchBase64(url: string): Promise<{ b64: string; mime: string }> {
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error(`photo ${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > 8_000_000) throw new Error('photo > 8 MB');
-  return { b64: buf.toString('base64'), mime: r.headers.get('content-type') || 'image/webp' };
+  const sharp = (await import('sharp')).default;
+  const jpg = await sharp(buf).rotate().resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
+  return { b64: jpg.toString('base64'), mime: 'image/jpeg' };
 }
 
 export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: boolean; by: string; force?: boolean }): Promise<PhotoSyncResult> {
@@ -92,7 +98,7 @@ export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: b
         const g = byTmpl.get(it.tmplId)!;
         // Rollback copy of the template's current photo.
         let backupId: number | null = null;
-        if (it.hadPhoto) {
+        if (it.hadPhoto && !lastUrl.has(it.tmplId)) {
           const [cur] = await odooExecute<any[]>('product.template', 'read', [[it.tmplId]], { fields: ['image_1920'] });
           if (cur?.image_1920) backupId = await odooExecuteWrite<number>('ir.attachment', 'create', [{ name: `photo-avant-synchro-site-${today}`, res_model: 'product.template', res_id: it.tmplId, datas: cur.image_1920, type: 'binary' }], { context: NO_MAIL });
         }
