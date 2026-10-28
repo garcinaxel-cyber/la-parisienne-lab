@@ -49,7 +49,8 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
   const [tab, setTab] = useState<Tab>(readOnly ? 'track' : 'order');
   // Messenger inbox (Axel, 2026-10-27) — visible to admin only while it is being tested; the
   // online-sales team keeps the current tabs until Axel switches it on for them.
-  const showInbox = isAdmin;
+  // Tin nhắn tab: online sales + admins (opened to the team 2026-10-28). Shop managers don't see it.
+  const showInbox = !readOnly;
   const [inboxUnread, setInboxUnread] = useState(0);
   // Badge on the tab while she is on another tab: one tiny count query per minute.
   useEffect(() => {
