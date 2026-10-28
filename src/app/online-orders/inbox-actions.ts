@@ -29,7 +29,7 @@ export type InboxConversation = {
   id: string; pageId: string; pageName: string; channelLabel: string | null;
   customerName: string | null; customerPic: string | null;
   lastAt: string | null; lastPreview: string | null; lastDirection: 'in' | 'out' | null;
-  lastInboundAt: string | null; unread: number; fromAd: boolean;
+  lastInboundAt: string | null; unread: number; fromAd: boolean; tagIds: string[];
 };
 export type InboxAttachment = { type: string; url: string | null; preview_url?: string | null; name?: string | null; mime_type?: string | null; expired?: boolean };
 export type InboxMessage = { id: string; direction: 'in' | 'out'; text: string | null; attachments: InboxAttachment[] | null; sentAt: string; senderAppId: string | null };
@@ -47,10 +47,17 @@ export async function listInboxPagesAction(): Promise<{ pages?: InboxPage[]; err
 }
 
 // Newest first, 30 at a time (index inbox_conv_last_idx / inbox_conv_page_last_idx).
-export async function listInboxConversationsAction(opts: { pageId?: string | null; before?: string | null; unreadOnly?: boolean; search?: string | null }): Promise<{ conversations?: InboxConversation[]; error?: string }> {
+export async function listInboxConversationsAction(opts: { pageId?: string | null; before?: string | null; unreadOnly?: boolean; search?: string | null; tagId?: string | null; waiting?: boolean }): Promise<{ conversations?: InboxConversation[]; error?: string }> {
   const auth = await requireInboxSession();
   if ('error' in auth) return { error: auth.error };
   const db = service(); if (!db) return { error: 'Server not configured' };
+  // Tag filter: the conversations carrying that tag (bounded), newest tagged first.
+  let tagConvIds: string[] | null = null;
+  if (opts.tagId) {
+    const { data: tc } = await db.from('inbox_conversation_tags').select('conversation_id').eq('tag_id', opts.tagId).order('created_at', { ascending: false }).limit(500);
+    tagConvIds = (tc ?? []).map((r: any) => r.conversation_id);
+    if (!tagConvIds.length) return { conversations: [] };
+  }
   const [{ data: pages }, convRes] = await Promise.all([
     db.from('inbox_pages').select('page_id, name, channel_label'),
     (() => {
@@ -58,18 +65,26 @@ export async function listInboxConversationsAction(opts: { pageId?: string | nul
       if (opts.pageId) q = q.eq('page_id', opts.pageId);
       if (opts.before) q = q.lt('last_message_at', opts.before);
       if (opts.unreadOnly) q = q.gt('unread_count', 0);
+      if (opts.waiting) q = q.eq('last_direction', 'in');
+      if (tagConvIds) q = q.in('id', tagConvIds);
       const s = (opts.search ?? '').trim().replace(/[%,()]/g, ' ').slice(0, 60);
       if (s) q = q.ilike('customer_name', `%${s}%`);
       return q;
     })(),
   ]);
   if (convRes.error) return { error: convRes.error.message };
+  const ids = (convRes.data ?? []).map((c: any) => c.id);
+  const tagsBy = new Map<string, string[]>();
+  if (ids.length) {
+    const { data: ct } = await db.from('inbox_conversation_tags').select('conversation_id, tag_id').in('conversation_id', ids);
+    for (const r of ct ?? []) tagsBy.set(r.conversation_id, [...(tagsBy.get(r.conversation_id) ?? []), r.tag_id]);
+  }
   const pageById = new Map((pages ?? []).map((p: any) => [p.page_id, p]));
   return {
     conversations: (convRes.data ?? []).map((c: any) => ({
       id: c.id, pageId: c.page_id, pageName: pageById.get(c.page_id)?.name ?? '', channelLabel: pageById.get(c.page_id)?.channel_label ?? null,
       customerName: c.customer_name, customerPic: c.customer_pic, lastAt: c.last_message_at, lastPreview: c.last_message_preview,
-      lastDirection: c.last_direction, lastInboundAt: c.last_inbound_at, unread: c.unread_count ?? 0, fromAd: !!c.ad_id,
+      lastDirection: c.last_direction, lastInboundAt: c.last_inbound_at, unread: c.unread_count ?? 0, fromAd: !!c.ad_id, tagIds: tagsBy.get(c.id) ?? [],
     })),
   };
 }
@@ -244,4 +259,98 @@ export async function createInboxUploadAction(fileName: string, mime: string, si
   const { data, error } = await db.storage.from('inbox-media').createSignedUploadUrl(path);
   if (error || !data) return { error: error?.message ?? 'upload' };
   return { path, token: data.token, publicUrl: db.storage.from('inbox-media').getPublicUrl(path).data.publicUrl };
+}
+
+// ── Tags (like Pancake) + conversation ↔ order link ── Axel, 2026-10-28.
+// Manual tags are shared by the team. The auto tag "Đã tạo đơn" (kind auto_order) is added when an
+// order is created from a conversation; each such order is also sent to Meta (dataset Laparis) as a
+// "chat" purchase through the website (laparis.com.vn/api/meta/capi-chat) — never B2B/shop orders.
+export type InboxTag = { id: string; name: string; color: string; kind: 'manual' | 'auto_order' };
+export type InboxConvOrder = { orderBatchId: string; source: 'lab' | 'shop_stock'; value: number; createdAt: string };
+
+export async function listInboxTagsAction(): Promise<{ tags?: InboxTag[]; error?: string }> {
+  const auth = await requireInboxSession();
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const { data, error } = await db.from('inbox_tags').select('id, name, color, kind').eq('active', true).order('sort').order('name');
+  if (error) return { error: error.message };
+  return { tags: (data ?? []) as InboxTag[] };
+}
+
+const TAG_COLORS = ['#1F6B45', '#D9A21B', '#6B3FA0', '#2F6FB5', '#3E9B6A', '#4C7FD1', '#B5487A', '#8C5A3C', '#3AA6A0', '#C2410C', '#64748B'];
+
+export async function createInboxTagAction(name: string, color?: string): Promise<{ tag?: InboxTag; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const n = name.trim().replace(/\s+/g, ' ').slice(0, 30);
+  if (!n) return { error: 'name' };
+  const c = color && TAG_COLORS.includes(color) ? color : TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)];
+  const { data, error } = await db.from('inbox_tags').insert({ name: n, color: c, kind: 'manual', sort: 500 }).select('id, name, color, kind').single();
+  if (error) return { error: error.code === '23505' ? 'duplicate' : error.message };
+  return { tag: data as InboxTag };
+}
+
+export async function deleteInboxTagAction(id: string): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const { error } = await db.from('inbox_tags').update({ active: false }).eq('id', id).eq('kind', 'manual');
+  if (error) return { error: error.message };
+  await db.from('inbox_conversation_tags').delete().eq('tag_id', id);
+  return { ok: true };
+}
+
+export async function setConversationTagAction(conversationId: string, tagId: string, on: boolean): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const { error } = on
+    ? await db.from('inbox_conversation_tags').upsert({ conversation_id: conversationId, tag_id: tagId, created_by: auth.userId }, { onConflict: 'conversation_id,tag_id', ignoreDuplicates: true })
+    : await db.from('inbox_conversation_tags').delete().eq('conversation_id', conversationId).eq('tag_id', tagId);
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+export async function getConversationOrdersAction(conversationId: string): Promise<{ orders?: InboxConvOrder[]; error?: string }> {
+  const auth = await requireInboxSession();
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const { data, error } = await db.from('inbox_conversation_orders').select('order_batch_id, source, value, created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).limit(20);
+  if (error) return { error: error.message };
+  return { orders: (data ?? []).map((o: any) => ({ orderBatchId: o.order_batch_id, source: o.source, value: Number(o.value) || 0, createdAt: o.created_at })) };
+}
+
+export async function linkInboxOrderAction(input: { conversationId: string; orderBatchId: string; source: 'lab' | 'shop_stock'; value: number; phone: string | null; name: string | null }): Promise<{ ok?: boolean; error?: string }> {
+  const auth = await requireInboxSession(true);
+  if ('error' in auth) return { error: auth.error };
+  const db = service(); if (!db) return { error: 'Server not configured' };
+  const value = Math.max(0, Math.round(Number(input.value) || 0));
+  const { data: conv } = await db.from('inbox_conversations').select('id, page_id').eq('id', input.conversationId).maybeSingle();
+  if (!conv) return { error: 'conversation' };
+  const { error } = await db.from('inbox_conversation_orders').insert({
+    conversation_id: conv.id, order_batch_id: input.orderBatchId, source: input.source, value, created_by: auth.userId,
+  });
+  if (error) return { error: error.code === '23505' ? 'already' : error.message };
+  const { data: autoTag } = await db.from('inbox_tags').select('id').eq('kind', 'auto_order').eq('active', true).limit(1).maybeSingle();
+  if (autoTag) await db.from('inbox_conversation_tags').upsert({ conversation_id: conv.id, tag_id: autoTag.id, created_by: auth.userId }, { onConflict: 'conversation_id,tag_id', ignoreDuplicates: true });
+
+  // Meta purchase (chat) — best effort, 5 s max, never blocks the order.
+  let capi = 'skipped';
+  const secret = process.env.CAPI_CHAT_SECRET;
+  if (secret && value > 0) {
+    const { data: page } = await db.from('inbox_pages').select('name').eq('page_id', conv.page_id).maybeSingle();
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const r = await fetch('https://www.laparis.com.vn/api/meta/capi-chat', {
+        method: 'POST', signal: ctl.signal, cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ eventId: input.orderBatchId, value, currency: 'VND', phone: input.phone, name: input.name, pageName: page?.name ?? null, eventTime: Math.floor(Date.now() / 1000) }),
+      });
+      const j = await r.json().catch(() => ({}));
+      capi = j.ok ? 'sent' : `error: ${String(j.error ?? r.status).slice(0, 120)}`;
+    } catch { capi = 'error: network'; } finally { clearTimeout(t); }
+  }
+  await db.from('inbox_conversation_orders').update({ capi_status: capi }).eq('order_batch_id', input.orderBatchId);
+  return { ok: true };
 }

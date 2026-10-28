@@ -5,10 +5,10 @@
 // Replies are sent through the Edge Function meta-send (until Meta approves pages_messaging, only
 // to people with a role on the Meta app). Replies sent from Pancake / Business Suite still appear here.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, ImageIcon, Bell as AdIcon, Zap, X } from 'lucide-react';
+import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, ImageIcon, Bell as AdIcon, Zap, X, Tag, Check } from 'lucide-react';
 import { createClient as createBrowserSupabase } from '@/lib/supabase-browser';
 import * as inbox from './inbox-actions';
-import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint } from './inbox-actions';
+import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint, InboxTag, InboxConvOrder } from './inbox-actions';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
 import type { InboxQuickReply } from './inbox-actions';
 import { useQuickReplies, filterReplies, QuickReplyPopup, QuickReplyManager } from './QuickReplies';
@@ -16,7 +16,7 @@ import { useQuickReplies, filterReplies, QuickReplyPopup, QuickReplyManager } fr
 const HAIR = '#EFE9CF';
 const PALE = '#FBF8EF';
 
-export type InboxOrderPrefill = { customerName: string; customerPhone: string; deliveryAddress: string; district: string; channel: string };
+export type InboxOrderPrefill = { customerName: string; customerPhone: string; deliveryAddress: string; district: string; channel: string; conversationId: string; pageName: string };
 
 function initials(name: string | null) {
   const parts = (name ?? '?').trim().split(/\s+/);
@@ -49,6 +49,9 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   const [pageFilter, setPageFilter] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [search, setSearch] = useState('');
+  const [tags, setTags] = useState<InboxTag[]>([]);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState(false);
   const [convs, setConvs] = useState<InboxConversation[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [hasMoreConvs, setHasMoreConvs] = useState(false);
@@ -56,10 +59,14 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   const active = useMemo(() => convs.find(c => c.id === activeId) ?? null, [convs, activeId]);
 
   useEffect(() => { inbox.listInboxPagesAction().then(r => r.pages && setPages(r.pages)); }, []);
+  const reloadTags = useCallback(() => inbox.listInboxTagsAction().then(r => r.tags && setTags(r.tags)), []);
+  useEffect(() => { reloadTags(); }, [reloadTags]);
+  const tagById = useMemo(() => new Map(tags.map(t => [t.id, t])), [tags]);
+  function patchConv(id: string, patch: Partial<InboxConversation>) { setConvs(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c)); }
 
   const loadList = useCallback(async (silent = false) => {
     if (!silent) setLoadingList(true);
-    const r = await inbox.listInboxConversationsAction({ pageId: pageFilter, unreadOnly, search });
+    const r = await inbox.listInboxConversationsAction({ pageId: pageFilter, unreadOnly, search, tagId: tagFilter, waiting });
     if (r.conversations) {
       setConvs(prev => {
         // keep older pages already loaded below the refreshed first page
@@ -73,7 +80,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
     setLoadingList(false);
     const u = await inbox.getInboxUnreadCountAction();
     if (typeof u.count === 'number') onUnreadChange?.(u.count);
-  }, [pageFilter, unreadOnly, search, onUnreadChange]);
+  }, [pageFilter, unreadOnly, search, tagFilter, waiting, onUnreadChange]);
 
   useEffect(() => {
     const t = setTimeout(() => loadList(false), search ? 300 : 0);
@@ -87,7 +94,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   async function loadMoreConvs() {
     const last = convs[convs.length - 1]?.lastAt;
     if (!last) return;
-    const r = await inbox.listInboxConversationsAction({ pageId: pageFilter, unreadOnly, search, before: last });
+    const r = await inbox.listInboxConversationsAction({ pageId: pageFilter, unreadOnly, search, tagId: tagFilter, waiting, before: last });
     if (r.conversations) { setConvs(prev => [...prev, ...r.conversations!]); setHasMoreConvs(r.conversations.length === 30); }
   }
 
@@ -116,7 +123,21 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
           <button style={chipStyle(!pageFilter)} onClick={() => setPageFilter(null)}>{tr('inboxAll')}</button>
           {pages.map(p => <button key={p.pageId} style={chipStyle(pageFilter === p.pageId)} onClick={() => setPageFilter(p.pageId)}>{p.name}</button>)}
           <button style={chipStyle(unreadOnly)} onClick={() => setUnreadOnly(v => !v)}>{tr('inboxUnreadOnly')}</button>
+          <button style={chipStyle(waiting)} onClick={() => setWaiting(v => !v)}>{tr('inboxWaiting')}</button>
         </div>
+        {tags.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {tags.map(t => {
+              const on = tagFilter === t.id;
+              return (
+                <button key={t.id} onClick={() => setTagFilter(on ? null : t.id)} className="flex items-center gap-1"
+                  style={{ height: 26, padding: '0 9px', borderRadius: 999, fontSize: 11.5, fontWeight: on ? 700 : 500, whiteSpace: 'nowrap', backgroundColor: on ? t.color : '#fff', color: on ? '#fff' : INK, border: `1px solid ${on ? t.color : BORDER}` }}>
+                  {!on && <span style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: t.color }} />}{t.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
         {loadingList && <div className="flex justify-center py-8"><Loader2 className="animate-spin" size={20} color={NAVY} /></div>}
@@ -138,6 +159,9 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
                 <span className="flex gap-1 flex-wrap mt-0.5">
                   <span style={{ fontSize: 10.5, fontWeight: 600, color: NAVY, border: '1px solid #C9D9CF', borderRadius: 4, padding: '0 6px' }}>{c.pageName}</span>
                   {c.fromAd && <span style={{ fontSize: 10.5, fontWeight: 600, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 4, padding: '0 6px' }}>{tr('inboxFromAd')}</span>}
+                  {c.tagIds.map(id => tagById.get(id)).filter(Boolean).map(t => (
+                    <span key={t!.id} style={{ fontSize: 10.5, fontWeight: 600, color: '#fff', backgroundColor: t!.color, borderRadius: 4, padding: '0 6px' }}>{t!.name}</span>
+                  ))}
                 </span>
               </span>
               {c.unread > 0 && (
@@ -165,7 +189,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
       {/* Column 2 + 3 */}
       <div className={`${active ? 'flex' : 'hidden lg:flex'} flex-1 min-w-0`}>
         {active
-          ? <Thread key={active.id} conv={active} readOnly={readOnly} onBack={() => setActiveId(null)} onCreateOrder={onCreateOrder} />
+          ? <Thread key={active.id} conv={active} readOnly={readOnly} onBack={() => setActiveId(null)} onCreateOrder={onCreateOrder} tags={tags} onTagsChanged={(ids) => patchConv(active.id, { tagIds: ids })} onTagListChanged={reloadTags} />
           : <div className="flex-1 flex items-center justify-center" style={{ fontSize: 13.5, color: INK_LIGHT, backgroundColor: PALE }}>{tr('inboxPick')}</div>}
       </div>
     </div>
@@ -183,12 +207,14 @@ function ReplyWindow({ lastInboundAt }: { lastInboundAt: string | null }) {
   return <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color, backgroundColor: bg, borderRadius: 999, padding: '3px 10px' }}><Clock size={12} aria-hidden />{text}</span>;
 }
 
-function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversation; readOnly: boolean; onBack: () => void; onCreateOrder: (p: InboxOrderPrefill) => void }) {
+function Thread({ conv, readOnly, onBack, onCreateOrder, tags, onTagsChanged, onTagListChanged }: { conv: InboxConversation; readOnly: boolean; onBack: () => void; onCreateOrder: (p: InboxOrderPrefill) => void; tags: InboxTag[]; onTagsChanged: (ids: string[]) => void; onTagListChanged: () => void }) {
   const { tr, lang } = useL();
   const [msgs, setMsgs] = useState<InboxMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [hint, setHint] = useState<InboxCustomerHint | null>(null);
+  const [orders, setOrders] = useState<InboxConvOrder[] | null>(null);
+  useEffect(() => { inbox.getConversationOrdersAction(conv.id).then(r => setOrders(r.orders ?? [])); }, [conv.id]);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -245,6 +271,8 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
       deliveryAddress: k?.address || '',
       district: k?.district || '',
       channel: conv.channelLabel || '',
+      conversationId: conv.id,
+      pageName: conv.pageName,
     });
   }
 
@@ -268,6 +296,7 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
           </div>
           <div className="hidden sm:block"><ReplyWindow lastInboundAt={conv.lastInboundAt} /></div>
         </div>
+        <TagBar conv={conv} tags={tags} readOnly={readOnly} onChange={onTagsChanged} onTagListChanged={onTagListChanged} />
 
         <div ref={scroller} onScroll={e => { const el = e.currentTarget; stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
           className="flex-1 overflow-y-auto px-3 lg:px-5 py-4 flex flex-col gap-1.5">
@@ -339,6 +368,18 @@ function Thread({ conv, readOnly, onBack, onCreateOrder }: { conv: InboxConversa
             {hint && hint.phones.length === 0 && <div style={{ fontSize: 12.5, color: INK_LIGHT }}>{tr('inboxNoPhone')}</div>}
             {hint && hint.phones.map(p => <div key={p} className="flex items-center gap-1.5" style={{ fontSize: 13, color: INK }}><Phone size={13} aria-hidden /> {p}</div>)}
           </div>
+          {orders && orders.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div style={{ fontSize: 11, fontWeight: 700, color: INK_LIGHT, textTransform: 'uppercase', letterSpacing: '.04em' }}>{tr('inboxConvOrders')}</div>
+              {orders.map(o => (
+                <div key={o.orderBatchId} className="flex items-center gap-2" style={{ fontSize: 12.5, color: INK, border: `1px solid ${HAIR}`, borderRadius: 8, padding: '6px 10px' }}>
+                  <ShoppingBag size={13} color="#1F6B45" aria-hidden />
+                  <span className="flex-1">{new Date(o.createdAt).toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit' })} · {o.source === 'lab' ? tr('inboxOrderLab') : tr('inboxOrderStock')}</span>
+                  <span style={{ fontWeight: 700 }}>{o.value.toLocaleString('vi-VN')}đ</span>
+                </div>
+              ))}
+            </div>
+          )}
           {hint?.known && (
             <div style={{ border: `1px solid ${HAIR}`, borderRadius: 10, padding: '10px 12px', fontSize: 12.5, color: INK }}>
               <div className="flex items-center gap-1.5 mb-1"><span style={{ fontSize: 10.5, fontWeight: 600, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 4, padding: '1px 6px' }}>{tr('inboxKnownCustomer')}</span>
@@ -537,6 +578,76 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
         </button>
       </div>
       {manage && <QuickReplyManager readOnly={readOnly} onClose={() => setManage(false)} />}
+    </div>
+  );
+}
+
+// Tags of the open conversation + a small picker (tap to add/remove, create a new tag inline).
+function TagBar({ conv, tags, readOnly, onChange, onTagListChanged }: { conv: InboxConversation; tags: InboxTag[]; readOnly: boolean; onChange: (ids: string[]) => void; onTagListChanged: () => void }) {
+  const { tr } = useL();
+  const [open, setOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = conv.tagIds;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  async function toggle(id: string) {
+    const on = !current.includes(id);
+    const next = on ? [...current, id] : current.filter(x => x !== id);
+    onChange(next);
+    const r = await inbox.setConversationTagAction(conv.id, id, on);
+    if (r.error) onChange(current);
+  }
+  async function create() {
+    if (!newName.trim()) return;
+    setBusy(true);
+    const r = await inbox.createInboxTagAction(newName);
+    setBusy(false);
+    if (r.tag) { setNewName(''); onTagListChanged(); await toggle(r.tag.id); }
+  }
+
+  const shown = current.map(id => tags.find(t => t.id === id)).filter(Boolean) as InboxTag[];
+  return (
+    <div ref={ref} className="relative flex items-center gap-1.5 flex-wrap px-3 lg:px-4 py-1.5" style={{ backgroundColor: '#fff', borderBottom: `1px solid ${HAIR}` }}>
+      {shown.map(t => (
+        <span key={t.id} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 600, color: '#fff', backgroundColor: t.color, borderRadius: 999, padding: '2px 9px' }}>
+          {t.name}
+          {!readOnly && t.kind === 'manual' && <button onClick={() => toggle(t.id)} aria-label={tr('inboxTagRemove')} style={{ color: '#fff', opacity: 0.85 }}><X size={11} /></button>}
+        </span>
+      ))}
+      {!readOnly && (
+        <button onClick={() => setOpen(v => !v)} className="flex items-center gap-1" style={{ fontSize: 11.5, fontWeight: 600, color: '#8A6D14', border: `1px dashed ${BORDER}`, borderRadius: 999, padding: '2px 9px' }}>
+          <Tag size={11} aria-hidden /> {tr('inboxTagAdd')}
+        </button>
+      )}
+      {!readOnly && shown.length === 0 && <span style={{ fontSize: 11, color: INK_LIGHT }}>{tr('inboxTagHint')}</span>}
+      {open && (
+        <div className="absolute left-3 top-full mt-1 z-30 flex flex-col" style={{ width: 250, maxHeight: 340, background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 12, boxShadow: '0 8px 24px rgba(40,30,10,.14)' }}>
+          <div className="overflow-y-auto py-1">
+            {tags.filter(t => t.kind === 'manual').map(t => {
+              const on = current.includes(t.id);
+              return (
+                <button key={t.id} onClick={() => toggle(t.id)} className="w-full flex items-center gap-2 px-3 py-2 text-left" style={{ fontSize: 13, color: INK, backgroundColor: on ? CREAM : '#fff' }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: t.color, flexShrink: 0 }} />
+                  <span className="flex-1">{t.name}</span>
+                  {on && <Check size={14} color="#1F6B45" aria-hidden />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-1.5 p-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+            <label className="flex-1"><span className="sr-only">{tr('inboxTagNew')}</span>
+              <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') create(); }} maxLength={30} placeholder={tr('inboxTagNew')}
+                className="w-full outline-none" style={{ height: 32, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '0 8px', fontSize: 12.5 }} /></label>
+            <button onClick={create} disabled={busy || !newName.trim()} className="px-2.5" style={{ height: 32, borderRadius: 8, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12, fontWeight: 600, opacity: newName.trim() ? 1 : 0.5 }}>{tr('qrAdd')}</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

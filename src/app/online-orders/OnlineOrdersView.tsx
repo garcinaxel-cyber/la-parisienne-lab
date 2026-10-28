@@ -155,6 +155,9 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
   const [results, setResults] = useState<OnlineProduct[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Set when the form was opened from a Messenger conversation ("Tạo đơn"): the order created next
+  // is linked to that conversation (auto tag + Meta chat purchase). Cleared after one order.
+  const [inboxLink, setInboxLink] = useState<{ conversationId: string; customerName: string; pageName: string } | null>(null);
   const [submitMsg, setSubmitMsg] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -220,6 +223,13 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     const orderDiscount = orderDiscountAmt > 0 ? { kind: orderDiscKind, value: Number(orderDiscValue) } : null;
     const discountFields = { orderDiscount, discountReason: hasDiscount ? discountReason.trim() : null };
     setSubmitting(true); setSubmitMsg(null);
+    const link = inboxLink;
+    const linkInfo = { value: grandTotal, phone: customerPhone || null, name: customerName || null };
+    const linkOrder = (orderBatchId: string | undefined, src: 'lab' | 'shop_stock') => {
+      if (!link || !orderBatchId) return;
+      import('./inbox-actions').then(m => m.linkInboxOrderAction({ conversationId: link.conversationId, orderBatchId, source: src, ...linkInfo })).catch(() => {});
+      setInboxLink(null);
+    };
     if (source === 'shop_stock') {
       const res = await actions.submitShopStockSaleAction({
         shop, channel: channel.trim(), saleDate: deliveryDate,
@@ -233,6 +243,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
       setSubmitMsg({ kind: 'ok', text: tr('okStock') });
+      linkOrder(res.orderBatchId, 'shop_stock');
     } else {
       const res = await actions.submitOnlineOrderAction({
         shop, channel: channel.trim(), deliveryDate, readyTime: readyTime || null,
@@ -246,6 +257,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       });
       setSubmitting(false);
       if (res.error) { setSubmitMsg({ kind: 'error', text: res.error }); return; }
+      linkOrder(res.orderBatchId, 'lab');
       if (res.warning) { setSubmitMsg({ kind: 'warn', text: res.warning }); }
       else setSubmitMsg({ kind: 'ok', text: res.orderRef ? `${tr('okOdoo')}${res.orderRef}` : tr('okSaved') });
     }
@@ -262,6 +274,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     if (p.deliveryAddress) setDeliveryAddress(p.deliveryAddress);
     if (p.district) setDistrict(p.district);
     if (p.channel) setChannel(p.channel);
+    setInboxLink({ conversationId: p.conversationId, customerName: p.customerName, pageName: p.pageName });
     setSubmitMsg(null);
     setTab('order');
   }
@@ -276,6 +289,12 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
       ) : (
       <div className="flex-1 overflow-y-auto pb-20">
         <div className="max-w-xl mx-auto px-4 py-4">
+          {tab === 'order' && !readOnly && inboxLink && (
+            <div className="flex items-center gap-2 mb-3" style={{ fontSize: 12.5, color: '#1F6B45', backgroundColor: '#EAF2EC', border: '1px solid #C9D9CF', borderRadius: 10, padding: '8px 12px' }}>
+              <span className="flex-1">💬 {tr('inboxLinkedTo')} <b>{inboxLink.customerName || '—'}</b> · {inboxLink.pageName}</span>
+              <button onClick={() => setInboxLink(null)} style={{ fontSize: 12, fontWeight: 600, color: '#8A6D14' }}>{tr('inboxUnlink')}</button>
+            </div>
+          )}
           {tab === 'order' && !readOnly && (
             <OrderTab
               source={source} setSource={setSource}

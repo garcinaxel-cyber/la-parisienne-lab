@@ -245,7 +245,7 @@ export async function submitOnlineOrderAction(input: {
   deliveryMode?: 'shop' | 'direct';
   items: OnlineOrderItem[]; fees?: ExtraFeeLineInput[];
   orderDiscount?: OrderDiscountInput; discountReason?: string | null;
-}): Promise<{ ok?: boolean; orderRef?: string | null; warning?: string; error?: string }> {
+}): Promise<{ ok?: boolean; orderBatchId?: string; orderRef?: string | null; warning?: string; error?: string }> {
   const auth = await requireOnlineWriteSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
@@ -408,7 +408,7 @@ export async function submitOnlineOrderAction(input: {
   });
   if (ooErr) {
     revalidatePath('/online-orders');
-    return { ok: true, orderRef: odooResult.order_ref ?? null, warning: `Đơn đã lưu nhưng lỗi ghi thông tin thanh toán: ${ooErr.message}` };
+    return { ok: true, orderBatchId, orderRef: odooResult.order_ref ?? null, warning: `Đơn đã lưu nhưng lỗi ghi thông tin thanh toán: ${ooErr.message}` };
   }
 
   // Extra fees (nến, nón...): never touch Odoo/production — a plain revenue line alongside the
@@ -423,9 +423,9 @@ export async function submitOnlineOrderAction(input: {
 
   revalidatePath('/online-orders');
   if (!odooResult.ok) {
-    return { ok: true, orderRef: null, warning: feeWarning ?? `Đơn đã lưu, sản xuất đã lên lịch, nhưng tạo đơn Odoo thất bại (${odooResult.error}) — admin sẽ tạo thủ công.` };
+    return { ok: true, orderBatchId, orderRef: null, warning: feeWarning ?? `Đơn đã lưu, sản xuất đã lên lịch, nhưng tạo đơn Odoo thất bại (${odooResult.error}) — admin sẽ tạo thủ công.` };
   }
-  return { ok: true, orderRef: odooResult.order_ref ?? null, warning: feeWarning ?? undefined };
+  return { ok: true, orderBatchId, orderRef: odooResult.order_ref ?? null, warning: feeWarning ?? undefined };
 }
 
 
