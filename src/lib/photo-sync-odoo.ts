@@ -130,3 +130,42 @@ export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: b
   const odooSkus = new Set(variants.map(v => v.default_code));
   return { ok: true, commit: opts.commit, items, webSkus: skus.length, notInOdoo: skus.filter(s => !odooSkus.has(s)).length };
 }
+
+// Website photos → lab-app recipe cards (same weekly run). A card (lab_fiche_meta) whose active
+// variants all point to one website photo gets that photo on the card and no per-variant override;
+// otherwise each matched variant carries its own website photo. Cards/variants not on the website
+// keep their app photo. Website tables are only read.
+export async function syncWebsitePhotosToApp(opts: { commit: boolean }): Promise<{ ok: boolean; error?: string; fiches: number; variants: number; changes: string[] }> {
+  const db = service();
+  if (!db) return { ok: false, error: 'Server not configured', fiches: 0, variants: 0, changes: [] };
+  const { data: prods } = await db.from('products').select('id, sku, main_image_url');
+  const { data: wvars } = await db.from('product_variants').select('product_id, sku');
+  const imgByProduct = new Map<string, string | null>((prods ?? []).map((p: any) => [p.id, p.main_image_url ?? null]));
+  const web = new Map<string, string>();
+  for (const p of prods ?? []) if (p.sku?.trim() && p.main_image_url) web.set(p.sku.trim().toUpperCase(), p.main_image_url);
+  for (const v of wvars ?? []) { const img = imgByProduct.get(v.product_id); if (v.sku?.trim() && img) web.set(v.sku.trim().toUpperCase(), img); }
+
+  const { data: fiches } = await db.from('lab_fiche_meta').select('id, image_url').eq('is_active', true);
+  const { data: vars } = await db.from('lab_fiche_variants').select('id, fiche_id, sku, image_url').eq('is_active', true);
+  const byFiche = new Map<string, any[]>();
+  for (const v of vars ?? []) { const a = byFiche.get(v.fiche_id) ?? []; a.push(v); byFiche.set(v.fiche_id, a); }
+  const changes: string[] = []; let fc = 0, vc = 0;
+  for (const f of fiches ?? []) {
+    const vs = byFiche.get(f.id) ?? [];
+    const matched = vs.filter(v => v.sku && web.has(String(v.sku).trim().toUpperCase()));
+    if (!matched.length) continue;
+    const imgs = new Set(matched.map(v => web.get(String(v.sku).trim().toUpperCase())!));
+    if (imgs.size === 1 && matched.length === vs.length) {
+      const img = Array.from(imgs)[0];
+      if (f.image_url !== img) { changes.push(`fiche ${f.id}`); fc++; if (opts.commit) await db.from('lab_fiche_meta').update({ image_url: img }).eq('id', f.id); }
+      for (const v of vs) if (v.image_url) { changes.push(`variant ${v.sku} → photo fiche`); vc++; if (opts.commit) await db.from('lab_fiche_variants').update({ image_url: null }).eq('id', v.id); }
+    } else {
+      for (const v of matched) {
+        const img = web.get(String(v.sku).trim().toUpperCase())!;
+        const shown = v.image_url ?? f.image_url;
+        if (shown !== img) { changes.push(`variant ${v.sku}`); vc++; if (opts.commit) await db.from('lab_fiche_variants').update({ image_url: img === f.image_url ? null : img }).eq('id', v.id); }
+      }
+    }
+  }
+  return { ok: true, fiches: fc, variants: vc, changes: changes.slice(0, 200) };
+}

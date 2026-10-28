@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { syncWebsitePhotosToOdoo } from '@/lib/photo-sync-odoo';
+import { syncWebsitePhotosToOdoo, syncWebsitePhotosToApp } from '@/lib/photo-sync-odoo';
 
 // Weekly website → Odoo photo sync (Axel, 2026-10-28: "une synchro par semaine"). Sunday 2h
 // Hanoi (Sat 19:00 UTC). Reads the website tables only; sends only photos changed since the last
@@ -13,9 +13,10 @@ export async function GET(req: Request) {
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const app = await syncWebsitePhotosToApp({ commit: true });
   const res = await syncWebsitePhotosToOdoo({ commit: true, by: 'synchro hebdo', budgetMs: 240_000 });
   const summary = {
-    ok: res.ok, error: res.error,
+    ok: res.ok, error: res.error, app: { fiches: app.fiches, variants: app.variants, error: app.error },
     updated: res.items.filter(i => i.action === 'update' && !i.error).map(i => i.tmplName),
     failed: res.items.filter(i => i.error).map(i => `${i.tmplName}: ${i.error}`),
     unchanged: res.items.filter(i => i.action === 'unchanged').length,
