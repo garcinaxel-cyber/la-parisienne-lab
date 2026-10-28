@@ -644,7 +644,7 @@ function TagBar({ conv, tags, readOnly, onChange, onTagListChanged }: { conv: In
             <label className="flex-1"><span className="sr-only">{tr('inboxTagNew')}</span>
               <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') create(); }} maxLength={30} placeholder={tr('inboxTagNew')}
                 className="w-full outline-none" style={{ height: 32, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '0 8px', fontSize: 12.5 }} /></label>
-            <button onClick={create} disabled={busy || !newName.trim()} className="px-2.5" style={{ height: 32, borderRadius: 8, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12, fontWeight: 600, opacity: newName.trim() ? 1 : 0.5 }}>{tr('qrAdd')}</button>
+            <button onClick={create} disabled={busy || !newName.trim()} className="px-2.5" style={{ height: 32, borderRadius: 8, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12, fontWeight: 600, opacity: newName.trim() ? 1 : 0.5 }}>{tr('inboxTagCreate')}</button>
           </div>
         </div>
       )}
