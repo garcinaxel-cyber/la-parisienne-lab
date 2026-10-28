@@ -40,8 +40,18 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
 
     const { data: orderLines } = await supabase.from('lab_order_lines')
       .select('order_ref, source_type, delivery_date, shop_name').in('import_id', importIds);
-    const allOrders = Array.from(new Map((orderLines ?? []).map((l: any) =>
-      [l.order_ref, { order_ref: l.order_ref, source_type: l.source_type, delivery_date: l.delivery_date, shop_name: l.shop_name }])).values());
+    const orderMap = new Map<string, { order_ref: string; source_type: string; delivery_date: string; shop_name: string | null }>((orderLines ?? []).map((l: any) =>
+      [l.order_ref, { order_ref: l.order_ref, source_type: l.source_type, delivery_date: l.delivery_date, shop_name: l.shop_name }]));
+    // 100%-packaging orders (no production line, so no lab_order_lines row) used to be invisible
+    // here: written once by odoo-auto-sync.ts's packagingOnly path and never re-read, so neither a
+    // line removed in Odoo nor an exact fractional qty ever reached them (2026-10-28 audit,
+    // S04513 / REP/02053). Pick them up from their own packaging rows for the same dates.
+    const { data: pkgOnlyRows } = await supabase.from('lab_order_packaging_lines')
+      .select('order_ref, source_type, delivery_date, shop_name').in('delivery_date', dates);
+    for (const r of (pkgOnlyRows ?? []) as any[]) {
+      if (!orderMap.has(r.order_ref)) orderMap.set(r.order_ref, { order_ref: r.order_ref, source_type: r.source_type, delivery_date: r.delivery_date, shop_name: r.shop_name });
+    }
+    const allOrders = Array.from(orderMap.values());
     if (!allOrders.length) return { ...res, ok: true };
 
     // Cost control: only ever call Odoo again for an order_ref once its delivery date has
@@ -76,6 +86,10 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
     const replRefs = orders.filter(o => o.source_type === 'replenishment').map(o => o.order_ref);
 
     const rows: { order_ref: string; delivery_date: string; source_type: string; shop_name: string | null; sku: string; product_name_vi: string; qty: number; note: string | null }[] = [];
+    // Refs whose Odoo lines were read in full this pass — the only ones where a packaging row
+    // missing from Odoo can safely be treated as "removed in Odoo" (never on a partial read).
+    const completeRefs = new Set<string>();
+    const LINE_LIMIT = 5000;
 
     if (salesRefs.length) {
       const soOrders = await tmo(odooExecute<any[]>('sale.order', 'search_read',
@@ -85,7 +99,8 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       const ids = soOrders.map((o: any) => o.id);
       if (ids.length) {
         const lines = await tmo(odooExecute<any[]>('sale.order.line', 'search_read',
-          [[['order_id', 'in', ids]]], { fields: ['order_id', 'product_id', 'product_uom_qty'], limit: 5000 }), 25000, 'so-lines');
+          [[['order_id', 'in', ids]]], { fields: ['order_id', 'product_id', 'product_uom_qty'], limit: LINE_LIMIT }), 25000, 'so-lines');
+        if (Array.isArray(lines) && lines.length < LINE_LIMIT) for (const o of soOrders) completeRefs.add(o.name);
         // sale.order.line has no native `note` field for packaging rows (unlike replenishment
         // lines) — a salesperson's note here would be a separate line_note row, not worth the
         // extra query for packaging-only items. Left null on purpose.
@@ -100,7 +115,8 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
       const ids = reqs.map((r: any) => r.id);
       if (ids.length) {
         const lines = await tmo(odooExecute<any[]>('stock.replenishment.request.line', 'search_read',
-          [[['request_id', 'in', ids]]], { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: 5000 }), 25000, 'repl-lines');
+          [[['request_id', 'in', ids]]], { fields: ['request_id', 'product_id', 'quantity_requested', 'note'], limit: LINE_LIMIT }), 25000, 'repl-lines');
+        if (Array.isArray(lines) && lines.length < LINE_LIMIT) for (const r of reqs) completeRefs.add(r.name);
         rows.push(...(await mapExcludedLines(lines, 'quantity_requested', 'request_id', idByRef, excludedSet, orders, 'replenishment')));
       }
     }
@@ -128,6 +144,14 @@ export async function syncOrderPackagingLines(supabase: SupabaseClient, dates: s
         .upsert(Array.from(rowsAgg.values()).map(r => ({ ...r, synced_at: new Date().toISOString() })), { onConflict: 'order_ref,sku' });
       if (error) return { ...res, error: error.message };
     }
+    // Lines removed in Odoo (or set to 0) — BUG FIX 2026-10-28 (REP/2026/02238, Axel: the
+    // manager removed a strawberry purée from his draft, the app kept showing it). This sync used
+    // to only ever upsert, so a removed packaging line stayed forever, in this table AND as a
+    // frozen copy in the delivery checklist (14 phantom lines since August: 7 zeroed by hand,
+    // 6 ticked OK and validated with no Odoo move). See removeStalePackagingLines.
+    try { await removeStalePackagingLines(supabase, orders.map(o => o.order_ref), completeRefs, rowsAgg); }
+    catch (e) { console.error('[packaging-sync] stale-line cleanup failed', e); }
+
     // Mark every order this pass actually checked as synced — including ones with zero
     // packaging lines — so they're never re-queried against Odoo again.
     await supabase.from('lab_order_packaging_sync_state')
@@ -182,4 +206,59 @@ async function mapExcludedLines(
     });
   }
   return out;
+}
+
+// Removes packaging rows that Odoo no longer has, for orders whose Odoo lines were read in full
+// this pass. Safety rules:
+//  - only refs in completeRefs (Odoo answered, read under the line limit) — a timeout or a
+//    partial read never empties an order;
+//  - an order already validated in the delivery check is left untouched (history);
+//  - in the checklist, a packaging line nobody has counted yet is deleted; one already counted
+//    keeps its count and gets qty_expected = 0, so the gap shows instead of erasing the work;
+//  - a SKU still demanded through lab_order_lines (an excluded SKU on a production line, merged
+//    into the same packaging bucket by delivery-check.ts) is never touched in the checklist.
+async function removeStalePackagingLines(
+  supabase: SupabaseClient, refs: string[], completeRefs: Set<string>,
+  current: Map<string, { order_ref: string; sku: string }>,
+) {
+  const checkRefs = refs.filter(r => completeRefs.has(r));
+  if (!checkRefs.length) return;
+  const { data: existing } = await supabase.from('lab_order_packaging_lines')
+    .select('id, order_ref, sku').in('order_ref', checkRefs);
+  const stale = ((existing ?? []) as any[]).filter(r => !current.has(`${r.order_ref}||${r.sku}`));
+  if (!stale.length) return;
+
+  const staleRefs = Array.from(new Set(stale.map(r => r.order_ref)));
+  const { data: headers } = await supabase.from('lab_delivery_orders')
+    .select('id, order_ref, validated_at').in('order_ref', staleRefs);
+  const validatedRefs = new Set(((headers ?? []) as any[]).filter(h => h.validated_at).map(h => h.order_ref));
+  const toRemove = stale.filter(r => !validatedRefs.has(r.order_ref));
+  if (!toRemove.length) return;
+
+  const { error: delErr } = await supabase.from('lab_order_packaging_lines')
+    .delete().in('id', toRemove.map(r => r.id));
+  if (delErr) throw delErr;
+
+  const { data: prodDemand } = await supabase.from('lab_order_lines')
+    .select('order_ref, product_sku, qty').in('order_ref', staleRefs).gt('qty', 0);
+  const demanded = new Set(((prodDemand ?? []) as any[]).map(l => `${l.order_ref}||${l.product_sku}`));
+  const headerIdsByRef = new Map<string, string[]>();
+  for (const h of (headers ?? []) as any[]) {
+    if (h.validated_at) continue;
+    headerIdsByRef.set(h.order_ref, [...(headerIdsByRef.get(h.order_ref) ?? []), h.id]);
+  }
+  for (const r of toRemove) {
+    if (demanded.has(`${r.order_ref}||${r.sku}`)) continue;
+    const ids = headerIdsByRef.get(r.order_ref);
+    if (!ids?.length) continue;
+    const { data: checkLines } = await supabase.from('lab_delivery_check_lines')
+      .select('id, qty_checked').in('delivery_order_id', ids).eq('category', 'packaging').eq('sku', r.sku);
+    for (const cl of (checkLines ?? []) as any[]) {
+      if (cl.qty_checked === null || cl.qty_checked === undefined) {
+        await supabase.from('lab_delivery_check_lines').delete().eq('id', cl.id);
+      } else {
+        await supabase.from('lab_delivery_check_lines').update({ qty_expected: 0 }).eq('id', cl.id);
+      }
+    }
+  }
 }

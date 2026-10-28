@@ -510,7 +510,11 @@ for (const l of soLines) {
   if (!order) continue;
   if (alreadyImported.has(order.name)) { skippedRefs.add(order.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
-  const qty = Math.round(Number(l.product_uom_qty ?? 0));
+  // Packaging / matières / OEM lines keep their exact quantity (0.2 kg, 8.4 kg…) — rounding
+  // them to an integer silently dropped 0.2–0.3 kg lines and turned 0.5 into 1 on 100%-packaging
+  // orders (2026-10-28 audit: REP/02053, REP/02054, S04471, S04513). Production keeps Math.round.
+  const rawQty = Number(l.product_uom_qty ?? 0);
+  const qty = excludedSet.has(prod.sku) ? Math.round(rawQty * 1000) / 1000 : Math.round(rawQty);
   if (!prod.sku || !qty) continue;
   if (excludedSet.has(prod.sku)) {
     (excludedSoLinesByRef[order.name] ??= []).push({
@@ -551,7 +555,11 @@ for (const l of replLines) {
   if (!req) continue;
   if (alreadyImported.has(req.name)) { skippedRefs.add(req.name); continue; }
   const prod = skuByProductId[l.product_id?.[0]] ?? { sku: '', name: '' };
-  const qty = Math.round(Number(l.quantity_requested ?? 0));
+  // Packaging / matières / OEM lines keep their exact quantity (0.2 kg, 8.4 kg…) — rounding
+  // them to an integer silently dropped 0.2–0.3 kg lines and turned 0.5 into 1 on 100%-packaging
+  // orders (2026-10-28 audit: REP/02053, REP/02054, S04471, S04513). Production keeps Math.round.
+  const rawQty = Number(l.quantity_requested ?? 0);
+  const qty = excludedSet.has(prod.sku) ? Math.round(rawQty * 1000) / 1000 : Math.round(rawQty);
   if (!prod.sku || !qty) continue;
   if (excludedSet.has(prod.sku)) {
     (excludedReplLinesByRef[req.name] ??= []).push({
