@@ -3278,7 +3278,11 @@ function ProductionCard({
   // Breakdown collapsed by default on phones (open on sm+ via CSS)
   const [showBreakdown, setShowBreakdown] = useState(false);
   const canAdvance = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
-  const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra;
+  // "Có sẵn" (served from stock) only for the families really kept in stock (Axel, 2026-10-28:
+  // "les seuls produits pouvant être en stock pour la prod sont chocolat, tira, maca et biscuit").
+  // On made-to-order products it was used for "made yesterday for tomorrow" and created gaps.
+  const canMarkStock = !readOnly && !a.cancelled && ['pending', 'in_progress'].includes(a.status) && !a.is_extra
+    && STORABLE_CATS.includes(a.category_name_vi ?? '');
   const canBlock = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
   const breakdown: BreakdownItem[] = Array.isArray(a.breakdown) ? a.breakdown : [];
   const late = isLate(a) && !readOnly && !!onDoneAndSend;
