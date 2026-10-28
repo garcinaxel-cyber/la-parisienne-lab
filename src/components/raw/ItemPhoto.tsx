@@ -41,7 +41,8 @@ export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false }: { 
   const box = { width: size, height: size, minWidth: size };
 
   if (url) return <img src={url} alt="" loading="lazy" decoding="async" className="rounded-md object-cover border border-[#E8D9C0] bg-white shrink-0" style={box} />;
-  if (!canAdd || !tmplId) return <span className="rounded-md bg-[#F5EFE6] border border-[#E8D9C0] inline-block shrink-0" style={box} aria-hidden />;
+  // Until the list is loaded, a neutral square (no camera flashing on items that do have a photo).
+  if (!cache || !canAdd || !tmplId) return <span className="rounded-md bg-[#F5EFE6] border border-[#E8D9C0] inline-block shrink-0" style={box} aria-hidden />;
 
   const pick = async (f: File | undefined) => {
     if (!f) return;
