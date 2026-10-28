@@ -1,6 +1,6 @@
 // Raw material & packaging photos (Axel, 2026-10-28: "mettre les photos raw materials et
 // packaging odoo sur la lab app … inventaires, réceptions, packaging des shops").
-// Source = the Odoo product photo, copied into storage as a light JPEG (lab_item_photos), so the
+// Source = the Odoo product photo, copied into storage as a 160 px JPEG thumbnail (~5 KB) (lab_item_photos), so the
 // app shows a plain image URL and never calls Odoo on screen. Refreshed by the weekly job when the
 // Odoo product changed. Staff can add a photo where there is none (addItemPhoto) — it goes to the
 // app at once and to Odoo in the background. Finished products are NOT handled here: their photo
@@ -9,6 +9,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
 
 const BUCKET = 'lab-images';
+// App copy = small thumbnail only (lists show it at 36–44 px): ~5 KB per photo, so screens stay light.
+const THUMB = 160;
 const NO_MAIL = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
 
 export function itemPhotoService() {
@@ -67,7 +69,7 @@ export async function syncOdooItemPhotos(opts: { commit: boolean; budgetMs?: num
       for (const im of imgs) {
         try {
           if (!im.image_512) continue;
-          const jpg = await toJpeg(Buffer.from(im.image_512, 'base64'), 400);
+          const jpg = await toJpeg(Buffer.from(im.image_512, 'base64'), THUMB);
           const url = await store(db, im.id, jpg);
           await db.from('lab_item_photos').upsert({ tmpl_id: im.id, sku: scope.get(im.id) ?? null, image_url: url, source: 'odoo', odoo_write_date: im.write_date, uploaded_at: new Date().toISOString() }, { onConflict: 'tmpl_id' });
           copied++;
@@ -84,7 +86,7 @@ export async function addItemPhoto(input: { tmplId: number; sku: string | null; 
   if (!db) return { ok: false, error: 'Server not configured' };
   const { data: row } = await db.from('lab_item_photos').select('tmpl_id').eq('tmpl_id', input.tmplId).maybeSingle();
   if (row) return { ok: false, error: 'Đã có ảnh · A photo already exists' };
-  const small = await toJpeg(input.data, 400);
+  const small = await toJpeg(input.data, THUMB);
   const url = await store(db, input.tmplId, small);
   await db.from('lab_item_photos').insert({ tmpl_id: input.tmplId, sku: input.sku, image_url: url, source: 'staff', uploaded_by_name: input.byName });
   const big = await toJpeg(input.data, 1200);

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw, ClipboardCheck } from 'lucide-react';
 import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, packHint } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
+import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
@@ -336,6 +337,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
             const n = qty[m.tmplId] ?? 0; const u = unit[m.tmplId] ?? -1;
             return (
               <div key={m.tmplId} className="flex items-center gap-2.5 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                <ItemPhoto tmplId={m.tmplId} sku={m.sku} size={44} canAdd />
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-bold leading-snug">{rawName(m, lang)}</div>
                   <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>{subLabel(m.type, m.sub, lang)} · {m.sku ?? '—'}{mode === 'request' ? ` · ${m.uom}` : ''}</div>
@@ -456,7 +458,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                   })()}
                   {w.note && <div className="text-[12px] pb-1.5" style={{ color: '#6B7280' }}>“{w.note}”</div>}
                   {w.lines.map(l => (
-                    <div key={l.id} className="flex items-baseline gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+                    <div key={l.id} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} />
                       <div className="flex-1 min-w-0">
                         <div className="text-[13.5px] font-bold leading-snug">{lineName(l)}</div>
                         {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
@@ -523,7 +526,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <div className="flex justify-between items-baseline px-1 pt-1"><b className="text-[13px]">{title}</b><span className="text-[11.5px]" style={{ color: '#6B7280' }}>{ls.length}</span></div>
               {ls.map(l => (
                 <div key={l.id} className="bg-white rounded-xl px-3 py-2.5" style={{ border: `1px solid ${BORDER}` }}>
-                  <div className="flex items-baseline gap-2"><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px] text-right">{fmtQty(l.qty)} {l.uom}{packHint(l) && <span className="block text-[11px] font-semibold" style={{ color: GOLD_TEXT }}>{packHint(l)}</span>}</b></div>
+                  <div className="flex items-center gap-2"><ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} /><b className="flex-1 text-[13px]">{lineName(l)}</b><b className="tabular-nums text-[13px] text-right">{fmtQty(l.qty)} {l.uom}{packHint(l) && <span className="block text-[11px] font-semibold" style={{ color: GOLD_TEXT }}>{packHint(l)}</span>}</b></div>
                   <div className="text-[11px] mb-2" style={{ color: '#6B7280' }}>{vnDayTime(l.createdAt).day} {vnDayTime(l.createdAt).time} · {l.requestedBy}{l.poRef ? ` · PO ${l.poRef}` : ''}{l.brand ? ` · ${l.brand}` : ''}
                     {l.approvedBy && <> · <b style={{ color: NAVY }}>✓ {l.approvedBy}</b>{l.requestedQty != null ? ` (${L('xin', 'asked')} ${fmtQty(l.requestedQty)})` : ''}</>}
                     {l.rejectedByLead && <> · <b style={{ color: LATE }}>{L(`${l.cancelledBy ?? lead} không duyệt`, `not approved by ${l.cancelledBy ?? lead}`)}</b>{l.rejectReason ? ` — ${l.rejectReason}` : ''}</>}</div>

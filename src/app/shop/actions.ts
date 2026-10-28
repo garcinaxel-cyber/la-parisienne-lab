@@ -1999,6 +1999,12 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
     const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku, image_url');
     const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
     const imageBySku = new Map<string, string | null>((excludedRows ?? []).map((r: any) => [r.sku, r.image_url ?? null]));
+    // Fallback: the item's Odoo photo copied into the app (Axel, 2026-10-28 — "que les shops aient
+    // les photos des packagings"). A photo set by hand in /admin/excluded still wins.
+    if (excludedSkus.length) {
+      const { data: itemPhotos } = await supabase.from('lab_item_photos').select('sku, image_url').in('sku', excludedSkus);
+      for (const r of itemPhotos ?? []) if (r.sku && !imageBySku.get(r.sku)) imageBySku.set(r.sku, r.image_url);
+    }
     if (excludedSkus.length && odooConfigured()) {
       try {
         const domain: any[] = q

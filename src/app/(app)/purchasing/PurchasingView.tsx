@@ -16,6 +16,7 @@ import {
   getPendingWithdrawalsAction, confirmWithdrawalAction, refuseTransferAction, addStorageRequestAction,
 } from './actions';
 import { Track } from '@/components/raw/PurchaseTrack';
+import ItemPhoto from '@/components/raw/ItemPhoto';
 import ReceiveTab from '@/components/raw/ReceiveTab';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -604,6 +605,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                 <div className="mt-1.5">
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} />
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
                         {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
@@ -703,7 +705,8 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                 <>
                   <div className="mt-1.5">
                     {w.lines.map(l => (
-                      <div key={l.id} className="flex items-baseline gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                      <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                        <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} />
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
                           {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
@@ -823,8 +826,8 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                 <div key={l.id} style={{ borderTop: `1px solid ${HAIR}` }}>
                   <button onClick={() => setOpen(s => ({ ...s, [l.id]: !s[l.id] }))} className="w-full text-left grid gap-3 items-center px-4 py-2.5 hover:bg-[#FFFDF6]" style={{ gridTemplateColumns: 'minmax(56px,70px) minmax(160px,1.4fr) minmax(120px,1fr) minmax(160px,200px) 18px' }}>
                     <div><b className="block text-[12.5px] tabular-nums">{dt.day}</b><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{dt.time}</span></div>
-                    <div className="min-w-0"><b className="block text-[13px] truncate">{nm(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
-                      <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div>
+                    <div className="min-w-0 flex items-center gap-2"><ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} /><div className="min-w-0"><b className="block text-[13px] truncate">{nm(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
+                      <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div></div>
                     <div className="text-[12px] min-w-0">{l.vendorName ? <span className="truncate block">{shortVendor(l.vendorName)}</span> : <span className="font-bold" style={{ color: LATE }}>{L('Chưa có NCC', 'No vendor yet')}</span>}
                       <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.poRef ? `PO ${l.poRef}` : l.status === 'pending' && age >= 2 ? <span className="font-extrabold rounded px-1" style={{ backgroundColor: '#FEF3F2', color: LATE }}>{L(`chờ ${age} ngày`, `waiting ${age} days`)}</span> : ''}</span></div>
                     <Track l={l} L={L} />
@@ -1057,7 +1060,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
             <tbody>
               {rows.slice(0, 400).map(m => (
                 <tr key={m.tmplId} style={{ borderTop: `1px solid ${HAIR}` }}>
-                  <td className="px-3 py-2"><b>{rawName(m, lang)}</b>{lang === 'vi' && m.nameVi && m.nameVi !== m.name && <div className="text-[11px]" style={{ color: '#6B7280' }}>{m.name}</div>}<div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></td>
+                  <td className="px-3 py-2"><div className="flex items-center gap-2.5"><ItemPhoto tmplId={m.tmplId} sku={m.sku} size={40} canAdd /><div className="min-w-0"><b>{rawName(m, lang)}</b>{lang === 'vi' && m.nameVi && m.nameVi !== m.name && <div className="text-[11px]" style={{ color: '#6B7280' }}>{m.name}</div>}<div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{m.sku ?? '—'} · {m.vendorName ? shortVendor(m.vendorName) : L('chưa có NCC', 'no vendor')}{!m.purchased ? ` · ${L('chưa từng mua', 'never bought')}` : ''}</div></div></div></td>
                   <td className="px-3 py-2">{m.uom}</td>
                   <td className="px-3 py-2"><select value={m.type} onChange={e => { const t = e.target.value as RawType; patch(m, { type: t, sub: Object.keys(RAW_TYPES[t].subs)[0] }); }} className="rounded-md px-1.5 py-1 text-xs bg-white" style={{ border: `1px solid ${HAIR}` }}>
                     {(Object.keys(RAW_TYPES) as RawType[]).map(t => <option key={t} value={t}>{typeLabel(t, lang)}</option>)}</select></td>

@@ -10,6 +10,7 @@
 //     catalogue unit like the withdrawal slips;
 //   * a listed product nobody counts is left out of the count with a reason; "= 0" is said explicitly;
 //     the team lead confirms.
+import ItemPhoto from '@/components/raw/ItemPhoto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Check, Loader2, ClipboardCheck, AlertTriangle, Trash2, AlertCircle, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
@@ -297,11 +298,14 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           <div key={t} className="bg-white rounded-2xl px-3" style={{ border: `1px solid ${BORDER}` }}>
             <div className="text-[10.5px] font-extrabold uppercase tracking-wide pt-2.5 pb-1" style={{ color: '#9CA3AF' }}>{lang === 'vi' ? RAW_TYPES[t].vi : RAW_TYPES[t].en}</div>
             {ls.map(l => { const es = entries.filter(e => e.tmplId === l.tmplId); return (
-              <button key={l.tmplId} onClick={() => startDraft(l.tmplId)} className="w-full flex items-center gap-2 py-2.5 text-left" style={{ borderTop: `1px solid ${HAIR}` }}>
+              <div key={l.tmplId} className="flex items-center gap-2 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={40} canAdd />
+                <button onClick={() => startDraft(l.tmplId)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
                 <div className="flex-1 min-w-0"><div className="text-[13px] font-bold leading-snug">{lineName(l)}</div>
                   <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{es.length ? `${es.length} ${L('lượt', es.length > 1 ? 'entries' : 'entry')} · ${Array.from(new Set(es.map(e => e.countedByName))).join(', ')}` : l.sku ?? '—'}</div></div>
                 {chip(l)}
-              </button>); })}
+                </button>
+              </div>); })}
           </div>))}
         {!adding ? <button onClick={() => setAdding(true)} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm khác', 'Other product')}</button>
