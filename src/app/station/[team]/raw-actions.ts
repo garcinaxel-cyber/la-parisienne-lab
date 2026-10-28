@@ -329,6 +329,26 @@ export async function reopenForApprovalAction(team: string, lineId: string): Pro
   return { ok: true };
 }
 
+// The chef cancels his own team's line himself (Axel, 2026-10-28): allowed while no purchase order
+// exists in Odoo for it — waiting for the lead, or in the purchasing queue without a PO (not even a
+// draft). Once Ms Flavor has put it on a PO, the chef must ask her to cancel it.
+export async function cancelOwnRequestLineAction(team: string, lineId: string): Promise<{ ok?: boolean; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const [l] = await teamLines(db, team, [lineId]);
+  if (!l) return { error: 'Not found' };
+  const { data, error } = await db.from('lab_purchase_request_lines')
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by_name: a.name || null })
+    .eq('id', l.id).in('status', ['to_approve', 'pending']).is('po_odoo_id', null).select('id');
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: L_TOO_LATE };
+  return { ok: true };
+}
+
+const L_TOO_LATE = 'Đã có đơn mua hàng (PO) trên Odoo — hãy nhờ Ms Flavor huỷ. / A PO already exists in Odoo — ask Ms Flavor to cancel it.';
 const L_FORBIDDEN = 'Chỉ trưởng nhóm mới duyệt được.';
 
 export async function uploadRawPhotoAction(formData: FormData): Promise<{ url?: string; error?: string }> {
