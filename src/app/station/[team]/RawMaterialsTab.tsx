@@ -15,7 +15,7 @@ import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
-  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, type TeamRequestsMeta,
+  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, type TeamRequestsMeta,
 } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -217,6 +217,17 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   async function reopen(l: PurchaseLine) {
     const res = await reopenForApprovalAction(team, l.id);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
+    loadMine();
+  }
+  // Chef cancels his own line while no PO exists in Odoo (Axel, 2026-10-28). Two taps: ask, then confirm.
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+  const canSelfCancel = (l: PurchaseLine) => (l.status === 'to_approve' || l.status === 'pending') && !l.poOdooId;
+  async function selfCancel(l: PurchaseLine) {
+    setBusy(true);
+    const res = await cancelOwnRequestLineAction(team, l.id);
+    setBusy(false); setConfirmCancel(null);
+    if (res.error) { setMsg({ ok: false, text: res.error }); loadMine(); return; }
+    setMsg({ ok: true, text: L(`Đã huỷ: ${lineName(l)}`, `Cancelled: ${lineName(l)}`) });
     loadMine();
   }
   const pending = mine.filter(l => l.status === 'pending');
@@ -533,6 +544,18 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                   <Track l={l} L={L} />
                   {meta.canApprove && ((l.status === 'cancelled' && l.rejectedByLead) || (l.status === 'pending' && l.approvedAt)) && (
                     <button onClick={() => reopen(l)} className="inline-flex items-center gap-1 text-[11.5px] font-bold mt-1.5" style={{ color: GOLD_TEXT }}><RotateCcw size={12} /> {L('Hoàn tác (chờ duyệt lại)', 'Undo (back to approval)')}</button>
+                  )}
+                  {canSelfCancel(l) && (confirmCancel === l.id ? (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[11.5px] flex-1" style={{ color: LATE }}>{L('Huỷ dòng này?', 'Cancel this line?')}</span>
+                      <button disabled={busy} onClick={() => selfCancel(l)} className="rounded-lg px-3 py-1.5 text-[12px] font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: LATE }}>{busy ? <Loader2 size={13} className="animate-spin" /> : L('Huỷ', 'Cancel')}</button>
+                      <button onClick={() => setConfirmCancel(null)} className="rounded-lg px-3 py-1.5 text-[12px] font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Không', 'No')}</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmCancel(l.id)} className="inline-flex items-center gap-1 text-[11.5px] font-bold mt-1.5 ml-3" style={{ color: LATE }}><X size={12} /> {L('Huỷ yêu cầu', 'Cancel request')}</button>
+                  ))}
+                  {(l.status === 'pending' || l.status === 'ordered') && !!l.poOdooId && (
+                    <div className="text-[11px] mt-1.5" style={{ color: '#6B7280' }}>{L('Đã có PO trên Odoo — muốn huỷ hãy nhờ Ms Flavor.', 'PO already in Odoo — ask Ms Flavor to cancel.')}</div>
                   )}
                 </div>
               ))}
