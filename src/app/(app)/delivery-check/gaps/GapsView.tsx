@@ -392,7 +392,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
               <div className="rounded-lg bg-gray-50 px-3.5 py-2.5">
                 <div className="text-[11px] font-bold text-gray-500">{vi ? 'SHOP NHẬN' : 'RECEIVED'}</div>
                 <div className="text-xl font-bold" style={{ color: current.kind === 'extra' ? '#1F5FAD' : '#B42318' }}>×{current.received}{current.damaged > 0 ? ` (${current.damaged} ${vi ? 'hỏng' : 'damaged'})` : ''}</div>
-                <div className="text-xs text-gray-500">{current.confirmedBy ?? '—'}{current.shopNote ? ` · “${current.shopNote}”` : ''}</div>
+                <div className="text-xs text-gray-500">{current.confirmedBy ?? '—'}{current.confirmedAt ? ` · ${new Date(current.confirmedAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}{current.shopNote ? ` · “${current.shopNote}”` : ''}</div>
               </div>
             </div>
             {current.photoUrls.length > 0 && (
