@@ -117,7 +117,7 @@ export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: b
           body: `Photo remplacée par la photo officielle du site (synchro lab-app) — ancienne photo gardée en pièce jointe — demandé par Axel le ${today.split('-').reverse().join('/')}.`,
           message_type: 'comment', subtype_xmlid: 'mail.mt_note',
         });
-        await db.from('lab_odoo_photo_sync').upsert({ tmpl_id: it.tmplId, skus: it.skus, web_url: it.webUrl, backup_attachment_id: backupId, variant_backups: variantBackups, synced_at: new Date().toISOString(), synced_by: opts.by }, { onConflict: 'tmpl_id' });
+        await db.from('lab_odoo_photo_sync').upsert({ tmpl_id: it.tmplId, skus: it.skus, web_url: it.webUrl, ...(backupId ? { backup_attachment_id: backupId } : {}), ...(variantBackups.length ? { variant_backups: variantBackups } : {}), synced_at: new Date().toISOString(), synced_by: opts.by }, { onConflict: 'tmpl_id' });
         it.backupAttachmentId = backupId;
       } catch (e: any) {
         it.error = String(e?.message ?? e).slice(0, 300);
