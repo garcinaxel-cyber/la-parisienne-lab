@@ -40,7 +40,7 @@ async function fetchBase64(url: string): Promise<{ b64: string; mime: string }> 
   return { b64: jpg.toString('base64'), mime: 'image/jpeg' };
 }
 
-export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: boolean; by: string; force?: boolean }): Promise<PhotoSyncResult> {
+export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: boolean; by: string; force?: boolean; budgetMs?: number }): Promise<PhotoSyncResult> {
   const db = service();
   if (!db) return { ok: false, commit: opts.commit, error: 'Server not configured', items: [], webSkus: 0, notInOdoo: 0 };
   if (opts.commit && !odooWriteConfigured()) return { ok: false, commit: true, error: 'Odoo write not configured', items: [], webSkus: 0, notInOdoo: 0 };
@@ -93,7 +93,10 @@ export async function syncWebsitePhotosToOdoo(opts: { skus?: string[]; commit: b
 
   if (opts.commit) {
     const today = new Date().toISOString().slice(0, 10);
+    const t0 = Date.now();
     for (const it of items.filter(i => i.action === 'update')) {
+      // Time budget (weekly cron): what is left is simply done on the next run.
+      if (opts.budgetMs && Date.now() - t0 > opts.budgetMs) { it.error = 'reporté (budget de temps)'; continue; }
       try {
         const g = byTmpl.get(it.tmplId)!;
         // Rollback copy of the template's current photo.
