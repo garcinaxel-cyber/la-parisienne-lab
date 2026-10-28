@@ -65,11 +65,13 @@ export async function syncOdooItemPhotos(opts: { commit: boolean; budgetMs?: num
     const t0 = Date.now();
     for (const c of chunks(todo, 10)) {
       if (opts.budgetMs && Date.now() - t0 > opts.budgetMs) break;
-      const imgs = await odooExecute<any[]>('product.template', 'read', [c.map(t => t.id)], { fields: ['id', 'image_512', 'write_date'] });
+      const imgs = await odooExecute<any[]>('product.template', 'read', [c.map(t => t.id)], { fields: ['id', 'image_512', 'image_128', 'write_date'] });
       for (const im of imgs) {
         try {
-          if (!im.image_512) continue;
-          const jpg = await toJpeg(Buffer.from(im.image_512, 'base64'), THUMB);
+          // image_512 can come back empty (e.g. SVG or odd formats): fall back to image_128.
+          const src = im.image_512 || im.image_128;
+          if (!src) { failed.push(`${im.id}: no image data`); continue; }
+          const jpg = await toJpeg(Buffer.from(src, 'base64'), THUMB);
           const url = await store(db, im.id, jpg);
           await db.from('lab_item_photos').upsert({ tmpl_id: im.id, sku: scope.get(im.id) ?? null, image_url: url, source: 'odoo', odoo_write_date: im.write_date, uploaded_at: new Date().toISOString() }, { onConflict: 'tmpl_id' });
           copied++;
