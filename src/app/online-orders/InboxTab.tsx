@@ -438,7 +438,10 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
   const items = useMemo(() => (slash ? filterReplies(replies, slash.q).slice(0, 30) : []), [replies, slash]);
 
   const hours = conv.lastInboundAt ? (Date.now() - new Date(conv.lastInboundAt).getTime()) / 3600_000 : Infinity;
-  const closed = hours >= 24 * 7;
+  // Without Meta's Human Agent feature (not requested yet), Facebook only allows a reply within 24 h
+  // of the customer's last message. Set to true once Human Agent is approved (then 7 days).
+  const HUMAN_AGENT = false;
+  const closed = hours >= (HUMAN_AGENT ? 24 * 7 : 24);
   const uploading = atts.some(a => a.status === 'uploading');
   const ready = atts.filter(a => a.status === 'ready');
   const canSend = !readOnly && !closed && !sending && !uploading && (text.trim().length > 0 || ready.length > 0);
@@ -538,7 +541,7 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
   return (
     <div className="flex flex-col gap-2">
       {closed && <div style={{ fontSize: 11.5, color: '#B42318', backgroundColor: '#FDECEA', borderRadius: 8, padding: '6px 10px' }}>{tr('sendWindowClosed')}</div>}
-      {!closed && hours >= 24 && <div style={{ fontSize: 11.5, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 8, padding: '6px 10px' }}>{tr('sendHumanAgent')}</div>}
+      {HUMAN_AGENT && !closed && hours >= 24 && <div style={{ fontSize: 11.5, color: '#8A6D14', backgroundColor: CREAM, borderRadius: 8, padding: '6px 10px' }}>{tr('sendHumanAgent')}</div>}
       {atts.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pt-1">
           {atts.map(a => (
