@@ -34,11 +34,12 @@ function HandoverPanel({ receiptId, poName, initial, L, lang, onChange }: { rece
   const [q, setQ] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const give = async (team: string) => {
+  const give = async (team: string, keep = false) => {
     setBusy(team); setErr(null);
     const grp = h.teams.find(t => t.team === team)!;
     try {
-      const r = await handoverToTeamAction(receiptId, team, grp.lines.map(l => ({ tmplId: l.tmplId, qty: q[`${team}|${l.tmplId}`] != null ? parseQty(q[`${team}|${l.tmplId}`]) : l.qty })));
+      // keep: put away in the Lab storage / cold room instead — nothing handed, the team takes it later with a normal slip.
+      const r = await handoverToTeamAction(receiptId, team, grp.lines.map(l => ({ tmplId: l.tmplId, qty: keep ? 0 : q[`${team}|${l.tmplId}`] != null ? parseQty(q[`${team}|${l.tmplId}`]) : l.qty })));
       if (r.error) setErr(r.error); else if (r.handover) { setH(r.handover); onChange?.(r.handover); }
     } catch { setErr(L('Mất kết nối — bấm lại, không bị tạo hai phiếu.', 'Connection lost — tap again, no double slip.')); }
     setBusy(null);
@@ -68,9 +69,11 @@ function HandoverPanel({ receiptId, poName, initial, L, lang, onChange }: { rece
                 </div>);
             })}
             {t.givenAt
-              ? <div className="text-[12.5px] font-bold" style={{ color: OK }}>✓ {t.slipNo ? L(`Đã giao · phiếu #${t.slipNo} · chờ chef bấm "Đã nhận"`, `Handed over · slip #${t.slipNo} · waiting for the chef's "Đã nhận"`) : L('Không giao gì', 'Nothing handed over')}{t.givenBy ? ` · ${t.givenBy}` : ''}</div>
+              ? <div className="text-[12.5px] font-bold" style={{ color: OK }}>✓ {t.slipNo ? L(`Đã giao · phiếu #${t.slipNo} · chờ chef bấm "Đã nhận"`, `Handed over · slip #${t.slipNo} · waiting for the chef's "Đã nhận"`) : L('Cất vào kho — team lấy sau bằng phiếu lấy kho', 'Put away in storage — the team takes it later with a slip')}{t.givenBy ? ` · ${t.givenBy}` : ''}</div>
               : <button disabled={!!busy} onClick={() => give(t.team)} className="w-full rounded-xl py-3 font-extrabold text-white text-[15px] disabled:opacity-50" style={{ backgroundColor: NAVY }}>
                   {busy === t.team ? <Loader2 size={17} className="inline animate-spin" /> : `✓ ${L('Đã giao cho team', 'Handed to the team')}`}</button>}
+            {!t.givenAt && <button disabled={!!busy} onClick={() => give(t.team, true)} className="w-full rounded-xl py-2.5 font-bold text-[13.5px] disabled:opacity-50" style={{ border: `1.5px solid ${BORDER}`, color: NAVY, backgroundColor: '#fff' }}>
+              ❄️ {L('Cất vào kho / tủ lạnh — team lấy sau', 'Put away in storage / cold room — team takes it later')}</button>}
           </div>);
       })}
       {h.kho.length > 0 && (

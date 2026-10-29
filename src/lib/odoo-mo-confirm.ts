@@ -98,13 +98,15 @@ export interface MoConfirmResult {
 // "Bypass Subsequent" button calls (ticks Auto Produce on every eligible line). We call it first,
 // whenever the flag is set, before action_confirm — exactly what a human would click by hand
 // (2026-08-05 investigation, confirmed both methods are callable by the write account).
-export async function confirmDoneMOs(date: string): Promise<MoConfirmResult> {
+// opts.typeId (2026-10-29): only that manufacturing type (one team's room) — used when a room count
+// starts, so everything sent to stock before the count is produced at once (rooms-odoo.ts).
+export async function confirmDoneMOs(date: string, opts?: { typeId?: number }): Promise<MoConfirmResult> {
   const origin = `Lab ${date}`;
   const res: MoConfirmResult = { date, origin, eligible: 0, bypassed: [], confirmed: [], errors: [] };
   if (!odooWriteConfigured()) return res;
 
   const drafts = await odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '=', 'draft']]],
+    [[['origin', '=', origin], ['state', '=', 'draft'], ...(opts?.typeId ? [['picking_type_id', '=', opts.typeId]] : [])]],
     { fields: ['id', 'name', 'has_producible_component', 'auto_parent_production_id'] });
   res.eligible = drafts.length;
 
@@ -172,7 +174,7 @@ export interface MoProduceResult {
 // list what's eligible, writing nothing) before trusting it on the whole day's batch. onlyMoId
 // drops the state filter entirely (matches by id alone) so a stuck 'to_close' test MO from a
 // previous incomplete attempt can be targeted directly, not just fresh 'confirmed' ones.
-export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRun?: boolean }): Promise<MoProduceResult> {
+export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRun?: boolean; typeId?: number }): Promise<MoProduceResult> {
   const origin = `Lab ${date}`;
   const dryRun = !!opts?.dryRun;
   const res: MoProduceResult = { date, origin, eligible: 0, dryRun, produced: [], errors: [] };
@@ -180,7 +182,7 @@ export async function produceMOs(date: string, opts?: { onlyMoId?: number; dryRu
 
   const domain: any[] = opts?.onlyMoId
     ? [['id', '=', opts.onlyMoId]]
-    : [['origin', '=', origin], ['state', '=', 'confirmed']];
+    : [['origin', '=', origin], ['state', '=', 'confirmed'], ...(opts?.typeId ? [['picking_type_id', '=', opts.typeId]] : [])];
   const mos = await odooExecute<any[]>('mrp.production', 'search_read',
     [domain], { fields: ['id', 'name', 'product_qty'] });
   res.eligible = mos.length;

@@ -7,6 +7,8 @@ import { TEAMS } from '@/lib/types';
 import { filterByPublished } from '@/lib/published-cards';
 
 export const revalidate = 0;
+// Room count start produces the team's MOs after the reply (waitUntil) — room for it.
+export const maxDuration = 120;
 
 export default async function StationPage({ params }: { params: { team: string } }) {
   const supabase = createClient();

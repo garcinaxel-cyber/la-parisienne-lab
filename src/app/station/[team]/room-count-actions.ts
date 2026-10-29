@@ -1,7 +1,7 @@
 'use server';
 // Room count — chef side (Axel, 2026-10-20). See lib/room-count.ts and supabase/lab_v128_room_counts.sql.
 // Phase 1: app only, nothing is written to Odoo.
-import { applyRoomCountToOdoo, roomsLinkedForDay } from '@/lib/rooms-odoo';
+import { applyRoomCountToOdoo, closeRoomMosForCount, roomsLinkedForDay } from '@/lib/rooms-odoo';
 import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, canActForTeam, canApproveForTeam } from '@/lib/raw-materials-db';
 import { resolveRawMaterialsBatch } from '@/lib/mp-consumption';
@@ -99,6 +99,12 @@ export async function openRoomCountAction(team: string): Promise<{ state?: RoomC
     // lost the race against a teammate: join theirs
     if (await openSession(db, team)) return { state: await loadState(db, team, a, canConfirm) };
     return { error: error?.message ?? 'Insert failed' };
+  }
+  // Rooms linked to Odoo: produce now what was sent to stock before the count (after the reply;
+  // the rooms cron retries). Later sends — urgent cakes — keep going to stock as usual.
+  if (roomsLinkedForDay(vnTodayStr())) {
+    const p = closeRoomMosForCount(db, s.id).catch(() => null);
+    try { waitUntil(p); } catch { await p; }
   }
 
   const day = 24 * 3600 * 1000;

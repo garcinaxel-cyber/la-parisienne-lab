@@ -260,7 +260,51 @@ async function claimSession(db: Db, id: string): Promise<boolean> {
 }
 
 /** Room on hand now minus internal transfers in/out after `cutoff` (MO moves are not rolled back). */
-async function roomTheoretical(db: Db, productIds: number[], room: number, cutoff: Date): Promise<Record<number, number>> {
+/**
+ * Room count start (Axel, 2026-10-29): the team's MOs for everything sent to stock so far are produced
+ * at once, and the moment is kept (mos_closed_at). Whatever is sent to stock afterwards (late birthday
+ * cakes…) goes into new MOs whose consumption is put back when rebuilding the room at the count —
+ * so the count only corrects real gaps and the later consumption stays in Odoo. Retried by the cron.
+ */
+export async function closeRoomMosForCount(db: Db, sessionId: string): Promise<{ closed: boolean; error?: string }> {
+  const { data: s } = await db.from('lab_room_count_sessions').select('id, team, count_date, cutoff_at, mos_closed_at').eq('id', sessionId).maybeSingle();
+  if (!s) return { closed: false, error: 'Session not found' };
+  if (s.mos_closed_at) return { closed: true };
+  const room = roomOf(s.team);
+  if (!room || !roomsLinkedForDay(s.count_date)) return { closed: false, error: 'not linked' };
+  if (!odooWriteConfigured()) return { closed: false, error: 'Odoo write account not configured' };
+  try {
+    // Drafts brought up to date with the sends first, then confirmed and produced (this team only).
+    const { syncStockToOdoo } = await import('@/lib/odoo-mo-sync');
+    const { confirmDoneMOs, produceMOs } = await import('@/lib/odoo-mo-confirm');
+    try { await syncStockToOdoo(db as any, s.count_date, { commit: true }); } catch { /* the hourly sync catches up */ }
+    await confirmDoneMOs(s.count_date, { typeId: room.manufType });
+    await produceMOs(s.count_date, { typeId: room.manufType });
+    const open = await odooExecuteWrite<any[]>('mrp.production', 'search_read',
+      [[['origin', 'in', [`Lab ${s.count_date}`, `OEM ${s.count_date}`]], ['picking_type_id', '=', room.manufType], ['auto_parent_production_id', '=', false],
+        ['state', 'not in', ['done', 'cancel']], ['create_date', '<=', String(s.cutoff_at).slice(0, 19).replace('T', ' ')]]], { fields: ['name'], limit: 5 });
+    if (open.length) {
+      await db.from('lab_room_count_sessions').update({ odoo_error: `MO chưa xong: ${open.map((m: any) => m.name).join(', ')}` }).eq('id', s.id);
+      return { closed: false, error: `open MOs: ${open.map((m: any) => m.name).join(', ')}` };
+    }
+    await db.from('lab_room_count_sessions').update({ mos_closed_at: new Date().toISOString() }).eq('id', s.id).is('mos_closed_at', null);
+    return { closed: true };
+  } catch (e: any) { return { closed: false, error: String(e?.message ?? e) }; }
+}
+
+/** Counts started (open or confirmed) whose MOs are not closed yet — every cron run. */
+export async function closePendingRoomMos(db: Db): Promise<{ closed: number; open: number }> {
+  const out = { closed: 0, open: 0 };
+  const sd = startDay();
+  if (!validDay(sd)) return out;
+  const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+  const { data } = await db.from('lab_room_count_sessions').select('id').is('mos_closed_at', null).in('status', ['open', 'confirmed'])
+    .gte('count_date', sd).gte('cutoff_at', since).limit(4);
+  for (const r of data ?? []) { const x = await closeRoomMosForCount(db, r.id); if (x.closed) out.closed++; else out.open++; }
+  return out;
+}
+
+async function roomTheoretical(db: Db, productIds: number[], room: number, cutoff: Date, mosClosedAt?: Date | null): Promise<Record<number, number>> {
   const out: Record<number, number> = {};
   for (const pid of productIds) out[pid] = 0;
   const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read',
@@ -297,6 +341,25 @@ async function roomTheoretical(db: Db, productIds: number[], room: number, cutof
       if (from === room && to !== room) out[pid] += qty;
     }
   }
+  // Production after the count's MOs were closed (sent to stock after the count started): its
+  // consumption from the room is put back, its output into the room taken out — the room as it was.
+  // Unbuilds are left alone (they correct production made before the count).
+  if (mosClosedAt) {
+    const mark = mosClosedAt.toISOString().slice(0, 19).replace('T', ' ');
+    for (let offset = 0; ; offset += 1000) {
+      const page = await odooExecuteWrite<any[]>('stock.move.line', 'search_read',
+        [[['product_id', 'in', productIds], ['state', '=', 'done'], ['date', '>', mark],
+          '|', ['location_id', '=', room], ['location_dest_id', '=', room],
+          '|', ['move_id.raw_material_production_id', '!=', false], ['move_id.production_id', '!=', false]]],
+        { fields: ['product_id', 'quantity', 'location_id', 'location_dest_id'], limit: 1000, offset, order: 'id asc' });
+      for (const ml of page) {
+        const pid = m2o(ml.product_id)!; const from = m2o(ml.location_id); const to = m2o(ml.location_dest_id); const qty = Number(ml.quantity ?? 0);
+        if (from === room && to !== room) out[pid] += qty;
+        if (to === room && from !== room) out[pid] -= qty;
+      }
+      if (page.length < 1000) break;
+    }
+  }
   for (const k of Object.keys(out)) out[Number(k)] = r3(out[Number(k)]);
   return out;
 }
@@ -304,7 +367,7 @@ async function roomTheoretical(db: Db, productIds: number[], room: number, cutof
 export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<RoomCountPushResult> {
   const { applyInventoryLines, addMissingCountLines, tryCancelInventoryLine } = await import('@/lib/odoo-inventory');
   const { lineTotal } = await import('@/lib/room-count');
-  const { data: s } = await db.from('lab_room_count_sessions').select('id, team, count_date, cutoff_at, status, odoo_state, odoo_inventory_id').eq('id', sessionId).maybeSingle();
+  const { data: s } = await db.from('lab_room_count_sessions').select('id, team, count_date, cutoff_at, status, odoo_state, odoo_inventory_id, mos_closed_at').eq('id', sessionId).maybeSingle();
   if (!s) return { ok: false, error: 'Session not found' };
   if (s.odoo_state === 'done') return { ok: true, inventoryId: s.odoo_inventory_id };
   if (s.status !== 'confirmed') return { ok: false, error: 'Session not confirmed' };
@@ -314,12 +377,17 @@ export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<R
   if (!(await claimSession(db, s.id))) return { ok: false, error: 'busy' };
   const save = (v: Record<string, any>) => db.from('lab_room_count_sessions').update({ ...v, odoo_at: new Date().toISOString() }).eq('id', s.id);
 
-  // Wait until the count day's MOs of this room are done (they consume what was used before the count).
-  try {
-    const open = await odooExecuteWrite<any[]>('mrp.production', 'search_read',
-      [[['origin', 'in', [`Lab ${s.count_date}`, `OEM ${s.count_date}`]], ['picking_type_id', '=', room.manufType], ['state', 'not in', ['done', 'cancel']]]], { fields: ['id'], limit: 1 });
-    if (open.length) { await save({ odoo_state: 'waiting', odoo_error: `Chờ lệnh sản xuất ngày ${s.count_date} hoàn tất (đêm nay) / waiting for the day's MOs` }); return { ok: false, waiting: true }; }
-  } catch (e: any) { await save({ odoo_state: 'error', odoo_error: String(e?.message ?? e).slice(0, 300) }); return { ok: false, error: String(e?.message ?? e) }; }
+  // The MOs of what was sent to stock before the count must be produced first (closeRoomMosForCount,
+  // run when the count starts). Later sends need not wait: their consumption is put back below.
+  let mosClosedAt: Date | null = s.mos_closed_at ? new Date(s.mos_closed_at) : null;
+  if (!mosClosedAt) {
+    const c = await closeRoomMosForCount(db, s.id);
+    if (c.closed) {
+      const { data: s2 } = await db.from('lab_room_count_sessions').select('mos_closed_at').eq('id', s.id).maybeSingle();
+      mosClosedAt = s2?.mos_closed_at ? new Date(s2.mos_closed_at) : null;
+    }
+    if (!mosClosedAt) { await save({ odoo_state: 'waiting', odoo_error: `Chờ lệnh sản xuất trước giờ kiểm kê hoàn tất / waiting for the MOs before the count${c.error ? ` — ${c.error}` : ''}`.slice(0, 300) }); return { ok: false, waiting: true }; }
+  }
 
   let invId: number | null = s.odoo_inventory_id ?? null;
   try {
@@ -364,7 +432,7 @@ export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<R
     const lineOf = new Map<number, number>(lines.map((l: any) => [m2o(l.product_id) as number, Number(l.id)]));
     const noLine = productIds.filter(p => !lineOf.get(p));
     if (noLine.length) throw new Error(`No count line in Odoo for product(s) ${noLine.join(', ')}`);
-    const theo = await roomTheoretical(db, productIds, room.location, new Date(s.cutoff_at));
+    const theo = await roomTheoretical(db, productIds, room.location, new Date(s.cutoff_at), mosClosedAt);
     for (const pid of productIds) await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[lineOf.get(pid)], { theoretical_qty: theo[pid] ?? 0 }], { context: NO_MAIL });
     const apply = await applyInventoryLines(counted.map(c => ({ odooCountLineId: lineOf.get(c.productId!)!, qtyCounted: r3(c.total) })));
     const log = apply.lines.map(l => ({ line: l.odooCountLineId, product: l.sku, theoretical: l.qtySystem, counted: l.qtyCounted, diff: l.diff, ok: l.ok, error: l.error ?? null }));
