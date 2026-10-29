@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { odooExecute, odooExecuteWrite, odooConfigured, odooWriteConfigured, labDayUtcRange } from '@/lib/odoo';
+import { roomsLinkedForDay, roomOf, ROOMS, LAB_MANUF_TYPE_ID, LAB_STOCK_ID } from '@/lib/rooms-odoo';
 
 function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
@@ -7,6 +8,8 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
 
 export interface SentToStock {
   bySku: Record<string, number>;
+  /** Same, per team then SKU (rooms linked to Odoo, 2026-10-29: one MO per product AND team). */
+  byTeamSku: Record<string, Record<string, number>>;
   // Lines sent to stock with NO sku at all — these can never be matched to an Odoo product,
   // so they'd otherwise vanish from the sync with no trace (see 2026-08-05 Charlotte Watermint
   // D14 gap: 446 in Odoo vs 447 actually sent, caused by a history-tab send with sku=null).
@@ -18,26 +21,32 @@ export interface SentToStock {
 export async function sentToStockBySku(supabase: SupabaseClient, date: string): Promise<SentToStock> {
   const { start, end } = labDayUtcRange(date);
   const { data: transfers } = await supabase.from('lab_stock_transfers')
-    .select('id').gte('created_at', start).lt('created_at', end).neq('status', 'cancelled');
+    .select('id, team').gte('created_at', start).lt('created_at', end).neq('status', 'cancelled');
   const tids = (transfers ?? []).map((t: any) => t.id);
-  if (!tids.length) return { bySku: {}, missingSku: [] };
+  if (!tids.length) return { bySku: {}, byTeamSku: {}, missingSku: [] };
+  const teamOfTransfer = new Map((transfers ?? []).map((t: any) => [t.id, t.team ?? '']));
   // Page by page: a short read here would LOWER the day's MOs (Supabase caps at 1000 rows).
   const lines: any[] = [];
   for (let i = 0; i < tids.length; i += 100) {
     for (let f = 0; ; f += 1000) {
-      const { data } = await supabase.from('lab_stock_transfer_lines').select('id, sku, qty_sent, product_name_vi').in('transfer_id', tids.slice(i, i + 100)).order('id').range(f, f + 999);
+      const { data } = await supabase.from('lab_stock_transfer_lines').select('id, transfer_id, sku, qty_sent, product_name_vi').in('transfer_id', tids.slice(i, i + 100)).order('id').range(f, f + 999);
       lines.push(...(data ?? []));
       if (!data || data.length < 1000) break;
     }
   }
   const bySku: Record<string, number> = {};
+  const byTeamSku: Record<string, Record<string, number>> = {};
   const missingSku: { productName: string; qty: number }[] = [];
   for (const l of lines ?? []) {
     if (!l.qty_sent || l.qty_sent <= 0) continue;
-    if (l.sku) bySku[l.sku] = (bySku[l.sku] ?? 0) + l.qty_sent;
+    if (l.sku) {
+      bySku[l.sku] = (bySku[l.sku] ?? 0) + l.qty_sent;
+      const t = String(teamOfTransfer.get(l.transfer_id) ?? '');
+      (byTeamSku[t] ??= {})[l.sku] = (byTeamSku[t][l.sku] ?? 0) + l.qty_sent;
+    }
     else missingSku.push({ productName: l.product_name_vi ?? '(unknown product)', qty: l.qty_sent });
   }
-  return { bySku, missingSku };
+  return { bySku, byTeamSku, missingSku };
 }
 
 export interface MoSyncResult {
@@ -72,7 +81,22 @@ async function syncStockToOdooInner(
   const res: MoSyncResult = { date, origin, committed: false, toCreate: [], toUpdate: [], unchanged: [], noProduct: [], missingSku: [] };
   if (!odooConfigured()) return res;
 
-  const { bySku, missingSku } = await sentToStockBySku(supabase, date);
+  const { bySku, byTeamSku, missingSku } = await sentToStockBySku(supabase, date);
+  // Rooms linked (2026-10-29): one MO per product and team, on the team's manufacturing type
+  // (components and semi-finished in the team's room, finished product into LAB/Stock). A team
+  // without a room keeps the legacy Lab: Manufacturing type. Before the start day: one MO per product.
+  const linked = roomsLinkedForDay(date);
+  const typeOfTeam = (team: string) => (linked ? roomOf(team)?.manufType ?? LAB_MANUF_TYPE_ID : null);
+  const roomLocOfType = (typeId: number | null) => Object.values(ROOMS).find(r => r.manufType === typeId)?.location ?? null;
+  const targets: { sku: string; typeId: number | null; qty: number }[] = [];
+  if (linked) {
+    const acc: Record<string, { sku: string; typeId: number; qty: number }> = {};
+    for (const [team, m] of Object.entries(byTeamSku)) for (const [sku, q] of Object.entries(m)) {
+      const typeId = typeOfTeam(team)!; const k = `${typeId}|${sku}`;
+      (acc[k] ??= { sku, typeId, qty: 0 }).qty += q;
+    }
+    targets.push(...Object.values(acc));
+  } else for (const [sku, q] of Object.entries(bySku)) targets.push({ sku, typeId: null, qty: q });
   res.missingSku = missingSku;
   if (missingSku.length) {
     res.errors = (res.errors ?? []).concat(missingSku.map(m => ({
@@ -80,11 +104,11 @@ async function syncStockToOdooInner(
       error: `"${m.productName}" ×${m.qty} sent to stock without a SKU — cannot sync to Odoo (see loadHistoryDetails/StationView)`,
     })));
   }
-  let entries = Object.entries(bySku).filter(([, q]) => q > 0);
-  if (opts.skus?.length) { const set = new Set(opts.skus); entries = entries.filter(([sku]) => set.has(sku)); }
+  let entries = targets.filter(t => t.qty > 0);
+  if (opts.skus?.length) { const set = new Set(opts.skus); entries = entries.filter(t => set.has(t.sku)); }
   if (!entries.length) return res;
 
-  const skus = entries.map(([sku]) => sku);
+  const skus = Array.from(new Set(entries.map(t => t.sku)));
   const prods = await tmo(odooExecute<any[]>('product.product', 'search_read',
     [[['default_code', 'in', skus]]], { fields: ['id', 'name', 'default_code', 'uom_id', 'product_tmpl_id'], limit: 2000 }), 30000, 'prods');
   const prodBySku: Record<string, any> = {}; const tmplByProd: Record<number, number> = {};
@@ -102,7 +126,7 @@ async function syncStockToOdooInner(
   const moDate = `${date} 02:00:00`;
 
   const existing = prodIds.length ? await tmo(odooExecute<any[]>('mrp.production', 'search_read',
-    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name'], limit: 5000 }), 20000, 'existing') : [];
+    [[['origin', '=', origin], ['state', '!=', 'cancel'], ['product_id', 'in', prodIds]]], { fields: ['id', 'product_id', 'product_qty', 'state', 'name', 'picking_type_id'], limit: 5000 }), 20000, 'existing') : [];
   // An mrp.unbuild does NOT lower the MO's quantity: subtract the done unbuilds, otherwise a day
   // that was corrected ("bếp chưa làm") looks still covered and later transfers never reach Odoo.
   // The read-only Odoo account has no right on mrp.unbuild (24/10 incident: reading unbuild_ids
@@ -114,20 +138,27 @@ async function syncStockToOdooInner(
       for (const u of ubs) if (u.mo_id) { const mid = Array.isArray(u.mo_id) ? u.mo_id[0] : u.mo_id; unbuiltByMo[mid] = (unbuiltByMo[mid] ?? 0) + Number(u.product_qty || 0); }
     } catch { /* unknown unbuilds: behave as before */ }
   }
-  const moByProd: Record<number, { confirmedSum: number; draft: { id: number; qty: number; name: string } | null }> = {};
+  // Grouping key: product, plus the manufacturing type once rooms are linked (one MO per team).
+  const keyOf = (pid: number, typeId: number | null) => (linked ? `${pid}|${typeId ?? LAB_MANUF_TYPE_ID}` : String(pid));
+  const moByProd: Record<string, { confirmedSum: number; draft: { id: number; qty: number; name: string } | null }> = {};
   for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {
     const pid = Array.isArray(m.product_id) ? m.product_id[0] : m.product_id;
-    const e = moByProd[pid] ??= { confirmedSum: 0, draft: null };
+    const tid = Array.isArray(m.picking_type_id) ? m.picking_type_id[0] : (m.picking_type_id || null);
+    const e = moByProd[keyOf(pid, tid)] ??= { confirmedSum: 0, draft: null };
     // A second draft (left by an old race) counts like a confirmed one, so it is never forgotten.
     if (m.state === 'draft' && !e.draft) e.draft = { id: m.id, qty: m.product_qty, name: m.name };
     else if (m.state === 'draft') e.confirmedSum += (m.product_qty ?? 0);
     else e.confirmedSum += (m.product_qty ?? 0) - (unbuiltByMo[m.id] ?? 0);
   }
 
-  for (const [sku, target] of entries) {
+  for (const { sku, typeId, qty: target } of entries) {
     const p = prodBySku[sku];
     if (!p) { res.noProduct.push({ sku, qty: target }); continue; }
-    const e = moByProd[p.id] ?? { confirmedSum: 0, draft: null };
+    const e = moByProd[keyOf(p.id, typeId)] ?? { confirmedSum: 0, draft: null };
+    const room = roomLocOfType(typeId);
+    const placement = linked && typeId
+      ? { picking_type_id: typeId, ...(room ? { location_src_id: room } : {}), location_dest_id: LAB_STOCK_ID }
+      : {};
     const desiredDraft = target - e.confirmedSum;
     if (desiredDraft <= 0) { res.unchanged.push({ sku, product: p.name, target, reason: 'covered by validated MOs' }); continue; }
     if (e.draft) {
@@ -136,7 +167,7 @@ async function syncStockToOdooInner(
     } else {
       res.toCreate.push({
         sku, product: p.name, qty: desiredDraft,
-        values: { product_id: p.id, product_qty: desiredDraft, product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id, origin, ...(bomFor(p) ? { bom_id: bomFor(p) } : {}), ...(moDateField ? { [moDateField]: moDate } : {}) },
+        values: { product_id: p.id, product_qty: desiredDraft, product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id, origin, ...(bomFor(p) ? { bom_id: bomFor(p) } : {}), ...(moDateField ? { [moDateField]: moDate } : {}), ...placement },
       });
     }
   }

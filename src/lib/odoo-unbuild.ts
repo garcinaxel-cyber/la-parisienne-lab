@@ -22,7 +22,7 @@ export async function reduceDayProduction(day: string, sku: string, target: numb
     const p = prods[0];
     const mos = await tmo(odooExecute<any[]>('mrp.production', 'search_read',
       [[['origin', '=', `Lab ${day}`], ['product_id', '=', p.id], ['state', '!=', 'cancel']]],
-      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'product_uom_id'], order: 'id desc' }), 20000, 'mos');
+      { fields: ['id', 'name', 'state', 'product_qty', 'qty_produced', 'bom_id', 'location_dest_id', 'location_src_id', 'product_uom_id'], order: 'id desc' }), 20000, 'mos');
     // Done unbuilds do not lower the MO's quantity: subtract them (else a second correction unbuilds again).
     const unbuilt: Record<number, number> = {};
     if (mos.length) {
@@ -49,9 +49,12 @@ export async function reduceDayProduction(day: string, sku: string, target: numb
       if (excess <= 0) break;
       const q = Math.min(excess, qtyOf(m));
       if (q <= 0) continue;
+      // Finished product taken back from where the MO put it; components returned where the MO took
+      // them (the team's room once rooms are linked, 2026-10-29 — LAB/Stock before, same as `loc`).
       const loc = Array.isArray(m.location_dest_id) ? m.location_dest_id[0] : m.location_dest_id;
+      const back = (Array.isArray(m.location_src_id) ? m.location_src_id[0] : m.location_src_id) || loc;
       const vals: any = {
-        mo_id: m.id, product_id: p.id, product_qty: q, location_id: loc, location_dest_id: loc,
+        mo_id: m.id, product_id: p.id, product_qty: q, location_id: loc, location_dest_id: back,
         product_uom_id: Array.isArray(m.product_uom_id) ? m.product_uom_id[0] : (Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id),
       };
       if (m.bom_id) vals.bom_id = Array.isArray(m.bom_id) ? m.bom_id[0] : m.bom_id;

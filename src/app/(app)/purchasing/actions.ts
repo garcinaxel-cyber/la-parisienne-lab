@@ -2,6 +2,7 @@
 // Purchasing space (Axel, 2026-10-08) — role 'purchasing' (storage manager + purchasing assistant) and
 // admin. Phase 1: everything stays in the app; Odoo is only read (catalogue sync). The assistant still
 // creates the purchase order in Odoo by hand and types its number here.
+import { pushSlipToOdoo, roomsLinkStartIso } from '@/lib/rooms-odoo';
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, packHint, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
@@ -248,6 +249,9 @@ export async function confirmWithdrawalAction(withdrawalId: string, qtys: { line
     .eq('id', w.id).eq('status', 'to_confirm').select('id');
   if (error) return { error: error.message };
   if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  // Rooms linked to Odoo (2026-10-29): the confirmed slip moves stock in Odoo right away. Best-effort:
+  // a failure is saved on the slip and retried by the 15-min cron, never blocks storage.
+  if (roomsLinkStartIso()) { try { await pushSlipToOdoo(g.db, w.id); } catch { /* retried by cron */ } }
   const extra = changed ? ` · ${changed} dòng đã sửa số lượng` : '';
   const extraEn = changed ? ` · ${changed} line(s) corrected` : '';
   if (w.kind === 'transfer') {

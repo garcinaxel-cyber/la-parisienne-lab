@@ -4,6 +4,7 @@ import { odooConfigured, odooAuthHealth } from '@/lib/odoo';
 import { sendAdminPush } from '@/lib/push-notify';
 import { runAutoOdooSync } from '@/lib/odoo-auto-sync';
 import { syncOrderPackagingLines } from '@/lib/odoo-packaging-sync';
+import { pushPendingSlips, pushPendingRoomCounts } from '@/lib/rooms-odoo';
 
 // Lab-local (Asia/Ho_Chi_Minh) rolling window for the packaging sync — matches the
 // delivery-check feature's own scope (today + tomorrow only, kept tight for cost).
@@ -61,7 +62,12 @@ export async function GET(req: Request) {
     try { packaging = await syncOrderPackagingLines(supabase as any, labUpcomingDates(2)); }
     catch (e: any) { packaging = { ok: false, error: String(e?.message ?? e) }; }
 
-    return NextResponse.json({ ...result, packaging, odooAuth: auth ? { read: auth.read, write: auth.write } : null });
+    // Rooms linked to Odoo: slips whose Odoo transfer failed or never ran (best-effort).
+    let roomSlips: any = null;
+    try { roomSlips = { slips: await pushPendingSlips(supabase as any), counts: await pushPendingRoomCounts(supabase as any) }; }
+    catch (e: any) { roomSlips = { error: String(e?.message ?? e) }; }
+
+    return NextResponse.json({ ...result, packaging, roomSlips, odooAuth: auth ? { read: auth.read, write: auth.write } : null });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? 'Cron sync failed' }, { status: 502 });
   }

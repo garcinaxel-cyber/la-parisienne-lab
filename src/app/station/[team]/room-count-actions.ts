@@ -1,6 +1,7 @@
 'use server';
 // Room count — chef side (Axel, 2026-10-20). See lib/room-count.ts and supabase/lab_v128_room_counts.sql.
 // Phase 1: app only, nothing is written to Odoo.
+import { applyRoomCountToOdoo, roomsLinkedForDay } from '@/lib/rooms-odoo';
 import { rawService, rawActor, canActForTeam, canApproveForTeam } from '@/lib/raw-materials-db';
 import { resolveRawMaterialsBatch } from '@/lib/mp-consumption';
 import { isOemSku } from '@/lib/oem';
@@ -260,5 +261,8 @@ export async function confirmRoomCountAction(team: string, sessionId: string): P
   const { error } = await db.from('lab_room_count_sessions').update({ status: 'confirmed', confirmed_by: a.userId, confirmed_by_name: a.name || null,
     confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', sessionId).eq('status', 'open');
   if (error) return { error: error.message };
+  // Rooms linked to Odoo (2026-10-29): the confirmed count is applied to the room right away.
+  // Best-effort: a failure is saved on the session and retried by the 15-min cron.
+  if (roomsLinkedForDay(st.session.countDate)) { try { await applyRoomCountToOdoo(db, sessionId); } catch { /* retried by cron */ } }
   return { ok: true, state: await loadState(db, team, a, true) };
 }
