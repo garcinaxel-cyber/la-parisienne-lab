@@ -200,7 +200,7 @@ export async function pushPendingSlips(db: Db, limit = 8): Promise<{ done: numbe
  * Typically OEM bags/cartons, or a semi-finished taken from LAB/Stock. One transfer per MO (origin
  * "App MO <name>"), adopted on retry.
  */
-export async function topUpRoomComponents(moId: number): Promise<{ ok: boolean; picking?: string; error?: string }> {
+export async function topUpRoomComponents(db: Db, moId: number): Promise<{ ok: boolean; picking?: string; error?: string }> {
   try {
     const [mo] = await odooExecuteWrite<any[]>('mrp.production', 'read', [[moId]], { fields: ['name', 'state', 'location_src_id', 'move_raw_ids'] });
     if (!mo || mo.state !== 'done') return { ok: true };
@@ -211,8 +211,13 @@ export async function topUpRoomComponents(moId: number): Promise<{ ok: boolean; 
     const cand = moves.filter(m => m.state === 'done' && !m.auto_produce && m2o(m.location_id) === room && Number(m.quantity) > 0);
     if (!cand.length) return { ok: true };
     const pids = Array.from(new Set(cand.map(m => m2o(m.product_id)!)));
-    const prods = await odooExecuteWrite<any[]>('product.product', 'read', [pids], { fields: ['categ_id', 'bom_ids'] });
-    const rawish = new Set(prods.filter(p => m2o(p.categ_id) === RAW_MATERIAL_CATEG_ID).map(p => p.id));
+    // "Comes with a slip" = raw-material category (any sub-category) OR in the app's slip catalogue
+    // (lab_raw_materials also holds products imported from other categories).
+    const raw = await odooExecuteWrite<any[]>('product.product', 'search_read',
+      [[['id', 'in', pids], ['categ_id', 'child_of', RAW_MATERIAL_CATEG_ID], ['active', 'in', [true, false]]]], { fields: ['id'], limit: 1000 });
+    const rawish = new Set<number>(raw.map(p => Number(p.id)));
+    const { data: cat } = await db.from('lab_raw_materials').select('product_id').in('product_id', pids);
+    for (const c of cat ?? []) if (c.product_id) rawish.add(Number(c.product_id));
     const lines = cand.filter(m => !rawish.has(m2o(m.product_id)!))
       .map(m => ({ productId: m2o(m.product_id)!, uomId: m2o(m.product_uom)!, qty: r3(Number(m.quantity)) })).filter(l => l.qty > 0);
     if (!lines.length) return { ok: true };
@@ -245,24 +250,44 @@ async function claimSession(db: Db, id: string): Promise<boolean> {
 }
 
 /** Room on hand now minus internal transfers in/out after `cutoff` (MO moves are not rolled back). */
-async function roomTheoretical(productIds: number[], room: number, cutoff: Date): Promise<Record<number, number>> {
+async function roomTheoretical(db: Db, productIds: number[], room: number, cutoff: Date): Promise<Record<number, number>> {
   const out: Record<number, number> = {};
   for (const pid of productIds) out[pid] = 0;
   const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read',
     [[['product_id', 'in', productIds], ['location_id', '=', room]]], { fields: ['product_id', 'quantity'], limit: 5000 });
   for (const q of quants) { const pid = m2o(q.product_id)!; out[pid] = (out[pid] ?? 0) + Number(q.quantity ?? 0); }
-  const since = cutoff.toISOString().slice(0, 19).replace('T', ' ');
+  // Internal transfers validated in Odoo after the cut-off. A slip transfer counts as "after" only if
+  // the slip itself was confirmed after the cut-off (a retry validated later is still "before"); a
+  // top-up (origin "App MO …") follows its MO, which belongs before the count: never rolled back.
+  const since = new Date(cutoff.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const all: any[] = [];
   for (let offset = 0; ; offset += 1000) {
-    const mls = await odooExecuteWrite<any[]>('stock.move.line', 'search_read',
+    const page = await odooExecuteWrite<any[]>('stock.move.line', 'search_read',
       [[['product_id', 'in', productIds], ['state', '=', 'done'], ['date', '>', since], ['picking_id.picking_type_id', '=', LAB_INTERNAL_TYPE_ID],
         '|', ['location_id', '=', room], ['location_dest_id', '=', room]]],
-      { fields: ['product_id', 'quantity', 'location_id', 'location_dest_id'], limit: 1000, offset, order: 'id asc' });
+      { fields: ['product_id', 'quantity', 'location_id', 'location_dest_id', 'picking_id', 'date'], limit: 1000, offset, order: 'id asc' });
+    all.push(...page);
+    if (page.length < 1000) break;
+  }
+  const pickIds = Array.from(new Set(all.map(ml => m2o(ml.picking_id)).filter(Boolean))) as number[];
+  const picks = pickIds.length ? await odooExecuteWrite<any[]>('stock.picking', 'read', [pickIds], { fields: ['origin'] }) : [];
+  const originOf = new Map(picks.map(p => [p.id, String(p.origin ?? '')]));
+  const { data: slips } = pickIds.length ? await db.from('lab_raw_withdrawals').select('odoo_picking_id, confirmed_at').in('odoo_picking_id', pickIds) : { data: [] as any[] };
+  const slipAt = new Map((slips ?? []).map((w: any) => [Number(w.odoo_picking_id), w.confirmed_at as string]));
+  const after = (ml: any) => {
+    const pid = m2o(ml.picking_id)!;
+    if (originOf.get(pid)?.startsWith('App MO ')) return false;
+    const at = slipAt.get(pid);
+    if (at) return Date.parse(String(at)) > cutoff.getTime();
+    return Date.parse(String(ml.date).replace(' ', 'T') + 'Z') > cutoff.getTime();
+  };
+  {
+    const mls = all.filter(after);
     for (const ml of mls) {
       const pid = m2o(ml.product_id)!; const from = m2o(ml.location_id); const to = m2o(ml.location_dest_id); const qty = Number(ml.quantity ?? 0);
       if (to === room && from !== room) out[pid] -= qty;
       if (from === room && to !== room) out[pid] += qty;
     }
-    if (mls.length < 1000) break;
   }
   for (const k of Object.keys(out)) out[Number(k)] = r3(out[Number(k)]);
   return out;
@@ -331,7 +356,7 @@ export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<R
     const lineOf = new Map<number, number>(lines.map((l: any) => [m2o(l.product_id) as number, Number(l.id)]));
     const noLine = productIds.filter(p => !lineOf.get(p));
     if (noLine.length) throw new Error(`No count line in Odoo for product(s) ${noLine.join(', ')}`);
-    const theo = await roomTheoretical(productIds, room.location, new Date(s.cutoff_at));
+    const theo = await roomTheoretical(db, productIds, room.location, new Date(s.cutoff_at));
     for (const pid of productIds) await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[lineOf.get(pid)], { theoretical_qty: theo[pid] ?? 0 }], { context: NO_MAIL });
     const apply = await applyInventoryLines(counted.map(c => ({ odooCountLineId: lineOf.get(c.productId!)!, qtyCounted: r3(c.total) })));
     const log = apply.lines.map(l => ({ line: l.odooCountLineId, product: l.sku, theoretical: l.qtySystem, counted: l.qtyCounted, diff: l.diff, ok: l.ok, error: l.error ?? null }));
@@ -368,7 +393,8 @@ export async function pushPendingRoomCounts(db: Db): Promise<{ done: number; wai
   const since = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
   const stale = new Date(Date.now() - STALE_MS).toISOString();
   const { data } = await db.from('lab_room_count_sessions').select('id').eq('status', 'confirmed').gte('count_date', s).gte('confirmed_at', since)
-    .or(`odoo_state.is.null,odoo_state.eq.error,odoo_state.eq.waiting,and(odoo_state.eq.pending,odoo_at.lt.${stale})`).order('confirmed_at').limit(2);
+    .or(`odoo_state.is.null,odoo_state.eq.error,odoo_state.eq.waiting,and(odoo_state.eq.pending,odoo_at.lt.${stale})`)
+    .order('odoo_at', { ascending: true, nullsFirst: true }).limit(4);
   for (const r of data ?? []) {
     const res = await applyRoomCountToOdoo(db, r.id);
     if (res.ok) out.done++; else if (res.waiting) out.waiting++; else out.errors++;
@@ -377,12 +403,12 @@ export async function pushPendingRoomCounts(db: Db): Promise<{ done: number; wai
 }
 
 /** topUpRoomComponents for an MO and every MO it auto-produced (any depth). */
-export async function topUpRoomComponentsTree(moId: number): Promise<{ pickings: string[]; errors: string[] }> {
+export async function topUpRoomComponentsTree(db: Db, moId: number): Promise<{ pickings: string[]; errors: string[] }> {
   const out = { pickings: [] as string[], errors: [] as string[] };
   let level = [moId];
   for (let depth = 0; level.length && depth < 6; depth++) {
     for (const id of level) {
-      const r = await topUpRoomComponents(id);
+      const r = await topUpRoomComponents(db, id);
       if (r.picking) out.pickings.push(r.picking);
       if (!r.ok && r.error) out.errors.push(r.error);
     }
@@ -395,22 +421,22 @@ export async function topUpRoomComponentsTree(moId: number): Promise<{ pickings:
 }
 
 /** Cron: tops up the room components of MOs done in a room (today and yesterday), a few per run. */
-export async function topUpRecentRoomMOs(db: Db, max = 12): Promise<{ done: number; errors: number }> {
+export async function topUpRecentRoomMOs(db: Db, max = 6): Promise<{ done: number; errors: number }> {
   const out = { done: 0, errors: 0 };
   const s = startDay();
   if (!validDay(s)) return out;
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
-  const days = [fmt.format(new Date()), fmt.format(new Date(Date.now() - 86400000))].filter(d => d >= s);
+  const days = Array.from({ length: 7 }, (_, i) => fmt.format(new Date(Date.now() - i * 86400000))).filter(d => d >= s);
   if (!days.length) return out;
   const origins = days.flatMap(d => [`Lab ${d}`, `OEM ${d}`]);
   const types = Object.values(ROOMS).map(r => r.manufType);
   const mos = await odooExecuteWrite<any[]>('mrp.production', 'search_read',
     [[['origin', 'in', origins], ['picking_type_id', 'in', types], ['state', '=', 'done']]], { fields: ['id', 'name'], limit: 1000, order: 'id asc' });
   if (!mos.length) return out;
-  const { data: seen } = await db.from('lab_room_topups').select('mo_odoo_id').in('mo_odoo_id', mos.map(m => m.id));
+  const { data: seen } = await db.from('lab_room_topups').select('mo_odoo_id').in('mo_odoo_id', mos.map(m => m.id)).is('error', null);
   const done = new Set((seen ?? []).map((r: any) => r.mo_odoo_id));
   for (const mo of mos.filter(m => !done.has(m.id)).slice(0, max)) {
-    const r = await topUpRoomComponentsTree(mo.id);
+    const r = await topUpRoomComponentsTree(db, mo.id);
     await db.from('lab_room_topups').upsert({ mo_odoo_id: mo.id, mo_name: mo.name, picking_names: r.pickings, error: r.errors.join(' · ') || null });
     if (r.errors.length) out.errors++; else out.done++;
   }

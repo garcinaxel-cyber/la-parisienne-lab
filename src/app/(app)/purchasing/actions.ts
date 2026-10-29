@@ -210,13 +210,19 @@ export async function correctWithdrawalLineAction(lineId: string, qty: number | 
   const v = qty == null ? null : Math.max(0, Math.round(Number(qty) * 1000) / 1000);
   // Once the slip has moved stock in Odoo (rooms linked), its quantities are final: a correction
   // would leave the app and Odoo apart. Correct with a new slip (give-back to the Kho) instead.
-  const { data: ln } = await g.db.from('lab_raw_withdrawal_lines').select('withdrawal_id, lab_raw_withdrawals(odoo_state)').eq('id', lineId).maybeSingle();
-  const os = (ln as any)?.lab_raw_withdrawals?.odoo_state;
-  if (os === 'done' || os === 'pending') return { error: 'Phiếu đã chuyển sang Odoo — dùng phiếu trả kho để sửa. / Already in Odoo — use a give-back slip to correct.' };
+  const { data: ln, error: lnErr } = await g.db.from('lab_raw_withdrawal_lines').select('withdrawal_id').eq('id', lineId).maybeSingle();
+  if (lnErr || !ln) return { error: lnErr?.message ?? 'Not found' };
+  const { data: wd, error: wErr } = await g.db.from('lab_raw_withdrawals').select('id, odoo_state, odoo_picking_id, odoo_error').eq('id', ln.withdrawal_id).maybeSingle();
+  if (wErr || !wd) return { error: wErr?.message ?? 'Not found' };
+  if (wd.odoo_picking_id || wd.odoo_state === 'done' || wd.odoo_state === 'pending')
+    return { error: 'Phiếu đã chuyển sang Odoo — dùng phiếu trả kho để sửa. / Already in Odoo — use a give-back slip to correct.' };
   const { error } = await g.db.from('lab_raw_withdrawal_lines').update(v == null
     ? { corrected_qty: null, corrected_by_name: null, corrected_at: null }
     : { corrected_qty: v, corrected_by_name: g.a.name || null, corrected_at: new Date().toISOString() }).eq('id', lineId);
-  return error ? { error: error.message } : { ok: true };
+  if (error) return { error: error.message };
+  // a slip skipped because nothing was given gets pushed again once a quantity is corrected
+  if (wd.odoo_state === 'skipped' && wd.odoo_error === 'nothing given') await g.db.from('lab_raw_withdrawals').update({ odoo_state: null, odoo_error: null }).eq('id', wd.id);
+  return { ok: true };
 }
 
 // Slips waiting for storage to confirm, any day (Axel, 2026-10-09: "hien confirm d'abord").
