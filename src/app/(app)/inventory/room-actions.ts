@@ -12,6 +12,7 @@ export type AdminRoomLine = {
 export type AdminRoomSession = {
   id: string; team: string; countDate: string; cutoffAt: string; status: string;
   openedBy: string | null; confirmedBy: string | null; confirmedAt: string | null;
+  odooState: string | null; odooError: string | null;
   counted: number; zero: number; leftOut: number; noReason: number; multi: number; alerts: number;
   lines: AdminRoomLine[];
 };
@@ -49,6 +50,7 @@ export async function getRoomCountsAdminAction(days = 60): Promise<{ sessions?: 
       return {
         id: s.id, team: s.team, countDate: s.count_date, cutoffAt: s.cutoff_at, status: s.status,
         openedBy: s.opened_by_name, confirmedBy: s.confirmed_by_name, confirmedAt: s.confirmed_at,
+        odooState: s.odoo_state ?? null, odooError: s.odoo_error ?? null,
         counted: lines.filter(l => l.total != null && !l.zero).length, zero: lines.filter(l => l.zero).length,
         leftOut: lines.filter(l => l.total == null).length, noReason: lines.filter(l => l.total == null && !l.reason).length,
         multi: lines.filter(l => l.entries.length > 1).length, alerts: lines.filter(l => l.unitAlert).length, lines,

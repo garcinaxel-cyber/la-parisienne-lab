@@ -96,7 +96,7 @@ export interface StartLineResult {
 // line, so the count could not be saved). For those, add the line ourselves: make sure a quant
 // exists (a plain empty stock.quant — quantity 0, harmless) and create the count line on it. Its
 // theoretical_qty is then 0, which is the true system quantity.
-async function addMissingCountLines(invId: number, locationId: number, productIds: number[]): Promise<void> {
+export async function addMissingCountLines(invId: number, locationId: number, productIds: number[]): Promise<void> {
   if (!productIds.length) return;
   const quants = await odooExecuteWrite<any[]>('stock.quant', 'search_read',
     [[['product_id', 'in', productIds], ['location_id', '=', locationId]]], { fields: ['id', 'product_id'] });

@@ -2,6 +2,8 @@
 // Purchasing space (Axel, 2026-10-08) — role 'purchasing' (storage manager + purchasing assistant) and
 // admin. Phase 1: everything stays in the app; Odoo is only read (catalogue sync). The assistant still
 // creates the purchase order in Odoo by hand and types its number here.
+import { pushSlipToOdoo, roomsLinkStartIso } from '@/lib/rooms-odoo';
+import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, packHint, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
@@ -206,10 +208,21 @@ export async function correctWithdrawalLineAction(lineId: string, qty: number | 
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   const v = qty == null ? null : Math.max(0, Math.round(Number(qty) * 1000) / 1000);
+  // Once the slip has moved stock in Odoo (rooms linked), its quantities are final: a correction
+  // would leave the app and Odoo apart. Correct with a new slip (give-back to the Kho) instead.
+  const { data: ln, error: lnErr } = await g.db.from('lab_raw_withdrawal_lines').select('withdrawal_id').eq('id', lineId).maybeSingle();
+  if (lnErr || !ln) return { error: lnErr?.message ?? 'Not found' };
+  const { data: wd, error: wErr } = await g.db.from('lab_raw_withdrawals').select('id, odoo_state, odoo_picking_id, odoo_error').eq('id', ln.withdrawal_id).maybeSingle();
+  if (wErr || !wd) return { error: wErr?.message ?? 'Not found' };
+  if (wd.odoo_picking_id || wd.odoo_state === 'done' || wd.odoo_state === 'pending')
+    return { error: 'Phiếu đã chuyển sang Odoo — dùng phiếu trả kho để sửa. / Already in Odoo — use a give-back slip to correct.' };
   const { error } = await g.db.from('lab_raw_withdrawal_lines').update(v == null
     ? { corrected_qty: null, corrected_by_name: null, corrected_at: null }
     : { corrected_qty: v, corrected_by_name: g.a.name || null, corrected_at: new Date().toISOString() }).eq('id', lineId);
-  return error ? { error: error.message } : { ok: true };
+  if (error) return { error: error.message };
+  // a slip skipped because nothing was given gets pushed again once a quantity is corrected
+  if (wd.odoo_state === 'skipped' && wd.odoo_error === 'nothing given') await g.db.from('lab_raw_withdrawals').update({ odoo_state: null, odoo_error: null }).eq('id', wd.id);
+  return { ok: true };
 }
 
 // Slips waiting for storage to confirm, any day (Axel, 2026-10-09: "hien confirm d'abord").
@@ -248,6 +261,13 @@ export async function confirmWithdrawalAction(withdrawalId: string, qtys: { line
     .eq('id', w.id).eq('status', 'to_confirm').select('id');
   if (error) return { error: error.message };
   if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  // Rooms linked to Odoo (2026-10-29): a give-back to the Kho moves in Odoo now (storage is the
+  // receiver); any other slip waits for the receiving chef's "Đã nhận" (option B) — pushSlipToOdoo
+  // skips it until then. Runs after the reply; a failure is retried by the rooms cron.
+  if (roomsLinkStartIso()) {
+    const p = pushSlipToOdoo(g.db, w.id).catch(() => null);   // runs after the response (retried by cron)
+    try { waitUntil(p); } catch { await p; }
+  }
   const extra = changed ? ` · ${changed} dòng đã sửa số lượng` : '';
   const extraEn = changed ? ` · ${changed} line(s) corrected` : '';
   if (w.kind === 'transfer') {

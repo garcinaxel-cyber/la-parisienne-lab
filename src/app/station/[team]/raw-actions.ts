@@ -1,6 +1,8 @@
 'use server';
 // Raw materials — chef side (Axel, 2026-10-08). Phase 1: storage withdrawals and purchase requests
 // are recorded in the app only; nothing goes to Odoo. Open to all 4 teams since 2026-10-17 (see RAW_TEAMS).
+import { pushSlipToOdoo, receivingTeam } from '@/lib/rooms-odoo';
+import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
 import { sendUsersPush, awaitPush } from '@/lib/push-notify';
 import { TEAM_SHORT, TRANSFER_TEAMS, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
@@ -365,4 +367,26 @@ export async function uploadRawPhotoAction(formData: FormData): Promise<{ url?: 
   const { error } = await db.storage.from('lab-design-photos').upload(path, buf, { contentType: file.type, upsert: false });
   if (error) return { error: error.message };
   return { url: db.storage.from('lab-design-photos').getPublicUrl(path).data.publicUrl };
+}
+
+// "Đã nhận" (rooms linked to Odoo, Axel 2026-10-29, option B): the receiving team has the goods of a
+// storage-confirmed slip in hand — only now does Odoo move them LAB/Stock → room (or room → room).
+export async function receiveSlipAction(team: string, withdrawalId: string): Promise<{ ok?: boolean; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: w } = await db.from('lab_raw_withdrawals').select('id, team, kind, to_team, status, refused_at, received_at').eq('id', withdrawalId).maybeSingle();
+  if (!w) return { error: 'Not found' };
+  if (receivingTeam(w) !== team) return { error: 'Forbidden' };
+  if (w.status !== 'confirmed' || w.refused_at) return { error: 'Kho chưa xác nhận phiếu này / Storage has not confirmed this slip' };
+  if (!w.received_at) {
+    const { error } = await db.from('lab_raw_withdrawals').update({ received_at: new Date().toISOString(), received_by_name: a.name || null })
+      .eq('id', w.id).is('received_at', null);
+    if (error) return { error: error.message };
+  }
+  const p = pushSlipToOdoo(db, w.id).catch(() => null);   // after the reply; the cron retries a failure
+  try { waitUntil(p); } catch { await p; }
+  return { ok: true };
 }

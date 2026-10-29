@@ -193,7 +193,9 @@ export type Withdrawal = { id: string; no: number; team: string; takenBy: string
   // Transfers between teams (Axel, 2026-10-16): kind 'transfer', fromTeam -> toTeam, confirmed by storage
   // like a withdrawal. Refused = refused (lines corrected to 0).
   kind: 'take' | 'transfer'; fromTeam: string | null; toTeam: string | null; note: string | null;
-  refused: boolean; refusedBy: string | null };
+  refused: boolean; refusedBy: string | null;
+  /** Rooms linked to Odoo (2026-10-29, option B): the receiving chef confirms the goods. */
+  receivedAt: string | null; receivedBy: string | null; awaitingReceipt: boolean };
 
 /** Signed quantity a slip line counts for `team`: storage withdrawals +, transfers + when received,
  *  − when given. Transfers count only once storage confirmed them; refused ones count 0. */

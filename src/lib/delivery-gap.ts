@@ -1,8 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isStockFamily } from '@/lib/delivery-check-production';
 import { labDateOf, labDayUtcRange, odooWriteConfigured } from '@/lib/odoo';
-import { syncStockToOdoo, sentToStockBySku } from '@/lib/odoo-mo-sync';
-import { reduceDayProduction } from '@/lib/odoo-unbuild';
+import { syncStockToOdoo } from '@/lib/odoo-mo-sync';
+import { reduceDayProductionAll } from '@/lib/odoo-unbuild';
 import { withLock } from '@/lib/named-lock';
 import { recordLabLoss, brokenReasonTag, retryLossScrap } from '@/lib/lab-loss';
 
@@ -225,8 +225,7 @@ export async function removeProduced(sb: SupabaseClient, cards: Card[], sku: str
       upd.qty_sent_total = sent - ((sent - np) - back); upd.transferred = upd.qty_sent_total >= np;
       for (const d2 of Array.from(days)) {
         if (!odooWriteConfigured()) break;
-        const target = (await sentToStockBySku(sb, d2)).bySku[sku] ?? 0;
-        const r = await withLock(sb, `unbuild|${sku}|${d2}`, () => reduceDayProduction(d2, sku, target, note));
+        const r = await withLock(sb, `unbuild|${sku}|${d2}`, () => reduceDayProductionAll(sb, d2, sku, note));
         refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
       }
     }
@@ -454,8 +453,7 @@ async function retryOdooPart(sb: SupabaseClient, kind: string, sku: string, date
       for (const t of (tls ?? []) as any[]) { const d = labDateOf(t.lab_stock_transfers?.created_at); if (d) days.add(d); }
     }
     for (const d of Array.from(days)) {
-      const target = (await sentToStockBySku(sb, d)).bySku[sku] ?? 0;
-      const r = await withLock(sb, `unbuild|${sku}|${d}`, () => reduceDayProduction(d, sku, target, note));
+      const r = await withLock(sb, `unbuild|${sku}|${d}`, () => reduceDayProductionAll(sb, d, sku, note));
       refs.push(...r.refs); if (!r.ok && r.error) errs.push(r.error);
     }
   }

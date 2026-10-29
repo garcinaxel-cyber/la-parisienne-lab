@@ -15,7 +15,7 @@ import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
-  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, type TeamRequestsMeta,
+  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, receiveSlipAction, type TeamRequestsMeta,
 } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -97,6 +97,14 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     const t = setInterval(() => { if (document.visibilityState === 'visible') loadToday(); }, 15000);
     return () => clearInterval(t);
   }, [waiting, loadToday]);
+  const [receiving, setReceiving] = useState<string | null>(null);
+  async function receive(w: Withdrawal) {
+    setReceiving(w.id);
+    const r = await receiveSlipAction(team, w.id);
+    setReceiving(null);
+    setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: L(`Đã nhận phiếu #${w.no}.`, `Slip #${w.no} received.`) });
+    loadToday(); loadHist();
+  }
   const [reminded, setReminded] = useState<Record<string, number>>({});
   async function remind(w: Withdrawal) {
     setReminded(r => ({ ...r, [w.id]: Date.now() }));
@@ -467,6 +475,16 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                       </div>
                     );
                   })()}
+                  {w.awaitingReceipt && (w.kind !== 'transfer' || w.toTeam === team) && (
+                    <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 mb-1.5 text-[12px]" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>
+                      <span className="flex-1">{L('Kho đã xác nhận — bấm khi đã nhận hàng trong tay.', 'Storage confirmed — tap once you have the goods.')}</span>
+                      <button disabled={receiving === w.id} onClick={() => receive(w)} className="flex-none rounded-md px-3 py-1.5 text-[12.5px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#067647', color: '#fff' }}>
+                        ✓ {L('Đã nhận', 'Received')}</button>
+                    </div>
+                  )}
+                  {w.receivedAt && !w.awaitingReceipt && w.receivedBy && (
+                    <div className="text-[11.5px] pb-1.5 font-semibold" style={{ color: '#067647' }}>✓ {L('Đã nhận', 'Received')} {vnDayTime(w.receivedAt).time} · {w.receivedBy}</div>
+                  )}
                   {w.note && <div className="text-[12px] pb-1.5" style={{ color: '#6B7280' }}>“{w.note}”</div>}
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${HAIR}` }}>

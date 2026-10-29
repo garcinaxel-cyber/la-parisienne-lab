@@ -1,4 +1,5 @@
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
+import { roomsLinkedForDay, ROOMS, LAB_STOCK_ID } from '@/lib/rooms-odoo';
 
 // OEM Orders (Axel, 2026-09-25) — the finished product (bag, or kg for cashews) is created in
 // Odoo when the assistants record packaging, not when Hung bakes. One MO per packaging entry,
@@ -40,6 +41,9 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
     moId = await tmo(odooExecuteWrite<number>('mrp.production', 'create', [{
       product_id: p.id, product_qty: qty, product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id,
       bom_id: bom.id, origin: `OEM ${date}`, ...(dateField ? { [dateField]: `${date} 02:00:00` } : {}),
+      // OEM is made by Team Hung: once rooms are linked (2026-10-29) the bulk and its raw materials
+      // come out of Room Hung, the bagged product goes to LAB/Stock.
+      ...(roomsLinkedForDay(date) ? { picking_type_id: ROOMS.hung.manufType, location_src_id: ROOMS.hung.location, location_dest_id: LAB_STOCK_ID } : {}),
     }]), 25000, 'create');
     const [mo] = await tmo(odooExecute<any[]>('mrp.production', 'read', [[moId]], { fields: ['name', 'has_producible_component'] }), 15000, 'read');
     moName = mo?.name;
@@ -50,6 +54,8 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
     if (done && typeof done === 'object' && done.res_model) {
       return { ok: false, moId, moName, state: 'confirmed', error: `Odoo asked for confirmation (${done.res_model}) — finish ${moName} by hand in Odoo` };
     }
+    // Room Hung: bags/cartons (not on any slip) are moved LAB/Stock → Room Hung by the rooms cron
+    // (topUpRecentRoomMOs) — one place only, so the transfer is never made twice.
     return { ok: true, moId, moName, state: 'done' };
   } catch (e: any) {
     return { ok: false, moId, moName, error: String(e?.message ?? e) };
