@@ -7,7 +7,7 @@ import ItemPhoto from '@/components/raw/ItemPhoto';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCw, ChevronLeft, Minus, Plus, Check } from 'lucide-react';
 import { fmtQty, vnDayTime, TEAM_SHORT, type RawPack } from '@/lib/raw-materials';
-import { getOpenReceiptsAction, getReceiptAction, validateReceiptAction, type OpenReceiptRow, type ReceiptView } from '@/app/(app)/purchasing/receive-actions';
+import { getOpenReceiptsAction, getReceiptAction, validateReceiptAction, getPendingHandoversAction, handoverToTeamAction, type OpenReceiptRow, type ReceiptView, type Handover, type PendingHandover } from '@/app/(app)/purchasing/receive-actions';
 import type { ShortReason, ValidateResult } from '@/lib/odoo-po-receive';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF';
@@ -23,6 +23,65 @@ const uuid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? c
 const parseQty = (t: string) => { const v = parseFloat(t.replace(/\s+/g, '').replace(',', '.')); return isNaN(v) ? 0 : Math.max(0, v); };
 const todayYmd = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
 
+const roomLabel = (team: string, L: (vi: string, en: string) => string) => team === 'kho' ? L('Kho chung', 'Lab storage') : `Room ${TEAM_SHORT[team]?.vi ?? team}`;
+
+// Hand-over to the teams (Axel, 2026-10-29): since the rooms are linked to Odoo, what a team ordered
+// reaches its room through a slip. One card per room; "Đã giao cho team" records the team's slip
+// (confirmed by storage) — the chef's "Đã nhận" then moves it in Odoo. Quantities can be corrected
+// (split, unit differences) before tapping.
+function HandoverPanel({ receiptId, poName, initial, L, lang, onChange }: { receiptId: string; poName: string; initial: Handover; L: (vi: string, en: string) => string; lang: 'vi' | 'en'; onChange?: (h: Handover) => void }) {
+  const [h, setH] = useState<Handover>(initial);
+  const [q, setQ] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const give = async (team: string) => {
+    setBusy(team); setErr(null);
+    const grp = h.teams.find(t => t.team === team)!;
+    try {
+      const r = await handoverToTeamAction(receiptId, team, grp.lines.map(l => ({ tmplId: l.tmplId, qty: q[`${team}|${l.tmplId}`] != null ? parseQty(q[`${team}|${l.tmplId}`]) : l.qty })));
+      if (r.error) setErr(r.error); else if (r.handover) { setH(r.handover); onChange?.(r.handover); }
+    } catch { setErr(L('Mất kết nối — bấm lại, không bị tạo hai phiếu.', 'Connection lost — tap again, no double slip.')); }
+    setBusy(null);
+  };
+  return (
+    <div className="space-y-2.5">
+      <div className="pt-1 px-1 text-[12px] font-extrabold uppercase tracking-wide" style={{ color: GOLD_TEXT }}>🚚 {L('Giao cho team', 'Hand over to the teams')} · {poName}</div>
+      {h.teams.map(t => {
+        const c = TEAM_SHORT[t.team];
+        return (
+          <div key={t.team} className="rounded-2xl p-3 space-y-2 bg-white" style={{ border: `1.5px solid ${t.givenAt ? OK : c?.color ?? HAIR}`, backgroundColor: t.givenAt ? OKBG : '#fff' }}>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full px-2.5 py-1 text-[12.5px] font-extrabold" style={{ color: c?.color, backgroundColor: c?.bg }}>→ {roomLabel(t.team, L)}</span>
+              <span className="text-[12px]" style={{ color: '#6B7280' }}>{t.lines.length} {L('sản phẩm', 'item(s)')}</span>
+            </div>
+            {t.lines.map(l => {
+              const k = `${t.team}|${l.tmplId}`;
+              return (
+                <div key={k} className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0 text-[13.5px] font-bold leading-snug">{(lang === 'vi' && l.nameVi) || l.name}
+                    {l.recvUom.toLowerCase() !== l.uom.toLowerCase() && !t.givenAt && <div className="text-[11px] font-semibold" style={{ color: WARN }}>{L(`Nhận theo ${l.recvUom} — kiểm tra số ${l.uom}`, `Received in ${l.recvUom} — check the ${l.uom} figure`)}</div>}</div>
+                  {t.givenAt
+                    ? <span className="font-extrabold text-[14px] tabular-nums">{fmtQty(l.qty)} {l.uom}</span>
+                    : <><input inputMode="decimal" value={q[k] ?? String(l.qty)} onChange={e => setQ(s => ({ ...s, [k]: e.target.value.replace(/[^0-9.,]/g, '') }))}
+                        className="w-20 h-10 rounded-xl text-center text-[17px] font-extrabold outline-none tabular-nums" style={{ border: `1.5px solid ${BORDER}` }} />
+                      <span className="text-[13px] font-bold w-10" style={{ color: '#6B7280' }}>{l.uom}</span></>}
+                </div>);
+            })}
+            {t.givenAt
+              ? <div className="text-[12.5px] font-bold" style={{ color: OK }}>✓ {t.slipNo ? L(`Đã giao · phiếu #${t.slipNo} · chờ chef bấm "Đã nhận"`, `Handed over · slip #${t.slipNo} · waiting for the chef's "Đã nhận"`) : L('Không giao gì', 'Nothing handed over')}{t.givenBy ? ` · ${t.givenBy}` : ''}</div>
+              : <button disabled={!!busy} onClick={() => give(t.team)} className="w-full rounded-xl py-3 font-extrabold text-white text-[15px] disabled:opacity-50" style={{ backgroundColor: NAVY }}>
+                  {busy === t.team ? <Loader2 size={17} className="inline animate-spin" /> : `✓ ${L('Đã giao cho team', 'Handed to the team')}`}</button>}
+          </div>);
+      })}
+      {h.kho.length > 0 && (
+        <div className="rounded-2xl p-3 space-y-1.5" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>
+          <span className="rounded-full px-2.5 py-1 text-[12.5px] font-extrabold" style={{ color: TEAM_SHORT.kho.color, backgroundColor: TEAM_SHORT.kho.bg }}>→ {L('Kho chung — cất vào kho', 'Lab storage — put away')}</span>
+          <div className="text-[13px] pt-1">{h.kho.map(k => `${(lang === 'vi' && k.nameVi) || k.name} ${fmtQty(k.qty)} ${k.uom}`).join(' · ')}</div>
+        </div>)}
+      {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: BADBG, color: BAD }}>{err}</div>}
+    </div>);
+}
+
 export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) => string; lang: 'vi' | 'en' }) {
   const [list, setList] = useState<OpenReceiptRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -35,11 +94,16 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
   const [done, setDone] = useState<ValidateResult | null>(null);
   const [clientId, setClientId] = useState(uuid());
   const [q, setQ] = useState('');
+  const [handover, setHandover] = useState<Handover | null>(null);
+  const [pending, setPending] = useState<PendingHandover[]>([]);
+  const [openHand, setOpenHand] = useState<PendingHandover | null>(null);
 
   const loadList = useCallback(async () => {
     setErr(null);
     const r = await getOpenReceiptsAction();
     if (r.error) setErr(r.error); setList(r.items ?? []);
+    const p = await getPendingHandoversAction();
+    setPending(p.items ?? []);
   }, []);
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -80,7 +144,9 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
         {still.length > 0 && <Res e="🚚" bg={WARNBG} t={L('Còn chờ giao', 'Still expected')} s={still.map(r => `${r.name.replace(/^\[[^\]]*\]\s*/, '')} ${fmtQty(r.expected - r.received)} ${r.uom}`).join(' · ')} />}
         {done.lowered.length > 0 && <Res e="🚫" bg={PALE} t={L('Đã giảm số lượng đặt', 'Order reduced')} s={done.lowered.map(l => `${l.name.replace(/^\[[^\]]*\]\s*/, '')} ${fmtQty(l.from)} → ${fmtQty(l.to)}`).join(' · ')} />}
         {!done.alreadyDone && <Res e="🧾" bg={PALE} t={billTxt} s={done.bill.gaps?.join(' · ')} />}
-        <button onClick={() => { setDone(null); setOpen(null); loadList(); }} className="w-full rounded-2xl py-3.5 font-extrabold text-white text-[16px]" style={{ backgroundColor: NAVY }}>{L('Xong', 'Done')}</button>
+        {handover && <HandoverPanel receiptId={clientId} poName={open.poName} initial={handover} L={L} lang={lang} onChange={setHandover} />}
+        {handover && handover.teams.some(t => !t.givenAt) && <div className="text-[12px] text-center" style={{ color: '#6B7280' }}>{L('Chưa giao xong? Có thể giao sau — xem mục "Chờ giao cho team".', 'Not handed over yet? You can do it later — see "To hand over".')}</div>}
+        <button onClick={() => { setDone(null); setOpen(null); setHandover(null); loadList(); }} className="w-full rounded-2xl py-3.5 font-extrabold text-white text-[16px]" style={{ backgroundColor: NAVY }}>{L('Xong', 'Done')}</button>
       </div>
     );
   }
@@ -97,7 +163,7 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
         const r = await validateReceiptAction(clientId, open.pickingId, vals.map(v => ({ moveId: v.l.moveId, qty: v.n, reason: v.n < v.l.expected - 1e-9 ? reason[v.l.moveId] ?? null : null, note: note[v.l.moveId] ?? null })));
         if (r.error) setErr(r.error);
         else if (r.result && !r.result.ok) setErr(r.result.error ?? 'Error');
-        else if (r.result) setDone(r.result);
+        else if (r.result) { setDone(r.result); setHandover(r.handover ?? null); }
       } catch { setErr(L('Mất kết nối — bấm lại, không bị nhận hai lần.', 'Connection lost — tap again, it will not be received twice.')); }
       setBusy(false);
     };
@@ -120,7 +186,8 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
           return (
             <div key={l.moveId} className="rounded-2xl p-3 space-y-2.5 bg-white" style={{ border: `1.5px solid ${full ? OK : short ? WARN : HAIR}`, backgroundColor: full ? OKBG : '#fff' }}>
               <div className="flex items-start gap-2.5"><ItemPhoto tmplId={l.tmplId} sku={(l.name.match(/^\[([^\]]*)\]/) ?? [])[1] ?? null} size={44} canAdd /><div className="min-w-0"><div className="font-extrabold text-[15px] leading-snug">{name}</div>
-                <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{packs.length ? packs.map(p => `${p.label} = ${fmtQty(p.f)} ${l.uom}`).join(' · ') : l.uom}{l.receivedBefore > 0 ? ` · ${L('đã nhận', 'received')} ${fmtQty(l.receivedBefore)}` : ''}</div></div></div>
+                <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{packs.length ? packs.map(p => `${p.label} = ${fmtQty(p.f)} ${l.uom}`).join(' · ') : l.uom}{l.receivedBefore > 0 ? ` · ${L('đã nhận', 'received')} ${fmtQty(l.receivedBefore)}` : ''}</div>
+                <DestChips dest={open.dest[l.productId] ?? []} expected={l.expected} uom={l.uom} L={L} /></div></div>
               <div className="flex items-center gap-2">
                 <button onClick={() => set((n ?? l.expected) - 1)} className="w-11 h-11 rounded-xl flex items-center justify-center bg-white" style={{ border: `1.5px solid ${BORDER}`, color: NAVY }}><Minus size={18} /></button>
                 <input inputMode="decimal" value={qty[l.moveId] ?? ''} placeholder="—" onChange={e => setQty(s => ({ ...s, [l.moveId]: e.target.value.replace(/[^0-9.,]/g, '') }))}
@@ -151,6 +218,19 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
     );
   }
 
+  // ---------- Hand-over left for later ----------
+  if (openHand) {
+    return (
+      <div className="space-y-3 pb-24">
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setOpenHand(null); loadList(); }} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><ChevronLeft size={20} /></button>
+          <div className="min-w-0 flex-1"><div className="font-extrabold text-[16px] truncate">{openHand.vendor}</div><div className="text-[12px]" style={{ color: '#6B7280' }}>{openHand.poName}</div></div>
+        </div>
+        <HandoverPanel receiptId={openHand.receiptId} poName={openHand.poName} initial={openHand.handover} L={L} lang={lang} />
+        <button onClick={() => { setOpenHand(null); loadList(); }} className="w-full rounded-2xl py-3.5 font-extrabold text-white text-[16px]" style={{ backgroundColor: NAVY }}>{L('Xong', 'Done')}</button>
+      </div>);
+  }
+
   // ---------- 1. List ----------
   const ymd = todayYmd();
   return (
@@ -161,6 +241,18 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
         <button onClick={() => { setList(null); loadList(); }} className="w-11 rounded-xl flex items-center justify-center bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><RefreshCw size={17} /></button>
       </div>
       {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: BADBG, color: BAD }}>{err}</div>}
+      {pending.length > 0 && <div className="space-y-2">
+        <div className="pt-1 px-1 text-[12px] font-extrabold uppercase tracking-wide" style={{ color: WARN }}>🚚 {L('Chờ giao cho team', 'To hand over')}</div>
+        {pending.map(p => {
+          const left = p.handover.teams.filter(t => !t.givenAt);
+          return (
+            <button key={p.receiptId} onClick={() => setOpenHand(p)} className="w-full flex items-center gap-3 rounded-2xl p-3 text-left" style={{ border: `1.5px solid ${WARN}`, backgroundColor: WARNBG }}>
+              <div className="flex-1 min-w-0"><div className="font-extrabold text-[14.5px]">{p.poName} · {p.vendor}</div>
+                <div className="flex flex-wrap gap-1 pt-1">{left.map(t => <span key={t.team} className="rounded-full px-2 py-0.5 text-[11.5px] font-extrabold" style={{ color: TEAM_SHORT[t.team]?.color, backgroundColor: TEAM_SHORT[t.team]?.bg }}>→ {roomLabel(t.team, L)}</span>)}</div></div>
+              <span className="text-[20px]">›</span>
+            </button>);
+        })}
+      </div>}
       {loading && <div className="text-center py-3"><Loader2 size={20} className="inline animate-spin" style={{ color: NAVY }} /></div>}
       {!list ? <div className="text-center py-8"><Loader2 size={22} className="inline animate-spin" style={{ color: NAVY }} /></div>
         : rows.length === 0 ? <div className="bg-white rounded-2xl p-8 text-center text-[14px] font-bold" style={{ border: `1px solid ${BORDER}`, color: '#9CA3AF' }}>📭 {L('Không có hàng chờ nhận', 'Nothing to receive')}</div>
@@ -190,4 +282,18 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
         })}
     </div>
   );
+}
+
+// Where a product goes once received (open request lines on this PO): team rooms first, the rest to the Kho.
+function DestChips({ dest, expected, uom, L }: { dest: { team: string; qty: number; uom: string }[]; expected: number; uom: string; L: (vi: string, en: string) => string }) {
+  const teams = dest.filter(d => d.team !== 'kho');
+  if (!teams.length) return <div className="pt-1"><span className="rounded-full px-2 py-0.5 text-[11.5px] font-extrabold" style={{ color: TEAM_SHORT.kho.color, backgroundColor: TEAM_SHORT.kho.bg }}>→ {L('Kho chung', 'Lab storage')}</span></div>;
+  const sameUnit = teams.every(d => d.uom.toLowerCase() === uom.toLowerCase());
+  const forTeams = teams.reduce((s, d) => s + d.qty, 0);
+  const rest = sameUnit ? Math.round((expected - forTeams) * 1000) / 1000 : 0;
+  return (
+    <div className="flex flex-wrap gap-1 pt-1">
+      {teams.map(d => <span key={d.team + d.uom} className="rounded-full px-2 py-0.5 text-[11.5px] font-extrabold" style={{ color: TEAM_SHORT[d.team]?.color, backgroundColor: TEAM_SHORT[d.team]?.bg }}>→ Room {TEAM_SHORT[d.team]?.vi ?? d.team} {fmtQty(d.qty)} {d.uom}</span>)}
+      {rest > 1e-9 && <span className="rounded-full px-2 py-0.5 text-[11.5px] font-extrabold" style={{ color: TEAM_SHORT.kho.color, backgroundColor: TEAM_SHORT.kho.bg }}>→ {L('Kho', 'Storage')} {fmtQty(rest)} {uom}</span>}
+    </div>);
 }

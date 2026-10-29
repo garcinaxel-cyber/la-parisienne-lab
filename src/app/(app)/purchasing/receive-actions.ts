@@ -4,7 +4,8 @@
 // lines and pushes the requester. Live Odoo reads each time the screen opens; nothing is cached.
 // Until PO_RECEIVING_OPEN=1 the screen is admin-only (test on a real PO first).
 import { rawService, rawActor, isPurchasing, purchasingUserIds } from '@/lib/raw-materials-db';
-import { sendUsersPush, awaitPush } from '@/lib/push-notify';
+import { sendUsersPush, sendTeamPush, awaitPush } from '@/lib/push-notify';
+import { TEAM_SHORT } from '@/lib/raw-materials';
 import { listOpenReceipts, getReceipt, validateReceipt, SHORT_REASONS, type OpenReceipt, type ReceiptDetail, type ValidateLine, type ValidateResult, type ShortReason } from '@/lib/odoo-po-receive';
 import type { RawPack } from '@/lib/raw-materials';
 
@@ -47,7 +48,9 @@ export async function getOpenReceiptsAction(): Promise<{ items?: OpenReceiptRow[
   } catch (e: any) { return { error: `Odoo: ${e?.message ?? e}` }; }
 }
 
-export type ReceiptView = ReceiptDetail & { packs: Record<number, RawPack[]>; nameVi: Record<number, string> };
+// dest: who waits for each product on this PO (open request lines), so the receiver knows where it goes.
+export type ReceiptDest = { team: string; qty: number; uom: string };
+export type ReceiptView = ReceiptDetail & { packs: Record<number, RawPack[]>; nameVi: Record<number, string>; dest: Record<number, ReceiptDest[]> };
 
 export async function getReceiptAction(pickingId: number): Promise<{ data?: ReceiptView; error?: string }> {
   const g = await guard();
@@ -59,17 +62,43 @@ export async function getReceiptAction(pickingId: number): Promise<{ data?: Rece
     const { data: mats } = pids.length ? await g.db.from('lab_raw_materials').select('product_id, packs, name_vi').in('product_id', pids) : { data: [] as any[] };
     const packs: Record<number, RawPack[]> = {}, nameVi: Record<number, string> = {};
     for (const m of mats ?? []) { if (Array.isArray(m.packs) && m.packs.length) packs[m.product_id] = m.packs; if (m.name_vi) nameVi[m.product_id] = m.name_vi; }
-    return { data: { ...d, packs, nameVi } };
+    const dest: Record<number, ReceiptDest[]> = {};
+    if (d.poId) {
+      const { data: rls } = await g.db.from('lab_purchase_request_lines').select('request_id, tmpl_id, uom, qty, received_qty')
+        .eq('po_odoo_id', d.poId).in('status', ['pending', 'ordered']).order('created_at');
+      const reqIds = Array.from(new Set((rls ?? []).map((l: any) => l.request_id)));
+      const tmplIds = Array.from(new Set((rls ?? []).map((l: any) => l.tmpl_id).filter(Boolean)));
+      const { data: reqs } = reqIds.length ? await g.db.from('lab_purchase_requests').select('id, team').in('id', reqIds) : { data: [] as any[] };
+      const { data: tm } = tmplIds.length ? await g.db.from('lab_raw_materials').select('tmpl_id, product_id').in('tmpl_id', tmplIds) : { data: [] as any[] };
+      const teamOf = new Map((reqs ?? []).map((r: any) => [r.id, r.team as string]));
+      const pidOf = new Map((tm ?? []).map((m: any) => [m.tmpl_id, Number(m.product_id)]));
+      for (const l of rls ?? []) {
+        const pid = pidOf.get(l.tmpl_id); const team = teamOf.get(l.request_id);
+        const need = Math.round((Number(l.qty) - Number(l.received_qty ?? 0)) * 1000) / 1000;
+        if (!pid || !team || need <= 0) continue;
+        const arr = dest[pid] ??= [];
+        const e = arr.find(x => x.team === team && x.uom === l.uom);
+        if (e) e.qty = Math.round((e.qty + need) * 1000) / 1000; else arr.push({ team, qty: need, uom: l.uom });
+      }
+    }
+    return { data: { ...d, packs, nameVi, dest } };
   } catch (e: any) { return { error: `Odoo: ${e?.message ?? e}` }; }
 }
 
-export async function validateReceiptAction(clientId: string, pickingId: number, lines: ValidateLine[]): Promise<{ result?: ValidateResult; error?: string }> {
+export type HandoverLine = { tmplId: number; productId: number | null; name: string; nameVi: string | null; uom: string; qty: number; recvUom: string };
+export type HandoverTeam = { team: string; lines: HandoverLine[]; slipId: string | null; slipNo: number | null; givenAt: string | null; givenBy: string | null };
+export type Handover = { teams: HandoverTeam[]; kho: { productId: number; name: string; nameVi: string | null; uom: string; qty: number }[] };
+
+export async function validateReceiptAction(clientId: string, pickingId: number, lines: ValidateLine[]): Promise<{ result?: ValidateResult; handover?: Handover | null; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   if (!UUID.test(String(clientId ?? ''))) return { error: 'Bad id' };
   // A resend (double tap, network cut) never validates twice.
   const { data: done } = await g.db.from('lab_po_receipts').select('id, status').eq('id', clientId).maybeSingle();
-  if (done?.status === 'done') return { result: { ok: true, alreadyDone: true, lowered: [], bill: { id: null, action: 'none' }, received: [], log: [] } };
+  if (done?.status === 'done') {
+    const { data: h } = await g.db.from('lab_po_receipts').select('handover').eq('id', clientId).maybeSingle();
+    return { result: { ok: true, alreadyDone: true, lowered: [], bill: { id: null, action: 'none' }, received: [], log: [] }, handover: (h?.handover as Handover) ?? null };
+  }
   const by = g.a.name || 'lab-app';
   let res: ValidateResult;
   try {
@@ -89,15 +118,20 @@ export async function validateReceiptAction(clientId: string, pickingId: number,
 
   // Chefs' request lines on this PO: received quantity allocated per product, oldest request first.
   const notify = new Map<string, string[]>(); // requester user id -> lines of text
+  // Hand-over (Axel, 2026-10-29): what each team ordered goes to its room through a slip; the rest
+  // stays in the Lab storage. Allocated like the request lines below (oldest request first).
+  const toTeam = new Map<string, Map<number, HandoverLine>>();
+  const givenByPid = new Map<number, number>();
   const { data: rls } = poId ? await g.db.from('lab_purchase_request_lines')
     .select('id, request_id, tmpl_id, name, uom, qty, received_qty, status').eq('po_odoo_id', poId).in('status', ['pending', 'ordered']).order('created_at') : { data: [] as any[] };
   if (rls?.length) {
     const tmplIds = Array.from(new Set(rls.map((l: any) => l.tmpl_id).filter(Boolean)));
-    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, product_id, name_vi').in('tmpl_id', tmplIds);
+    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, product_id, name_vi, name, uom').in('tmpl_id', tmplIds);
+    const matOf = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
     const pidOf = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m.product_id]));
     const viOf = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m.name_vi]));
     const reqIds = Array.from(new Set(rls.map((l: any) => l.request_id)));
-    const { data: reqs } = await g.db.from('lab_purchase_requests').select('id, no, created_by').in('id', reqIds);
+    const { data: reqs } = await g.db.from('lab_purchase_requests').select('id, no, created_by, team').in('id', reqIds);
     const reqOf = new Map((reqs ?? []).map((r: any) => [r.id, r]));
     const left = new Map(res.received.map(r => [r.productId, r.received]));
     const now = new Date().toISOString();
@@ -115,6 +149,14 @@ export async function validateReceiptAction(clientId: string, pickingId: number,
         ...(full ? { status: 'received', received_at: now, received_by_name: by } : {}),
       }).eq('id', l.id);
       const req: any = reqOf.get(l.request_id);
+      if (give > 0 && req?.team && req.team !== 'kho') {
+        const m: any = matOf.get(l.tmpl_id);
+        const byT = toTeam.get(req.team) ?? new Map<number, HandoverLine>(); toTeam.set(req.team, byT);
+        const e = byT.get(l.tmpl_id);
+        if (e) e.qty = Math.round((e.qty + give) * 1000) / 1000;
+        else byT.set(l.tmpl_id, { tmplId: l.tmpl_id, productId: pid ?? null, name: m?.name ?? l.name, nameVi: m?.name_vi ?? null, uom: m?.uom ?? l.uom, qty: Math.round(give * 1000) / 1000, recvUom: r.uom });
+        givenByPid.set(pid, (givenByPid.get(pid) ?? 0) + give);
+      }
       if (!req?.created_by) continue;
       const name = viOf.get(l.tmpl_id) || l.name;
       const txt = got > 0
@@ -122,6 +164,18 @@ export async function validateReceiptAction(clientId: string, pickingId: number,
         : `${name}: chưa về${r.reason ? ` · ${SHORT_REASONS[r.reason as ShortReason].vi}` : ''} (#${req.no})`;
       notify.set(req.created_by, [...(notify.get(req.created_by) ?? []), txt]);
     }
+  }
+  let handover: Handover | null = null;
+  if (toTeam.size) {
+    const pids = res.received.map(r => r.productId);
+    const { data: vm } = pids.length ? await g.db.from('lab_raw_materials').select('product_id, name_vi').in('product_id', pids) : { data: [] as any[] };
+    const viP = new Map((vm ?? []).map((m: any) => [Number(m.product_id), m.name_vi as string | null]));
+    handover = {
+      teams: Array.from(toTeam.entries()).map(([team, m]) => ({ team, lines: Array.from(m.values()), slipId: null, slipNo: null, givenAt: null, givenBy: null })),
+      kho: res.received.map(r => ({ productId: r.productId, name: r.name.replace(/^\[[^\]]*\]\s*/, ''), nameVi: viP.get(r.productId) ?? null, uom: r.uom,
+        qty: Math.round((r.received - (givenByPid.get(r.productId) ?? 0)) * 1000) / 1000 })).filter(k => k.qty > 1e-9),
+    };
+    await g.db.from('lab_po_receipts').update({ handover }).eq('id', clientId);
   }
   for (const [uid, txts] of Array.from(notify.entries())) {
     const p = { title: `📦 Hàng đã về · ${poName}`, body: txts.join('\n').slice(0, 400), url: '/station/me', tag: `po-recv-${poId}` };
@@ -134,5 +188,73 @@ export async function validateReceiptAction(clientId: string, pickingId: number,
     const body = issues.map(r => `${r.name}: ${SHORT_REASONS[r.reason as ShortReason].vi}${r.note ? ` — ${r.note}` : ''}`).join('\n');
     if (ids.length) await awaitPush(sendUsersPush(g.db, ids, { title: `⚠️ ${poName} · ${vendor}`, body: body.slice(0, 400), url: '/purchasing?tab=receive', tag: `po-issue-${poId}` }));
   }
-  return { result: res };
+  return { result: res, handover };
+}
+
+export type PendingHandover = { receiptId: string; poName: string; vendor: string | null; createdAt: string; handover: Handover };
+
+/** Receipts of the last 7 days with goods not yet handed over to a team. */
+export async function getPendingHandoversAction(): Promise<{ items?: PendingHandover[]; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data, error } = await g.db.from('lab_po_receipts').select('id, po_name, vendor_name, created_at, handover')
+    .eq('status', 'done').not('handover', 'is', null).gte('created_at', since).order('created_at', { ascending: false }).limit(100);
+  if (error) return { error: error.message };
+  return { items: (data ?? []).filter((r: any) => (r.handover?.teams ?? []).some((t: any) => !t.givenAt))
+    .map((r: any) => ({ receiptId: r.id, poName: r.po_name, vendor: r.vendor_name, createdAt: r.created_at, handover: r.handover })) };
+}
+
+/**
+ * "Đã giao cho team": the goods are handed to the team — the app records the team's slip, already
+ * confirmed by storage; the chef's "Đã nhận" then moves LAB/Stock → Room in Odoo (rooms-odoo.ts).
+ * qtys may correct what was handed (unit differences, split); 0 everywhere = nothing handed.
+ * Compare-and-set on the receipt's hand-over: a double tap never creates two slips.
+ */
+export async function handoverToTeamAction(receiptId: string, team: string, qtys: { tmplId: number; qty: number }[]): Promise<{ ok?: boolean; slipNo?: number | null; handover?: Handover; error?: string }> {
+  const g = await guard();
+  if (!g) return { error: 'Forbidden' };
+  if (!UUID.test(String(receiptId ?? ''))) return { error: 'Bad id' };
+  const { data: row } = await g.db.from('lab_po_receipts').select('id, po_name, vendor_name, handover, handover_rev').eq('id', receiptId).maybeSingle();
+  const h = row?.handover as Handover | null;
+  const grp = h?.teams.find(t => t.team === team);
+  if (!row || !h || !grp) return { error: 'Not found' };
+  if (grp.givenAt) return { ok: true, slipNo: grp.slipNo, handover: h };
+  const want = new Map((qtys ?? []).map(q => [Number(q.tmplId), Math.max(0, Math.round(Number(q.qty) * 1000) / 1000)]));
+  const lines = grp.lines.map(l => ({ ...l, qty: want.has(l.tmplId) && !isNaN(want.get(l.tmplId)!) ? want.get(l.tmplId)! : l.qty })).filter(l => l.qty > 0);
+  const now = new Date().toISOString();
+  const by = g.a.name || null;
+  let slip: { id: string; no: number } | null = null;
+  if (lines.length) {
+    const { data: mats } = await g.db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, bom_count, no_recipe_needed').in('tmpl_id', lines.map(l => l.tmplId));
+    const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
+    const { data: w, error } = await g.db.from('lab_raw_withdrawals').insert({
+      team, kind: 'take', taken_by: `Nhận hàng ${row.po_name}`, created_by: g.a.userId, status: 'confirmed', confirmed_at: now, confirmed_by_name: by,
+      note: `📦 Hàng đặt đã về · ${row.po_name}${row.vendor_name ? ` · ${row.vendor_name}` : ''}`,
+    }).select('id, no').single();
+    if (error || !w) return { error: error?.message ?? 'Insert failed' };
+    const { error: lErr } = await g.db.from('lab_raw_withdrawal_lines').insert(lines.map(l => {
+      const m: any = byId.get(l.tmplId);
+      return { withdrawal_id: w.id, tmpl_id: l.tmplId, sku: m?.sku ?? null, name: m?.name ?? l.name, uom: m?.uom ?? l.uom, qty: l.qty,
+        off_recipe: !!m && m.bom_count === 0 && !m.no_recipe_needed, used_for: null, brand: null };
+    }));
+    if (lErr) { await g.db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }
+    slip = { id: w.id, no: Number(w.no) };
+  }
+  const next: Handover = { ...h, teams: h.teams.map(t => t.team === team ? { ...t, lines: t.lines.map(l => ({ ...l, qty: lines.find(x => x.tmplId === l.tmplId)?.qty ?? 0 })), slipId: slip?.id ?? null, slipNo: slip?.no ?? null, givenAt: now, givenBy: by } : t) };
+  const { data: upd } = await g.db.from('lab_po_receipts').update({ handover: next, handover_rev: Number(row.handover_rev ?? 0) + 1 }).eq('id', receiptId).eq('handover_rev', Number(row.handover_rev ?? 0)).select('id');
+  if (!upd?.length) {
+    // Someone else handed it over meanwhile: drop this slip, keep theirs.
+    if (slip) { await g.db.from('lab_raw_withdrawal_lines').delete().eq('withdrawal_id', slip.id); await g.db.from('lab_raw_withdrawals').delete().eq('id', slip.id); }
+    const { data: cur } = await g.db.from('lab_po_receipts').select('handover').eq('id', receiptId).maybeSingle();
+    const ch = cur?.handover as Handover;
+    return { ok: true, slipNo: ch?.teams.find(t => t.team === team)?.slipNo ?? null, handover: ch };
+  }
+  if (slip) {
+    const what = lines.map(l => `${l.nameVi || l.name} ${l.qty} ${l.uom}`).join(', ').slice(0, 300);
+    await awaitPush(sendTeamPush(g.db, team,
+      { title: `📦 Hàng đặt đã về · ${row.po_name}`, body: `Phiếu #${slip.no}: ${what} — bấm "✓ Đã nhận" khi nhận hàng`, url: `/station/${team}`, tag: `raw-pick-${slip.no}` },
+      { title: `📦 Ordered goods arrived · ${row.po_name}`, body: `Slip #${slip.no} (${TEAM_SHORT[team]?.en ?? team}): ${what} — tap "✓ Đã nhận" once received`, url: `/station/${team}`, tag: `raw-pick-${slip.no}` }));
+  }
+  return { ok: true, slipNo: slip?.no ?? null, handover: next };
 }
