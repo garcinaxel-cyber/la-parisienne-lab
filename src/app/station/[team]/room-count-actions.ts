@@ -2,6 +2,7 @@
 // Room count — chef side (Axel, 2026-10-20). See lib/room-count.ts and supabase/lab_v128_room_counts.sql.
 // Phase 1: app only, nothing is written to Odoo.
 import { applyRoomCountToOdoo, roomsLinkedForDay } from '@/lib/rooms-odoo';
+import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, canActForTeam, canApproveForTeam } from '@/lib/raw-materials-db';
 import { resolveRawMaterialsBatch } from '@/lib/mp-consumption';
 import { isOemSku } from '@/lib/oem';
@@ -258,11 +259,14 @@ export async function confirmRoomCountAction(team: string, sessionId: string): P
   const counted = new Set(st.entries.map(e => e.tmplId));
   const missing = st.lines.filter(l => !counted.has(l.tmplId) && !l.leftOutReason);
   if (missing.length) return { error: `Còn ${missing.length} nguyên liệu chưa đếm và chưa có lý do / ${missing.length} items neither counted nor explained` };
-  const { error } = await db.from('lab_room_count_sessions').update({ status: 'confirmed', confirmed_by: a.userId, confirmed_by_name: a.name || null,
-    confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', sessionId).eq('status', 'open');
+  const { data: upd, error } = await db.from('lab_room_count_sessions').update({ status: 'confirmed', confirmed_by: a.userId, confirmed_by_name: a.name || null,
+    confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', sessionId).eq('status', 'open').select('id');
   if (error) return { error: error.message };
-  // Rooms linked to Odoo (2026-10-29): the confirmed count is applied to the room right away.
-  // Best-effort: a failure is saved on the session and retried by the 15-min cron.
-  if (roomsLinkedForDay(st.session.countDate)) { try { await applyRoomCountToOdoo(db, sessionId); } catch { /* retried by cron */ } }
+  // Rooms linked to Odoo (2026-10-29): the count is applied to the room once that day's MOs are done
+  // (usually the same night). First try right after the reply; the cron retries until it is applied.
+  if (upd?.length && roomsLinkedForDay(st.session.countDate)) {
+    const p = applyRoomCountToOdoo(db, sessionId).catch(() => null);
+    try { waitUntil(p); } catch { await p; }
+  }
   return { ok: true, state: await loadState(db, team, a, true) };
 }

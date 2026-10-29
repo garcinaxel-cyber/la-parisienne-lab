@@ -141,9 +141,16 @@ async function syncStockToOdooInner(
   // Grouping key: product, plus the manufacturing type once rooms are linked (one MO per team).
   const keyOf = (pid: number, typeId: number | null) => (linked ? `${pid}|${typeId ?? LAB_MANUF_TYPE_ID}` : String(pid));
   const moByProd: Record<string, { confirmedSum: number; draft: { id: number; qty: number; name: string } | null }> = {};
+  const legacyLeft: Record<number, number> = {};
   for (const m of existing.sort((a: any, z: any) => a.id - z.id)) {
     const pid = Array.isArray(m.product_id) ? m.product_id[0] : m.product_id;
     const tid = Array.isArray(m.picking_type_id) ? m.picking_type_id[0] : (m.picking_type_id || null);
+    // Linked day with an MO on another type (legacy Lab: Manufacturing, made before the switch or by
+    // hand): it already covers part of the day — counted against the teams' targets, never modified.
+    if (linked && !Object.values(ROOMS).some(r => r.manufType === tid)) {
+      legacyLeft[pid] = (legacyLeft[pid] ?? 0) + (m.product_qty ?? 0) - (m.state === 'draft' ? 0 : (unbuiltByMo[m.id] ?? 0));
+      continue;
+    }
     const e = moByProd[keyOf(pid, tid)] ??= { confirmedSum: 0, draft: null };
     // A second draft (left by an old race) counts like a confirmed one, so it is never forgotten.
     if (m.state === 'draft' && !e.draft) e.draft = { id: m.id, qty: m.product_qty, name: m.name };
@@ -159,7 +166,9 @@ async function syncStockToOdooInner(
     const placement = linked && typeId
       ? { picking_type_id: typeId, ...(room ? { location_src_id: room } : {}), location_dest_id: LAB_STOCK_ID }
       : {};
-    const desiredDraft = target - e.confirmedSum;
+    const cover = Math.max(0, Math.min(legacyLeft[p.id] ?? 0, target - e.confirmedSum));
+    if (cover > 0) legacyLeft[p.id] -= cover;
+    const desiredDraft = target - e.confirmedSum - cover;
     if (desiredDraft <= 0) { res.unchanged.push({ sku, product: p.name, target, reason: 'covered by validated MOs' }); continue; }
     if (e.draft) {
       if (e.draft.qty === desiredDraft) res.unchanged.push({ sku, product: p.name, target, reason: 'up to date' });

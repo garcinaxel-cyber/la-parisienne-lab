@@ -20,3 +20,14 @@ alter table public.lab_room_count_sessions
   add column if not exists odoo_error text,
   add column if not exists odoo_log jsonb,
   add column if not exists odoo_at timestamptz;
+
+-- MOs done in a room whose non-raw components (packaging, semi-finished from LAB/Stock) were moved
+-- LAB/Stock → room (cron, every 15 min). One row per MO: never topped up twice.
+create table if not exists public.lab_room_topups (
+  mo_odoo_id integer primary key,
+  mo_name text,
+  picking_names text[],
+  error text,
+  created_at timestamptz not null default now()
+);
+alter table public.lab_room_topups enable row level security;

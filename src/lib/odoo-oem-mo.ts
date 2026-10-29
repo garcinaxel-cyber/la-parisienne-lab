@@ -1,5 +1,5 @@
 import { odooExecute, odooExecuteWrite, odooWriteConfigured } from '@/lib/odoo';
-import { roomsLinkedForDay, ROOMS, LAB_STOCK_ID } from '@/lib/rooms-odoo';
+import { roomsLinkedForDay, ROOMS, LAB_STOCK_ID, topUpRoomComponentsTree } from '@/lib/rooms-odoo';
 
 // OEM Orders (Axel, 2026-09-25) — the finished product (bag, or kg for cashews) is created in
 // Odoo when the assistants record packaging, not when Hung bakes. One MO per packaging entry,
@@ -54,6 +54,8 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
     if (done && typeof done === 'object' && done.res_model) {
       return { ok: false, moId, moName, state: 'confirmed', error: `Odoo asked for confirmation (${done.res_model}) — finish ${moName} by hand in Odoo` };
     }
+    // Room Hung: bags/cartons (not on any slip) are moved LAB/Stock → Room Hung for this MO.
+    if (roomsLinkedForDay(date)) { try { await topUpRoomComponentsTree(moId); } catch { /* best-effort */ } }
     return { ok: true, moId, moName, state: 'done' };
   } catch (e: any) {
     return { ok: false, moId, moName, error: String(e?.message ?? e) };
@@ -78,6 +80,7 @@ export async function resumeOemMO(moId: number): Promise<OemMoResult> {
     if (done && typeof done === 'object' && done.res_model) {
       return { ok: false, moId, moName: mo.name, state: 'confirmed', error: `Odoo asked for confirmation (${done.res_model}) — finish ${mo.name} by hand in Odoo` };
     }
+    try { await topUpRoomComponentsTree(moId); } catch { /* best-effort; no-op outside a room */ }
     return { ok: true, moId, moName: mo.name, state: 'done' };
   } catch (e: any) {
     return { ok: false, moId, error: String(e?.message ?? e) };
