@@ -33,7 +33,7 @@ export type OpenReceipt = {
   products: { id: number; name: string }[];
 };
 export type ReceiptLine = {
-  moveId: number; productId: number; poLineId: number | null; name: string; uom: string;
+  moveId: number; productId: number; tmplId: number | null; poLineId: number | null; name: string; uom: string;
   expected: number;        // still to receive on this receipt (move demand)
   ordered: number;         // PO line quantity
   receivedBefore: number;  // already received on earlier deliveries
@@ -82,7 +82,7 @@ export async function getReceipt(pickingId: number): Promise<ReceiptDetail | nul
   if (!p || m2oId(p.picking_type_id) !== LAB_RECEIPT_TYPE_ID || !p.purchase_id) return null;
   const moves = await odooExecute<any[]>('stock.move', 'search_read',
     [[['picking_id', '=', pickingId], ['state', 'not in', ['done', 'cancel']]]],
-    { fields: ['id', 'product_id', 'product_uom_qty', 'product_uom', 'purchase_line_id'], context: { lang: 'vi_VN' } });
+    { fields: ['id', 'product_id', 'product_tmpl_id', 'product_uom_qty', 'product_uom', 'purchase_line_id'], context: { lang: 'vi_VN' } });
   const plIds = Array.from(new Set(moves.map(m => m2oId(m.purchase_line_id)).filter(Boolean))) as number[];
   const pls = plIds.length ? await odooExecuteWrite<any[]>('purchase.order.line', 'read', [plIds], { fields: ['product_qty', 'qty_received'] }) : [];
   const plById = new Map(pls.map(l => [l.id, l]));
@@ -92,7 +92,7 @@ export async function getReceipt(pickingId: number): Promise<ReceiptDetail | nul
     lines: moves.map(m => {
       const pl: any = plById.get(m2oId(m.purchase_line_id) ?? -1);
       return {
-        moveId: m.id, productId: m2oId(m.product_id)!, poLineId: m2oId(m.purchase_line_id), name: m2oName(m.product_id) ?? '',
+        moveId: m.id, productId: m2oId(m.product_id)!, tmplId: m2oId(m.product_tmpl_id), poLineId: m2oId(m.purchase_line_id), name: m2oName(m.product_id) ?? '',
         uom: m2oName(m.product_uom) ?? '', expected: Number(m.product_uom_qty) || 0,
         ordered: Number(pl?.product_qty ?? m.product_uom_qty) || 0, receivedBefore: Number(pl?.qty_received ?? 0) || 0,
       };

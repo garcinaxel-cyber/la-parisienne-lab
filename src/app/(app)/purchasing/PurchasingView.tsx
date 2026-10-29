@@ -605,7 +605,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                 <div className="mt-1.5">
                   {w.lines.map(l => (
                     <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
-                      <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} />
+                      <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} canAdd />
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
                         {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
@@ -706,7 +706,7 @@ function StorageTab({ L, lang, onPending }: { L: LFn; lang: 'vi' | 'en'; onPendi
                   <div className="mt-1.5">
                     {w.lines.map(l => (
                       <div key={l.id} className="flex items-center gap-3 py-1.5" style={{ borderTop: `1px solid ${HAIR}` }}>
-                        <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} />
+                        <ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} canAdd />
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-bold leading-snug">{nm(l)}</div>
                           {l.packLabel && l.packCount ? <div className="text-[11px]" style={{ color: '#9CA3AF' }}>{fmtQty(l.packCount)} × {l.packLabel}</div> : null}
@@ -826,7 +826,7 @@ function HistoryTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                 <div key={l.id} style={{ borderTop: `1px solid ${HAIR}` }}>
                   <button onClick={() => setOpen(s => ({ ...s, [l.id]: !s[l.id] }))} className="w-full text-left grid gap-3 items-center px-4 py-2.5 hover:bg-[#FFFDF6]" style={{ gridTemplateColumns: 'minmax(56px,70px) minmax(160px,1.4fr) minmax(120px,1fr) minmax(160px,200px) 18px' }}>
                     <div><b className="block text-[12.5px] tabular-nums">{dt.day}</b><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{dt.time}</span></div>
-                    <div className="min-w-0 flex items-center gap-2"><ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} /><div className="min-w-0"><b className="block text-[13px] truncate">{nm(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
+                    <div className="min-w-0 flex items-center gap-2"><ItemPhoto tmplId={l.tmplId} sku={l.sku} size={36} canAdd /><div className="min-w-0"><b className="block text-[13px] truncate">{nm(l)}{l.isNew && <span className="ml-1 text-[10px] font-extrabold rounded px-1" style={{ backgroundColor: '#F2F4F7' }}>{L('MỚI', 'NEW')}</span>}</b>
                       <span className="text-[11.5px]" style={{ color: '#6B7280' }}>{fmtQty(l.qty)} {l.uom}{packHint(l) && <span style={{ color: GOLD_TEXT }}> ({packHint(l)})</span>} · <TeamBadge team={l.team} lang={lang} /> {l.requestedBy}</span></div></div>
                     <div className="text-[12px] min-w-0">{l.vendorName ? <span className="truncate block">{shortVendor(l.vendorName)}</span> : <span className="font-bold" style={{ color: LATE }}>{L('Chưa có NCC', 'No vendor yet')}</span>}
                       <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{l.poRef ? `PO ${l.poRef}` : l.status === 'pending' && age >= 2 ? <span className="font-extrabold rounded px-1" style={{ backgroundColor: '#FEF3F2', color: LATE }}>{L(`chờ ${age} ngày`, `waiting ${age} days`)}</span> : ''}</span></div>

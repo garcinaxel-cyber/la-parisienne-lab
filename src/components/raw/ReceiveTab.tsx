@@ -3,6 +3,7 @@
 // Flavor) on a phone: big cards, big steppers, icon reasons, almost no text. Reads Odoo live when the
 // screen opens; Validate writes Odoo (receipt, backorder, PO quantity, the PO's single draft bill) —
 // see lib/odoo-po-receive.ts.
+import ItemPhoto from '@/components/raw/ItemPhoto';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCw, ChevronLeft, Minus, Plus, Check } from 'lucide-react';
 import { fmtQty, vnDayTime, TEAM_SHORT, type RawPack } from '@/lib/raw-materials';
@@ -118,8 +119,8 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
           const set = (v: number) => setQty(s => ({ ...s, [l.moveId]: String(Math.max(0, Math.round(v * 1000) / 1000)) }));
           return (
             <div key={l.moveId} className="rounded-2xl p-3 space-y-2.5 bg-white" style={{ border: `1.5px solid ${full ? OK : short ? WARN : HAIR}`, backgroundColor: full ? OKBG : '#fff' }}>
-              <div><div className="font-extrabold text-[15px] leading-snug">{name}</div>
-                <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{packs.length ? packs.map(p => `${p.label} = ${fmtQty(p.f)} ${l.uom}`).join(' · ') : l.uom}{l.receivedBefore > 0 ? ` · ${L('đã nhận', 'received')} ${fmtQty(l.receivedBefore)}` : ''}</div></div>
+              <div className="flex items-start gap-2.5"><ItemPhoto tmplId={l.tmplId} sku={(l.name.match(/^\[([^\]]*)\]/) ?? [])[1] ?? null} size={44} canAdd /><div className="min-w-0"><div className="font-extrabold text-[15px] leading-snug">{name}</div>
+                <div className="text-[11.5px]" style={{ color: '#6B7280' }}>{packs.length ? packs.map(p => `${p.label} = ${fmtQty(p.f)} ${l.uom}`).join(' · ') : l.uom}{l.receivedBefore > 0 ? ` · ${L('đã nhận', 'received')} ${fmtQty(l.receivedBefore)}` : ''}</div></div></div>
               <div className="flex items-center gap-2">
                 <button onClick={() => set((n ?? l.expected) - 1)} className="w-11 h-11 rounded-xl flex items-center justify-center bg-white" style={{ border: `1.5px solid ${BORDER}`, color: NAVY }}><Minus size={18} /></button>
                 <input inputMode="decimal" value={qty[l.moveId] ?? ''} placeholder="—" onChange={e => setQty(s => ({ ...s, [l.moveId]: e.target.value.replace(/[^0-9.,]/g, '') }))}
