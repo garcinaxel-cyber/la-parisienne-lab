@@ -1,5 +1,6 @@
 // Server-only helpers for the raw materials feature (see raw-materials.ts). Phase 1: the app's own
 // tables only; Odoo is read, never written.
+import { roomsLinkStartIso, needsChefReceipt } from '@/lib/rooms-odoo';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import type { RawMaterial, PurchaseLine, Withdrawal } from '@/lib/raw-materials';
@@ -97,7 +98,7 @@ export async function loadLines(db: NonNullable<ReturnType<typeof rawService>>, 
 }
 
 export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawService>>, build: (q: any) => any): Promise<Withdrawal[]> {
-  const { data: ws, error } = await build(db.from('lab_raw_withdrawals').select('id, no, team, taken_by, created_at, status, confirmed_at, confirmed_by_name, kind, from_team, to_team, note, refused_at, refused_by_name')).limit(2000);
+  const { data: ws, error } = await build(db.from('lab_raw_withdrawals').select('id, no, team, taken_by, created_at, status, confirmed_at, confirmed_by_name, kind, from_team, to_team, note, refused_at, refused_by_name, received_at, received_by_name')).limit(2000);
   if (error) throw new Error(error.message);
   const ids = (ws ?? []).map((w: any) => w.id);
   const lines = new Map<string, any[]>();
@@ -107,11 +108,15 @@ export async function loadWithdrawals(db: NonNullable<ReturnType<typeof rawServi
       .in('withdrawal_id', ids.slice(i, i + 200));
     for (const l of data ?? []) { const a = lines.get(l.withdrawal_id) ?? []; a.push(l); lines.set(l.withdrawal_id, a); }
   }
+  const linkStart = roomsLinkStartIso();
   return (ws ?? []).map((w: any) => ({
     id: w.id, no: Number(w.no), team: w.team, takenBy: w.taken_by ?? null, createdAt: w.created_at,
     status: w.status === 'to_confirm' ? 'to_confirm' : 'confirmed', confirmedAt: w.confirmed_at ?? null, confirmedBy: w.confirmed_by_name ?? null,
     kind: w.kind === 'transfer' ? 'transfer' : 'take', fromTeam: w.from_team ?? null, toTeam: w.to_team ?? null, note: w.note ?? null,
     refused: !!w.refused_at, refusedBy: w.refused_by_name ?? null,
+    receivedAt: w.received_at ?? null, receivedBy: w.received_by_name ?? null,
+    awaitingReceipt: !!linkStart && w.status === 'confirmed' && !w.refused_at && !w.received_at && needsChefReceipt(w)
+      && !!w.confirmed_at && Date.parse(w.confirmed_at) >= Date.parse(linkStart),
     lines: (lines.get(w.id) ?? []).map(l => ({
       id: l.id, tmplId: l.tmpl_id ?? null, sku: l.sku ?? null, name: l.name, uom: l.uom, qty: Number(l.qty),
       packLabel: l.pack_label ?? null, packCount: l.pack_count == null ? null : Number(l.pack_count),

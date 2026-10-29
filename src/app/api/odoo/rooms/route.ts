@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { odooWriteConfigured } from '@/lib/odoo';
-import { pushPendingSlips, pushPendingRoomCounts, topUpRecentRoomMOs, roomsLinkStartIso } from '@/lib/rooms-odoo';
+import { pushPendingSlips, pushPendingRoomCounts, chaseUnreceivedSlips, roomsLinkStartIso } from '@/lib/rooms-odoo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 // Rooms linked to Odoo (2026-10-29) — every 15 min (pg_cron "rooms-odoo", ?secret=CRON_SECRET):
-//   1. slips whose Odoo transfer failed or never ran;
-//   2. packaging / semi-finished components of room MOs done today and yesterday (LAB/Stock → room);
+//   1. slips confirmed but not marked received: reminder after 1 h, auto-received after their day;
+//   2. received slips whose Odoo transfer failed or never ran;
 //   3. confirmed room counts waiting for their day's MOs, or that failed.
 // Does nothing while ROOMS_LINK_START_DAY is not set.
 export async function GET(req: Request) {
@@ -19,8 +19,8 @@ export async function GET(req: Request) {
   if (!odooWriteConfigured() || !process.env.SUPABASE_SERVICE_ROLE_KEY) return NextResponse.json({ error: 'Server not configured' }, { status: 503 });
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const out: Record<string, any> = {};
+  try { out.chase = await chaseUnreceivedSlips(db); } catch (e: any) { out.chase = { error: String(e?.message ?? e) }; }
   try { out.slips = await pushPendingSlips(db); } catch (e: any) { out.slips = { error: String(e?.message ?? e) }; }
-  try { out.topups = await topUpRecentRoomMOs(db); } catch (e: any) { out.topups = { error: String(e?.message ?? e) }; }
   try { out.counts = await pushPendingRoomCounts(db); } catch (e: any) { out.counts = { error: String(e?.message ?? e) }; }
   return NextResponse.json(out);
 }

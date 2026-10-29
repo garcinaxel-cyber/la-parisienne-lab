@@ -261,8 +261,9 @@ export async function confirmWithdrawalAction(withdrawalId: string, qtys: { line
     .eq('id', w.id).eq('status', 'to_confirm').select('id');
   if (error) return { error: error.message };
   if (!upd?.length) return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
-  // Rooms linked to Odoo (2026-10-29): the confirmed slip moves stock in Odoo right after the reply
-  // (waitUntil — storage never waits on Odoo). A failure is saved on the slip and retried by the cron.
+  // Rooms linked to Odoo (2026-10-29): a give-back to the Kho moves in Odoo now (storage is the
+  // receiver); any other slip waits for the receiving chef's "Đã nhận" (option B) — pushSlipToOdoo
+  // skips it until then. Runs after the reply; a failure is retried by the rooms cron.
   if (roomsLinkStartIso()) {
     const p = pushSlipToOdoo(g.db, w.id).catch(() => null);   // runs after the response (retried by cron)
     try { waitUntil(p); } catch { await p; }

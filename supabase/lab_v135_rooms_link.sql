@@ -21,13 +21,9 @@ alter table public.lab_room_count_sessions
   add column if not exists odoo_log jsonb,
   add column if not exists odoo_at timestamptz;
 
--- MOs done in a room whose non-raw components (packaging, semi-finished from LAB/Stock) were moved
--- LAB/Stock → room (cron, every 15 min). One row per MO: never topped up twice.
-create table if not exists public.lab_room_topups (
-  mo_odoo_id integer primary key,
-  mo_name text,
-  picking_names text[],
-  error text,
-  created_at timestamptz not null default now()
-);
-alter table public.lab_room_topups enable row level security;
+-- Option B (Axel, 2026-10-29): the receiving chef confirms the goods ("Đã nhận"); only then does the
+-- slip move stock in Odoo. Not tapped: reminder after 1 h, auto-received after the slip's lab day.
+alter table public.lab_raw_withdrawals
+  add column if not exists received_at timestamptz,
+  add column if not exists received_by_name text,
+  add column if not exists chef_reminded_at timestamptz;

@@ -3,16 +3,18 @@
 // Each team has its own room in Odoo (stock.location, sibling of LAB/Stock under the LAB view, so a
 // reservation on LAB/Stock never takes from a room) and its own manufacturing operation type. From
 // ROOMS_LINK_START_DAY (env, 'YYYY-MM-DD', lab day) on:
-//   * a slip confirmed by storage = an internal transfer validated in Odoo:
+//   * a slip = an internal transfer validated in Odoo once the goods change hands (Axel, 29/10,
+//     option B): the receiving chef taps "Đã nhận"; a give-back to the Kho moves when storage confirms
+//     it. Not tapped: reminder after 1 h, and moved anyway after the slip's lab day (storage confirmed
+//     it, so the goods are meant to have left):
 //       take                → LAB/Stock → Room of the team
 //       transfer team → team → Room A → Room B
 //       transfer team → kho  → Room → LAB/Stock (give-back)
 //   * the day's MOs are made per product and per team on the team's type: components consumed in
 //     the room, semi-finished made and consumed in the room (type default destination = room, tested
 //     29/10 on WH/MO/71230), finished product forced to LAB/Stock on the parent MO (deliveries
-//     unchanged). Components that are not raw materials and not made by the MO itself (packaging,
-//     a semi-finished from LAB/Stock) are moved LAB/Stock → room after the MO is done
-//     (topUpRoomComponents), since no slip ever brings them to the room;
+//     unchanged). Recipes only use raw materials and semi-finished (checked 29/10: OEM BoMs hold no
+//     bag or carton), so nothing else has to follow the MO into the room;
 //   * a confirmed room count is applied to the room once that day's MOs are done.
 // Internal transfers make no accounting entry; only inventory adjustments do.
 // Before the start day nothing changes (one MO per product on Lab: Manufacturing, LAB/Stock).
@@ -23,7 +25,6 @@ import { odooExecuteWrite, odooWriteConfigured, labDayUtcRange } from '@/lib/odo
 export const LAB_STOCK_ID = 8;
 export const LAB_INTERNAL_TYPE_ID = 7;      // Lab: Transferts internes
 export const LAB_MANUF_TYPE_ID = 11;        // Lab: Manufacturing (legacy, LAB/Stock → LAB/Stock)
-export const RAW_MATERIAL_CATEG_ID = 18;    // All / Raw Material (nguyên liệu)
 
 export const ROOMS: Record<string, { location: number; manufType: number }> = {
   hung: { location: 219, manufType: 314 },
@@ -116,12 +117,14 @@ async function moveInOdoo(args: {
  */
 export async function pushSlipToOdoo(db: Db, withdrawalId: string): Promise<SlipPushResult> {
   const { data: w } = await db.from('lab_raw_withdrawals')
-    .select('id, no, team, kind, from_team, to_team, status, confirmed_at, refused_at, confirmed_by_name, taken_by, odoo_picking_id, odoo_state, odoo_tries')
+    .select('id, no, team, kind, from_team, to_team, status, confirmed_at, refused_at, confirmed_by_name, taken_by, received_at, received_by_name, odoo_picking_id, odoo_state, odoo_tries')
     .eq('id', withdrawalId).maybeSingle();
   if (!w) return { state: 'error', error: 'Slip not found' };
   if (w.odoo_state === 'done' || w.odoo_state === 'skipped') return { state: w.odoo_state };
   const start = roomsLinkStartIso();
   if (w.status !== 'confirmed' || !w.confirmed_at || !start || Date.parse(w.confirmed_at) < Date.parse(start)) return { state: 'skipped' };
+  // Option B: nothing moves in Odoo before the receiving chef has the goods (refused: closed below).
+  if (!w.refused_at && needsChefReceipt(w) && !w.received_at) return { state: 'skipped' };
   if (!(await claimSlip(db, w.id))) return { state: 'busy' };
   const save = async (v: Record<string, any>) => {
     await db.from('lab_raw_withdrawals').update({ ...v, odoo_at: new Date().toISOString(), odoo_tries: Number(w.odoo_tries ?? 0) + 1 }).eq('id', w.id);
@@ -162,7 +165,7 @@ export async function pushSlipToOdoo(db: Db, withdrawalId: string): Promise<Slip
     const origin = `App ${kindVi} #${w.no}`;
     const pk = await moveInOdoo({
       origin, src, dst, knownPickingId: w.odoo_picking_id,
-      note: `<p>Lab app — ${kindVi} #${w.no} · ${w.team} · ${w.taken_by ?? ''} · kho xác nhận: ${w.confirmed_by_name ?? ''}</p><p>Lab app — ${take ? 'storage slip' : 'transfer'} #${w.no}, confirmed by storage.</p>`,
+      note: `<p>Lab app — ${kindVi} #${w.no} · ${w.team} · ${w.taken_by ?? ''} · kho xác nhận: ${w.confirmed_by_name ?? ''} · đã nhận: ${w.received_by_name ?? ''}</p><p>Lab app — ${take ? 'storage slip' : 'transfer'} #${w.no}, confirmed by storage, received by ${w.received_by_name ?? 'storage'}.</p>`,
       lines: tmplIds.map(t => { const p = prodOf.get(t); return { productId: p.id, uomId: m2o(p.uom_id)!, qty: qtyByTmpl.get(t)! }; }),
       onCreated: async id => { if (id !== w.odoo_picking_id) await db.from('lab_raw_withdrawals').update({ odoo_picking_id: id }).eq('id', w.id); },
     });
@@ -183,7 +186,8 @@ export async function pushPendingSlips(db: Db, limit = 8): Promise<{ done: numbe
   if (!start) return out;
   const stale = new Date(Date.now() - STALE_MS).toISOString();
   const { data } = await db.from('lab_raw_withdrawals').select('id').eq('status', 'confirmed').gte('confirmed_at', start)
-    .or(`odoo_state.is.null,odoo_state.eq.error,and(odoo_state.eq.pending,odoo_at.lt.${stale})`).lt('odoo_tries', 30)
+    .or(`odoo_state.is.null,odoo_state.eq.error,and(odoo_state.eq.pending,odoo_at.lt.${stale})`)
+    .or('received_at.not.is.null,refused_at.not.is.null,and(kind.eq.transfer,to_team.eq.kho)').lt('odoo_tries', 30)
     .order('odoo_tries').order('confirmed_at').limit(limit);
   for (const r of data ?? []) {
     const res = await pushSlipToOdoo(db, r.id);
@@ -192,43 +196,49 @@ export async function pushPendingSlips(db: Db, limit = 8): Promise<{ done: numbe
   return out;
 }
 
-// ── Components no slip brings to the room ────────────────────────────────────────────────────────
+/** The receiving chef confirms the goods (a give-back to the Kho is received by storage itself). */
+export function needsChefReceipt(w: { kind?: string | null; to_team?: string | null }): boolean {
+  return !((w.kind ?? 'take') === 'transfer' && w.to_team === 'kho');
+}
+/** The team that receives the goods of a slip. */
+export function receivingTeam(w: { kind?: string | null; team: string; to_team?: string | null }): string {
+  return (w.kind ?? 'take') === 'transfer' ? (w.to_team ?? w.team) : w.team;
+}
+
 /**
- * After an MO in a room is done: components consumed from the room that are neither raw materials
- * (those come with the team's slips) nor made by the MO itself (auto-produced semi-finished) are
- * moved LAB/Stock → room, so the room is not left negative and LAB/Stock not left too high.
- * Typically OEM bags/cartons, or a semi-finished taken from LAB/Stock. One transfer per MO (origin
- * "App MO <name>"), adopted on retry.
+ * Cron: slips confirmed by storage that no chef marked "Đã nhận".
+ *   - after 1 h: one push to the receiving team;
+ *   - once the slip's lab day is over: marked received (at the storage confirmation time, i.e. before
+ *     any end-of-day room count) and pushed — storage confirmed it, the goods are meant to have left.
  */
-export async function topUpRoomComponents(db: Db, moId: number): Promise<{ ok: boolean; picking?: string; error?: string }> {
-  try {
-    const [mo] = await odooExecuteWrite<any[]>('mrp.production', 'read', [[moId]], { fields: ['name', 'state', 'location_src_id', 'move_raw_ids'] });
-    if (!mo || mo.state !== 'done') return { ok: true };
-    const room = m2o(mo.location_src_id);
-    if (!room || !Object.values(ROOMS).some(r => r.location === room)) return { ok: true };
-    const moves = mo.move_raw_ids?.length ? await odooExecuteWrite<any[]>('stock.move', 'read', [mo.move_raw_ids],
-      { fields: ['product_id', 'quantity', 'product_uom', 'state', 'auto_produce', 'location_id'] }) : [];
-    const cand = moves.filter(m => m.state === 'done' && !m.auto_produce && m2o(m.location_id) === room && Number(m.quantity) > 0);
-    if (!cand.length) return { ok: true };
-    const pids = Array.from(new Set(cand.map(m => m2o(m.product_id)!)));
-    // "Comes with a slip" = raw-material category (any sub-category) OR in the app's slip catalogue
-    // (lab_raw_materials also holds products imported from other categories).
-    const raw = await odooExecuteWrite<any[]>('product.product', 'search_read',
-      [[['id', 'in', pids], ['categ_id', 'child_of', RAW_MATERIAL_CATEG_ID], ['active', 'in', [true, false]]]], { fields: ['id'], limit: 1000 });
-    const rawish = new Set<number>(raw.map(p => Number(p.id)));
-    const { data: cat } = await db.from('lab_raw_materials').select('product_id').in('product_id', pids);
-    for (const c of cat ?? []) if (c.product_id) rawish.add(Number(c.product_id));
-    const lines = cand.filter(m => !rawish.has(m2o(m.product_id)!))
-      .map(m => ({ productId: m2o(m.product_id)!, uomId: m2o(m.product_uom)!, qty: r3(Number(m.quantity)) })).filter(l => l.qty > 0);
-    if (!lines.length) return { ok: true };
-    const pk = await moveInOdoo({
-      origin: `App MO ${mo.name}`, src: LAB_STOCK_ID, dst: room, lines,
-      note: `<p>Lab app — bổ sung thành phần không có trong phiếu lấy kho (bao bì, bán thành phẩm) cho ${mo.name}.</p><p>Lab app — components no slip brings to the room (packaging, semi-finished) for ${mo.name}.</p>`,
-    });
-    return { ok: true, picking: pk.name };
-  } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e).slice(0, 300) };
+export async function chaseUnreceivedSlips(db: Db): Promise<{ reminded: number; autoReceived: number }> {
+  const out = { reminded: 0, autoReceived: 0 };
+  const start = roomsLinkStartIso();
+  if (!start) return out;
+  const { data } = await db.from('lab_raw_withdrawals').select('id, no, team, kind, to_team, confirmed_at, chef_reminded_at')
+    .eq('status', 'confirmed').is('refused_at', null).is('received_at', null).gte('confirmed_at', start).limit(200);
+  const today = labDayUtcRange(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())).start;
+  const { sendTeamPush, awaitPush } = await import('@/lib/push-notify');
+  for (const w of (data ?? []).filter((x: any) => needsChefReceipt(x))) {
+    if (Date.parse(w.confirmed_at) < Date.parse(today)) {
+      const { data: upd } = await db.from('lab_raw_withdrawals').update({ received_at: w.confirmed_at, received_by_name: 'auto (cuối ngày / end of day)' })
+        .eq('id', w.id).is('received_at', null).select('id');
+      if (upd?.length) out.autoReceived++;
+      continue;
+    }
+    if (!w.chef_reminded_at && Date.now() - Date.parse(w.confirmed_at) > 60 * 60 * 1000) {
+      const { data: upd } = await db.from('lab_raw_withdrawals').update({ chef_reminded_at: new Date().toISOString() }).eq('id', w.id).is('chef_reminded_at', null).select('id');
+      if (!upd?.length) continue;
+      const t = receivingTeam(w);
+      try {
+        await awaitPush(sendTeamPush(db, t,
+          { title: 'La Parisienne Lab', body: `📦 Phiếu #${w.no}: đã nhận hàng chưa? Bấm "Đã nhận" trên app.`, url: `/station/${t}`, tag: `raw-recv-${w.no}` },
+          { title: 'La Parisienne Lab', body: `📦 Slip #${w.no}: received the goods? Tap "Received" in the app.`, url: `/station/${t}`, tag: `raw-recv-${w.no}` }));
+        out.reminded++;
+      } catch { /* push is best-effort */ }
+    }
   }
+  return out;
 }
 
 // ── Room count → Odoo ─────────────────────────────────────────────────────────────────────────
@@ -257,8 +267,7 @@ async function roomTheoretical(db: Db, productIds: number[], room: number, cutof
     [[['product_id', 'in', productIds], ['location_id', '=', room]]], { fields: ['product_id', 'quantity'], limit: 5000 });
   for (const q of quants) { const pid = m2o(q.product_id)!; out[pid] = (out[pid] ?? 0) + Number(q.quantity ?? 0); }
   // Internal transfers validated in Odoo after the cut-off. A slip transfer counts as "after" only if
-  // the slip itself was confirmed after the cut-off (a retry validated later is still "before"); a
-  // top-up (origin "App MO …") follows its MO, which belongs before the count: never rolled back.
+  // the goods were received after the cut-off (a retry validated later is still "before").
   const since = new Date(cutoff.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
   const all: any[] = [];
   for (let offset = 0; ; offset += 1000) {
@@ -272,11 +281,10 @@ async function roomTheoretical(db: Db, productIds: number[], room: number, cutof
   const pickIds = Array.from(new Set(all.map(ml => m2o(ml.picking_id)).filter(Boolean))) as number[];
   const picks = pickIds.length ? await odooExecuteWrite<any[]>('stock.picking', 'read', [pickIds], { fields: ['origin'] }) : [];
   const originOf = new Map(picks.map(p => [p.id, String(p.origin ?? '')]));
-  const { data: slips } = pickIds.length ? await db.from('lab_raw_withdrawals').select('odoo_picking_id, confirmed_at').in('odoo_picking_id', pickIds) : { data: [] as any[] };
-  const slipAt = new Map((slips ?? []).map((w: any) => [Number(w.odoo_picking_id), w.confirmed_at as string]));
+  const { data: slips } = pickIds.length ? await db.from('lab_raw_withdrawals').select('odoo_picking_id, confirmed_at, received_at').in('odoo_picking_id', pickIds) : { data: [] as any[] };
+  const slipAt = new Map((slips ?? []).map((w: any) => [Number(w.odoo_picking_id), (w.received_at ?? w.confirmed_at) as string]));
   const after = (ml: any) => {
     const pid = m2o(ml.picking_id)!;
-    if (originOf.get(pid)?.startsWith('App MO ')) return false;
     const at = slipAt.get(pid);
     if (at) return Date.parse(String(at)) > cutoff.getTime();
     return Date.parse(String(ml.date).replace(' ', 'T') + 'Z') > cutoff.getTime();
@@ -398,47 +406,6 @@ export async function pushPendingRoomCounts(db: Db): Promise<{ done: number; wai
   for (const r of data ?? []) {
     const res = await applyRoomCountToOdoo(db, r.id);
     if (res.ok) out.done++; else if (res.waiting) out.waiting++; else out.errors++;
-  }
-  return out;
-}
-
-/** topUpRoomComponents for an MO and every MO it auto-produced (any depth). */
-export async function topUpRoomComponentsTree(db: Db, moId: number): Promise<{ pickings: string[]; errors: string[] }> {
-  const out = { pickings: [] as string[], errors: [] as string[] };
-  let level = [moId];
-  for (let depth = 0; level.length && depth < 6; depth++) {
-    for (const id of level) {
-      const r = await topUpRoomComponents(db, id);
-      if (r.picking) out.pickings.push(r.picking);
-      if (!r.ok && r.error) out.errors.push(r.error);
-    }
-    try {
-      const kids = await odooExecuteWrite<any[]>('mrp.production', 'search_read', [[['auto_parent_production_id', 'in', level]]], { fields: ['id'], limit: 500 });
-      level = kids.map(k => k.id);
-    } catch { level = []; }
-  }
-  return out;
-}
-
-/** Cron: tops up the room components of MOs done in a room (today and yesterday), a few per run. */
-export async function topUpRecentRoomMOs(db: Db, max = 6): Promise<{ done: number; errors: number }> {
-  const out = { done: 0, errors: 0 };
-  const s = startDay();
-  if (!validDay(s)) return out;
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
-  const days = Array.from({ length: 7 }, (_, i) => fmt.format(new Date(Date.now() - i * 86400000))).filter(d => d >= s);
-  if (!days.length) return out;
-  const origins = days.flatMap(d => [`Lab ${d}`, `OEM ${d}`]);
-  const types = Object.values(ROOMS).map(r => r.manufType);
-  const mos = await odooExecuteWrite<any[]>('mrp.production', 'search_read',
-    [[['origin', 'in', origins], ['picking_type_id', 'in', types], ['state', '=', 'done']]], { fields: ['id', 'name'], limit: 1000, order: 'id asc' });
-  if (!mos.length) return out;
-  const { data: seen } = await db.from('lab_room_topups').select('mo_odoo_id').in('mo_odoo_id', mos.map(m => m.id)).is('error', null);
-  const done = new Set((seen ?? []).map((r: any) => r.mo_odoo_id));
-  for (const mo of mos.filter(m => !done.has(m.id)).slice(0, max)) {
-    const r = await topUpRoomComponentsTree(db, mo.id);
-    await db.from('lab_room_topups').upsert({ mo_odoo_id: mo.id, mo_name: mo.name, picking_names: r.pickings, error: r.errors.join(' · ') || null });
-    if (r.errors.length) out.errors++; else out.done++;
   }
   return out;
 }
