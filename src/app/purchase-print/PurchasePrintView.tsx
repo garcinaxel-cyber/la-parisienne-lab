@@ -52,14 +52,13 @@ function vnDate(iso: string | null | undefined): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
-const shortVendor = (v: string | null) => (v ?? '').replace(/^(CÔNG TY|CONG TY)\s+(TNHH|CỔ PHẦN|CP)\s*/i, '').trim();
-
 export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; printedBy?: string }) {
-  // Several vendors on one sheet (Axel, 2026-10-29: the daily request the assistant has the CEO approve):
-  // grouped by vendor with a header row each; Odoo still gets one PO per vendor afterwards.
-  const vendorKey = (l: PurchaseLine) => l.vendorName ?? '';
-  const multiVendor = new Set(lines.map(vendorKey)).size > 1;
-  const sorted = [...lines].sort((a, b) => (multiVendor ? (vendorKey(a) === '' ? 1 : vendorKey(b) === '' ? -1 : vendorKey(a).localeCompare(vendorKey(b))) : 0)
+  // Daily request the assistant has the CEO approve (Axel, 2026-10-29): grouped by WHO asks — the team and
+  // its signer — rather than by vendor ("elle veut davantage voir qui demande le produit"). Odoo still gets
+  // one PO per vendor afterwards.
+  const groupKey = (l: PurchaseLine) => { const p = signer(l.requestedBy, l.team); return `${p.teamLabel} — ${p.full}`; };
+  const multiGroup = new Set(lines.map(groupKey)).size > 1;
+  const sorted = [...lines].sort((a, b) => (multiGroup ? groupKey(a).localeCompare(groupKey(b), 'vi') : 0)
     || a.requestNo - b.requestNo || a.name.localeCompare(b.name));
   const people = sorted.map(l => signer(l.requestedBy, l.team));
   const requesters = Array.from(new Set(people.map(p => p.full).filter(Boolean)));
@@ -75,7 +74,7 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
   // printable height of an A4 landscape page (210mm - 2×8mm margins) if it is still taller.
   const sheetRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const PRINTABLE_PX = (194 / 25.4) * 96; // 194mm at 96 dpi
+    const PRINTABLE_PX = (281 / 25.4) * 96; // A4 portrait (Axel, 2026-10-29): 297mm - 2×8mm, at 96 dpi
     const fit = () => {
       const el = sheetRef.current; if (!el) return;
       (el.style as any).zoom = '';
@@ -93,11 +92,12 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          @page { margin: 8mm 12mm; size: A4 landscape; }
+          @page { margin: 8mm 10mm; size: A4 portrait; }
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .prprint-sheet { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
           .prprint-table th, .prprint-table td { padding: 3px 6px !important; }
-          .prprint-sign-gap { height: 60px !important; }
+          .prprint-sign-gap { height: 70px !important; }
+          .prprint-sign-gap-ceo { height: 130px !important; }
         }
         .prprint-sign { break-inside: avoid; page-break-inside: avoid; }
         .prprint-table { border-collapse: collapse; width: 100%; }
@@ -115,7 +115,7 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
         </button>
       </div>
 
-      <div ref={sheetRef} className="prprint-sheet" style={{ background: '#fff', color: '#111', maxWidth: '1040px', margin: '24px auto', padding: '20px 28px', fontFamily: "'Times New Roman', serif", fontSize: 13.5 }}>
+      <div ref={sheetRef} className="prprint-sheet" style={{ background: '#fff', color: '#111', maxWidth: '760px', margin: '24px auto', padding: '20px 24px', fontFamily: "'Times New Roman', serif", fontSize: 13 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-print.png" alt="La Paris" style={{ height: 56 }} />
@@ -139,12 +139,12 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
         <table className="prprint-table">
           <thead>
             <tr>
-              <th style={{ width: '5%' }}>STT</th>
-              <th style={{ width: '35%' }}>TÊN VẬT TƯ</th>
-              <th style={{ width: '9%' }}>ĐƠN VỊ TÍNH</th>
+              <th style={{ width: '6%' }}>STT</th>
+              <th style={{ width: '34%' }}>TÊN VẬT TƯ</th>
+              <th style={{ width: '8%' }}>ĐVT</th>
               <th style={{ width: '9%' }}>SỐ LƯỢNG</th>
-              <th style={{ width: '13%' }}>ĐƠN GIÁ<br />(ĐÃ BAO GỒM VAT)</th>
-              <th style={{ width: '12%' }}>THÀNH TIỀN</th>
+              <th style={{ width: '13%' }}>ĐƠN GIÁ<br />(ĐÃ VAT)</th>
+              <th style={{ width: '13%' }}>THÀNH TIỀN</th>
               <th style={{ width: '17%' }}>GHI CHÚ</th>
             </tr>
           </thead>
@@ -152,12 +152,12 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
             {sorted.map((l, i) => {
               const ph = packHint(l);
               const note = [l.brand ? `${l.brandStrict ? 'Chỉ ' : ''}${l.brand}` : '', ph ? `(${ph})` : '', l.note ?? ''].filter(Boolean).join(' · ');
-              const newVendor = multiVendor && (i === 0 || vendorKey(sorted[i - 1]) !== vendorKey(l));
-              const nInVendor = sorted.filter(x => vendorKey(x) === vendorKey(l)).length;
+              const newGroup = multiGroup && (i === 0 || groupKey(sorted[i - 1]) !== groupKey(l));
+              const nInGroup = sorted.filter(x => groupKey(x) === groupKey(l)).length;
               return (
-                <Fragment key={l.id}>{newVendor && (
+                <Fragment key={l.id}>{newGroup && (
                   <tr><td colSpan={7} style={{ backgroundColor: '#F2F2F2', fontWeight: 700 }}>
-                    Nhà cung cấp: {vendorKey(l) ? shortVendor(vendorKey(l)) : 'Chưa chọn NCC'} <span style={{ fontWeight: 400, fontSize: 12 }}>({nInVendor} dòng)</span></td></tr>
+                    {groupKey(l)} <span style={{ fontWeight: 400, fontSize: 12 }}>({nInGroup} dòng)</span></td></tr>
                 )}
                 <tr>
                   <td style={{ textAlign: 'center' }}>{i + 1}</td>
@@ -177,16 +177,16 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
         </table>
 
         <div className="prprint-sign" style={{ display: 'flex', justifyContent: 'space-between', marginTop: 22 }}>
-          <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
+          <div style={{ width: 260, textAlign: 'center', lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700 }}>Người lập phiếu</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
             <div className="prprint-sign-gap" style={{ height: 90 }} />
             <div style={{ fontWeight: 700 }}>{PURCHASER}</div>
           </div>
-          <div style={{ width: 300, textAlign: 'center', lineHeight: 1.5 }}>
+          <div style={{ width: 340, textAlign: 'center', lineHeight: 1.5 }}>
             <div style={{ fontWeight: 700 }}>Phê Duyệt</div>
             <div style={{ fontStyle: 'italic' }}>(Ký, ghi rõ họ tên)</div>
-            <div className="prprint-sign-gap" style={{ height: 90 }} />
+            <div className="prprint-sign-gap-ceo" style={{ height: 150 }} />
             <div style={{ fontWeight: 700 }}>Dương Xuân Giang</div>
           </div>
         </div>
