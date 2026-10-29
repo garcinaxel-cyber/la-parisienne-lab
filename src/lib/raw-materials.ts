@@ -17,6 +17,15 @@ export type RawMaterial = {
   /** Brands of this one Odoo product (Axel, 2026-10-19: Kem whipping = Paysan Breton / Pauls / Bravo). When set, the chef
    *  picks the brand on the storage slip; Odoo and accounting keep the single product. */
   brands: string[];
+  /** What the Odoo product is (Axel, 2026-10-29): its Odoo category — raw material, packaging, or equipment & tools. */
+  kind: RawKind;
+  /** Bought for testing / R&D, not for regular production (Axel, 2026-10-29) — set by purchasing in the catalogue. */
+  forTesting: boolean;
+};
+
+export type RawKind = 'raw' | 'packaging' | 'tools';
+export const RAW_KINDS: Record<RawKind, [string, string]> = {
+  raw: ['Nguyên liệu', 'Raw material'], packaging: ['Bao bì', 'Packaging'], tools: ['Dụng cụ & thiết bị', 'Tools & equipment'],
 };
 
 // Taken from storage but used in no Odoo recipe — the chef is asked what it was for (Axel, 2026-10-09).

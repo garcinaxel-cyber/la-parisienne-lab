@@ -5,8 +5,8 @@ import { Truck, RefreshCw, Search, Check, X, ChevronRight, ChevronDown, AlertTri
 import PushBell from '@/components/PushBell';
 import { useI18n } from '@/lib/i18n';
 import {
-  RAW_TYPES, subLabel, typeLabel, shortVendor, rawName, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
-  type PurchaseLine, type RawMaterial, type Withdrawal, type RawType,
+  RAW_TYPES, RAW_KINDS, subLabel, typeLabel, shortVendor, rawName, vnDayTime, daysBetween, fmtQty, TEAM_SHORT,
+  type PurchaseLine, type RawMaterial, type Withdrawal, type RawType, type RawKind,
   packHint,
 } from '@/lib/raw-materials';
 import {
@@ -157,6 +157,11 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     return Array.from(m.values());
   };
   const vendorOptions = board.vendors;
+  // Daily purchase request for the CEO (Axel, 2026-10-29): one print gathering the day's requests, whatever
+  // the vendor — Odoo still gets one PO per vendor. Quick picks: today's requests, or everything waiting.
+  const todayVn = vnDayTime(new Date().toISOString()).ymd;
+  const todays = pending.filter(l => l.tmplId != null && vnDayTime(l.createdAt).ymd === todayVn);
+  const selectable = pending.filter(l => l.tmplId != null);
 
   return (
     <div className="space-y-3">
@@ -193,6 +198,15 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
           <div className="px-4 py-2 text-[11px]" style={{ backgroundColor: PALE, color: '#6B7280' }}>{L('Xác nhận PO trên Odoo. App tự cập nhật “Đã đặt” khi PO được xác nhận, hoặc trả dòng về hàng chờ nếu PO bị huỷ.', 'Confirm the PO in Odoo. The app switches to “Ordered” once confirmed, or puts the lines back in the queue if the PO is cancelled.')}</div>
         </div>
       )}
+      {selectable.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="font-bold" style={{ color: '#6B7280' }}>{L('Chọn nhanh để in phiếu trình duyệt:', 'Quick select for the approval print:')}</span>
+          <button onClick={() => setSel(new Set(todays.map(l => l.id)))} disabled={!todays.length} className="rounded-full px-3 py-1.5 font-extrabold bg-white disabled:opacity-40" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>
+            {L(`Yêu cầu hôm nay (${todays.length})`, `Today's requests (${todays.length})`)}</button>
+          <button onClick={() => setSel(new Set(selectable.map(l => l.id)))} className="rounded-full px-3 py-1.5 font-extrabold bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>
+            {L(`Tất cả đang chờ (${selectable.length})`, `Everything waiting (${selectable.length})`)}</button>
+        </div>
+      )}
       {sel.size > 0 && (
         <div className="sticky top-2 z-20 flex items-center gap-2 rounded-xl px-3 py-2.5 flex-wrap shadow-md" style={{ backgroundColor: NAVY, color: '#fff' }}>
           <b className="text-[13px] flex-1">{L(`Đã chọn ${selLines.length} dòng`, `${selLines.length} lines selected`)}</b>
@@ -224,6 +238,8 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         return (
           <div key={k} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
             <div className="flex items-center gap-2 px-4 py-2.5 flex-wrap" style={{ borderBottom: `1px solid ${HAIR}`, backgroundColor: none ? '#FFF8EC' : '#fff' }}>
+              {(() => { const ids = ls.filter(l => l.tmplId != null).map(l => l.id); const on = ids.length > 0 && ids.every(i => sel.has(i)); return ids.length > 0 ? (
+                <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={on} onChange={e => toggle(ids, e.target.checked)} aria-label={L('Chọn cả NCC', 'Select the whole vendor')} title={L('Chọn cả NCC', 'Select the whole vendor')} />) : null; })()}
               <b className="text-sm flex-1 min-w-[200px]">{none ? <span className="inline-flex items-center gap-1.5" style={{ color: LATE }}><AlertTriangle size={14} /> {L('Chưa có nhà cung cấp', 'No vendor yet')}</span> : shortVendor(ls[0].vendorName)}</b>
               <span className="text-xs" style={{ color: '#6B7280' }}>{ls.length} {L('dòng', 'lines')}</span>
             </div>
@@ -904,6 +920,8 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<'todo' | 'ok' | 'hidden' | 'all'>('todo');
   const [type, setType] = useState<'all' | RawType>('all');
+  // Raw materials / packaging / tools (Axel, 2026-10-29) — raw materials first, as before.
+  const [kind, setKind] = useState<'all' | RawKind>('raw');
   const [q, setQ] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -945,7 +963,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   const fold = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
   const nq = fold(q.trim());
   const base = all.filter(m => (filter === 'all' || (filter === 'todo' ? !m.checked && m.visible : filter === 'ok' ? m.checked && m.visible : !m.visible))
-    && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))));
+    && (kind === 'all' || m.kind === kind) && (type === 'all' || m.type === type) && (!nq || nq.split(/\s+/).every(w => fold(`${m.name} ${m.nameVi ?? ''} ${m.sku ?? ''}`).includes(w))));
   // Excel-like column filters (Axel, 2026-10-12): each header opens a checklist of its values with
   // counts; filters combine with each other and with the chips above. Sort on name / recipes.
   const colVal = (m: RawMaterial, k: ColKey): string => {
@@ -958,6 +976,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
       case 'recipes': return m.bomCount != null && m.bomCount > 0 ? 'has' : m.noRecipeNeeded ? 'nr' : m.bomCount === 0 ? 'none' : 'unk';
       case 'visible': return m.visible ? 'on' : 'off';
       case 'status': return m.checked ? 'checked' : 'todo';
+      case 'testing': return m.forTesting ? 'test' : 'prod';
     }
   };
   const colLabel = (k: ColKey, v: string): string => {
@@ -969,10 +988,11 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
       case 'recipes': return v === 'has' ? L('Có công thức', 'Used in recipes') : v === 'nr' ? L('Không cần công thức', 'No recipe needed') : v === 'none' ? L('⚠ Chưa có', '⚠ None') : L('Chưa rõ', 'Unknown');
       case 'visible': return v === 'on' ? L('Chef thấy', 'Shown to chefs') : L('Ẩn', 'Hidden');
       case 'status': return v === 'checked' ? L('Đã duyệt', 'Checked') : L('Gợi ý', 'Suggested');
+      case 'testing': return v === 'test' ? L('🧪 Hàng thử nghiệm', '🧪 For testing') : L('Hàng sản xuất', 'For production');
       default: return v;
     }
   };
-  const FIXED_ORDER: Partial<Record<ColKey, string[]>> = { recipes: ['has', 'none', 'nr', 'unk'], packs: ['yes', 'no'], visible: ['on', 'off'], status: ['todo', 'checked'], type: Object.keys(RAW_TYPES) };
+  const FIXED_ORDER: Partial<Record<ColKey, string[]>> = { recipes: ['has', 'none', 'nr', 'unk'], packs: ['yes', 'no'], visible: ['on', 'off'], status: ['todo', 'checked'], type: Object.keys(RAW_TYPES), testing: ['prod', 'test'] };
   const passCols = (m: RawMaterial, except: ColKey | null) =>
     (Object.keys(cf) as ColKey[]).every(k => k === except || !cf[k] || cf[k]!.has(colVal(m, k)));
   const optionsFor = (k: ColKey) => {
@@ -988,7 +1008,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     ? sort.dir * ((a.bomCount ?? -1) - (b.bomCount ?? -1)) || rawName(a, lang).localeCompare(rawName(b, lang), coll)
     : sort.dir * rawName(a, lang).localeCompare(rawName(b, lang), coll));
   const activeCols = (Object.keys(cf) as ColKey[]).filter(k => cf[k]);
-  const colTitle: Record<ColKey, string> = { vendor: L('Nhà cung cấp', 'Vendor'), uom: L('Đơn vị', 'Unit'), type: L('Loại', 'Type'), group: L('Nhóm', 'Group'), packs: L('Quy cách', 'Packs'), recipes: L('Công thức', 'Recipes'), visible: L('Chef thấy', 'Chefs see'), status: L('Trạng thái', 'Status') };
+  const colTitle: Record<ColKey, string> = { vendor: L('Nhà cung cấp', 'Vendor'), uom: L('Đơn vị', 'Unit'), type: L('Loại', 'Type'), group: L('Nhóm', 'Group'), packs: L('Quy cách', 'Packs'), recipes: L('Công thức', 'Recipes'), visible: L('Chef thấy', 'Chefs see'), status: L('Trạng thái', 'Status'), testing: L('Thử nghiệm', 'Testing') };
   const Th = ({ k, label, align = 'left', sorts }: { k: ColKey; label: string; align?: 'left' | 'center' | 'right'; sorts?: ColSortOpt[] }) => {
     const on = !!cf[k] || (!!sorts && sorts.some(o => o.key === sort.key && (o.key !== 'name' || sort.dir !== 1)));
     return (
@@ -1003,7 +1023,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <Kpi label={L('Nguyên liệu Odoo', 'Odoo raw materials')} value={String(all.length)} sub={L('không gồm bao bì', 'packaging excluded')} />
+        <Kpi label={L('Danh mục Odoo', 'Odoo catalogue')} value={String(all.length)} sub={L(`${all.filter(m => m.kind === 'raw').length} nguyên liệu · ${all.filter(m => m.kind === 'packaging').length} bao bì · ${all.filter(m => m.kind === 'tools').length} dụng cụ`, `${all.filter(m => m.kind === 'raw').length} raw · ${all.filter(m => m.kind === 'packaging').length} packaging · ${all.filter(m => m.kind === 'tools').length} tools`)} />
         <Kpi label={L('Chef thấy', 'Shown to chefs')} value={String(all.filter(m => m.visible).length)} />
         <Kpi label={L('Chờ duyệt', 'To check')} value={String(all.filter(m => m.visible && !m.checked).length)} warn={all.some(m => m.visible && !m.checked)} />
         <div className="bg-white rounded-xl px-3 py-2.5 flex flex-col justify-between" style={{ border: `1px solid ${BORDER}` }}>
@@ -1017,6 +1037,10 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
       <div className="flex gap-1.5 flex-wrap items-center">
         {([['todo', L('Chờ duyệt', 'To check')], ['ok', L('Đã duyệt', 'Checked')], ['hidden', L('Đã ẩn', 'Hidden')], ['all', L('Tất cả', 'All')]] as const).map(([k, t]) => (
           <button key={k} onClick={() => setFilter(k)} className="rounded-full px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#fff' : NAVY, border: `1px solid ${filter === k ? NAVY : BORDER}` }}>{t}</button>))}
+        <span className="w-px h-5 mx-1" style={{ backgroundColor: BORDER }} />
+        {(['raw', 'packaging', 'tools', 'all'] as const).map(k => (
+          <button key={k} onClick={() => setKind(k)} className="rounded-full px-2.5 py-1 text-xs font-bold" style={{ backgroundColor: kind === k ? NAVY : '#fff', color: kind === k ? '#fff' : NAVY, border: `1px solid ${kind === k ? NAVY : BORDER}` }}>
+            {k === 'all' ? L('Tất cả nhóm', 'Everything') : L(RAW_KINDS[k][0], RAW_KINDS[k][1])} <span style={{ opacity: 0.7 }}>{k === 'all' ? all.length : all.filter(m => m.kind === k).length}</span></button>))}
         <span className="w-px h-5 mx-1" style={{ backgroundColor: BORDER }} />
         {(['all', 'dry', 'fresh', 'frozen'] as const).map(t => (
           <button key={t} onClick={() => setType(t)} className="rounded-full px-2.5 py-1 text-xs font-bold" style={{ backgroundColor: type === t ? PALE : '#fff', color: type === t ? GOLD_TEXT : '#344054', border: `1px solid ${type === t ? GOLD : BORDER}` }}>{t === 'all' ? L('Mọi loại', 'All types') : typeLabel(t, lang)}</button>))}
@@ -1050,12 +1074,13 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
         : !all.length ? <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: `1px solid ${BORDER}`, color: '#6B7280' }}>{L('Danh mục trống — bấm “Đồng bộ” để lấy nguyên liệu từ Odoo.', 'Empty catalogue — press “Sync” to load the raw materials from Odoo.')}</div>
         : (
         <div className="bg-white rounded-2xl overflow-x-auto" style={{ border: `1px solid ${BORDER}` }}>
-          <table className="w-full text-[12.5px]" style={{ minWidth: 860 }}>
+          <table className="w-full text-[12.5px]" style={{ minWidth: 940 }}>
             <thead><tr className="text-[10px] uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
               <Th k="vendor" label={L('Nguyên liệu', 'Raw material (Odoo name)')} sorts={[{ key: 'name', dir: 1, label: L('Tên A → Z', 'Name A → Z') }, { key: 'name', dir: -1, label: L('Tên Z → A', 'Name Z → A') }]} />
               <Th k="uom" label={L('Đơn vị', 'Unit')} /><Th k="type" label={L('Loại', 'Type')} /><Th k="group" label={L('Nhóm', 'Group')} />
               <Th k="packs" label={L('Quy cách', 'Packs')} />
               <Th k="recipes" label={L('Công thức', 'Recipes')} align="center" sorts={[{ key: 'bom', dir: -1, label: L('Nhiều công thức nhất', 'Most recipes first') }, { key: 'bom', dir: 1, label: L('Ít công thức nhất', 'Fewest recipes first') }]} />
+              <Th k="testing" label={L('Thử nghiệm', 'Testing')} align="center" />
               <Th k="visible" label={L('Chef thấy', 'Chefs see')} align="center" /><Th k="status" label={L('Trạng thái', 'Status')} align="right" /></tr></thead>
             <tbody>
               {rows.slice(0, 400).map(m => (
@@ -1101,6 +1126,11 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                           style={m.noRecipeNeeded ? { backgroundColor: '#F2F4F7', color: '#344054' } : { backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
                           {m.noRecipeNeeded ? L('Không cần công thức', 'No recipe needed') : m.bomCount === 0 ? L('⚠ Chưa có', '⚠ None') : '—'}</button>}
                   </td>
+                  <td className="px-3 py-2 text-center">
+                    {/* For testing / R&D vs regular production (Axel, 2026-10-29). */}
+                    <button onClick={() => patch(m, { forTesting: !m.forTesting })} className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 whitespace-nowrap"
+                      style={m.forTesting ? { backgroundColor: '#F4EBFF', color: '#6941C6' } : { backgroundColor: '#fff', color: '#9CA3AF', border: `1px dashed ${HAIR}` }}>
+                      {m.forTesting ? L('🧪 Thử nghiệm', '🧪 Testing') : L('Sản xuất', 'Production')}</button></td>
                   <td className="px-3 py-2 text-center"><button onClick={() => patch(m, { visible: !m.visible })} aria-label="visible" className="inline-block w-9 h-5 rounded-full relative align-middle" style={{ backgroundColor: m.visible ? NAVY : '#D0D5DD' }}>
                     <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: m.visible ? 18 : 2 }} /></button></td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">{m.checked
@@ -1118,7 +1148,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
 }
 
 /* ===================== Excel-like column filter ===================== */
-type ColKey = 'vendor' | 'uom' | 'type' | 'group' | 'packs' | 'recipes' | 'visible' | 'status';
+type ColKey = 'vendor' | 'uom' | 'type' | 'group' | 'packs' | 'recipes' | 'visible' | 'status' | 'testing';
 type ColSortOpt = { key: 'name' | 'bom'; dir: 1 | -1; label: string };
 
 function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort, onSort, onClose }: {

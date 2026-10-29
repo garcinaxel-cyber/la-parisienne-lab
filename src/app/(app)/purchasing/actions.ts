@@ -351,7 +351,17 @@ export async function getCatalogueAction(): Promise<{ items?: RawMaterial[]; syn
   return { items: (data ?? []).map(mapMaterial), syncedAt };
 }
 
-const RAW_MATERIAL_CATEG_ID = 18; // Odoo "All / Raw Material (nguyên liệu)" — packaging is a separate category, left out on purpose
+const RAW_MATERIAL_CATEG_ID = 18; // Odoo "All / Raw Material (nguyên liệu)"
+// Packaging and equipment & tools (Axel, 2026-10-29: "in the purchase catalogue have a filter for packaging
+// and tools") — synced too, tagged by kind. New ones arrive hidden from the chefs and with "no recipe needed",
+// so neither the chefs' raw-material list nor the off-recipe alert changes until purchasing decides.
+const PACKAGING_CATEG_ID = 23; // "Bao bì, vỏ hộp đóng gói (Packaging)"
+const TOOLS_CATEG_ID = 22; // "Máy móc thiết bị nhỏ, công cụ dụng cụ (equipment & tools)"
+const CATALOGUE_CATEG_IDS = [RAW_MATERIAL_CATEG_ID, PACKAGING_CATEG_ID, TOOLS_CATEG_ID];
+// Consumables (cleaning, spare parts…) already imported by hand count as tools.
+const CONSUMABLE_CATEG_IDS = [20, 21];
+const kindOfCateg = (id: number | undefined): 'raw' | 'packaging' | 'tools' =>
+  (id === PACKAGING_CATEG_ID ? 'packaging' : id === TOOLS_CATEG_ID || (id != null && CONSUMABLE_CATEG_IDS.includes(id)) ? 'tools' : 'raw');
 
 export async function syncCatalogueAction(): Promise<{ added?: number; updated?: number; removed?: number; error?: string }> {
   const g = await guard();
@@ -361,8 +371,8 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     // in sync instead of being set aside because they are outside "Raw Material".
     const { data: known } = await g.db.from('lab_raw_materials').select('tmpl_id').eq('active', true).limit(5000);
     const knownIds = (known ?? []).map(r => r.tmpl_id);
-    const tmpls = await odooExecuteWrite<any[]>('product.template', 'search_read', [['&', ['active', '=', true], '|', ['categ_id', '=', RAW_MATERIAL_CATEG_ID], ['id', 'in', knownIds]]],
-      { fields: ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id'], limit: 3000 });
+    const tmpls = await odooExecuteWrite<any[]>('product.template', 'search_read', [['&', ['active', '=', true], '|', ['categ_id', 'in', CATALOGUE_CATEG_IDS], ['id', 'in', knownIds]]],
+      { fields: ['id', 'default_code', 'name', 'uom_id', 'purchased_product_qty', 'product_variant_id', 'categ_id'], limit: 4000 });
     const tmplIds = tmpls.map(t => t.id);
     // Vietnamese names (Odoo vi_VN translation) for the chefs' screen. Never blocks the sync.
     const viName = new Map<number, string>();
@@ -389,7 +399,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     let bomByProduct: Map<number, number> | null = new Map();
     try {
       for (let off = 0; off < 20000; off += 2000) {
-        const ls = await odooExecuteWrite<any[]>('mrp.bom.line', 'search_read', [[['product_id.categ_id', '=', RAW_MATERIAL_CATEG_ID], ['bom_id.active', '=', true]]],
+        const ls = await odooExecuteWrite<any[]>('mrp.bom.line', 'search_read', [[['product_id.categ_id', 'in', CATALOGUE_CATEG_IDS], ['bom_id.active', '=', true]]],
           { fields: ['product_id'], limit: 2000, offset: off });
         for (const l of ls) { const pid = l.product_id?.[0]; if (pid) bomByProduct.set(pid, (bomByProduct.get(pid) ?? 0) + 1); }
         if (ls.length < 2000) break;
@@ -404,9 +414,11 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     for (let i = 0; i < tmpls.length; i += 200) {
       const chunk = tmpls.slice(i, i + 200);
       const fresh = chunk.filter(t => !have.has(t.id)).map(t => {
-        const uom = normUom(t.uom_id?.[1] ?? 'kg'); const vend = vendorsByTmpl.get(t.id) ?? []; const c = classifyRaw(t.name);
+        const uom = normUom(t.uom_id?.[1] ?? 'kg'); const vend = vendorsByTmpl.get(t.id) ?? []; const kind = kindOfCateg(t.categ_id?.[0]);
+        const c = kind === 'raw' ? classifyRaw(t.name) : { type: 'dry' as const, sub: 'other' };
         return { tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), name_vi: viName.get(t.id) ?? null, uom,
-          type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: Number(t.purchased_product_qty) > 0, checked: false,
+          kind, odoo_categ: t.categ_id?.[1] ?? null, ...(kind === 'raw' ? {} : { no_recipe_needed: true }),
+          type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: kind === 'raw' && Number(t.purchased_product_qty) > 0, checked: false,
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
           active: true, synced_at: now, ...bomOf(t) };
       });
@@ -416,6 +428,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
         const { error } = await g.db.from('lab_raw_materials').update({
           product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), uom: normUom(t.uom_id?.[1] ?? 'kg'),
           ...(viName.has(t.id) ? { name_vi: viName.get(t.id) } : {}),
+          kind: kindOfCateg(t.categ_id?.[0]), odoo_categ: t.categ_id?.[1] ?? null,
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
           active: true, synced_at: now, ...bomOf(t),
         }).eq('tmpl_id', t.id);
@@ -429,7 +442,7 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
   } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
 }
 
-export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[]; noRecipeNeeded?: boolean; brands?: string[] }) {
+export async function updateMaterialAction(tmplId: number, patch: { type?: string; sub?: string; visible?: boolean; checked?: boolean; packs?: RawPack[]; noRecipeNeeded?: boolean; brands?: string[]; forTesting?: boolean }) {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   const p: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by_name: g.a.name || null };
@@ -438,6 +451,7 @@ export async function updateMaterialAction(tmplId: number, patch: { type?: strin
   if (typeof patch.visible === 'boolean') p.visible = patch.visible;
   if (typeof patch.checked === 'boolean') p.checked = patch.checked;
   if (typeof patch.noRecipeNeeded === 'boolean') p.no_recipe_needed = patch.noRecipeNeeded;
+  if (typeof patch.forTesting === 'boolean') p.for_testing = patch.forTesting;
   if (Array.isArray(patch.brands)) p.brands = Array.from(new Set(patch.brands.map(b => String(b ?? '').trim().slice(0, 40)).filter(Boolean))).slice(0, 8);
   if (Array.isArray(patch.packs)) p.packs = patch.packs
     .map(x => ({ label: String(x.label ?? '').trim().slice(0, 30), factor: Number(x.factor) }))

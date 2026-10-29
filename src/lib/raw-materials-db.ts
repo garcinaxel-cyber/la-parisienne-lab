@@ -57,6 +57,7 @@ export function mapMaterial(r: any): RawMaterial {
     vendorId: r.vendor_id ?? null, vendorName: r.vendor_name ?? null, vendors: Array.isArray(r.vendors) ? r.vendors : [],
     bomCount: r.bom_count == null ? null : Number(r.bom_count), noRecipeNeeded: !!r.no_recipe_needed,
     brands: Array.isArray(r.brands) ? r.brands.filter((b: any) => typeof b === 'string' && b.trim()) : [],
+    kind: r.kind === 'packaging' || r.kind === 'tools' ? r.kind : 'raw', forTesting: !!r.for_testing,
   };
 }
 

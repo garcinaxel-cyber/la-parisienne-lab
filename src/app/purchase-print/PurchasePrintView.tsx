@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { fmtQty, packHint, type PurchaseLine } from '@/lib/raw-materials';
@@ -52,13 +52,22 @@ function vnDate(iso: string | null | undefined): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
+const shortVendor = (v: string | null) => (v ?? '').replace(/^(CÔNG TY|CONG TY)\s+(TNHH|CỔ PHẦN|CP)\s*/i, '').trim();
+
 export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; printedBy?: string }) {
-  const sorted = [...lines].sort((a, b) => a.requestNo - b.requestNo || a.name.localeCompare(b.name));
+  // Several vendors on one sheet (Axel, 2026-10-29: the daily request the assistant has the CEO approve):
+  // grouped by vendor with a header row each; Odoo still gets one PO per vendor afterwards.
+  const vendorKey = (l: PurchaseLine) => l.vendorName ?? '';
+  const multiVendor = new Set(lines.map(vendorKey)).size > 1;
+  const sorted = [...lines].sort((a, b) => (multiVendor ? (vendorKey(a) === '' ? 1 : vendorKey(b) === '' ? -1 : vendorKey(a).localeCompare(vendorKey(b))) : 0)
+    || a.requestNo - b.requestNo || a.name.localeCompare(b.name));
   const people = sorted.map(l => signer(l.requestedBy, l.team));
   const requesters = Array.from(new Set(people.map(p => p.full).filter(Boolean)));
   const teams = Array.from(new Set(people.map(p => p.teamLabel).filter(Boolean)));
   const nos = Array.from(new Set(sorted.map(l => l.requestNo))).filter(Boolean);
-  const firstDate = sorted.map(l => l.createdAt).filter(Boolean).sort()[0];
+  const dates = sorted.map(l => l.createdAt).filter(Boolean).sort();
+  const firstDate = dates[0];
+  const lastDate = dates[dates.length - 1];
   const empty = Math.max(0, MIN_ROWS - sorted.length);
 
   // One sheet = one page (Axel, 2026-10-24: the signature names were spilling onto a 2nd page).
@@ -123,7 +132,7 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
           <div>Team: <b>{teams.join(', ')}</b></div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, lineHeight: 1.7, marginBottom: 8 }}>
-          <div>Ngày đề xuất: <b>{vnDate(firstDate)}</b></div>
+          <div>Ngày đề xuất: <b>{vnDate(firstDate)}{lastDate && vnDate(lastDate) !== vnDate(firstDate) ? ` – ${vnDate(lastDate)}` : ''}</b></div>
           {nos.length > 0 && <div style={{ fontSize: 12, color: '#444' }}>Yêu cầu số: {nos.map(n => `#${n}`).join(', ')}</div>}
         </div>
 
@@ -143,8 +152,14 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
             {sorted.map((l, i) => {
               const ph = packHint(l);
               const note = [l.brand ? `${l.brandStrict ? 'Chỉ ' : ''}${l.brand}` : '', ph ? `(${ph})` : '', l.note ?? ''].filter(Boolean).join(' · ');
+              const newVendor = multiVendor && (i === 0 || vendorKey(sorted[i - 1]) !== vendorKey(l));
+              const nInVendor = sorted.filter(x => vendorKey(x) === vendorKey(l)).length;
               return (
-                <tr key={l.id}>
+                <Fragment key={l.id}>{newVendor && (
+                  <tr><td colSpan={7} style={{ backgroundColor: '#F2F2F2', fontWeight: 700 }}>
+                    Nhà cung cấp: {vendorKey(l) ? shortVendor(vendorKey(l)) : 'Chưa chọn NCC'} <span style={{ fontWeight: 400, fontSize: 12 }}>({nInVendor} dòng)</span></td></tr>
+                )}
+                <tr>
                   <td style={{ textAlign: 'center' }}>{i + 1}</td>
                   <td>{l.name}{l.sku ? <span style={{ color: '#555', fontSize: 11.5 }}> [{l.sku}]</span> : null}</td>
                   <td style={{ textAlign: 'center' }}>{l.uom}</td>
@@ -152,7 +167,7 @@ export default function PurchasePrintView({ lines }: { lines: PurchaseLine[]; pr
                   <td></td>
                   <td></td>
                   <td style={{ fontSize: 12 }}>{note}</td>
-                </tr>
+                </tr></Fragment>
               );
             })}
             {Array.from({ length: empty }, (_, k) => (
