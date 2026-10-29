@@ -14,7 +14,7 @@ export const maxDuration = 60;
 
 const CAUSE_EN: Record<string, string> = {
   found_at_lab: 'found at the Lab', damaged_returned: 'damaged, brought back', lost_transport: 'lost in transport',
-  shop_miscount: 'shop miscounted', lab_sent_extra: 'Lab sent extra',
+  shop_miscount: 'shop miscounted', lab_sent_extra: 'Lab sent extra', wrong_shop: 'delivered to another shop by mistake',
 };
 
 export default async function DeliveryGapsPage() {

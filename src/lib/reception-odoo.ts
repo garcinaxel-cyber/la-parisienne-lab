@@ -850,3 +850,59 @@ export async function finalizeOffSlip(input: {
     return { ok: false, live, error: e?.message ?? String(e), done };
   }
 }
+
+// ── Wrong shop (Axel, 2026-10-29) ────────────────────────────────────────────────────────────
+// Units of shop A's REP order put on shop B's van (Long Biên → Timecity, REP/02253). The Lab's OUT
+// already moved them into transit for A. Shop B keeps them: one receipt into B's stock, taken
+// from transit while A's IN has not received them, or from A's stock if A's IN already counted
+// them. A's IN is then validated at what A really received (by the caller).
+export async function moveWrongShop(input: {
+  sku: string; qty: number; sourceRepRef: string; sourceShopName: string; receivingShopName: string; note: string;
+}): Promise<{ ok: boolean; live: boolean; error?: string; done: string[] }> {
+  const live = inValidationLive();
+  const done: string[] = [];
+  if (!odooWriteConfigured()) return { ok: false, live, error: 'Odoo write account not configured', done };
+  try {
+    const { SHOP_CONFIG } = await import('@/lib/shops');
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    const whCode = (name: string) => {
+      const k = Object.keys(SHOP_CONFIG).find(x => norm(x) === norm(name));
+      const c = k ? SHOP_CONFIG[k] : undefined;
+      return c?.docType === 'replenishment' ? c.warehouseCode : undefined;
+    };
+    const destCode = whCode(input.receivingShopName), srcCode = whCode(input.sourceShopName);
+    if (!destCode) return { ok: false, live, error: `${input.receivingShopName}: not a REP shop — settle by hand`, done };
+    if (!srcCode) return { ok: false, live, error: `${input.sourceShopName}: not a REP shop — settle by hand`, done };
+    const [p] = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'uom_id'] });
+    if (!p) return { ok: false, live, error: `Product ${input.sku} not found in Odoo`, done };
+    const whs = await odooExecuteWrite<any[]>('stock.warehouse', 'search_read', [[['code', 'in', [destCode, srcCode]]]], { fields: ['code', 'lot_stock_id', 'in_type_id'] });
+    const dest = whs.find(w => w.code === destCode), src = whs.find(w => w.code === srcCode);
+    if (!dest || !src) return { ok: false, live, error: `Warehouse ${!dest ? destCode : srcCode} not found in Odoo`, done };
+    // Did shop A's IN already put these units in A's stock?
+    const ins = await odooExecuteWrite<any[]>('stock.picking', 'search_read',
+      [[['origin', '=', input.sourceRepRef], ['location_id', '=', TRANSIT_LOCATION_ID], ['state', '!=', 'cancel']]], { fields: ['id', 'state'] });
+    let receivedAtSource = 0;
+    const doneIns = ins.filter(i => i.state === 'done').map(i => i.id);
+    if (doneIns.length) {
+      const ms = await odooExecuteWrite<any[]>('stock.move', 'search_read', [[['picking_id', 'in', doneIns], ['product_id', '=', p.id], ['state', '=', 'done']]], { fields: ['quantity'] });
+      receivedAtSource = ms.reduce((s, m) => s + Number(m.quantity), 0);
+    }
+    const fromLoc = receivedAtSource >= input.qty ? src.lot_stock_id[0] : TRANSIT_LOCATION_ID;
+    const fromLabel = fromLoc === TRANSIT_LOCATION_ID ? 'transit' : `${srcCode}/Stock`;
+    if (!live) { done.push(`receipt ${fromLabel} → ${destCode}/Stock ${input.sku} ×${input.qty}`); return { ok: true, live, done }; }
+    const origin = `${input.sourceRepRef} nhầm shop → ${input.receivingShopName}`;
+    const pickId = await odooExecuteWrite<number>('stock.picking', 'create', [{
+      picking_type_id: dest.in_type_id[0], location_id: fromLoc, location_dest_id: dest.lot_stock_id[0], origin,
+      move_ids: [[0, 0, { name: input.sku, product_id: p.id, product_uom: p.uom_id[0], product_uom_qty: input.qty, location_id: fromLoc, location_dest_id: dest.lot_stock_id[0] }]],
+    }], { context: NO_MAIL });
+    await odooExecuteWrite('stock.picking', 'action_confirm', [[pickId]], { context: NO_MAIL });
+    const v = await validateWholePicking(pickId);
+    const name = await recordName('stock.picking', pickId);
+    if (!v.ok) return { ok: false, live, error: `${name}: ${v.error}`, done };
+    done.push(`${name} (${fromLabel} → ${destCode}/Stock) ${input.sku} ×${input.qty} validated`);
+    await odooExecuteWrite('stock.picking', 'message_post', [[pickId]], { body: `App Lab: ${input.note}`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' }).catch(() => {});
+    return { ok: true, live, done };
+  } catch (e: any) {
+    return { ok: false, live, error: e?.message ?? String(e), done };
+  }
+}

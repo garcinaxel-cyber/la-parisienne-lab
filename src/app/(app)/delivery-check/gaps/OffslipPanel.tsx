@@ -3,6 +3,7 @@
 // the Delivery gaps page. One card per declared product: photo, the shop's note, a suggested
 // customer order (same product delivered that day or the day before), and three causes:
 //   customer_order : customer not charged (return + invoice back to draft) + the shop gets them
+//   wrong_shop     : another La Paris shop's units (wrong van): moved to this shop, the other shop's missing line closed (29/10)
 //   lab_extra      : the shop gets them only
 // "The shop gets them" = a new adjustment REP closed automatically (REP shops), or a new line on
 // the SO it was received with (Moon Flower) — so they show in Axel's REP / SO exports.
@@ -12,7 +13,7 @@ import { useI18n } from '@/lib/i18n';
 import { PackagePlus, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getOffslipItemsAction, settleOffslipAction, type OffslipRow } from './actions';
 
-type Cause = 'customer_order' | 'lab_extra' | 'shop_error';
+type Cause = 'customer_order' | 'wrong_shop' | 'lab_extra' | 'shop_error';
 
 // mode 'open' sits above the tabs (to settle); mode 'closed' sits in the « Clôturés » tab (Axel, 16/10).
 export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'closed' }) {
@@ -32,7 +33,10 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
       setRows(r.items); setCanSend(!!r.canSendOdoo);
       setSel(prev => {
         const n = { ...prev };
-        for (const i of r.items!) if (!n[i.id]) n[i.id] = { cause: i.suggestions.length ? 'customer_order' : null, ref: i.suggestions[0]?.orderRef ?? '' };
+        for (const i of r.items!) if (!n[i.id]) {
+          const shop = i.suggestions.find(x => x.kind === 'shop'), cust = i.suggestions.find(x => x.kind === 'customer');
+          n[i.id] = shop ? { cause: 'wrong_shop', ref: shop.orderRef } : { cause: cust ? 'customer_order' : null, ref: cust?.orderRef ?? '' };
+        }
         return n;
       });
     }
@@ -50,7 +54,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
     const s = sel[r.id];
     if (!s?.cause) return;
     setBusy(r.id);
-    const res = await settleOffslipAction({ id: r.id, cause: s.cause, sourceOrderRef: s.cause === 'customer_order' ? s.ref : null });
+    const res = await settleOffslipAction({ id: r.id, cause: s.cause, sourceOrderRef: s.cause === 'customer_order' || s.cause === 'wrong_shop' ? s.ref : null });
     setBusy(null);
     setMsg(m => ({ ...m, [r.id]: res.ok ? { ok: true, text: (res.done ?? []).join(' · ') || T('Xong', 'Done') } : { ok: false, text: `${res.error}${res.done?.length ? ` — ${T('đã làm', 'already done')}: ${res.done.join(' · ')}` : ''}` } }));
     if (res.ok) load();
@@ -63,6 +67,9 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
     { k: 'customer_order', t: T('Đơn của khách, giao nhầm chỗ', "Commande d'un client, livrée au mauvais endroit"),
       d: r => T(`Odoo: trả hàng ${r.qty} trên phiếu giao của đơn → hoá đơn về nháp, bớt ${r.qty} → ${toShop(r)}. Khách không bị tính tiền, shop giữ bánh.`,
         `Odoo: return of ${r.qty} on the order's delivery → invoice back to draft without these ${r.qty} (accounting re-posts it) → ${toShop(r)}. The customer is not invoiced, the shop keeps the cakes.`) },
+    { k: 'wrong_shop', t: T('Hàng của shop khác, giao nhầm xe', "Produits d'un autre shop, mis dans le mauvais camion"),
+      d: r => T(`Odoo: nhận ${r.qty} vào kho shop này (từ transit, hoặc từ kho shop kia nếu shop kia đã nhận). Dòng "thiếu" của shop kia được đóng, phiếu nhận của shop kia xác nhận theo số thật.`,
+        `Odoo: ${r.qty} received into this shop's stock (from transit, or from the other shop's stock if it already counted them). The other shop's "missing" line is closed and its receipt validated at the real quantities.`) },
     { k: 'lab_extra', t: T('Lab gửi dư / không rõ nguồn', 'Sent extra by the Lab / unknown origin'),
       d: r => r.orderRef && !r.orderRef.startsWith('REP') ? T(`Odoo: ${toShop(r)}.`, `Odoo: ${toShop(r)}.`) : T(`Odoo: ${toShop(r)}. Không đụng hoá đơn.`, `Odoo: ${toShop(r)}. No invoice touched.`) },
     { k: 'shop_error', t: T('Shop nhầm (không có hàng thừa)', 'Shop mistake (nothing extra)'),
@@ -120,16 +127,30 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                         <input type="radio" name={`c-${r.id}`} checked={on} onChange={() => setSel(m => ({ ...m, [r.id]: { ...s, cause: c.k } }))} className="mt-1" />
                         <span className="flex-1">
                           <span className="block text-sm font-bold">{c.t}</span>
+                          {c.k === 'wrong_shop' && on && (
+                            <span className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+                              {T('Đơn shop', 'Shop order')} :
+                              {r.suggestions.some(x => x.kind === 'shop') && (
+                                <select value={s.ref} onChange={e => setSel(m => ({ ...m, [r.id]: { ...s, ref: e.target.value } }))} className="rounded-md px-2 py-1 font-semibold" style={{ border: '1px solid #D1D5DB' }}>
+                                  {r.suggestions.filter(x => x.kind === 'shop').map(x => <option key={x.orderRef} value={x.orderRef}>{x.orderRef} · {x.customer} · {T('thiếu', 'missing')} {x.qty}</option>)}
+                                  <option value="">{T('Khác…', 'Other…')}</option>
+                                </select>
+                              )}
+                              {(!r.suggestions.some(x => x.kind === 'shop' && x.orderRef === s.ref)) && (
+                                <input value={s.ref} onChange={e => setSel(m => ({ ...m, [r.id]: { ...s, ref: e.target.value.toUpperCase() } }))} placeholder="REP/2026/0…" className="rounded-md px-2 py-1 w-36 font-mono" style={{ border: '1px solid #D1D5DB' }} />
+                              )}
+                            </span>
+                          )}
                           {c.k === 'customer_order' && on && (
                             <span className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
                               {T('Đơn', 'Order')} :
-                              {r.suggestions.length > 0 ? (
+                              {r.suggestions.some(x => x.kind === 'customer') ? (
                                 <select value={s.ref} onChange={e => setSel(m => ({ ...m, [r.id]: { ...s, ref: e.target.value } }))} className="rounded-md px-2 py-1 font-semibold" style={{ border: '1px solid #D1D5DB' }}>
-                                  {r.suggestions.map(x => <option key={x.orderRef} value={x.orderRef}>{x.orderRef} · {x.customer} · {x.qty}</option>)}
+                                  {r.suggestions.filter(x => x.kind === 'customer').map(x => <option key={x.orderRef} value={x.orderRef}>{x.orderRef} · {x.customer} · {x.qty}</option>)}
                                   <option value="">{T('Khác…', 'Other…')}</option>
                                 </select>
                               ) : null}
-                              {(!r.suggestions.length || !s.ref || !r.suggestions.some(x => x.orderRef === s.ref)) && (
+                              {(!s.ref || !r.suggestions.some(x => x.kind === 'customer' && x.orderRef === s.ref)) && (
                                 <input value={s.ref} onChange={e => setSel(m => ({ ...m, [r.id]: { ...s, ref: e.target.value.toUpperCase() } }))} placeholder="S0…" className="rounded-md px-2 py-1 w-28 font-mono" style={{ border: '1px solid #D1D5DB' }} />
                               )}
                             </span>
@@ -141,7 +162,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                   })}
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button disabled={busy === r.id || !s.cause || (s.cause === 'customer_order' && !/^S\d+/.test(s.ref.trim())) || (s.cause !== 'shop_error' && !canSend)}
+                  <button disabled={busy === r.id || !s.cause || (s.cause === 'customer_order' && !/^S\d+/.test(s.ref.trim())) || (s.cause === 'wrong_shop' && !/^REP\//.test(s.ref.trim())) || (s.cause !== 'shop_error' && !canSend)}
                     onClick={() => settle(r)} className="rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
                     {busy === r.id ? <Loader2 size={14} className="animate-spin inline" /> : s.cause === 'shop_error' ? T('Xác nhận', 'Validate') : T('Xác nhận và gửi Odoo', 'Validate and send to Odoo')}
                   </button>
@@ -161,7 +182,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
           <span className="text-ink-light">{r.shopName} · {r.orderRef}</span>
           <span className="flex-1" />
           <span style={{ color: '#374151' }}>
-            {r.labCause === 'customer_order' ? `${T('Đơn khách', 'Customer order')} ${r.sourceOrderRef}` : r.labCause === 'lab_extra' ? T('Lab gửi dư', 'Sent extra') : T('Shop nhầm', 'Shop mistake')}
+            {r.labCause === 'customer_order' ? `${T('Đơn khách', 'Customer order')} ${r.sourceOrderRef}` : r.labCause === 'wrong_shop' ? `${T('Nhầm shop', 'Wrong shop')} · ${r.sourceOrderRef}` : r.labCause === 'lab_extra' ? T('Lab gửi dư', 'Sent extra') : T('Shop nhầm', 'Shop mistake')}
             {r.odooMode === 'simulated' ? ` · ${T('mô phỏng', 'simulated')}` : ''} · {r.decidedBy}
           </span>
           {Array.isArray(r.odooLog?.done) && r.odooLog.done.length > 0 && (

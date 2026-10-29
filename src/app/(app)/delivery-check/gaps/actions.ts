@@ -143,7 +143,7 @@ export async function settleOffslipAction(input: { id: string; cause: import('@/
   if ('error' in auth) return { error: auth.error };
   // Same rule as the other gaps: anything that writes to Odoo = lab manager / admin only.
   if (input.cause !== 'shop_error' && !ODOO_SEND_ROLES.includes(auth.role)) return { error: 'Only the Lab manager or an admin can send to Odoo' };
-  if (!['customer_order', 'lab_extra', 'shop_error'].includes(input.cause)) return { error: 'Bad cause' };
+  if (!['customer_order', 'wrong_shop', 'lab_extra', 'shop_error'].includes(input.cause)) return { error: 'Bad cause' };
   const sb = service();
   if (!sb) return { error: 'Server not configured' };
   const { settleOffslip } = await import('@/lib/offslip');
