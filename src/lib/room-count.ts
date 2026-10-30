@@ -29,10 +29,17 @@ export type RoomSession = {
   id: string; team: string; countDate: string; cutoffAt: string; status: 'open' | 'confirmed' | 'cancelled';
   openedByName: string | null; confirmedByName: string | null; confirmedAt: string | null;
 };
+// Product missing from the catalogue (Axel, 2026-10-30): free name + photo, linked to an Odoo product later.
+export type RoomFreeItem = {
+  id: string; name: string; qty: number; uom: string; photoUrl: string | null; note: string | null;
+  countedBy: string | null; countedByName: string | null; createdAt: string; linkedTmplId: number | null;
+};
+export const FREE_UNITS = ['kg', 'g', 'L', 'ml', 'Unit', 'hộp', 'gói', 'chai', 'túi'] as const;
 export type RoomCountState = {
   session: RoomSession | null;
   lines: RoomLine[];
   entries: RoomEntry[];
+  freeItems?: RoomFreeItem[];
   canConfirm: boolean;          // team lead of this team (or admin)
   meId: string;
 };

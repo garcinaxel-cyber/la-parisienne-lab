@@ -12,11 +12,12 @@
 //     the team lead confirms.
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Check, Loader2, ClipboardCheck, AlertTriangle, Trash2, AlertCircle, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, X, Check, Loader2, ClipboardCheck, AlertTriangle, Trash2, AlertCircle, Plus, ChevronDown, ChevronRight, Camera } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
 import { RAW_TYPES, fmtQty, vnDayTime, pieceUnit, type RawMaterial, type RawType } from '@/lib/raw-materials';
-import { LEFT_OUT_REASONS, lineTotal, unitAlert, type RoomCountState, type RoomEntry, type RoomLine, type LeftOutReason } from '@/lib/room-count';
-import { getRoomCountAction, openRoomCountAction, saveRoomEntryAction, deleteRoomEntryAction, setLeftOutReasonAction, confirmRoomCountAction, type EntryInput } from './room-count-actions';
+import { LEFT_OUT_REASONS, FREE_UNITS, lineTotal, unitAlert, type RoomCountState, type RoomEntry, type RoomLine, type LeftOutReason } from '@/lib/room-count';
+import { getRoomCountAction, openRoomCountAction, saveRoomEntryAction, deleteRoomEntryAction, setLeftOutReasonAction, confirmRoomCountAction, saveFreeItemAction, deleteFreeItemAction, searchCountCatalogAction, type EntryInput } from './room-count-actions';
+import { uploadRawPhotoAction } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647', OKBG = '#EAF6EC';
 type Unit = { label: string; factor: number };   // factor = catalogue units in one typed unit
@@ -309,8 +310,22 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           </div>))}
         {!adding ? <button onClick={() => setAdding(true)} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm khác', 'Other product')}</button>
-          : <OtherProduct items={items} listed={new Set(lines.map(l => l.tmplId))} lang={lang} L={L} onClose={() => setAdding(false)}
+          : <OtherProduct team={team} items={items} listed={new Set(lines.map(l => l.tmplId))} lang={lang} L={L} onClose={() => setAdding(false)}
+              onFree={async (f) => { setBusy(true); try { const r = await saveFreeItemAction(team, s.id, f); if (r.error) setErr(r.error); else { if (r.state) setSt(r.state); setAdding(false); ping(); } } catch { setErr(L('Mất kết nối — bấm lưu lại, không bị trùng.', 'Connection lost — tap save again, no duplicate.')); } setBusy(false); }}
+              busy={busy}
               onPick={(m) => { setAdding(false); setSt(x => x && !x.lines.some(l => l.tmplId === m.tmplId) ? { ...x, lines: [...x.lines, { tmplId: m.tmplId, sku: m.sku, name: m.name, nameVi: m.nameVi, uom: m.uom, type: m.type, sub: m.sub, source: 'added', takenRecent: null, leftOutReason: null, leftOutNote: null }] } : x); startDraft(m.tmplId); }} />}
+        {(st.freeItems ?? []).length > 0 && (
+          <div className="bg-white rounded-2xl px-3" style={{ border: `1px solid ${BORDER}` }}>
+            <div className="text-[10.5px] font-extrabold uppercase tracking-wide pt-2.5 pb-1" style={{ color: GOLD_TEXT }}>🆕 {L('Sản phẩm chưa có trong danh mục · Axel sẽ liên kết', 'Not in the catalogue yet · Axel will link them')}</div>
+            {(st.freeItems ?? []).map(f => (
+              <div key={f.id} className="flex items-center gap-2 py-2.5" style={{ borderTop: `1px solid ${HAIR}` }}>
+                {f.photoUrl ? <img src={f.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover flex-none" /> : <div className="w-10 h-10 rounded-lg flex-none flex items-center justify-center" style={{ backgroundColor: PALE }}><Camera size={16} style={{ color: '#C4B98A' }} /></div>}
+                <div className="flex-1 min-w-0"><div className="text-[13px] font-bold leading-snug">{f.name}</div>
+                  <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.countedByName ?? '—'}{f.note ? ` · ${f.note}` : ''}</div></div>
+                <span className="text-[11.5px] font-bold rounded-full px-2 py-0.5 whitespace-nowrap tabular-nums" style={{ backgroundColor: OKBG, color: OK }}>{fmtQty(f.qty)} {f.uom}</span>
+                {(f.countedBy === st.meId || st.canConfirm) && <button disabled={busy} onClick={() => act(deleteFreeItemAction(team, s.id, f.id))} className="p-0.5" style={{ color: LATE }} aria-label="delete"><Trash2 size={14} /></button>}
+              </div>))}
+          </div>)}
         <div className="text-center text-[12px] pb-2" style={{ color: '#9CA3AF' }}>{L('Có thể thoát bất cứ lúc nào — tiến độ đã được lưu.', 'You can leave at any time — progress is saved.')}</div>
       </> : (
         <div className="space-y-3">
@@ -369,20 +384,81 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
   );
 }
 
-function OtherProduct({ items, listed, lang, L, onPick, onClose }: { items: RawMaterial[] | null; listed: Set<number>; lang: 'vi' | 'en'; L: (vi: string, en: string) => string; onPick: (m: RawMaterial) => void; onClose: () => void }) {
+type FreeInput = { id: string; name: string; qty: number; uom: string; photoUrl: string | null; note: string | null };
+// "Sản phẩm khác": search the whole raw catalogue (hidden products included, from the server); not found →
+// a new product typed freely with its photo (Axel, 2026-10-30), linked to an Odoo product later.
+function OtherProduct({ team, items, listed, lang, L, onPick, onClose, onFree, busy }: { team: string; items: RawMaterial[] | null; listed: Set<number>; lang: 'vi' | 'en'; L: (vi: string, en: string) => string; onPick: (m: RawMaterial) => void; onClose: () => void; onFree: (f: FreeInput) => void; busy: boolean }) {
   const [q, setQ] = useState('');
-  const res = useMemo(() => {
+  const [remote, setRemote] = useState<RawMaterial[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [free, setFree] = useState<FreeInput | null>(null);
+  const [qtyTxt, setQtyTxt] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState<string | null>(null);
+  const local = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (s.length < 2) return [];
     return (items ?? []).filter(m => !listed.has(m.tmplId) && (m.name.toLowerCase().includes(s) || (m.nameVi ?? '').toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s))).slice(0, 30);
   }, [items, listed, q]);
+  useEffect(() => {
+    const s = q.trim();
+    if (s.length < 2) { setRemote([]); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try { const r = await searchCountCatalogAction(team, s); setRemote((r.items ?? []).filter(m => !listed.has(m.tmplId))); } catch { /* local results stay */ }
+      setSearching(false);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q, team, listed]);
+  const res = useMemo(() => { const seen = new Set(local.map(m => m.tmplId)); return [...local, ...remote.filter(m => !seen.has(m.tmplId))].slice(0, 30); }, [local, remote]);
+  const upload = async (file: File) => {
+    setUploading(true); setUpErr(null);
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const r = await uploadRawPhotoAction(fd);
+      if (r.error) setUpErr(r.error); else setFree(f => f && ({ ...f, photoUrl: r.url! }));
+    } catch { setUpErr(L('Không tải được ảnh.', 'Could not upload the photo.')); }
+    setUploading(false);
+  };
+  if (free) {
+    const n = parseQty(qtyTxt);
+    return (
+      <div className="bg-white rounded-2xl p-3 space-y-2.5" style={{ border: `1.5px solid ${GOLD}` }}>
+        <div className="flex items-center gap-2"><b className="flex-1 text-[13.5px]" style={{ color: NAVY }}>🆕 {L('Sản phẩm mới (chưa có trong danh mục)', 'New product (not in the catalogue)')}</b>
+          <button onClick={onClose} style={{ color: '#6B7280' }}><X size={16} /></button></div>
+        <input autoFocus value={free.name} onChange={e => setFree({ ...free, name: e.target.value })} placeholder={L('Tên sản phẩm', 'Product name')}
+          className="w-full rounded-xl px-3 py-2.5 text-[14px] font-bold outline-none" style={{ border: `1px solid ${BORDER}` }} />
+        <div className="flex items-center gap-2">
+          <input inputMode="decimal" value={qtyTxt} placeholder="0" onChange={e => setQtyTxt(e.target.value.replace(/[^0-9.,]/g, ''))}
+            className="w-28 rounded-xl px-3 py-2 text-[22px] font-extrabold outline-none tabular-nums" style={{ border: `1.5px solid ${GOLD}` }} />
+          <div className="flex gap-1 flex-wrap flex-1">{FREE_UNITS.map(u => (
+            <button key={u} onClick={() => setFree({ ...free, uom: u })} className="text-[12px] font-bold rounded-lg px-2 py-1"
+              style={{ border: `1px solid ${free.uom === u ? GOLD : HAIR}`, backgroundColor: free.uom === u ? PALE : '#fff', color: free.uom === u ? GOLD_TEXT : '#6B7280' }}>{u === 'Unit' ? L('cái', 'pcs') : u}</button>))}</div>
+        </div>
+        <label className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold cursor-pointer" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
+          {free.photoUrl ? <img src={free.photoUrl} alt="" className="w-10 h-10 rounded-lg object-cover" /> : <Camera size={18} />}
+          {uploading ? <Loader2 size={15} className="animate-spin" /> : free.photoUrl ? L('Đổi ảnh', 'Change photo') : L('Chụp ảnh sản phẩm', 'Take a photo')}
+          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
+        </label>
+        {upErr && <div className="text-[12px] font-semibold" style={{ color: LATE }}>{upErr}</div>}
+        <input value={free.note ?? ''} onChange={e => setFree({ ...free, note: e.target.value })} placeholder={L('Ghi chú (thương hiệu, quy cách…)', 'Note (brand, size…)')}
+          className="w-full rounded-xl px-3 py-2 text-[13px] outline-none" style={{ border: `1px solid ${HAIR}` }} />
+        <button disabled={busy || uploading || !free.name.trim()} onClick={() => onFree({ ...free, qty: n })}
+          className="w-full rounded-xl py-3 font-extrabold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>
+          {busy ? <Loader2 size={16} className="inline animate-spin" /> : L('Lưu sản phẩm mới', 'Save the new product')}</button>
+      </div>);
+  }
   return (
     <div className="bg-white rounded-2xl p-3 space-y-2" style={{ border: `1.5px solid ${GOLD}` }}>
       <div className="flex items-center gap-2"><Search size={14} style={{ color: '#9CA3AF' }} />
         <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm trong danh mục…', 'Search the catalogue…')} className="flex-1 py-1.5 text-[13.5px] outline-none" />
+        {searching && <Loader2 size={14} className="animate-spin" style={{ color: '#9CA3AF' }} />}
         <button onClick={onClose} style={{ color: '#6B7280' }}><X size={16} /></button></div>
       {res.map(m => <button key={m.tmplId} onClick={() => onPick(m)} className="w-full text-left py-2 text-[13px] font-bold" style={{ borderTop: `1px solid ${HAIR}` }}>
         {lang === 'vi' && m.nameVi ? m.nameVi : m.name} <span className="text-[10.5px] font-normal" style={{ color: '#9CA3AF' }}>{m.sku ?? ''} · {m.uom}</span></button>)}
+      <button onClick={() => { setFree({ id: uuid(), name: q.trim(), qty: 0, uom: 'kg', photoUrl: null, note: null }); setQtyTxt(''); }}
+        className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT, backgroundColor: PALE }}>
+        <Plus size={15} /> {L('Không tìm thấy? Thêm sản phẩm mới + ảnh', 'Not found? Add a new product + photo')}</button>
     </div>
   );
 }

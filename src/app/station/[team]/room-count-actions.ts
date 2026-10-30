@@ -7,7 +7,9 @@ import { rawService, rawActor, canActForTeam, canApproveForTeam } from '@/lib/ra
 import { resolveRawMaterialsBatch } from '@/lib/mp-consumption';
 import { isOemSku } from '@/lib/oem';
 import { vnTodayStr } from '@/lib/odoo';
-import { ROOM_LOCATIONS, LEFT_OUT_REASONS, type RoomCountState, type RoomEntry, type RoomLine, type LeftOutReason } from '@/lib/room-count';
+import { ROOM_LOCATIONS, LEFT_OUT_REASONS, FREE_UNITS, type RoomCountState, type RoomEntry, type RoomLine, type LeftOutReason, type RoomFreeItem } from '@/lib/room-count';
+import { mapMaterial } from '@/lib/raw-materials-db';
+import type { RawMaterial } from '@/lib/raw-materials';
 import { TRANSFER_TEAMS } from '@/lib/raw-materials';
 
 type Db = NonNullable<ReturnType<typeof rawService>>;
@@ -59,14 +61,71 @@ async function teamNetTaken(db: Db, team: string, sinceIso: string, untilIso: st
 async function loadState(db: Db, team: string, a: { userId: string }, canConfirm: boolean): Promise<RoomCountState> {
   const s = await openSession(db, team);
   if (!s) return { session: null, lines: [], entries: [], canConfirm, meId: a.userId };
-  const [{ data: ls }, { data: es }] = await Promise.all([
+  const [{ data: ls }, { data: es }, { data: fs }] = await Promise.all([
     db.from('lab_room_count_lines').select('*').eq('session_id', s.id).limit(3000),
     db.from('lab_room_count_entries').select('*').eq('session_id', s.id).is('deleted_at', null).order('created_at').limit(5000),
+    db.from('lab_room_count_free_items').select('*').eq('session_id', s.id).is('deleted_at', null).order('created_at').limit(500),
   ]);
   return {
     session: { id: s.id, team: s.team, countDate: s.count_date, cutoffAt: s.cutoff_at, status: s.status, openedByName: s.opened_by_name, confirmedByName: s.confirmed_by_name, confirmedAt: s.confirmed_at },
     lines: (ls ?? []).map(mapLine), entries: (es ?? []).map(mapEntry), canConfirm, meId: a.userId,
+    freeItems: (fs ?? []).map(mapFree),
   };
+}
+const mapFree = (f: any): RoomFreeItem => ({ id: f.id, name: f.name, qty: Number(f.qty), uom: f.uom, photoUrl: f.photo_url ?? null, note: f.note ?? null,
+  countedBy: f.counted_by ?? null, countedByName: f.counted_by_name ?? null, createdAt: f.created_at, linkedTmplId: f.linked_tmpl_id ?? null });
+
+// Products missing from the catalogue (Axel, 2026-10-30): free name, quantity, unit and photo. Kept in the
+// app only — never sent to Odoo until Axel links it to a real product. Same id = same row (resend-safe).
+export async function saveFreeItemAction(team: string, sessionId: string, input: { id: string; name: string; qty: number; uom: string; photoUrl?: string | null; note?: string | null }): Promise<SaveResult> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!isTeam(team) || !canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: s } = await db.from('lab_room_count_sessions').select('team, status').eq('id', sessionId).maybeSingle();
+  if (!s || s.team !== team) return { error: 'Not found' };
+  if (s.status !== 'open') return { error: 'Phiên kiểm kê đã đóng / This count is closed' };
+  if (!UUID.test(String(input.id ?? ''))) return { error: 'Bad id' };
+  const name = String(input.name ?? '').trim().slice(0, 120);
+  if (!name) return { error: 'Nhập tên sản phẩm / Type the product name' };
+  const qty = Math.max(0, Math.round(Number(input.qty) * 1000) / 1000);
+  const uom = (FREE_UNITS as readonly string[]).includes(input.uom) ? input.uom : 'kg';
+  const photo = input.photoUrl && /^https:\/\//.test(input.photoUrl) ? input.photoUrl : null;
+  const { error } = await db.from('lab_room_count_free_items').upsert({ id: input.id, session_id: sessionId, team, name, qty, uom, photo_url: photo,
+    note: String(input.note ?? '').trim().slice(0, 200) || null, counted_by: a.userId, counted_by_name: a.name || null }, { onConflict: 'id' });
+  if (error) return { error: error.message };
+  return { ok: true, state: await loadState(db, team, a, canApproveForTeam(a, team)) };
+}
+
+export async function deleteFreeItemAction(team: string, sessionId: string, id: string): Promise<SaveResult> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!isTeam(team) || !canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const canConfirm = canApproveForTeam(a, team);
+  const { data: f } = await db.from('lab_room_count_free_items').select('id, session_id, counted_by').eq('id', id).maybeSingle();
+  if (!f || f.session_id !== sessionId) return { error: 'Not found' };
+  if (f.counted_by !== a.userId && !canConfirm) return { error: 'Chỉ xoá được lượt của bạn / You can only delete your own entries' };
+  await db.from('lab_room_count_free_items').update({ deleted_at: new Date().toISOString(), deleted_by_name: a.name || null }).eq('id', id);
+  return { ok: true, state: await loadState(db, team, a, canConfirm) };
+}
+
+// "Other product" search: the whole raw-material catalogue, hidden products included (a product the
+// chefs never take from storage can still sit in a room).
+export async function searchCountCatalogAction(team: string, q: string): Promise<{ items?: RawMaterial[]; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!isTeam(team) || !canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const s = String(q ?? '').trim().replace(/[%,()]/g, ' ').slice(0, 60);
+  if (s.length < 2) return { items: [] };
+  const { data, error } = await db.from('lab_raw_materials').select('*').eq('active', true).eq('kind', 'raw')
+    .or(`name.ilike.%${s}%,name_vi.ilike.%${s}%,sku.ilike.%${s}%`).order('name').limit(30);
+  if (error) return { error: error.message };
+  return { items: (data ?? []).map(mapMaterial) };
 }
 
 export async function getRoomCountAction(team: string): Promise<{ state?: RoomCountState; error?: string }> {
