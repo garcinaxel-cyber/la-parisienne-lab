@@ -128,9 +128,18 @@ export async function validateOrderAction(deliveryOrderId: string): Promise<{ ok
     updated_at: new Date().toISOString(),
   }).eq('id', deliveryOrderId);
   if (error) return { error: error.message };
+  // Axel 2026-10-30 (REP/02265): "Valider" alone never reached Odoo when the assistant skipped the
+  // second button on the print page — the order sat validated for 6 h, the shop's IN stuck.
+  // Now the Odoo delivery is validated right here. If it needs a human (split, error), the order
+  // stays validated in the app and the print page's « Valider la livraison Odoo » still works.
+  let odoo: { ok: boolean; note?: string } | undefined;
+  try {
+    const r = await pushDeliveryToOdoo(supabase, auth, deliveryOrderId, false, []);
+    odoo = r.ok ? { ok: true } : { ok: false, note: r.needsSplit ? 'needs_split' : (r.error ?? 'error') };
+  } catch (e: any) { odoo = { ok: false, note: String(e?.message ?? e) }; }
   revalidatePath('/delivery-check');
   revalidatePath('/delivery-check/category');
-  return { ok: true };
+  return { ok: true, odoo } as any;
 }
 
 // Hide/show a checked line on the printed delivery slip without touching its tracked data —
@@ -300,6 +309,13 @@ export async function validateDeliveryOnOdooAction(
   const supabase = createClient();
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { ok: false, dryRun, error: auth.error };
+  return pushDeliveryToOdoo(supabase, auth, deliveryOrderId, dryRun, splits);
+}
+
+async function pushDeliveryToOdoo(
+  supabase: ReturnType<typeof createClient>, auth: { session: any; profile: any },
+  deliveryOrderId: string, dryRun: boolean, splits: SplitInput[],
+): Promise<DeliveryValidateResult> {
 
   const { data: header } = await supabase.from('lab_delivery_orders')
     .select('order_ref, source_type, delivery_date, status').eq('id', deliveryOrderId).maybeSingle();

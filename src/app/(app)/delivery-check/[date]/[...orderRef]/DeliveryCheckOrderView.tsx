@@ -276,7 +276,13 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
     const { validateOrderAction } = await import('../../actions');
     const res = await validateOrderAction(header.id);
     setValidating(false);
-    if (res.ok) setValidated(true); else setValidateError(res.error ?? 'Error');
+    if (res.ok) {
+      setValidated(true);
+      // Odoo is now validated with the same click (30/10); if it could not, say so — the print
+      // page button still finishes it.
+      const o = (res as any).odoo;
+      if (o && !o.ok) setValidateError(`Odoo chưa xác nhận (${o.note}) — bấm « Valider la livraison Odoo ». / Odoo not validated yet — use « Valider la livraison Odoo ».`);
+    } else setValidateError(res.error ?? 'Error');
   }
 
   async function unlock() {
@@ -474,6 +480,9 @@ export default function DeliveryCheckOrderView({ header, lines, backHref, online
         state={state} checked={checked} savingLine={savingLine} validated={validated} vi={vi} upd={upd} checkLine={checkLine} setChecked={setChecked}
         hiddenFromPrint={hiddenFromPrint} toggleHidden={toggleHidden} />
 
+      {validated && validateError && (
+        <div className="card px-4 py-3 text-xs font-semibold flex items-center gap-1" style={{ color: '#B45309' }}><AlertTriangle size={13} /> {validateError}</div>
+      )}
       {!validated && (
         <div className="card px-4 py-3 flex items-center justify-between flex-wrap gap-2">
           <span className="text-sm text-ink-light">
