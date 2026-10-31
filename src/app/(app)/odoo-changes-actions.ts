@@ -2,6 +2,7 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { applyOdooChanges } from '@/lib/odoo-apply';
 import { revalidatePath } from 'next/cache';
+import { odooExecute, odooConfigured } from '@/lib/odoo';
 
 async function guard() {
   const supabase = createClient();
@@ -125,4 +126,73 @@ export async function setExcludedSkuImageAction(sku: string, imageUrl: string): 
   if (error) return { error: error.message };
   revalidatePath('/admin/excluded');
   return {};
+}
+
+// Show / hide a non-production item in the shops' order catalogue and stock-count search
+// (Axel, 2026-10-31). Hidden items stay non-production (never a production card).
+export async function setExcludedSkuShopVisibleAction(sku: string, visible: boolean): Promise<{ error?: string }> {
+  const { supabase, ok } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  const { error } = await supabase.from('lab_excluded_skus').update({ shop_visible: visible }).eq('sku', sku);
+  if (error) return { error: error.message };
+  revalidatePath('/admin/excluded');
+  return {};
+}
+
+export type OdooCandidate = { sku: string; name: string; inList: boolean; isProduction: boolean; saleOk: boolean };
+
+// Search Odoo products to add to the non-production list (Axel, 2026-10-31: "en rajouter depuis
+// Odoo … ajout rapide"). One text query, or several codes pasted at once (space / comma / new
+// line). Vietnamese names. Flags products already in the list and production SKUs (a recipe
+// variant) — adding one of those would stop its production cards, so the UI asks first.
+export async function searchOdooForExclusionAction(query: string): Promise<{ products?: OdooCandidate[]; error?: string }> {
+  const { supabase, ok } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  if (!odooConfigured()) return { error: 'Odoo not configured' };
+  const raw = (query ?? '').trim().slice(0, 2000);
+  if (raw.length < 2) return { products: [] };
+  const tokens = raw.split(/[\s,;]+/).map(t => t.trim()).filter(Boolean);
+  const multi = tokens.length > 1 && tokens.every(t => /^[A-Za-z0-9.\-_]+$/.test(t) && /\d/.test(t));
+  const domain: any[] = multi
+    ? [['default_code', 'in', tokens]]
+    : ['&', ['default_code', '!=', false], '|', ['name', 'ilike', raw], ['default_code', 'ilike', raw]];
+  try {
+    const rows = await odooExecute<any[]>('product.product', 'search_read', [domain],
+      { fields: ['default_code', 'name', 'display_name', 'sale_ok'], context: { lang: 'vi_VN' }, limit: multi ? 200 : 30 });
+    const skus = rows.map(r => r.default_code).filter(Boolean);
+    const [{ data: ex }, { data: fv }] = await Promise.all([
+      skus.length ? supabase.from('lab_excluded_skus').select('sku').in('sku', skus) : Promise.resolve({ data: [] as any[] }),
+      skus.length ? supabase.from('lab_fiche_variants').select('sku').in('sku', skus) : Promise.resolve({ data: [] as any[] }),
+    ]);
+    const inList = new Set((ex ?? []).map((r: any) => r.sku));
+    const prod = new Set((fv ?? []).map((r: any) => r.sku));
+    const seen = new Set<string>();
+    const products: OdooCandidate[] = [];
+    for (const r of rows) {
+      const sku = r.default_code as string;
+      if (!sku || seen.has(sku)) continue;
+      seen.add(sku);
+      const name = String(r.display_name || '').replace(/\[.*?\]\s*/, '').trim() || r.name || sku;
+      products.push({ sku, name, inList: inList.has(sku), isProduction: prod.has(sku), saleOk: !!r.sale_ok });
+    }
+    return { products };
+  } catch (e: any) {
+    return { error: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
+// Add one or several Odoo products to the non-production list, visible to shops or not.
+export async function addExcludedFromOdooAction(items: { sku: string; name: string }[], shopVisible: boolean): Promise<{ added?: number; error?: string }> {
+  const { supabase, ok, userId } = await guard();
+  if (!ok) return { error: 'Not authorized' };
+  const rows = (items ?? []).filter(i => i?.sku).slice(0, 200).map(i => ({
+    sku: String(i.sku).trim(), product_name: String(i.name ?? '').trim().slice(0, 200) || null,
+    reason: 'added from Odoo', excluded_by: userId, shop_visible: !!shopVisible,
+  }));
+  if (!rows.length) return { added: 0 };
+  const { error } = await supabase.from('lab_excluded_skus').upsert(rows, { onConflict: 'sku', ignoreDuplicates: true });
+  if (error) return { error: error.message };
+  revalidatePath('/admin/excluded');
+  revalidatePath('/orders', 'layout');
+  return { added: rows.length };
 }

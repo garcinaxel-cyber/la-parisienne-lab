@@ -1146,7 +1146,7 @@ async function resolvePackagingMetaBySku(skus: string[]): Promise<Record<string,
   if (!skus.length || !odooConfigured()) return out;
   const supabase = service();
   if (!supabase) return out;
-  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku'); // all items, hidden ones too: a shop keeps counting what it already has
   const excludedSkus = new Set((excludedRows ?? []).map((r: any) => r.sku).filter(Boolean));
   const candidateSkus = skus.filter(sku => excludedSkus.has(sku));
   if (!candidateSkus.length) return out;
@@ -1525,7 +1525,7 @@ export async function searchStockCountProductsAction(query: string, shopName?: s
   if (q && odooConfigured()) {
     const supabase = service();
     if (supabase) {
-      const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+      const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku').eq('shop_visible', true);
       const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
       if (excludedSkus.length) {
         try {
@@ -2021,7 +2021,8 @@ export async function searchManagerOrderProductsAction(query: string, shopName?:
     // image_url (Axel, 2026-09-22: "laisse moi la possibilité de mettre une photo") — packaging
     // items have no fiche/variant, so their photo lives on lab_excluded_skus itself (set from
     // /admin/excluded), not on lab_fiche_variants like production SKUs.
-    const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku, image_url');
+    // shop_visible (Axel, 2026-10-31): an item hidden in /admin/excluded is not offered to shops.
+    const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku, image_url').eq('shop_visible', true);
     const excludedSkus = (excludedRows ?? []).map((r: any) => r.sku).filter(Boolean);
     const imageBySku = new Map<string, string | null>((excludedRows ?? []).map((r: any) => [r.sku, r.image_url ?? null]));
     // Fallback: the item's Odoo photo copied into the app (Axel, 2026-10-28 — "que les shops aient
@@ -2071,7 +2072,7 @@ export async function getManagerOrderCategoriesAction(shopName?: string): Promis
   const production = await fetchProductionCatalog();
   const cats = new Set<string>();
   for (const p of production) if (p.category) cats.add(p.category);
-  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku');
+  const { data: excludedRows } = await supabase.from('lab_excluded_skus').select('sku').eq('shop_visible', true);
   if ((excludedRows ?? []).some((r: any) => r.sku)) cats.add('Packaging');
   return { categories: Array.from(cats).sort((a, b) => a.localeCompare(b, 'vi')) };
 }
