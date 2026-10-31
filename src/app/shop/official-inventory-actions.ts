@@ -10,9 +10,9 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireShopOrStaffSession } from './actions';
 import { resolveShopWarehouseLocation } from '@/lib/odoo-scrap';
-import { isLastDayOfMonthVN, vnPeriodStr, vnTodayStr, odooExecute } from '@/lib/odoo';
+import { isLastDayOfMonthVN, vnPeriodStr, vnTodayStr, odooExecute, odooExecuteWrite } from '@/lib/odoo';
 import {
-  getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff,
+  getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff, addMissingCountLines,
   applyInventoryLines, tryCancelInventoryLine, type InventoryLineResult,
 } from '@/lib/odoo-inventory';
 import { countUnitFor, type CountUnit } from '@/lib/count-units';
@@ -231,6 +231,24 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
   // Full warehouse snapshot (quants), archived products included — gives us the SKU/name/qty list
   // AND is how a product discontinued on Odoo but still physically in stock stays on the list.
   const quants = await getAllStockQuantsAtLocation(loc.locationId, true);
+  // + every product received by the shop in the last 60 days (Axel, 2026-10-31): a product back at 0
+  // in Odoo has no quant (Odoo deletes them) but may still be on the shelf — it must be countable.
+  try {
+    const since = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+    const have = new Set(quants.map(q => q.sku));
+    const pids = new Set<number>();
+    for (let offset = 0; offset < 20000; offset += 2000) {
+      const mls = await odooExecuteWrite<any[]>('stock.move.line', 'search_read',
+        [[['location_dest_id', '=', loc.locationId], ['state', '=', 'done'], ['date', '>=', since]]], { fields: ['product_id'], limit: 2000, offset, order: 'id asc' });
+      for (const ml of mls) { const pid = Array.isArray(ml.product_id) ? ml.product_id[0] : ml.product_id; if (pid) pids.add(pid); }
+      if (mls.length < 2000) break;
+    }
+    const ids = Array.from(pids);
+    for (let i = 0; i < ids.length; i += 500) {
+      const prods = await odooExecuteWrite<any[]>('product.product', 'read', [ids.slice(i, i + 500)], { fields: ['default_code', 'name'], context: { active_test: false } });
+      for (const pr of prods) if (pr.default_code && !have.has(pr.default_code)) { have.add(pr.default_code); quants.push({ sku: pr.default_code, name: pr.name, qty: 0 }); }
+    }
+  } catch (e: any) { console.error('[official-inventory] received products lookup failed', String(e?.message ?? e)); }
   if (!quants.length) return { error: 'Aucun produit trouvé sur Odoo pour cet entrepôt' };
   const skus = quants.map(q => q.sku);
   const productBySku = await resolveProductsBySkuIncludingArchived(skus);
@@ -292,6 +310,58 @@ export async function saveOfficialInventoryLineAction(
     .eq('session_id', sessionId).eq('sku', sku);
   if (error) return { error: error.message };
   return { ok: true };
+}
+
+/** "Thêm sản phẩm" (Axel, 2026-10-31): the shop searches the whole Odoo catalogue for a product that
+ *  is physically there but not on its list, like the chefs' "other product". */
+export async function searchOfficialProductsAction(sessionId: string, q: string, shopName?: string): Promise<{ items?: { sku: string; name: string }[]; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const s = String(q ?? '').trim().slice(0, 60);
+  if (s.length < 2) return { items: [] };
+  const { data: have } = await supabase.from('lab_shop_official_inventory_lines').select('sku').eq('session_id', sessionId).limit(3000);
+  const listed = new Set((have ?? []).map((r: any) => r.sku));
+  try {
+    const prods = await odooExecute<any[]>('product.product', 'search_read',
+      [['&', ['default_code', '!=', false], '|', ['name', 'ilike', s], ['default_code', 'ilike', s]]], { fields: ['default_code', 'name'], limit: 40 });
+    return { items: prods.filter(p => p.default_code && !listed.has(p.default_code)).slice(0, 25).map(p => ({ sku: p.default_code, name: p.name })) };
+  } catch (e: any) { return { error: String(e?.message ?? e) }; }
+}
+
+export async function addOfficialInventoryLineAction(sessionId: string, sku: string, shopName?: string): Promise<{ line?: OfficialInventoryLine; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: sess } = await supabase.from('lab_shop_official_inventory_sessions')
+    .select('id, shop_name, status, odoo_inventory_id, odoo_location_id').eq('id', sessionId).maybeSingle();
+  if (!sess || sess.shop_name !== auth.shopName) return { error: 'Session introuvable' };
+  if (sess.status !== 'draft') return { error: 'Inventaire déjà envoyé — modification impossible' };
+  if (!sess.odoo_inventory_id || !sess.odoo_location_id) return { error: 'Inventaire Odoo introuvable' };
+  const { data: dup } = await supabase.from('lab_shop_official_inventory_lines').select('*').eq('session_id', sessionId).eq('sku', sku).maybeSingle();
+  const finish = async (row: any) => {
+    const img = await imageUrlsBySku([row.sku]); const cat = await categoriesBySku([row.sku]);
+    return { line: await mapLine(row, img, cat) };
+  };
+  if (dup) return finish(dup);
+  try {
+    const bySku = await resolveProductsBySkuIncludingArchived([sku]);
+    const prod = bySku[sku];
+    if (!prod) return { error: 'Sản phẩm không có trên Odoo' };
+    const lineFor = async () => (await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
+      [[['inventory_id', '=', sess.odoo_inventory_id], ['product_id', '=', prod.id]]], { fields: ['id', 'theoretical_qty'], limit: 1 }))[0];
+    let l = await lineFor();
+    if (!l) { await addMissingCountLines(sess.odoo_inventory_id, sess.odoo_location_id, [prod.id]); l = await lineFor(); }
+    if (!l) return { error: 'Không thêm được dòng trên Odoo' };
+    const { data: row, error } = await supabase.from('lab_shop_official_inventory_lines').insert({
+      session_id: sessionId, sku, product_name: prod.name, qty_theoretical: Number(l.theoretical_qty ?? 0), qty_counted: 0,
+      odoo_count_line_id: l.id, updated_at: new Date().toISOString(),
+    }).select('*').single();
+    if (error || !row) return { error: error?.message ?? 'Insert failed' };
+    return finish(row);
+  } catch (e: any) { return { error: String(e?.message ?? e) }; }
 }
 
 /** "Các dòng còn lại = 0" (Axel, 2026-10-31): the lines nobody counted are confirmed at 0 in one go —

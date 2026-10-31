@@ -128,6 +128,34 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   }
 
   const [zeroing, setZeroing] = useState(false);
+  // "Thêm sản phẩm" (Axel, 2026-10-31): a product on the shelf but not on the list
+  const [addOpen, setAddOpen] = useState(false);
+  const [addQ, setAddQ] = useState('');
+  const [addRes, setAddRes] = useState<{ sku: string; name: string }[]>([]);
+  const [addBusy, setAddBusy] = useState<string | null>(null);
+  const [addErr, setAddErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!addOpen || !session || addQ.trim().length < 2) { setAddRes([]); return; }
+    const t = setTimeout(async () => {
+      const actions = await import('./official-inventory-actions');
+      const r = await actions.searchOfficialProductsAction(session.id, addQ, shopArg);
+      if (r.error) setAddErr(r.error); else { setAddErr(null); setAddRes(r.items ?? []); }
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addQ, addOpen, session?.id]);
+  async function addProduct(sku: string) {
+    if (!session) return;
+    setAddBusy(sku); setAddErr(null);
+    const actions = await import('./official-inventory-actions');
+    const r = await actions.addOfficialInventoryLineAction(session.id, sku, shopArg);
+    setAddBusy(null);
+    if (r.error || !r.line) { setAddErr(r.error ?? 'Error'); return; }
+    const line = r.line;
+    setLines(prev => prev.some(l => l.sku === line.sku) ? prev : [...prev, line]);
+    setOpenCats(p => ({ ...p, [line.category]: true }));
+    setAddOpen(false); setAddQ(''); setAddRes([]);
+  }
   async function handleRemainingZero() {
     if (!session) return;
     setZeroing(true);
@@ -387,6 +415,29 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
           );
         })}
       </div>
+      {!addOpen ? (
+        <button type="button" onClick={() => setAddOpen(true)} className="w-full rounded-xl py-2.5 text-sm font-bold"
+          style={{ border: `1.5px dashed ${BORDER}`, color: NAVY, backgroundColor: '#fff' }}>
+          ＋ {L('Thêm sản phẩm không có trong danh sách', 'Add a product missing from the list')}
+        </button>
+      ) : (
+        <div className="rounded-xl p-3 space-y-2" style={{ border: `1.5px solid ${GOLD}`, backgroundColor: '#fff' }}>
+          <div className="flex items-center gap-2">
+            <input autoFocus value={addQ} onChange={e => setAddQ(e.target.value)} placeholder={L('Tìm tên hoặc mã sản phẩm…', 'Search a product name or code…')}
+              className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ border: `1px solid ${BORDER}` }} />
+            <button type="button" onClick={() => { setAddOpen(false); setAddQ(''); }} className="text-xs font-semibold" style={{ color: '#6B7280' }}>{L('Đóng', 'Close')}</button>
+          </div>
+          {addErr && <div className="text-xs font-semibold" style={{ color: RED }}>{addErr}</div>}
+          {addRes.map(p => (
+            <button key={p.sku} type="button" disabled={!!addBusy} onClick={() => addProduct(p.sku)}
+              className="w-full flex items-center gap-2 text-left py-2 text-[13px]" style={{ borderTop: `1px solid ${BORDER}` }}>
+              <span className="flex-1 min-w-0 font-semibold" style={{ color: INK }}>{p.name}</span>
+              <span className="text-[11px]" style={{ color: '#8A9A8F' }}>{p.sku}</span>
+              {addBusy === p.sku && <Loader2 size={13} className="animate-spin" style={{ color: NAVY }} />}
+            </button>))}
+          {addQ.trim().length >= 2 && !addRes.length && !addErr && <div className="text-xs" style={{ color: '#8A9A8F' }}>{L('Không tìm thấy trên Odoo.', 'Not found in Odoo.')}</div>}
+        </div>
+      )}
       {badDraftSkus.length > 0 && (
         <div className="text-sm font-semibold text-center" style={{ color: RED }}>{L('Số lượng không hợp lệ:', 'Invalid quantity:')} {badDraftSkus.join(', ')}</div>
       )}
