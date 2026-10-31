@@ -100,19 +100,21 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
   }
 
   function updateLocalQty(sku: string, qty: number) {
-    setLines(prev => prev.map(l => l.sku === sku ? { ...l, qtyCounted: qty } : l));
+    setLines(prev => prev.map(l => l.sku === sku ? { ...l, qtyCounted: qty, counted: true } : l));
   }
 
   // Commit a field on blur/Enter: empty = 0 (uncounted counts as 0 here, see the server side);
   // an invalid expression stays in the field in red and is NOT saved.
   function commitDraft(sku: string, raw: string) {
+    // An empty field on a line nobody counted yet stays "not counted" (a tap in and out is not a 0).
+    if (raw.trim() === '' && !lines.find(l => l.sku === sku)?.counted) { setDrafts(p => { const n = { ...p }; delete n[sku]; return n; }); return; }
     const typed = raw.trim() === '' ? 0 : evalQty(raw);
     if (typed === null || !Number.isFinite(typed)) return;
     const line = lines.find(l => l.sku === sku);
     const v = line && inPieces(line) ? countToOdoo(sku, typed) : typed;
     setDrafts(p => { const n = { ...p }; delete n[sku]; return n; });
-    const current = lines.find(l => l.sku === sku)?.qtyCounted;
-    if (current === v) return;
+    const cur = lines.find(l => l.sku === sku);
+    if (cur && cur.qtyCounted === v && cur.counted) return;
     updateLocalQty(sku, v);
     commitQty(sku, v);
   }
@@ -123,6 +125,17 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     const actions = await import('./official-inventory-actions');
     await actions.saveOfficialInventoryLineAction(session.id, sku, qty, name.trim(), shopArg);
     setSavingSku(null);
+  }
+
+  const [zeroing, setZeroing] = useState(false);
+  async function handleRemainingZero() {
+    if (!session) return;
+    setZeroing(true);
+    const actions = await import('./official-inventory-actions');
+    const res = await actions.setRemainingZeroAction(session.id, name.trim(), shopArg);
+    setZeroing(false);
+    if (res.error) { setSubmitError(res.error); return; }
+    setLines(prev => prev.map(l => l.counted ? l : { ...l, qtyCounted: 0, counted: true }));
   }
 
   async function handleSubmit() {
@@ -148,7 +161,9 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
     );
   }
 
-  const countedCount = lines.filter(l => l.qtyCounted > 0).length;
+  // counted = someone saved the line (0 included); an untouched line would still go to Odoo as 0.
+  const countedCount = lines.filter(l => l.counted).length;
+  const uncounted = lines.filter(l => !l.counted);
   const badDraftSkus = Object.entries(drafts).filter(([, v]) => v.trim() !== '' && Number.isNaN(evalQty(v) as number)).map(([sku]) => sku);
   const isSubmitted = session?.status === 'submitted';
 
@@ -208,9 +223,22 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
             <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: RED }}>{L('Bước 1/2', 'Step 1/2')}</div>
             <div className="font-bold text-base" style={{ color: INK }}>{L('Xác nhận kiểm kê?', 'Confirm the inventory?')}</div>
             <div className="text-sm" style={{ color: '#5C6B60' }}>{countedCount}/{lines.length} {L('sản phẩm đã nhập. Sau khi xác nhận, số liệu không thể sửa nữa.', 'products entered. Once confirmed, the figures can no longer be changed.')}</div>
+            {/* Lines nobody counted (Axel, 2026-10-31): never sent at 0 by accident — one tap confirms them at 0. */}
+            {uncounted.length > 0 && (
+              <div className="rounded-lg p-3 space-y-2" style={{ backgroundColor: '#FBEAE8', border: '1px solid #EFC3BE' }}>
+                <div className="text-sm font-bold" style={{ color: RED }}>{L(`${uncounted.length} sản phẩm chưa đếm`, `${uncounted.length} products not counted`)}</div>
+                <div className="text-xs" style={{ color: INK }}>{uncounted.slice(0, 8).map(l => l.productName).join(' · ')}{uncounted.length > 8 ? ` … +${uncounted.length - 8}` : ''}</div>
+                <div className="text-xs" style={{ color: '#5C6B60' }}>{L('Nếu shop không có các sản phẩm này, bấm "= 0". Nếu có, quay lại đếm.', 'If the shop has none of these, tap "= 0". If it has some, go back and count them.')}</div>
+                <div className="flex gap-2">
+                  <button onClick={() => setScreen('count')} className="flex-1 rounded-lg py-2.5 text-xs font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK, backgroundColor: '#fff' }}>{L('Quay lại đếm', 'Back to counting')}</button>
+                  <button disabled={zeroing} onClick={handleRemainingZero} className="flex-1 rounded-lg py-2.5 text-xs font-bold text-white" style={{ backgroundColor: RED }}>
+                    {zeroing ? <Loader2 size={14} className="inline animate-spin" /> : L('Các dòng còn lại = 0', 'The rest = 0')}</button>
+                </div>
+              </div>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setScreen('recap')} className="flex-1 rounded-lg py-3 text-sm font-semibold" style={{ border: `1px solid ${BORDER}`, color: INK }}>{L('Quay lại', 'Back')}</button>
-              <button onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white" style={{ backgroundColor: NAVY }}>{L('Xác nhận kiểm kê', 'Confirm the inventory')}</button>
+              <button disabled={uncounted.length > 0} onClick={() => setScreen('confirm2')} className="flex-1 rounded-lg py-3 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>{L('Xác nhận kiểm kê', 'Confirm the inventory')}</button>
             </div>
           </>
         ) : (
@@ -296,7 +324,7 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
       <div className="space-y-2">
         {groups.map(g => {
           const open = !!openCats[g.category];
-          const done = g.lines.filter(l => l.qtyCounted > 0).length;
+          const done = g.lines.filter(l => l.counted).length;
           return (
             <div key={g.category} className="rounded-xl overflow-hidden" style={{ border: `1px solid ${BORDER}`, backgroundColor: open ? GOLD_PALE : '#fff' }}>
               <button type="button" onClick={() => setOpenCats(p => ({ ...p, [g.category]: !open }))}
@@ -345,12 +373,12 @@ export default function OfficialInventoryTab({ shopName, readOnly, staffNames, o
                     <div className="flex items-center gap-1.5 shrink-0">
                       {savingSku === l.sku && <Loader2 size={12} className="animate-spin" style={{ color: NAVY }} />}
                       <QtyExprInput width={56} borderColor={BORDER} filledBorderColor={GREEN}
-                        value={drafts[l.sku] ?? (l.qtyCounted > 0 ? String(shownQty(l)) : '')}
+                        value={drafts[l.sku] ?? (l.counted || l.qtyCounted > 0 ? String(shownQty(l)) : '')}
                         onChange={v => setDrafts(p => ({ ...p, [l.sku]: v }))}
                         onBlur={v => commitDraft(l.sku, v)} />
                       {l.countUnit && <span className="text-[11px] font-semibold" style={{ color: NAVY }}>{unitLabel(l)}</span>}
                     </div>
-                    {l.qtyCounted > 0 && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
+                    {l.counted && <CheckCircle2 size={16} style={{ color: GREEN }} className="shrink-0" />}
                   </div>
                   ))}
                 </div>

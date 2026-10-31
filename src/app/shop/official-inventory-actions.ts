@@ -10,7 +10,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireShopOrStaffSession } from './actions';
 import { resolveShopWarehouseLocation } from '@/lib/odoo-scrap';
-import { isLastDayOfMonthVN, vnPeriodStr, odooExecute } from '@/lib/odoo';
+import { isLastDayOfMonthVN, vnPeriodStr, vnTodayStr, odooExecute } from '@/lib/odoo';
 import {
   getAllStockQuantsAtLocation, resolveProductsBySkuIncludingArchived, startGroupedInventoryCutoff,
   applyInventoryLines, tryCancelInventoryLine, type InventoryLineResult,
@@ -37,6 +37,8 @@ export interface OfficialInventoryLine {
   productName: string;
   qtyTheoretical: number | null;
   qtyCounted: number;
+  /** false = nobody saved this line yet (it still goes to Odoo as 0 if left like that). */
+  counted: boolean;
   imageUrl: string | null;
   odooPushStatus: string | null;
   odooPushError: string | null;
@@ -141,6 +143,7 @@ async function mapLine(row: any, imgBySku: Record<string, string | null>, catByS
     id: row.id, sku: row.sku, productName: row.product_name ?? row.sku,
     qtyTheoretical: row.qty_theoretical === null ? null : Number(row.qty_theoretical),
     qtyCounted: Number(row.qty_counted ?? 0),
+    counted: !!row.counted,
     imageUrl: imgBySku[row.sku] ?? null,
     odooPushStatus: row.odoo_push_status ?? null, odooPushError: row.odoo_push_error ?? null,
     category: catBySku[row.sku]?.category ?? 'Khác',
@@ -234,7 +237,7 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
   const products = skus.map(sku => productBySku[sku] ? { sku, id: productBySku[sku].id } : null).filter((p): p is { sku: string; id: number } => !!p);
   if (!products.length) return { error: 'Aucun produit Odoo résolu pour cet entrepôt' };
 
-  const cutoff = await startGroupedInventoryCutoff(loc.locationId, products, `Kiểm kê chính thức / Official Inventory — ${auth.shopName} — ${period}`);
+  const cutoff = await startGroupedInventoryCutoff(loc.locationId, products, `Kiểm kê chính thức / Official Inventory — ${auth.shopName} — ${period}`, vnTodayStr());
   if (!cutoff.ok || !cutoff.lines) return { error: cutoff.error ?? 'Échec de l\'ouverture du comptage sur Odoo' };
 
   const { data: created, error: sessErr } = await supabase.from('lab_shop_official_inventory_sessions').insert({
@@ -285,10 +288,29 @@ export async function saveOfficialInventoryLineAction(
 
   const name = (updatedByName ?? '').trim().slice(0, 80);
   const { error } = await supabase.from('lab_shop_official_inventory_lines')
-    .update({ qty_counted: qty, updated_by_name: name || null, updated_at: new Date().toISOString() })
+    .update({ qty_counted: qty, counted: true, updated_by_name: name || null, updated_at: new Date().toISOString() })
     .eq('session_id', sessionId).eq('sku', sku);
   if (error) return { error: error.message };
   return { ok: true };
+}
+
+/** "Các dòng còn lại = 0" (Axel, 2026-10-31): the lines nobody counted are confirmed at 0 in one go —
+ *  the shop never has to tap 0 on 200 empty lines, but says so knowingly. */
+export async function setRemainingZeroAction(sessionId: string, updatedByName: string, shopName?: string): Promise<{ ok?: boolean; count?: number; error?: string }> {
+  const auth = await requireShopOrStaffSession(shopName);
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  const { data: sess } = await supabase.from('lab_shop_official_inventory_sessions')
+    .select('id, shop_name, status').eq('id', sessionId).maybeSingle();
+  if (!sess || sess.shop_name !== auth.shopName) return { error: 'Session introuvable' };
+  if (sess.status !== 'draft') return { error: 'Inventaire déjà envoyé — modification impossible' };
+  const name = (updatedByName ?? '').trim().slice(0, 80);
+  const { data, error } = await supabase.from('lab_shop_official_inventory_lines')
+    .update({ qty_counted: 0, counted: true, updated_by_name: name ? `${name} (= 0)` : '(= 0)', updated_at: new Date().toISOString() })
+    .eq('session_id', sessionId).eq('counted', false).select('id');
+  if (error) return { error: error.message };
+  return { ok: true, count: data?.length ?? 0 };
 }
 
 export interface SubmitOfficialInventoryResult {

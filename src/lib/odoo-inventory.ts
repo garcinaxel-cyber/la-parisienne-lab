@@ -361,6 +361,9 @@ export async function startGroupedInventoryCutoff(
   locationId: number,
   products: { sku: string; id: number }[],
   label: string,
+  // Accounting date of the adjustment (Axel, 2026-10-31): the count belongs to the last day of the
+  // month even when management applies it days later (September was booked on 06/10).
+  accountingDate?: string,
 ): Promise<GroupedCutoffResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Compte Odoo en écriture non configuré' };
   if (!products.length) return { ok: false, error: 'Aucun produit à geler' };
@@ -389,6 +392,7 @@ export async function startGroupedInventoryCutoff(
         product_selection: 'manual',
         product_ids: [[6, 0, products.map(p => p.id)]],
         location_ids: [[6, 0, [locationId]]],
+        ...(accountingDate ? { accounting_date: accountingDate } : {}),
       }], { context: NO_MAIL_CONTEXT });
       createdHere = true;
       try {

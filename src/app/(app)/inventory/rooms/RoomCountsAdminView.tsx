@@ -68,7 +68,7 @@ export default function RoomCountsAdminView() {
                 {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 <div className="flex-1 min-w-0"><div className="text-sm font-bold text-navy">{team(s.team)} · {s.countDate}</div>
                   <div className="text-xs text-ink-light truncate">{T('Chốt', 'Cut-off')} {vnDayTime(s.cutoffAt).time} · {T('mở bởi', 'ouvert par')} {s.openedBy ?? '—'}{s.confirmedBy ? ` · ${T('xác nhận bởi', 'confirmé par')} ${s.confirmedBy}` : ''}</div>
-                  {s.odooState && <div className="text-xs font-semibold truncate" style={{ color: s.odooState === 'done' ? '#047857' : '#B42318' }}>Odoo: {s.odooState === 'done' ? T('đã điều chỉnh', 'ajusté') : `${T('lỗi', 'erreur')} — ${s.odooError ?? ''}`}</div>}</div>
+                  {s.odooState && <div className="text-xs font-semibold truncate" style={{ color: s.odooState === 'done' || s.odooState === 'sent' ? '#047857' : s.odooState === 'waiting' || s.odooState === 'pending' ? '#B45309' : '#B42318' }}>Odoo: {s.odooState === 'done' ? T('đã điều chỉnh', 'ajusté') : s.odooState === 'sent' ? T('đã gửi phiếu kiểm kê — chờ xác nhận trên Odoo', 'feuille de comptage envoyée — à valider dans Odoo') : s.odooState === 'waiting' || s.odooState === 'pending' ? T('đang chờ', 'en attente') : `${T('lỗi', 'erreur')} — ${s.odooError ?? ''}`}</div>}</div>
                 <span className="text-xs font-bold rounded-full px-2 py-0.5 shrink-0" style={{ color: st.c, backgroundColor: st.bg }}>{st.t}</span>
               </button>
               {isOpen && <div className="px-4 pb-4 space-y-4 text-sm">

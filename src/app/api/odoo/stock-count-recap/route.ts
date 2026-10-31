@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendAdminPush, type PushPayload } from '@/lib/push-notify';
-import { PORTAL_SHOP_NAMES } from '@/lib/shops';
+import { PORTAL_SHOP_NAMES, SHOP_CONFIG } from '@/lib/shops';
+import { isLastDayOfMonthVN, vnPeriodStr } from '@/lib/odoo';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 export const dynamic = 'force-dynamic';
@@ -48,7 +49,28 @@ export async function GET(req: Request) {
   const shortName = (s: string) => s.replace(/^La Paris\s+/i, '');
   const linesVi: string[] = []; const linesEn: string[] = [];
   let missing = 0;
+  // Last day of the month (Axel, 2026-10-31): the official inventory replaces the daily Kiểm kho in
+  // the shops with an Odoo warehouse — the recap reports it instead.
+  const officialDay = isLastDayOfMonthVN();
+  const offByShop = new Map<string, { status: string; n: number; counted: number }>();
+  if (officialDay) {
+    const { data: sessions } = await supabase.from('lab_shop_official_inventory_sessions').select('id, shop_name, status').eq('period', vnPeriodStr());
+    for (const s of sessions ?? []) {
+      const { count: n } = await supabase.from('lab_shop_official_inventory_lines').select('id', { count: 'exact', head: true }).eq('session_id', s.id);
+      const { count: c } = await supabase.from('lab_shop_official_inventory_lines').select('id', { count: 'exact', head: true }).eq('session_id', s.id).eq('counted', true);
+      const prev = offByShop.get(s.shop_name);
+      if (!prev || s.status === 'submitted') offByShop.set(s.shop_name, { status: s.status, n: n ?? 0, counted: c ?? 0 });
+    }
+  }
   for (const shop of PORTAL_SHOP_NAMES) {
+    if (officialDay && SHOP_CONFIG[shop]?.warehouseCode) {
+      const o = offByShop.get(shop);
+      if (!o) { missing += 1; linesVi.push(`✗ ${shortName(shop)}: chưa kiểm kê chính thức`); linesEn.push(`✗ ${shortName(shop)}: no official inventory`); continue; }
+      if (o.status === 'submitted') { linesVi.push(`✓ ${shortName(shop)}: kiểm kê chính thức đã gửi (${o.n} SP)`); linesEn.push(`✓ ${shortName(shop)}: official inventory sent (${o.n} SKUs)`); continue; }
+      missing += 1;
+      linesVi.push(`◐ ${shortName(shop)}: kiểm kê chính thức đang làm ${o.counted}/${o.n} — chưa gửi`); linesEn.push(`◐ ${shortName(shop)}: official inventory in progress ${o.counted}/${o.n} — not sent`);
+      continue;
+    }
     const c = byShop.get(shop);
     const finished = doneByShop.get(shop) ?? 0;
     if (!c) {
@@ -82,8 +104,8 @@ export async function GET(req: Request) {
     }
   } catch { /* recap stays useful without this line */ }
 
-  const viPayload: PushPayload = { title: `📋 Kiểm kho hôm nay${missing ? ` — ${missing} shop chưa làm` : ' — đủ'}`, body: linesVi.join('\n') };
-  const enPayload: PushPayload = { title: `📋 Stock counts today${missing ? ` — ${missing} shop(s) missing` : ' — all done'}`, body: linesEn.join('\n') };
+  const viPayload: PushPayload = { title: `📋 ${officialDay ? 'Kiểm kê chính thức' : 'Kiểm kho hôm nay'}${missing ? ` — ${missing} shop chưa xong` : ' — đủ'}`, body: linesVi.join('\n') };
+  const enPayload: PushPayload = { title: `📋 ${officialDay ? 'Official inventory' : 'Stock counts today'}${missing ? ` — ${missing} shop(s) not done` : ' — all done'}`, body: linesEn.join('\n') };
   await sendAdminPush(supabase, viPayload, enPayload);
 
   return NextResponse.json({ date: today, shops: PORTAL_SHOP_NAMES.length, counted: byShop.size, missing, lines: linesEn });

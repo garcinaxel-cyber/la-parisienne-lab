@@ -270,6 +270,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Last day of the month: the official inventory replaces the daily Kiểm kho (Axel, 2026-10-31).
+  const officialDay = !!(officialInv?.isLastDay && officialInv.hasWarehouse && !eventState?.inEvent);
+  useEffect(() => { if (officialDay && tab === 'stock') setTab('official-inventory'); }, [officialDay, tab]);
 
   // Axel, 2026-09-13: "je dois pas avoir de dependance avec l'interface d'un des shops, c'est a
   // part" — deliveries/cakes, staff names, pertes, kiểm kho and the order tab's live-inventory
@@ -1511,11 +1514,14 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
             style={{ backgroundColor: tab === 'losses' ? NAVY : 'white', color: tab === 'losses' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <Trash2 size={16} /> {L('Hao hụt', 'Losses')}
           </button>
+          {/* Last day of the month (Axel, 2026-10-31): the official inventory replaces the daily Kiểm kho. */}
+          {!officialDay && (
           <button onClick={() => setTab('stock')}
             className={tabBtn}
             style={{ backgroundColor: tab === 'stock' ? NAVY : 'white', color: tab === 'stock' ? 'white' : INK, border: `1px solid ${BORDER}` }}>
             <ClipboardList size={16} /> {L('Kiểm kho', 'Stock count')}
           </button>
+          )}
           <button onClick={() => setTab('report')}
             className={tabBtn}
             style={{ backgroundColor: tab === 'report' ? NAVY : 'white', color: tab === 'report' ? 'white' : INK, border: `1px solid ${BORDER}` }}>

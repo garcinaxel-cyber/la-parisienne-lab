@@ -147,7 +147,7 @@ export async function pushSlipToOdoo(db: Db, withdrawalId: string): Promise<Slip
     const teams = [w.team, w.from_team, w.to_team].filter((t: any) => t && t !== 'kho' && roomOf(t));
     if (teams.length) {
       const { data: applied } = await db.from('lab_room_count_sessions').select('team, count_date').in('team', Array.from(new Set(teams)))
-        .eq('odoo_state', 'done').gt('cutoff_at', at).limit(1);
+        .in('odoo_state', ['done', 'sent']).gt('cutoff_at', at).limit(1);
       if (applied?.length) { await save({ odoo_state: 'skipped', odoo_error: `absorbed by room count ${applied[0].team} ${applied[0].count_date}` }); return { state: 'skipped' }; }
     }
   }
@@ -381,7 +381,7 @@ export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<R
   const { lineTotal } = await import('@/lib/room-count');
   const { data: s } = await db.from('lab_room_count_sessions').select('id, team, count_date, cutoff_at, status, odoo_state, odoo_inventory_id, mos_closed_at').eq('id', sessionId).maybeSingle();
   if (!s) return { ok: false, error: 'Session not found' };
-  if (s.odoo_state === 'done') return { ok: true, inventoryId: s.odoo_inventory_id };
+  if (s.odoo_state === 'done' || s.odoo_state === 'sent') return { ok: true, inventoryId: s.odoo_inventory_id };
   if (s.status !== 'confirmed') return { ok: false, error: 'Session not confirmed' };
   const room = roomOf(s.team);
   if (!room) return { ok: false, error: 'No room for this team' };
@@ -446,17 +446,17 @@ export async function applyRoomCountToOdoo(db: Db, sessionId: string): Promise<R
     if (noLine.length) throw new Error(`No count line in Odoo for product(s) ${noLine.join(', ')}`);
     const theo = await roomTheoretical(db, productIds, room.location, new Date(s.cutoff_at), mosClosedAt);
     for (const pid of productIds) await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[lineOf.get(pid)], { theoretical_qty: theo[pid] ?? 0 }], { context: NO_MAIL });
-    const apply = await applyInventoryLines(counted.map(c => ({ odooCountLineId: lineOf.get(c.productId!)!, qtyCounted: r3(c.total) })));
+    // Counted quantities written on the Odoo count sheet only (Axel, 2026-10-31): the adjustment stays
+    // in progress and Axel checks, adjusts and applies it himself. Odoo then applies on-hand-then +
+    // (counted − theoretical at the cut-off), so applying later stays right.
+    const apply = await applyInventoryLines(counted.map(c => ({ odooCountLineId: lineOf.get(c.productId!)!, qtyCounted: r3(c.total) })), { applyToStock: false });
     const log = apply.lines.map(l => ({ line: l.odooCountLineId, product: l.sku, theoretical: l.qtySystem, counted: l.qtyCounted, diff: l.diff, ok: l.ok, error: l.error ?? null }));
     const bad = apply.lines.filter(l => !l.ok);
-    const [after] = await odooExecuteWrite<any[]>('stock.inventory', 'read', [[invId]], { fields: ['state'] });
-    if (!apply.ok || bad.length || after?.state !== 'done') {
-      // nothing applied yet → close the open adjustment so it never blocks the next try
-      if (after?.state === 'in_progress' && !log.some(l => l.ok && l.diff)) { await tryCancelInventoryLine(invId!); const [c] = await odooExecuteWrite<any[]>('stock.inventory', 'read', [[invId]], { fields: ['state'] }); if (c?.state !== 'in_progress') await db.from('lab_room_count_sessions').update({ odoo_inventory_id: null }).eq('id', s.id); }
-      await save({ odoo_state: 'error', odoo_error: (apply.error ?? (bad.map(b => `${b.sku}: ${b.error}`).join(' · ') || `adjustment ${invId} is ${after?.state}`)).slice(0, 800), odoo_log: log });
-      return { ok: false, inventoryId: invId!, error: apply.error ?? `${bad.length} line(s) not applied` };
+    if (!apply.ok || bad.length) {
+      await save({ odoo_state: 'error', odoo_error: (apply.error ?? bad.map(b => `${b.sku}: ${b.error}`).join(' · ')).slice(0, 800), odoo_log: log });
+      return { ok: false, inventoryId: invId!, error: apply.error ?? `${bad.length} line(s) not written` };
     }
-    await save({ odoo_state: 'done', odoo_error: null, odoo_log: log });
+    await save({ odoo_state: 'sent', odoo_error: null, odoo_log: log });
     return { ok: true, inventoryId: invId!, applied: log.length };
   } catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 800);

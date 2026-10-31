@@ -176,7 +176,9 @@ export async function confirmSubmitAction(sessionId: string, inventoryDate: stri
   }
 
   const res = withLine.length
-    ? await applyInventoryLines(withLine.map(l => ({ odooCountLineId: l.odoo_count_line_id as number, qtyCounted: Number(l.qty_counted) })))
+    // Counted quantities only — the stock is not touched (Axel, 2026-10-31: every inventory lands in
+    // Odoo as an open count sheet that he checks, adjusts and applies himself).
+    ? await applyInventoryLines(withLine.map(l => ({ odooCountLineId: l.odoo_count_line_id as number, qtyCounted: Number(l.qty_counted) })), { applyToStock: false })
     : { ok: true, lines: [] as (InventoryLineResult & { odooCountLineId: number })[] };
   if (!res.ok) {
     await supabase.from('lab_inventory_sessions').update({

@@ -1883,6 +1883,31 @@ export type ShopStockLevel = { sku: string; name: string; qty: number; category:
 export async function getShopCurrentStockLevelsAction(shopName?: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; asOfDate?: string | null; asOfBy?: string | null; error?: string }> {
   const auth = await requireShopOrStaffSession(shopName);
   if ('error' in auth) return { error: auth.error };
+  const daily = await dailyStockLevels(auth.shopName);
+  // Last day of the month the daily Kiểm kho is replaced by the official inventory (Axel,
+  // 2026-10-31): once the shop sent it today, it is the order tab's stock reference.
+  const supabase = service();
+  if (supabase) {
+    const today = vnDateStr();
+    const { data: off } = await supabase.from('lab_shop_official_inventory_sessions')
+      .select('id, submitted_at, submitted_by_name').eq('shop_name', auth.shopName).eq('status', 'submitted')
+      .gte('submitted_at', new Date(`${today}T00:00:00+07:00`).toISOString()).order('submitted_at', { ascending: false }).limit(1).maybeSingle();
+    if (off) {
+      const offLines = await fetchAllPages<{ sku: string; product_name: string | null; qty_counted: number }>((f, t) =>
+        supabase.from('lab_shop_official_inventory_lines').select('sku, product_name, qty_counted').eq('session_id', off.id).order('id').range(f, t));
+      const catBySku = new Map((daily.levels ?? []).map(l => [l.sku, l]));
+      const levels: ShopStockLevel[] = offLines.map(l => {
+        const d = catBySku.get(l.sku);
+        return { sku: l.sku, name: d?.name ?? l.product_name ?? l.sku, qty: Number(l.qty_counted ?? 0), category: d?.category ?? ('Khác' as any) };
+      });
+      return { levels, asOf: off.submitted_at, asOfDate: today, asOfBy: off.submitted_by_name ?? null };
+    }
+  }
+  return daily;
+}
+
+async function dailyStockLevels(shop: string): Promise<{ levels?: ShopStockLevel[]; asOf?: string | null; asOfDate?: string | null; asOfBy?: string | null; error?: string }> {
+  const auth = { shopName: shop };
   const today = vnDateStr();
   let date = today;
   let sessions = await fetchStockSessions(auth.shopName, today);
