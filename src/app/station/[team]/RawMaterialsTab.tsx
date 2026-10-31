@@ -13,6 +13,7 @@ import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, r
 import { Track } from '@/components/raw/PurchaseTrack';
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
+import RoomCountHistory from './RoomCountHistory';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
   getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, receiveSlipAction, type TeamRequestsMeta,
@@ -268,6 +269,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     <div className="space-y-3 pb-24">
       {modeBar}
       <RoomCountPanel team={team} lang={lang} items={items} />
+      <RoomCountHistory team={team} lang={lang} />
     </div>
   );
 

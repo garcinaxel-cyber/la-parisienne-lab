@@ -335,3 +335,53 @@ export async function confirmRoomCountAction(team: string, sessionId: string): P
   }
   return { ok: true, state: await loadState(db, team, a, true) };
 }
+
+// ── History (Axel, 2026-10-31): the team sees its past room counts — what was counted, by whom,
+// when. No theoretical figure and no gap on the chef side (Axel: "ne voit pas l'écart").
+export type RoomCountHistoryItem = { id: string; countDate: string; cutoffAt: string; confirmedAt: string | null; confirmedByName: string | null; openedByName: string | null; products: number; freeItems: number };
+export type RoomCountHistoryLine = { tmplId: number; name: string; nameVi: string | null; uom: string; type: string | null; total: number; zero: boolean; countedBy: string[] };
+
+export async function getRoomCountHistoryAction(team: string): Promise<{ items?: RoomCountHistoryItem[]; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!isTeam(team) || !canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: ss, error } = await db.from('lab_room_count_sessions').select('id, count_date, cutoff_at, confirmed_at, confirmed_by_name, opened_by_name')
+    .eq('team', team).eq('status', 'confirmed').order('cutoff_at', { ascending: false }).limit(12);
+  if (error) return { error: error.message };
+  const items: RoomCountHistoryItem[] = [];
+  for (const s of ss ?? []) {
+    const { data: es } = await db.from('lab_room_count_entries').select('tmpl_id').eq('session_id', s.id).is('deleted_at', null).limit(5000);
+    const { count: free } = await db.from('lab_room_count_free_items').select('id', { count: 'exact', head: true }).eq('session_id', s.id).is('deleted_at', null);
+    items.push({ id: s.id, countDate: s.count_date, cutoffAt: s.cutoff_at, confirmedAt: s.confirmed_at, confirmedByName: s.confirmed_by_name, openedByName: s.opened_by_name,
+      products: new Set((es ?? []).map((e: any) => e.tmpl_id)).size, freeItems: free ?? 0 });
+  }
+  return { items };
+}
+
+export async function getRoomCountHistoryDetailAction(team: string, sessionId: string): Promise<{ lines?: RoomCountHistoryLine[]; free?: RoomFreeItem[]; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!isTeam(team) || !canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: s } = await db.from('lab_room_count_sessions').select('id, team, status').eq('id', sessionId).maybeSingle();
+  if (!s || s.team !== team || s.status !== 'confirmed') return { error: 'Not found' };
+  const [{ data: ls }, { data: es }, { data: fs }] = await Promise.all([
+    db.from('lab_room_count_lines').select('tmpl_id, name, name_vi, uom, type').eq('session_id', sessionId).limit(3000),
+    db.from('lab_room_count_entries').select('tmpl_id, qty, is_zero, counted_by_name').eq('session_id', sessionId).is('deleted_at', null).limit(5000),
+    db.from('lab_room_count_free_items').select('*').eq('session_id', sessionId).is('deleted_at', null).limit(500),
+  ]);
+  const byT = new Map<number, { total: number; zero: boolean; by: Set<string> }>();
+  for (const e of es ?? []) {
+    const x = byT.get(e.tmpl_id) ?? { total: 0, zero: true, by: new Set<string>() };
+    x.total += Number(e.qty); x.zero = x.zero && !!e.is_zero; if (e.counted_by_name) x.by.add(e.counted_by_name);
+    byT.set(e.tmpl_id, x);
+  }
+  const lines: RoomCountHistoryLine[] = (ls ?? []).filter((l: any) => byT.has(l.tmpl_id)).map((l: any) => {
+    const x = byT.get(l.tmpl_id)!;
+    return { tmplId: l.tmpl_id, name: l.name, nameVi: l.name_vi ?? null, uom: l.uom, type: l.type ?? null, total: Math.round(x.total * 1000) / 1000, zero: x.zero, countedBy: Array.from(x.by) };
+  });
+  return { lines, free: (fs ?? []).map(mapFree) };
+}
