@@ -139,6 +139,18 @@ export async function pushSlipToOdoo(db: Db, withdrawalId: string): Promise<Slip
   }
   if (!src || !dst || src === dst) { await save({ odoo_state: 'skipped', odoo_error: 'no room for this team' }); return { state: 'skipped' }; }
   if (!odooWriteConfigured()) { await save({ odoo_state: 'error', odoo_error: 'Odoo write account not configured' }); return { state: 'error' }; }
+  // A slip handed over BEFORE the cut-off of a room count already applied in Odoo is inside that
+  // count (the goods were in the room when it was counted, Odoo lacked them, the adjustment added
+  // them): moving it now would count it twice (31/10, slips #163 Hưng, #164 Entremet).
+  {
+    const at = String(w.received_at ?? w.confirmed_at);
+    const teams = [w.team, w.from_team, w.to_team].filter((t: any) => t && t !== 'kho' && roomOf(t));
+    if (teams.length) {
+      const { data: applied } = await db.from('lab_room_count_sessions').select('team, count_date').in('team', Array.from(new Set(teams)))
+        .eq('odoo_state', 'done').gt('cutoff_at', at).limit(1);
+      if (applied?.length) { await save({ odoo_state: 'skipped', odoo_error: `absorbed by room count ${applied[0].team} ${applied[0].count_date}` }); return { state: 'skipped' }; }
+    }
+  }
 
   try {
     const { data: lines } = await db.from('lab_raw_withdrawal_lines').select('id, tmpl_id, name, qty, corrected_qty').eq('withdrawal_id', w.id);
