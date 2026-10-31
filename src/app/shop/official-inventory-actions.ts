@@ -250,9 +250,13 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
     }
   } catch (e: any) { console.error('[official-inventory] received products lookup failed', String(e?.message ?? e)); }
   if (!quants.length) return { error: 'Aucun produit trouvé sur Odoo pour cet entrepôt' };
-  const skus = quants.map(q => q.sku);
+  // One row per SKU (2026-10-31, Thăng Long): two Odoo products can share a default_code (BBMCF:
+  // 6485 active + 6460 archived) → the same SKU twice → duplicate key on (session_id, sku).
+  const skus = Array.from(new Set(quants.map(q => q.sku)));
   const productBySku = await resolveProductsBySkuIncludingArchived(skus);
-  const products = skus.map(sku => productBySku[sku] ? { sku, id: productBySku[sku].id } : null).filter((p): p is { sku: string; id: number } => !!p);
+  const seenPid = new Set<number>();
+  const products = skus.map(sku => productBySku[sku] ? { sku, id: productBySku[sku].id } : null)
+    .filter((p): p is { sku: string; id: number } => !!p && !seenPid.has(p.id) && (seenPid.add(p.id), true));
   if (!products.length) return { error: 'Aucun produit Odoo résolu pour cet entrepôt' };
 
   const cutoff = await startGroupedInventoryCutoff(loc.locationId, products, `Kiểm kê chính thức / Official Inventory — ${auth.shopName} — ${period}`, vnTodayStr());
@@ -272,7 +276,14 @@ export async function startOfficialInventoryAction(startedByName: string, shopNa
 
   const nameBySku: Record<string, string> = {};
   for (const q of quants) nameBySku[q.sku] = q.name;
-  const lineRows = cutoff.lines.map(l => ({
+  // Keep one Odoo count line per SKU (the one with stock if any); extra lines stay uncounted on Odoo.
+  const bySku = new Map<string, (typeof cutoff.lines)[number]>();
+  for (const l of cutoff.lines) {
+    const cur = bySku.get(l.sku);
+    if (!cur || (cur.qtyTheoretical === 0 && l.qtyTheoretical !== 0)) bySku.set(l.sku, l);
+  }
+  if (bySku.size < cutoff.lines.length) console.warn('[official-inventory] duplicate SKU lines dropped', { shop: auth.shopName, dropped: cutoff.lines.length - bySku.size });
+  const lineRows = Array.from(bySku.values()).map(l => ({
     session_id: created.id, sku: l.sku, product_name: nameBySku[l.sku] ?? l.sku,
     qty_theoretical: l.qtyTheoretical, qty_counted: 0, odoo_count_line_id: l.odooCountLineId,
     updated_at: new Date().toISOString(),
