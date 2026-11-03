@@ -109,6 +109,38 @@ export async function addItemPhoto(input: { tmplId: number; sku: string | null; 
   return { ok: true, url, odoo };
 }
 
+/** Replace the photo of an item that already has one (Purchasing / admin only — Axel, 2026-11-03:
+ *  "laisser la possibilité de changer la photo dans la base de données app, ça influence la photo Odoo").
+ *  App first (new thumbnail), then Odoo in the background: the current Odoo photo is saved as an
+ *  ir.attachment on the same product (rollback) before image_1920 is overwritten. */
+export async function replaceItemPhoto(input: { tmplId: number; sku: string | null; data: Buffer; byName: string }): Promise<{ ok: true; url: string; odoo: () => Promise<void> } | { ok: false; error: string }> {
+  const db = itemPhotoService();
+  if (!db) return { ok: false, error: 'Server not configured' };
+  const small = await toJpeg(input.data, THUMB);
+  const url = await store(db, input.tmplId, small);
+  const { error } = await db.from('lab_item_photos').upsert({ tmpl_id: input.tmplId, sku: input.sku, image_url: url, source: 'staff', uploaded_by_name: input.byName, uploaded_at: new Date().toISOString() }, { onConflict: 'tmpl_id' });
+  if (error) return { ok: false, error: error.message };
+  const big = await toJpeg(input.data, 1200);
+  const odoo = async () => {
+    if (!odooWriteConfigured()) return;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const [cur] = await odooExecute<any[]>('product.template', 'read', [[input.tmplId]], { fields: ['image_1920'] });
+      let backupId: number | null = null;
+      if (cur?.image_1920) {
+        backupId = await odooExecuteWrite<number>('ir.attachment', 'create', [{ name: `photo-avant-lab-app-${today}`, res_model: 'product.template', res_id: input.tmplId, datas: cur.image_1920, type: 'binary' }], { context: NO_MAIL });
+      }
+      await odooExecuteWrite('product.template', 'write', [[input.tmplId], { image_1920: big.toString('base64') }], { context: NO_MAIL });
+      await odooExecuteWrite('product.template', 'message_post', [[input.tmplId]], {
+        body: `Photo remplacée depuis la lab-app par ${input.byName}${backupId ? ` (ancienne photo conservée en pièce jointe n°${backupId})` : ' (aucune photo avant)'}.`, message_type: 'comment', subtype_xmlid: 'mail.mt_note',
+      });
+      const [w] = await odooExecute<any[]>('product.template', 'read', [[input.tmplId]], { fields: ['write_date'] });
+      await db.from('lab_item_photos').update({ odoo_write_date: w?.write_date ?? null }).eq('tmpl_id', input.tmplId);
+    } catch (e) { console.error('[item-photo] odoo replace failed', input.tmplId, e); }
+  };
+  return { ok: true, url, odoo };
+}
+
 /** tmpl_id → photo URL and SKU → photo URL, for screens. One small query (~500 rows). */
 export async function loadItemPhotoMaps(db: Db): Promise<{ byTmpl: Map<number, string>; bySku: Map<string, string> }> {
   const { data } = await db.from('lab_item_photos').select('tmpl_id, sku, image_url');

@@ -5,7 +5,7 @@
 // one — it shows at once and is sent to Odoo in the background.
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Loader2 } from 'lucide-react';
-import { getItemPhotosAction, addItemPhotoAction } from '@/app/item-photo-actions';
+import { getItemPhotosAction, addItemPhotoAction, replaceItemPhotoAction } from '@/app/item-photo-actions';
 
 let cache: { byTmpl: Map<number, string>; bySku: Map<string, string> } | null = null;
 let pending: Promise<void> | null = null;
@@ -31,7 +31,7 @@ async function compress(file: File): Promise<Blob> {
   return b ?? file;
 }
 
-export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false }: { tmplId?: number | null; sku?: string | null; size?: number; canAdd?: boolean }) {
+export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false, canReplace = false }: { tmplId?: number | null; sku?: string | null; size?: number; canAdd?: boolean; canReplace?: boolean }) {
   const [, force] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -40,22 +40,38 @@ export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false }: { 
   const url = (tmplId && cache?.byTmpl.get(tmplId)) || (sku && cache?.bySku.get(sku)) || null;
   const box = { width: size, height: size, minWidth: size };
 
-  if (url) return <img src={url} alt="" loading="lazy" decoding="async" className="rounded-md object-cover border border-[#E8D9C0] bg-white shrink-0" style={box} />;
-  // Until the list is loaded, a neutral square (no camera flashing on items that do have a photo).
-  if (!cache || !canAdd || !tmplId) return <span className="rounded-md bg-[#F5EFE6] border border-[#E8D9C0] inline-block shrink-0" style={box} aria-hidden />;
-
   const pick = async (f: File | undefined) => {
-    if (!f) return;
+    if (!f || !tmplId) return;
     setBusy(true); setErr(null);
     try {
       const fd = new FormData();
       fd.set('tmplId', String(tmplId)); if (sku) fd.set('sku', sku);
       fd.set('file', await compress(f), 'photo.jpg');
-      const r = await addItemPhotoAction(fd);
+      const r = await (url ? replaceItemPhotoAction(fd) : addItemPhotoAction(fd));
       if (r.error || !r.url) { setErr(r.error ?? 'Error'); window.alert(r.error ?? 'Error'); }
       else { cache?.byTmpl.set(tmplId, r.url); if (sku) cache?.bySku.set(sku, r.url); listeners.forEach(x => x()); }
     } finally { setBusy(false); if (input.current) input.current.value = ''; }
   };
+  if (url && canReplace && tmplId) {
+    // Purchasing / admin: small camera badge on the photo to replace it (also replaces the Odoo photo).
+    return (
+      <span className="relative inline-block shrink-0" style={box}>
+        <img src={url} alt="" loading="lazy" decoding="async" className="rounded-md object-cover border border-[#E8D9C0] bg-white" style={box} />
+        <span role="button" tabIndex={0} title="Đổi ảnh (cập nhật cả Odoo) · Change photo (also updates Odoo)" aria-disabled={busy}
+          onClick={e => { e.stopPropagation(); e.preventDefault(); if (!busy) input.current?.click(); }}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); if (!busy) input.current?.click(); } }}
+          className="absolute -right-1.5 -bottom-1.5 w-[18px] h-[18px] rounded-full bg-white border border-[#C9A96E] text-[#7A4E2D] inline-flex items-center justify-center cursor-pointer shadow-sm">
+          {busy ? <Loader2 size={10} className="animate-spin" /> : <Camera size={10} />}
+        </span>
+        <input ref={input} type="file" accept="image/*" className="hidden" onClick={e => e.stopPropagation()} onChange={e => pick(e.target.files?.[0])} />
+        {err ? <span className="sr-only">{err}</span> : null}
+      </span>
+    );
+  }
+  if (url) return <img src={url} alt="" loading="lazy" decoding="async" className="rounded-md object-cover border border-[#E8D9C0] bg-white shrink-0" style={box} />;
+  // Until the list is loaded, a neutral square (no camera flashing on items that do have a photo).
+  if (!cache || !canAdd || !tmplId) return <span className="rounded-md bg-[#F5EFE6] border border-[#E8D9C0] inline-block shrink-0" style={box} aria-hidden />;
+
   return (
     <>
       {/* span, not button: the thumbnail sits inside row buttons (inventory list) */}
