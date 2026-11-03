@@ -437,7 +437,9 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
         const uom = normUom(t.uom_id?.[1] ?? 'kg'); const vend = vendorsByTmpl.get(t.id) ?? []; const kind = kindOfCateg(t.categ_id?.[0]);
         const c = kind === 'raw' ? classifyRaw(t.name) : { type: 'dry' as const, sub: 'other' };
         return { tmpl_id: t.id, product_id: t.product_variant_id?.[0] ?? null, sku: t.default_code || null, name: String(t.name).trim(), name_vi: viName.get(t.id) ?? null, uom,
-          kind, odoo_categ: t.categ_id?.[1] ?? null, ...(kind === 'raw' ? {} : { no_recipe_needed: true }),
+          kind, odoo_categ: t.categ_id?.[1] ?? null,
+          // Always send the key: in a mixed batch a missing key is inserted as NULL (not the DB default) and breaks the NOT NULL constraint.
+          no_recipe_needed: kind !== 'raw',
           type: c.type, sub: c.sub, packs: parsePacks(t.name, uom), visible: kind === 'raw' && Number(t.purchased_product_qty) > 0, checked: false,
           purchased: Number(t.purchased_product_qty) > 0, vendor_id: vend[0]?.id ?? null, vendor_name: vend[0]?.name ?? null, vendors: vend,
           active: true, synced_at: now, ...bomOf(t) };
