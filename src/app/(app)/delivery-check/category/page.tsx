@@ -71,6 +71,7 @@ export default async function DeliveryCheckCategoryPage() {
     category: string; product_category: string | null; team: string | null; order_ref: string; shop_name: string | null;
     delivery_date: string; qty_expected: number; qty_checked: number | null; status: string;
     id: string; discrepancy_reason: string | null; discrepancy_note: string | null; note: string | null;
+    locked: boolean;
   };
   const rows: Row[] = [];
   for (const r of results) {
@@ -83,6 +84,11 @@ export default async function DeliveryCheckCategoryPage() {
         delivery_date: r.header.delivery_date, qty_expected: l.qty_expected, qty_checked: l.qty_checked,
         status: l.status, discrepancy_reason: l.discrepancy_reason, discrepancy_note: l.discrepancy_note,
         note: l.note,
+        // Same locks as checkLineAction: a line the app already corrected, or an order already
+        // validated / pushed, cannot be re-checked here (Axel 2026-11-04, REP/02355).
+        locked: (!!(l as any).resolution && ['not_made', 'undeclared', 'casse', 'auto_transfer'].includes((l as any).resolution))
+          || (r.header as any).status === 'validated'
+          || ['validated', 'already_done'].includes((r.header as any).odoo_push_status ?? ''),
       });
     }
   }

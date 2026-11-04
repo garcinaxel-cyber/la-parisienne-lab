@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, CheckCircle2, Pencil } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Lock, Pencil } from 'lucide-react';
 import { reasonLabel } from '@/lib/delivery-check-reasons';
 import GapResolver from '@/components/GapResolver';
 
@@ -11,6 +12,13 @@ type Row = {
   category: string; product_category: string | null; team: string | null; order_ref: string; shop_name: string | null;
   delivery_date: string; qty_expected: number; qty_checked: number | null; status: string;
   discrepancy_reason: string | null; discrepancy_note: string | null; note: string | null;
+  locked: boolean;
+};
+
+const fromRows = (rows: Row[]) => {
+  const s: Record<string, { qty: string; reason: string; note: string }> = {};
+  for (const r of rows) s[r.id] = { qty: String(r.qty_checked ?? r.qty_expected), reason: r.discrepancy_reason ?? '', note: r.discrepancy_note ?? '' };
+  return s;
 };
 
 export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { rows: Row[]; today: string; tomorrow: string }) {
@@ -18,13 +26,23 @@ export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { r
   const vi = lang === 'vi';
   const [day, setDay] = useState<'today' | 'tomorrow'>('today');
   const [activeCat, setActiveCat] = useState<string | null>(null);
-  const [state, setState] = useState<Record<string, { qty: string; reason: string; note: string }>>(() => {
-    const s: Record<string, { qty: string; reason: string; note: string }> = {};
-    for (const r of rows) s[r.id] = { qty: String(r.qty_checked ?? r.qty_expected), reason: r.discrepancy_reason ?? '', note: r.discrepancy_note ?? '' };
-    return s;
-  });
+  const router = useRouter();
+  const [state, setState] = useState<Record<string, { qty: string; reason: string; note: string }>>(() => fromRows(rows));
   const [checked, setChecked] = useState<Set<string>>(() => new Set(rows.filter(r => r.qty_checked != null).map(r => r.id)));
   const [savingLine, setSavingLine] = useState<string | null>(null);
+  // Axel 2026-11-04 (REP/02355): this page kept the quantities of when it was opened, so a line
+  // corrected meanwhile (not made, scrap…) still showed ×3 and the OK was refused. Fresh server
+  // rows now replace the local copy, and the page reloads when the phone comes back to it.
+  useEffect(() => {
+    setState(fromRows(rows));
+    setChecked(new Set(rows.filter(r => r.qty_checked != null).map(r => r.id)));
+  }, [rows]);
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') router.refresh(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
+  }, [router]);
 
   const upd = (id: string, patch: Partial<{ qty: string; reason: string; note: string }>) =>
     setState(p => ({ ...p, [id]: { ...p[id], ...patch } }));
@@ -40,6 +58,7 @@ export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { r
     if (!res.ok) {
       setChecked(p => { const n = new Set(p); n.delete(r.id); return n; });
       window.alert(res.error ?? 'Error');
+      router.refresh(); // show the line as it really is now
       return;
     }
     if (r.category === 'production') import('@/lib/follow-up-client').then(({ startFollowUp }) => startFollowUp(r.id));
@@ -140,7 +159,12 @@ export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { r
                               </div>
                               <div className="col-span-2 text-center font-bold text-navy">×{r.qty_expected}</div>
                               <div className="col-span-5 flex items-center justify-center gap-2">
-                                {isChecked ? (
+                                {r.locked ? (
+                                  <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#6B7280' }}
+                                    title={vi ? 'Đã khoá — báo quản lý Lab nếu cần sửa' : 'Locked — ask the Lab manager to change it'}>
+                                    <Lock size={14} /> ×{r.qty_checked ?? st.qty}{r.qty_checked != null && Number(r.qty_checked) !== r.qty_expected && <span style={{ color: '#DC2626' }}> ({Number(r.qty_checked) - r.qty_expected > 0 ? '+' : ''}{Number(r.qty_checked) - r.qty_expected})</span>}
+                                  </span>
+                                ) : isChecked ? (
                                   <>
                                     <span className="inline-flex items-center gap-1.5 text-sm font-bold" style={{ color: '#059669' }}>
                                       <CheckCircle2 size={16} /> ×{st.qty}{isDiff && <span style={{ color: '#DC2626' }}> ({diff > 0 ? '+' : ''}{diff})</span>}
@@ -166,12 +190,12 @@ export default function DeliveryCheckCategoryView({ rows, today, tomorrow }: { r
                                 )}
                               </div>
                             </div>
-                            {isDiff && !isChecked && Number.isFinite(qty) && st.qty !== '' && (
+                            {!r.locked && isDiff && !isChecked && Number.isFinite(qty) && st.qty !== '' && (
                               <GapResolver lineId={r.id} expected={r.qty_expected} qty={qty} vi={vi}
                                 onSaved={(reason, note) => { upd(r.id, { reason, note }); setChecked(p => new Set(p).add(r.id)); }}
                                 onRecount={() => upd(r.id, { qty: String(r.qty_expected), reason: '', note: '' })} />
                             )}
-                            {isChecked && isDiff && st.reason && (
+                            {(isChecked || r.locked) && isDiff && st.reason && (
                               <div className="mt-1 text-[11px] font-semibold" style={{ color: '#8A5A00' }}>{reasonLabel(st.reason, vi)}{st.note ? ` · ${st.note}` : ''}</div>
                             )}
                           </div>
