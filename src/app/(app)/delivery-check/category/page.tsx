@@ -1,3 +1,4 @@
+import { isHardResolution } from '@/lib/delivery-gap';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import { ensureDeliveryOrderChecklist, ensureDeliveryOrderChecklistsBatch } from '@/lib/delivery-check';
@@ -86,7 +87,7 @@ export default async function DeliveryCheckCategoryPage() {
         note: l.note,
         // Same locks as checkLineAction: a line the app already corrected, or an order already
         // validated / pushed, cannot be re-checked here (Axel 2026-11-04, REP/02355).
-        locked: (!!(l as any).resolution && ['not_made', 'undeclared', 'casse', 'auto_transfer'].includes((l as any).resolution))
+        locked: isHardResolution(l as any)
           || (r.header as any).status === 'validated'
           || ['validated', 'already_done'].includes((r.header as any).odoo_push_status ?? ''),
       });

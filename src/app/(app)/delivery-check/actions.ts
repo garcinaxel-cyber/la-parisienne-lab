@@ -41,17 +41,29 @@ export async function checkLineAction(
   if ('error' in auth) return { error: auth.error };
 
   const { data: line } = await supabase.from('lab_delivery_check_lines')
-    .select('qty_expected, qty_checked, discrepancy_reason, resolution, delivery_order_id').eq('id', lineId).single();
+    .select('qty_expected, qty_checked, discrepancy_reason, resolution, resolution_qty, resolution_odoo_status, delivery_order_id, delivery_date, sku, product_category, category').eq('id', lineId).single();
   if (!line) return { error: 'Line not found' };
   // A line the app already corrected (cards, Odoo unbuild, Lab scrap, auto transfer) cannot be
   // re-counted or given another reason: the correction would stay and stack (review 2026-10-24).
   // "Out of stock" only raised a recount alert (no card, no Odoo change): a re-count is allowed —
   // the open alert is closed below (Axel 2026-10-25: CTM 4 → 5 refused, the 5th was found).
-  const SIDE = ['not_made', 'undeclared', 'casse', 'auto_transfer'];
-  const reopenOos = line.resolution === 'out_of_stock'
-    && (Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason);
-  if (line.resolution && SIDE.includes(line.resolution) && (Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason)) {
+  // A "not made" that changed nothing (no card cut, nothing in Odoo) no longer locks the line:
+  // it can be re-counted like "out of stock" (Axel 2026-11-04, REP/02370).
+  const { isHardResolution, computeDayPool } = await import('@/lib/delivery-gap');
+  const hard = isHardResolution(line as any);
+  const changed = Number(line.qty_checked) !== qtyChecked || line.discrepancy_reason !== reason;
+  const reopenOos = (line.resolution === 'out_of_stock' || (line.resolution === 'not_made' && !hard)) && changed;
+  if (hard && changed) {
     return { error: 'Dòng này app đã sửa (thẻ bếp / Odoo) — báo quản lý Lab. / Already corrected by the app — ask the Lab manager.' };
+  }
+  // "Bếp chưa làm" is final: refused while the kitchen is still making this product for that day
+  // (cards not finished). Admin / Lab manager can still force it.
+  if (reason === 'not_made' && line.sku && auth.profile?.role === 'assistant') {
+    const sbx = serviceClient() ?? supabase;
+    const { pool } = await computeDayPool(sbx, line.delivery_date, line.sku, lineId, line.product_category, line.category);
+    if (pool.kitchenWorking) {
+      return { error: `Bếp đang làm (${pool.produced}/${pool.planned}) — chờ bếp xong rồi kiểm lại. / The kitchen is still making it (${pool.produced}/${pool.planned}) — check again when it is done.` };
+    }
   }
   // From Tasks · Delivery gaps the quantity does not change, only the reason: allowed even on a
   // validated order (nothing leaves differently, Odoo OUT is untouched).
@@ -76,7 +88,7 @@ export async function checkLineAction(
     status: isDiff ? 'adjusted' : 'ok',
     discrepancy_reason: isDiff ? reason : null,
     discrepancy_note: isDiff ? (note || null) : null,
-    ...(line.resolution && !SIDE.includes(line.resolution) && (line.resolution !== 'out_of_stock' || reopenOos)
+    ...(line.resolution && !hard && (line.resolution !== 'out_of_stock' || reopenOos)
       ? { resolution: null, resolution_odoo_status: null, resolution_odoo_error: null, resolution_qty: null } : {}),
     checked_by: auth.session.user.id,
     checked_by_name: auth.profile?.full_name ?? null,

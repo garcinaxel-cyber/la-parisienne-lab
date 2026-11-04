@@ -206,6 +206,20 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
 
   // ── Short ──
   if (ctx.family === 'mto') {
+    // Kitchen still making it (Axel 2026-11-04): nothing to decide yet, the line stays to check.
+    if (ctx.kitchenWorking) {
+      return box(<>
+        <div className="font-bold text-[15px] text-navy">{vi ? `⏳ Bếp đang làm (${ctx.made}/${ctx.planned ?? '?'})` : `⏳ Kitchen still working (${ctx.made}/${ctx.planned ?? '?'})`}</div>
+        <div className="text-xs mb-2" style={{ color: '#8A5A00' }}>{vi ? 'Chưa chọn « Bếp chưa làm » — chờ bếp làm xong rồi kiểm lại dòng này.' : 'Do not pick "Not made" yet — check this line again when the kitchen is done.'}</div>
+        {tiles}
+        {radio({ code: 'recount', vi: 'Chờ bếp — kiểm sau', en: 'Wait for the kitchen — check later', sub: 'Dòng này để lại, chưa xác nhận', subEn: 'The line stays unchecked' })}
+        {radio({ code: 'casse', vi: 'Bánh bị hỏng / vỡ', en: 'Broken / damaged', sub: 'Chụp 1 ảnh — ghi vào hao hụt Lab', subEn: 'Take 1 photo — goes to Lab scrap' })}
+        {radio({ code: 'order_changed', vi: 'Cửa hàng / khách đổi đơn', en: 'Order changed by shop / customer' })}
+        {radio({ code: 'other', vi: 'Lý do khác', en: 'Other', sub: 'Ghi rõ lý do', subEn: 'Explain' })}
+        {extras}
+        {footer('Xác nhận', 'Confirm')}
+      </>, 'amber');
+    }
     if (ctx.autoNotMade) {
       return box(<>
         <div className="font-bold text-[15px] text-navy">{vi ? `Bếp chưa làm ${diff} cái` : `${diff} not made by the kitchen`}</div>

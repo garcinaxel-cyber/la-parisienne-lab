@@ -18,6 +18,28 @@ export interface DayPool {
   sku: string; date: string; family: Family;
   planned: number; produced: number; fromStock: number; sent: number; lost: number;
   otherLeft: number; pendingLeft: number; blockedReasons: string[]; partial: boolean;
+  // Kitchen still working on this product for this day (Axel 2026-11-04, REP/02370 Mangomind:
+  // checked at 15:13 for tomorrow, "not made" picked, all 12 were done at 15:45).
+  kitchenWorking: boolean; openCards: number;
+}
+
+/** "Bếp chưa làm" is final only once the kitchen is done. For a FUTURE delivery day any card not
+ *  finished (pending / in progress / partial) means production is still going on. On the delivery
+ *  day itself only a card being worked on (in progress) counts: a card never started that morning
+ *  will not be made. */
+export function isKitchenWorking(cards: { status: string; is_extra?: boolean }[], date: string, today: string): { working: boolean; open: number } {
+  const live = cards.filter(c => c.status !== 'skip' && c.status !== 'blocked');
+  const openStatuses = date > today ? ['pending', 'in_progress', 'partial'] : ['in_progress'];
+  const open = live.filter(c => openStatuses.includes(c.status)).length;
+  return { working: open > 0, open };
+}
+
+/** A "not made" that changed nothing (no card cut, nothing sent to Odoo) does not lock the line. */
+export function isHardResolution(line: { resolution?: string | null; resolution_qty?: number | string | null; resolution_odoo_status?: string | null }): boolean {
+  const SIDE = ['not_made', 'undeclared', 'casse', 'auto_transfer'];
+  if (!line.resolution || !SIDE.includes(line.resolution)) return false;
+  if (line.resolution !== 'not_made') return true;
+  return (Number(line.resolution_qty) || 0) > 0 || !['none', null, undefined, ''].includes(line.resolution_odoo_status as any);
 }
 
 type Card = {
@@ -71,9 +93,12 @@ export async function computeDayPool(sb: SupabaseClient, date: string, sku: stri
     sent += Number(c.qty_sent_total) || 0;
     if (!c.is_extra && (c.status === 'partial' || (Number(c.qty_produced) || 0) < q)) partial = true;
   }
+  // No kitchen card at all for this product and day: not made by the kitchen (tools, consumables
+  // sent with a replenishment…) → handled like a stock item, never "not made" (153-MH.964, 03/11).
   const family: Family = lineCategory === 'packaging' ? 'packaging'
-    : (isStockFamily(productCategory) || (fromStock > 0 && produced === 0)) ? 'stock' : 'mto';
-  return { pool: { sku, date, family, planned, produced, fromStock, sent, lost, otherLeft, pendingLeft, blockedReasons, partial }, cards };
+    : (isStockFamily(productCategory) || (fromStock > 0 && produced === 0) || cards.length === 0) ? 'stock' : 'mto';
+  const kw = isKitchenWorking(cards, date, labDateOf(new Date().toISOString())!);
+  return { pool: { sku, date, family, planned, produced, fromStock, sent, lost, otherLeft, pendingLeft, blockedReasons, partial, kitchenWorking: kw.working, openCards: kw.open }, cards };
 }
 
 // Lab reserve of a made-to-order product (Axel, 2026-10-24): the ONLY stock of such cakes is extra
@@ -132,19 +157,22 @@ export interface GapContext {
   madeCovers: boolean;
   // Lab reserve of EXTRA production for this product, counted by the app (over + made-to-order)
   reserve?: number;
+  // Kitchen cards for this product/day still being made → "not made" is not offered yet
+  kitchenWorking?: boolean; planned?: number;
 }
 
 export function contextFor(pool: DayPool, expected: number, qty: number): GapContext {
   const dir = qty < expected ? 'short' : 'over';
   const diff = Math.abs(qty - expected);
   const available = pool.produced + pool.fromStock - pool.lost - pool.otherLeft - pool.pendingLeft;
-  const autoNotMade = pool.family === 'mto' && dir === 'short' && available <= qty;
+  const autoNotMade = pool.family === 'mto' && dir === 'short' && available <= qty && !pool.kitchenWorking;
   const autoNote = autoNotMade
     ? (pool.blockedReasons.length ? pool.blockedReasons.join(', ') : `${pool.produced}/${pool.planned}`)
     : null;
   return {
     family: pool.family, dir, diff, made: pool.produced, sent: pool.sent, otherLeft: pool.otherLeft, lost: pool.lost,
     thisQty: qty, expected, autoNotMade, autoNote, madeCovers: dir === 'over' && available >= qty,
+    kitchenWorking: pool.kitchenWorking, planned: pool.planned,
   };
 }
 
