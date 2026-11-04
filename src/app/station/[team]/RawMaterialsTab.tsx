@@ -72,6 +72,8 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   const [cart, setCart] = useState<CartLine[]>([]);
   const [newItems, setNewItems] = useState<NewItem[]>([]);
   const [draft, setDraft] = useState<NewItem>({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null });
+  // Raw text of the new-product quantity while typing, so "0," / "0." can be typed (0.5 kg) (Axel, 2026-11-04).
+  const [draftQtyTxt, setDraftQtyTxt] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [mine, setMine] = useState<PurchaseLine[]>([]);
   const [days, setDays] = useState(30);
@@ -346,7 +348,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
           'A raw material missing from the list? Contact Lân or Axel with the missing item\'s name and the recipe it is for.')}
       </div>
       {mode === 'request' && (
-        <button onClick={() => { setDraft({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null }); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
+        <button onClick={() => { setDraft({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null }); setDraftQtyTxt(null); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm mới (chưa có trong danh sách)', 'New product (not in the list)')}</button>
       )}
 
@@ -712,7 +714,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               </div>
               <div className="flex gap-2 mt-2">
                 <label className="flex-1"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Số lượng', 'Quantity')}</span>
-                  <input inputMode="decimal" value={draft.qty ? String(draft.qty) : ''} onChange={e => { const v = parseFloat(e.target.value.replace(',', '.')); setDraft(d => ({ ...d, qty: isNaN(v) ? 0 : v })); }} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
+                  <input inputMode="decimal" value={draftQtyTxt ?? (draft.qty ? String(draft.qty) : '')} onChange={e => { const t = e.target.value; const v = parseFloat(t.replace(',', '.')); setDraftQtyTxt(t); setDraft(d => ({ ...d, qty: isNaN(v) ? 0 : v })); }} onBlur={() => setDraftQtyTxt(null)} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
                 <label className="w-28"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Đơn vị', 'Unit')}</span>
                   <select value={draft.uom} onChange={e => setDraft(d => ({ ...d, uom: e.target.value }))} className="w-full rounded-lg px-2 py-2 text-[13.5px] bg-white" style={{ border: `1px solid ${BORDER}` }}><option>kg</option><option>L</option><option value="Unit">{L('Cái', 'Unit')}</option></select></label>
               </div>
