@@ -7,6 +7,7 @@ import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
 import { classifyRaw, parsePacks, packHint, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
+import { syncOdooItemPhotos, pushPendingStaffPhotos } from '@/lib/item-photos';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
 
 async function guard() {
@@ -383,7 +384,7 @@ const CONSUMABLE_CATEG_IDS = [20, 21];
 const kindOfCateg = (id: number | undefined): 'raw' | 'packaging' | 'tools' =>
   (id === PACKAGING_CATEG_ID ? 'packaging' : id === TOOLS_CATEG_ID || (id != null && CONSUMABLE_CATEG_IDS.includes(id)) ? 'tools' : 'raw');
 
-export async function syncCatalogueAction(): Promise<{ added?: number; updated?: number; removed?: number; error?: string }> {
+export async function syncCatalogueAction(): Promise<{ added?: number; updated?: number; removed?: number; photosIn?: number; photosOut?: number; photosLeft?: number; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   try {
@@ -460,7 +461,16 @@ export async function syncCatalogueAction(): Promise<{ added?: number; updated?:
     }
     const gone = Array.from(have).filter(id => !tmplIds.includes(id));
     if (gone.length) await g.db.from('lab_raw_materials').update({ active: false, synced_at: now }).in('tmpl_id', gone);
-    return { added, updated, removed: gone.length };
+    // Photos too (Axel 2026-11-04): app → Odoo first (staff photos whose push failed), then
+    // Odoo → app (new or changed Odoo photos). Time-boxed; never blocks the catalogue result.
+    let photosIn = 0, photosOut = 0, photosLeft = 0;
+    try {
+      const out = await pushPendingStaffPhotos({ budgetMs: 30_000 });
+      photosOut = out.sent;
+      const inn = await syncOdooItemPhotos({ commit: true, budgetMs: 60_000 });
+      photosIn = inn.copied; photosLeft = Math.max(0, inn.toCopy - inn.copied - inn.failed.length);
+    } catch (e) { console.error('[catalogue sync] photos', e); }
+    return { added, updated, removed: gone.length, photosIn, photosOut, photosLeft };
   } catch (e: any) { return { error: e?.message ?? 'Odoo error' }; }
 }
 

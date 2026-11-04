@@ -3,6 +3,8 @@ import { createClient, getSafeSession } from '@/lib/supabase-server';
 import PurchasingView from './PurchasingView';
 
 export const dynamic = 'force-dynamic';
+// The catalogue "Đồng bộ" action now also copies photos (up to ~90 s).
+export const maxDuration = 300;
 
 // Purchasing space (Axel, 2026-10-08): purchase requests, today's storage withdrawals, history,
 // raw material catalogue. Role 'purchasing' and admin only — the assistant and lab manager roles do

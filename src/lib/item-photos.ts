@@ -27,6 +27,11 @@ async function toJpeg(buf: Buffer, size: number): Promise<Buffer> {
     .flatten({ background: '#ffffff' }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
 }
 
+// Full-size copy kept (not shown on screens) so a failed Odoo push can be retried later.
+async function storeFull(db: Db, tmplId: number, jpg: Buffer): Promise<void> {
+  await db.storage.from(BUCKET).upload(`items/full/${tmplId}.jpg`, jpg, { contentType: 'image/jpeg', upsert: true });
+}
+
 async function store(db: Db, tmplId: number, jpg: Buffer): Promise<string> {
   const path = `items/${tmplId}-${Date.now()}.jpg`;
   const { error } = await db.storage.from(BUCKET).upload(path, jpg, { contentType: 'image/jpeg', upsert: true, cacheControl: '31536000' });
@@ -59,7 +64,9 @@ export async function syncOdooItemPhotos(opts: { commit: boolean; budgetMs?: num
   }
   const { data: existing } = await db.from('lab_item_photos').select('tmpl_id, odoo_write_date');
   const known = new Map<number, string | null>((existing ?? []).map((r: any) => [Number(r.tmpl_id), r.odoo_write_date ?? null]));
-  const todo = withPhoto.filter(t => known.get(t.id) !== t.write_date);
+  // A staff photo not yet in Odoo (odoo_write_date null) is never overwritten by the Odoo one.
+  const pendingStaff = new Set((existing ?? []).filter((r: any) => r.odoo_write_date == null).map((r: any) => Number(r.tmpl_id)));
+  const todo = withPhoto.filter(t => !pendingStaff.has(t.id) && known.get(t.id) !== t.write_date);
   let copied = 0; const failed: string[] = [];
   if (opts.commit) {
     const t0 = Date.now();
@@ -92,6 +99,7 @@ export async function addItemPhoto(input: { tmplId: number; sku: string | null; 
   const url = await store(db, input.tmplId, small);
   await db.from('lab_item_photos').insert({ tmpl_id: input.tmplId, sku: input.sku, image_url: url, source: 'staff', uploaded_by_name: input.byName });
   const big = await toJpeg(input.data, 1200);
+  await storeFull(db, input.tmplId, big).catch(() => {});
   const odoo = async () => {
     if (!odooWriteConfigured()) return;
     try {
@@ -118,9 +126,10 @@ export async function replaceItemPhoto(input: { tmplId: number; sku: string | nu
   if (!db) return { ok: false, error: 'Server not configured' };
   const small = await toJpeg(input.data, THUMB);
   const url = await store(db, input.tmplId, small);
-  const { error } = await db.from('lab_item_photos').upsert({ tmpl_id: input.tmplId, sku: input.sku, image_url: url, source: 'staff', uploaded_by_name: input.byName, uploaded_at: new Date().toISOString() }, { onConflict: 'tmpl_id' });
+  const { error } = await db.from('lab_item_photos').upsert({ tmpl_id: input.tmplId, sku: input.sku, image_url: url, source: 'staff', uploaded_by_name: input.byName, uploaded_at: new Date().toISOString(), odoo_write_date: null }, { onConflict: 'tmpl_id' });
   if (error) return { ok: false, error: error.message };
   const big = await toJpeg(input.data, 1200);
+  await storeFull(db, input.tmplId, big).catch(() => {});
   const odoo = async () => {
     if (!odooWriteConfigured()) return;
     try {
@@ -139,6 +148,42 @@ export async function replaceItemPhoto(input: { tmplId: number; sku: string | nu
     } catch (e) { console.error('[item-photo] odoo replace failed', input.tmplId, e); }
   };
   return { ok: true, url, odoo };
+}
+
+/** Retry: staff photos that never reached Odoo (odoo_write_date null — the background push
+ *  failed). Sent only when the Odoo product still has no photo (never overwrites); otherwise the
+ *  row is marked as seen so the Odoo photo stays the reference. Uses the full-size copy when kept,
+ *  else the app thumbnail. (Axel 2026-11-04: catalogue "Đồng bộ" button also syncs photos.) */
+export async function pushPendingStaffPhotos(opts: { budgetMs?: number } = {}): Promise<{ pending: number; sent: number; skipped: number; failed: string[] }> {
+  const db = itemPhotoService();
+  const out = { pending: 0, sent: 0, skipped: 0, failed: [] as string[] };
+  if (!db || !odooWriteConfigured()) return out;
+  const { data: rows } = await db.from('lab_item_photos').select('tmpl_id, image_url, uploaded_by_name').eq('source', 'staff').is('odoo_write_date', null).limit(200);
+  out.pending = rows?.length ?? 0;
+  const t0 = Date.now();
+  for (const r of rows ?? []) {
+    if (opts.budgetMs && Date.now() - t0 > opts.budgetMs) break;
+    const id = Number(r.tmpl_id);
+    try {
+      const [t] = await odooExecute<any[]>('product.template', 'search_read', [[['id', '=', id]]], { fields: ['id', 'image_128', 'write_date'] });
+      if (!t) { out.skipped++; continue; }
+      if (t.image_128) { await db.from('lab_item_photos').update({ odoo_write_date: t.write_date }).eq('tmpl_id', id); out.skipped++; continue; }
+      let buf: Buffer | null = null;
+      const full = await db.storage.from(BUCKET).download(`items/full/${id}.jpg`);
+      if (full.data) buf = Buffer.from(await full.data.arrayBuffer());
+      else { const res = await fetch(r.image_url); if (res.ok) buf = Buffer.from(await res.arrayBuffer()); }
+      if (!buf) { out.failed.push(`${id}: photo introuvable`); continue; }
+      const jpg = await toJpeg(buf, 1200);
+      await odooExecuteWrite('product.template', 'write', [[id], { image_1920: jpg.toString('base64') }], { context: NO_MAIL });
+      await odooExecuteWrite('product.template', 'message_post', [[id]], {
+        body: `Photo ajoutée depuis la lab-app par ${r.uploaded_by_name ?? 'staff'} (renvoi par le bouton Đồng bộ du catalogue).`, message_type: 'comment', subtype_xmlid: 'mail.mt_note',
+      });
+      const [w] = await odooExecute<any[]>('product.template', 'read', [[id]], { fields: ['write_date'] });
+      await db.from('lab_item_photos').update({ odoo_write_date: w?.write_date ?? null }).eq('tmpl_id', id);
+      out.sent++;
+    } catch (e: any) { out.failed.push(`${id}: ${String(e?.message ?? e).slice(0, 120)}`); }
+  }
+  return out;
 }
 
 /** tmpl_id → photo URL and SKU → photo URL, for screens. One small query (~500 rows). */

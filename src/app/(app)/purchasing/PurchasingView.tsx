@@ -937,7 +937,9 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     setSyncing(true); setMsg(null);
     const r = await syncCatalogueAction();
     setSyncing(false);
-    setMsg(r.error ? r.error : L(`Đã đồng bộ: ${r.added} mới, ${r.updated} cập nhật, ${r.removed} ngừng dùng.`, `Synced: ${r.added} new, ${r.updated} updated, ${r.removed} no longer active.`));
+    const ph = r.error ? '' : L(` Ảnh: ${r.photosIn ?? 0} lấy từ Odoo, ${r.photosOut ?? 0} gửi lên Odoo${r.photosLeft ? `, còn ${r.photosLeft} — bấm lại` : ''}.`,
+      ` Photos: ${r.photosIn ?? 0} from Odoo, ${r.photosOut ?? 0} sent to Odoo${r.photosLeft ? `, ${r.photosLeft} left — press again` : ''}.`);
+    setMsg(r.error ? r.error : L(`Đã đồng bộ: ${r.added} mới, ${r.updated} cập nhật, ${r.removed} ngừng dùng.`, `Synced: ${r.added} new, ${r.updated} updated, ${r.removed} no longer active.`) + ph);
     load();
   }
   async function patch(m: RawMaterial, p: Parameters<typeof updateMaterialAction>[1]) {
