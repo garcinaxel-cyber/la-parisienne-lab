@@ -69,6 +69,29 @@ export async function testOnchange(moId: number, qtyProducing: number): Promise<
   return result;
 }
 
+// Option A (Axel, 2026-11-05): packaging is stored in the Lab kho (LAB/Stock), never in the
+// chefs' rooms — but a room MO takes every component from its room, so rooms went deeply negative
+// on packaging while LAB/Stock kept it forever. Right after action_confirm (not before: Odoo
+// resets a draft MO's move locations whenever its quantity changes), the packaging / consumable
+// component moves of a ROOM MO are re-pointed to LAB/Stock. Ingredients stay in the room. The
+// following produce step (write product_qty → cascade) then builds the move lines from LAB/Stock.
+const ROOM_LOCATIONS = [219, 220, 221, 222];
+const LAB_STOCK = 8;
+// Bao bì (Packaging) 23, vật tư tiêu hao 20, Consumable 21, equipment & tools 22
+const PACKAGING_CATEGS = [20, 21, 22, 23];
+export async function relocateRoomPackaging(moId: number): Promise<number> {
+  const moves = await odooExecuteWrite<any[]>('stock.move', 'search_read',
+    [[['raw_material_production_id', '=', moId], ['location_id', 'in', ROOM_LOCATIONS],
+      ['product_id.categ_id', 'in', PACKAGING_CATEGS], ['state', 'not in', ['done', 'cancel']]]],
+    { fields: ['id', 'move_line_ids'] });
+  if (!moves.length) return 0;
+  if (moves.some(m => (m.move_line_ids ?? []).length)) {
+    await odooExecuteWrite('mrp.production', 'do_unreserve', [[moId]]);
+  }
+  await odooExecuteWrite('stock.move', 'write', [moves.map(m => m.id), { location_id: LAB_STOCK }]);
+  return moves.length;
+}
+
 export interface MoConfirmResult {
   date: string;
   origin: string;
@@ -121,6 +144,8 @@ export async function confirmDoneMOs(date: string, opts?: { typeId?: number }): 
       }
       await odooExecuteWrite('mrp.production', 'action_confirm', [[mo.id]]);
       res.confirmed.push({ id: mo.id, name: mo.name });
+      try { await relocateRoomPackaging(mo.id); }
+      catch (e: any) { res.errors.push({ id: mo.id, name: mo.name, error: `packaging → LAB/Stock: ${String(e?.message ?? e)}` }); }
     } catch (e: any) {
       res.errors.push({ id: mo.id, name: mo.name, error: String(e?.message ?? e) });
     }
