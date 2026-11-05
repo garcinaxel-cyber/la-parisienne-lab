@@ -315,8 +315,8 @@ export async function finalizeSalesOrderGaps(
     if (!delivery) return { ok: false, live, error: 'No validated Lab delivery for this order (validate the delivery first)', done };
 
     const skus = Array.from(new Set(lines.map(l => l.sku)));
-    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'] });
-    const prodBySku = new Map(prods.map(p => [p.default_code as string, p]));
+    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id', 'active'], context: { active_test: false } });
+    const prodBySku = new Map(prods.sort((a, b) => Number(a.active) - Number(b.active)).map(p => [p.default_code as string, p])); // active product wins over an archived duplicate
     for (const s of skus) if (!prodBySku.has(s)) return { ok: false, live, error: `Product ${s} not found in Odoo`, done };
 
     const toReturn = new Map<number, number>(); // product id → qty
@@ -511,8 +511,8 @@ export async function finalizeReplenishmentGaps(
     const shopStock: number = shopIn.location_dest_id?.[0];
 
     const skus = Array.from(new Set(lines.map(l => l.sku)));
-    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'] });
-    const prodBySku = new Map(prods.map(p => [p.default_code as string, p]));
+    const prods = await odooExecute<any[]>('product.product', 'search_read', [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id', 'active'], context: { active_test: false } });
+    const prodBySku = new Map(prods.sort((a, b) => Number(a.active) - Number(b.active)).map(p => [p.default_code as string, p])); // active product wins over an archived duplicate
     for (const s of skus) if (!prodBySku.has(s)) return { ok: false, live, error: `Product ${s} not found in Odoo`, done };
     const agg = (acts: RepGapLine['action'][]) => {
       const m = new Map<string, number>();
@@ -820,8 +820,8 @@ export async function finalizeOffSlip(input: {
     const repWh = cfg?.docType === 'replenishment' ? cfg.warehouseCode : undefined;
     const recvSo = !repWh && input.receivingOrderRef && !input.receivingOrderRef.startsWith('REP') ? input.receivingOrderRef : null;
     if (!repWh && !recvSo) return { ok: false, live, error: `${input.shopName}: no REP warehouse and no sales order to attach — settle by hand`, done };
-    const prods = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'default_code', 'uom_id'] });
-    const p = prods[0];
+    const prods = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'default_code', 'uom_id', 'active'], context: { active_test: false } });
+    const p = prods.find(x => x.active) ?? prods[0]; // prefer the active product if an archived duplicate shares the SKU
     if (!p) return { ok: false, live, error: `Product ${input.sku} not found in Odoo`, done };
 
     // 1. Customer order: not charged for these units (return + invoice draft, lowered).
@@ -873,7 +873,7 @@ export async function moveWrongShop(input: {
     const destCode = whCode(input.receivingShopName), srcCode = whCode(input.sourceShopName);
     if (!destCode) return { ok: false, live, error: `${input.receivingShopName}: not a REP shop — settle by hand`, done };
     if (!srcCode) return { ok: false, live, error: `${input.sourceShopName}: not a REP shop — settle by hand`, done };
-    const [p] = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'uom_id'] });
+    const [p] = await odooExecuteWrite<any[]>('product.product', 'search_read', [[['default_code', '=', input.sku]]], { fields: ['id', 'uom_id'], context: { active_test: false } });
     if (!p) return { ok: false, live, error: `Product ${input.sku} not found in Odoo`, done };
     const whs = await odooExecuteWrite<any[]>('stock.warehouse', 'search_read', [[['code', 'in', [destCode, srcCode]]]], { fields: ['code', 'lot_stock_id', 'in_type_id'] });
     const dest = whs.find(w => w.code === destCode), src = whs.find(w => w.code === srcCode);

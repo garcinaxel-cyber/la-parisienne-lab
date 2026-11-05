@@ -78,9 +78,9 @@ async function resolveWarehouseId(code: string): Promise<{ id: number; name: str
 async function resolveProducts(skus: string[]): Promise<Record<string, { id: number; uom_id: number }>> {
   if (!skus.length) return {};
   const rows = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id'], limit: 2000 }), 20000, 'products');
+    [[['default_code', 'in', skus]]], { fields: ['id', 'default_code', 'uom_id', 'active'], limit: 2000, context: { active_test: false } }), 20000, 'products'); // include archived products (discontinued items still being shipped/received)
   const out: Record<string, { id: number; uom_id: number }> = {};
-  for (const p of rows) if (p.default_code) out[p.default_code] = { id: p.id, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
+  for (const p of rows.sort((a, b) => Number(a.active) - Number(b.active))) if (p.default_code) out[p.default_code] = { id: p.id, uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id };
   return out;
 }
 

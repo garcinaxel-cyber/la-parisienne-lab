@@ -110,9 +110,9 @@ async function syncStockToOdooInner(
 
   const skus = Array.from(new Set(entries.map(t => t.sku)));
   const prods = await tmo(odooExecute<any[]>('product.product', 'search_read',
-    [[['default_code', 'in', skus]]], { fields: ['id', 'name', 'default_code', 'uom_id', 'product_tmpl_id'], limit: 2000 }), 30000, 'prods');
+    [[['default_code', 'in', skus]]], { fields: ['id', 'name', 'default_code', 'uom_id', 'product_tmpl_id', 'active'], limit: 2000, context: { active_test: false } }), 30000, 'prods'); // archived (discontinued) products must still resolve: their remaining stock is still produced/sent
   const prodBySku: Record<string, any> = {}; const tmplByProd: Record<number, number> = {};
-  for (const p of prods) if (p.default_code) { prodBySku[p.default_code] = p; tmplByProd[p.id] = Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id; }
+  for (const p of prods) if (p.default_code && !(prodBySku[p.default_code]?.active && !p.active)) { prodBySku[p.default_code] = p; tmplByProd[p.id] = Array.isArray(p.product_tmpl_id) ? p.product_tmpl_id[0] : p.product_tmpl_id; }
   const prodIds = Object.values(prodBySku).map((p: any) => p.id);
   const tmplIds = Array.from(new Set(Object.values(tmplByProd)));
   const boms = (prodIds.length || tmplIds.length) ? await tmo(odooExecute<any[]>('mrp.bom', 'search_read',
