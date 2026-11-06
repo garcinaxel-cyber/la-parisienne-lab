@@ -73,6 +73,9 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/lab/raw-photo-cleanup')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
+  // HR pilot (2026-11-06): employee personal space — the token in the URL is the key, validated in
+  // every server action (src/app/hr/[token]/actions.ts). Same posture as the shop order link.
+  if (pathname.startsWith('/hr/')) return NextResponse.next();
 
   // Is a Supabase auth cookie present? (name: sb-<ref>-auth-token, possibly chunked .0/.1)
   const hasAuth = req.cookies.getAll().some(

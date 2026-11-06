@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { isOemSku } from '@/lib/oem';
@@ -14,6 +14,8 @@ import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
+import HrTeamTab from './HrTeamTab';
+import { HR_PILOT_TEAMS } from '@/lib/hr';
 import type { StockProduct } from './actions';
 // Teams on the stock-production screen (Axel, 2026-10-23): all their products are storable and
 // recorded as extra production — the Production tab shows product cards instead of order cards.
@@ -144,7 +146,7 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw' | 'team';
 // Raw materials tab (withdrawals + purchase requests, Axel 2026-10-08) — test phase on team Hưng only.
 const RAW_TEAMS = ['hung', 'baby_mama', 'entremet', 'baker'];
 
@@ -1299,6 +1301,14 @@ export default function StationView({
       labelEn: 'Raw mat.',
       count: 0,
       icon: <Package size={14} />,
+    }] : []),
+    // HR pilot (Axel, 2026-11-06): schedule, requests, overtime — Team Hưng first, leader/admin only.
+    ...(HR_PILOT_TEAMS.includes(team) && !(userRole === 'worker' || userRole === 'viewer' || userRole === 'employee') ? [{
+      id: 'team' as Tab,
+      labelVi: 'Nhóm',
+      labelEn: 'Team',
+      count: 0,
+      icon: <Users size={14} />,
     }] : []),
   ];
 
@@ -2675,6 +2685,12 @@ export default function StationView({
           </div>
         );
       })()}
+
+      {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && !isEmployee && (
+        <div className="max-w-3xl mx-auto px-3 py-3">
+          <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
+        </div>
+      )}
 
       {activeTab === 'raw' && RAW_TEAMS.includes(team) && (
         <div className="max-w-3xl mx-auto px-4 py-4">
