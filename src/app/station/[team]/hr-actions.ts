@@ -6,11 +6,11 @@
 // Allowed: admin / lab_manager, or the hr_employees row flagged leader whose profile_id is the user.
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import {
-  HR_PICK, HR_PILOT_TEAMS, addDays, dm, hoursBetween, hrNeedsGiang, hrTypeLabel, weekMonth, monthEnd,
+  HR_PICK, HR_PILOT_TEAMS, addDays, dm, hoursBetween, hrNeedsGiang, hrTypeLabel, monthEnd,
   type HrOt, type HrRequest,
 } from '@/lib/hr';
 import {
-  hrApplyRequest, hrLoadWeek, hrPushEmployees, hrRequestDays, hrService, hrUnapplyRequest, type HrWeekData,
+  hrApplyRequest, hrLoadMonth, hrPushEmployees, hrRequestDays, hrService, hrUnapplyRequest, type HrMonthData,
 } from '@/lib/hr-server';
 
 const service = hrService;
@@ -35,16 +35,16 @@ async function guard(team: string): Promise<{ name: string } | { error: string }
   return { error: 'Not allowed' };
 }
 
-export type TeamHrData = { week: HrWeekData; requests: HrRequest[]; ots: HrOt[]; otHours: Record<string, number> };
+export type TeamHrData = { week: HrMonthData; requests: HrRequest[]; ots: HrOt[]; otHours: Record<string, number> };
 
-export async function loadTeamHrAction(team: string, ws: string): Promise<{ data?: TeamHrData; error?: string }> {
+export async function loadTeamHrAction(team: string, month: string): Promise<{ data?: TeamHrData; error?: string }> {
   const g = await guard(team);
   if ('error' in g) return { error: g.error };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ws)) return { error: 'Bad week' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(month)) return { error: 'Bad month' };
   const db = service();
-  const week = await hrLoadWeek(db, team, ws, true);
+  const week = await hrLoadMonth(db, team, month, true);
   if ('error' in week) return { error: week.error };
-  const month = weekMonth(ws);
+  month = week.month;
   const [reqs, ots] = await Promise.all([
     db.from('hr_requests').select('*').eq('team', team).order('created_at', { ascending: false }).limit(100),
     db.from('hr_ot_requests').select('*, hr_ot_lines(employee_id, confirm)').eq('team', team).gte('day', month).lte('day', monthEnd(month)).order('day', { ascending: false }),

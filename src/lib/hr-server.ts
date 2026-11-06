@@ -3,7 +3,7 @@
 import { createClient as createServiceClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   HR_DEFAULT_RULES, HR_OFF_CODES, addDays, dayStr, daysInMonth, dow, hrRequestCode, monthEnd, monthStart,
-  offAllowance, scheduleCode, weekDays, weekMonth, type HrEmployee, type HrRules,
+  offAllowance, scheduleCode, weekStart, type HrEmployee, type HrRules,
 } from '@/lib/hr';
 import { awaitPush, sendUsersPush } from '@/lib/push-notify';
 
@@ -16,19 +16,22 @@ export async function hrRules(db: SupabaseClient, team: string): Promise<HrRules
   return (data as HrRules) ?? HR_DEFAULT_RULES;
 }
 
-export type HrWeekData = {
-  weekStart: string; days: string[]; month: string; allowance: number;
-  employees: HrEmployee[]; stored: Record<string, string>; wishes: string[];
-  published: boolean; publishedBy: string | null; rules: HrRules;
+export type HrMonthData = {
+  month: string; days: string[]; // Monday of the month's first week → Sunday of its last week
+  weeks: { start: string; published: boolean }[];
+  allowance: number; employees: HrEmployee[]; stored: Record<string, string>; wishes: string[]; rules: HrRules;
   monthOff: Record<string, number>; monthSat: Record<string, number>; monthSun: Record<string, number>;
 };
 
-// One week + the whole month it belongs to (for the "days off used / allowed" counter).
-export async function hrLoadWeek(db: SupabaseClient, team: string, ws: string, withTokens = false): Promise<HrWeekData | { error: string }> {
-  const days = weekDays(ws);
-  const month = weekMonth(ws);
-  const from = ws < month ? ws : month;
-  const to = days[6] > monthEnd(month) ? days[6] : monthEnd(month);
+// A whole month as one continuous strip of full weeks (Hưng, 2026-11-06: scroll right through the
+// month instead of jumping week by week). Publication stays per week.
+export async function hrLoadMonth(db: SupabaseClient, team: string, month: string, withTokens = false): Promise<HrMonthData | { error: string }> {
+  const m = monthStart(month);
+  const from = weekStart(m);
+  const to = addDays(weekStart(monthEnd(m)), 6);
+  const days: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) days.push(d);
+  const starts = days.filter((_, i) => i % 7 === 0);
   const cols = withTokens ? '*' : 'id, team, full_name, position, base_shift, clock_id, is_leader, is_casual, sort_order, profile_id';
   const { data: emps, error } = await db.from('hr_employees').select(cols).eq('team', team).eq('active', true).order('sort_order');
   if (error) return { error: error.message.includes('does not exist') ? 'HR_NOT_INSTALLED' : error.message };
@@ -37,27 +40,27 @@ export async function hrLoadWeek(db: SupabaseClient, team: string, ws: string, w
   const [st, wi, wk, rules] = await Promise.all([
     ids.length ? db.from('hr_schedule_days').select('employee_id, day, code').in('employee_id', ids).gte('day', from).lte('day', to) : Promise.resolve({ data: [] as any[] }),
     ids.length ? db.from('hr_off_wishes').select('employee_id, day').in('employee_id', ids).gte('day', from).lte('day', to) : Promise.resolve({ data: [] as any[] }),
-    db.from('hr_schedule_weeks').select('status, published_by').eq('team', team).eq('week_start', ws).maybeSingle(),
+    db.from('hr_schedule_weeks').select('week_start, status').eq('team', team).in('week_start', starts),
     hrRules(db, team),
   ]);
   const stored: Record<string, string> = {};
   for (const r of (st as any).data ?? []) stored[r.employee_id + '|' + r.day] = r.code;
   const wishes = ((wi as any).data ?? []).map((w: any) => w.employee_id + '|' + w.day);
   const wset = new Set<string>(wishes);
+  const pub = new Set(((wk as any).data ?? []).filter((w: any) => w.status === 'published').map((w: any) => w.week_start));
   const monthOff: Record<string, number> = {}, monthSat: Record<string, number> = {}, monthSun: Record<string, number> = {};
-  const n = daysInMonth(month);
+  const n = daysInMonth(m);
   for (const e of employees) {
     let o = 0, sa = 0, su = 0;
     for (let d = 1; d <= n; d++) {
-      const day = dayStr(month, d);
+      const day = dayStr(m, d);
       if (scheduleCode(e, day, stored, wset) === 'O') { o++; if (dow(day) === 6) sa++; if (dow(day) === 0) su++; }
     }
     monthOff[e.id] = o; monthSat[e.id] = sa; monthSun[e.id] = su;
   }
   return {
-    weekStart: ws, days, month, allowance: offAllowance(month), employees, stored, wishes,
-    published: (wk as any).data?.status === 'published', publishedBy: (wk as any).data?.published_by ?? null, rules,
-    monthOff, monthSat, monthSun,
+    month: m, days, weeks: starts.map((start) => ({ start, published: pub.has(start) })),
+    allowance: offAllowance(m), employees, stored, wishes, rules, monthOff, monthSat, monthSun,
   };
 }
 

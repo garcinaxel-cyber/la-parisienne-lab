@@ -1,14 +1,14 @@
 'use client';
 // HR pilot — station "Nhân sự" tab for the team leader (Axel, 2026-11-06, Team Hưng first).
-// Round 2 after Hưng's review: weekly schedule (swipe between weeks) published week by week, team
+// Round 2 after Hưng's review: the month as one continuous strip (scroll right), published week by week, team
 // holidays, leave approved → written into the schedule, proof papers, staff without the app managed
 // here, group overtime. The leader's own space ("Của tôi") is a sub-tab so the station keeps one tab.
 import { useCallback, useEffect, useState } from 'react';
 import {
   HR_CODE_LABEL, HR_OFF_CODES, HR_OT_CAP, HR_PICK, HR_PROOF_TYPES, addDays, dm, dow, hanoiToday, hoursBetween, hrRequestCode,
-  hrTypeLabel, monthLabel, offLimit, scheduleCode, shortDay, weekStart, wishDeadline, type HrEmployee,
+  hrTypeLabel, monthLabel, monthStart, addMonths, offLimit, scheduleCode, shortDay, weekStart, wishDeadline, type HrEmployee,
 } from '@/lib/hr';
-import WeekGrid, { BORDER, Legend, WeekHeader, codeStyle, codeText } from '@/components/hr/WeekGrid';
+import MonthGrid, { BORDER, Legend, MonthHeader, codeStyle, codeText } from '@/components/hr/WeekGrid';
 import EmployeeHrView from '@/app/hr/[token]/EmployeeHrView';
 import {
   loadTeamHrAction, setScheduleCodeAction, setHolidayAction, setWeekStatusAction, decideRequestAction, noProofAction,
@@ -28,17 +28,18 @@ function defaultWeek(): string {
 export default function HrTeamTab({ team, lang, myToken }: { team: string; lang: 'vi' | 'en'; myToken?: string | null }) {
   const tr: TR = (en, vi) => (lang === 'vi' ? vi : en);
   const [sub, setSub] = useState<Sub>('schedule');
-  const [ws, setWs] = useState(defaultWeek);
+  const [focus] = useState(defaultWeek);
+  const [month, setMonth] = useState(() => monthStart(addDays(defaultWeek(), 3)));
   const [data, setData] = useState<TeamHrData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
-    const r = await loadTeamHrAction(team, ws);
+    const r = await loadTeamHrAction(team, month);
     setBusy(false);
     if (r.error) setErr(r.error); else { setErr(null); setData(r.data!); }
-  }, [team, ws]);
+  }, [team, month]);
   useEffect(() => { load(); }, [load]);
   // Keep in sync with the employees' requests: refresh every 30 s while visible, and on focus.
   useEffect(() => {
@@ -81,7 +82,7 @@ export default function HrTeamTab({ team, lang, myToken }: { team: string; lang:
         <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: BORDER, color: '#6B7280' }}>{tr('Loading…', 'Đang tải…')}</div>
       ) : (
         <>
-          {sub === 'schedule' && <ScheduleView data={data} team={team} lang={lang} tr={tr} ws={ws} setWs={setWs} reload={load} busy={busy} setData={setData} />}
+          {sub === 'schedule' && <ScheduleView data={data} team={team} lang={lang} tr={tr} month={month} setMonth={setMonth} focus={focus} reload={load} busy={busy} setData={setData} />}
           {sub === 'requests' && <RequestsView data={data} team={team} lang={lang} tr={tr} reload={load} />}
           {sub === 'overtime' && <OvertimeView data={data} team={team} lang={lang} tr={tr} reload={load} />}
           {sub === 'team' && <TeamView data={data} team={team} lang={lang} tr={tr} reload={load} />}
@@ -93,23 +94,20 @@ export default function HrTeamTab({ team, lang, myToken }: { team: string; lang:
 
 const nameOf = (data: TeamHrData, id: string | null) => data.week.employees.find((e) => e.id === id)?.full_name ?? '—';
 
-// ───────────────────────── Schedule (one week) ─────────────────────────
-function ScheduleView({ data, team, lang, tr, ws, setWs, reload, busy, setData }: {
-  data: TeamHrData; team: string; lang: string; tr: TR; ws: string; setWs: (w: string) => void; reload: () => void; busy: boolean;
+// ───────────────────────── Schedule (whole month, scroll right) ─────────────────────────
+function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, busy, setData }: {
+  data: TeamHrData; team: string; lang: string; tr: TR; month: string; setMonth: (m: string) => void; focus: string; reload: () => void; busy: boolean;
   setData: (d: TeamHrData) => void;
 }) {
   const week = data.week;
   const [pick, setPick] = useState<{ e: HrEmployee; day: string } | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const today = hanoiToday();
   const wishes = new Set(week.wishes);
   const codeOf = (e: HrEmployee, d: string) => scheduleCode(e, d, week.stored, wishes);
   const regular = week.employees.filter((e) => !e.is_casual);
-  const deadline = wishDeadline(week.weekStart);
-  const open = today <= deadline && !week.published;
+  const inMonth = (d: string) => d.slice(0, 7) === week.month.slice(0, 7);
 
   const alerts: string[] = [];
-  for (const d of week.days) {
+  for (const d of week.days.filter(inMonth)) {
     const n = regular.filter((e) => HR_OFF_CODES.includes(codeOf(e, d))).length;
     if (n > offLimit(week.rules, d)) alerts.push(tr(`${shortDay(d, 'en')}: ${n} people off, max ${offLimit(week.rules, d)}`, `${shortDay(d, 'vi')}: ${n} người nghỉ, tối đa ${offLimit(week.rules, d)}`));
   }
@@ -136,42 +134,34 @@ function ScheduleView({ data, team, lang, tr, ws, setWs, reload, busy, setData }
     if (r.error) alertSoft(r.error);
     reload();
   };
-  const togglePublish = async () => {
-    setPublishing(true);
-    const r = await setWeekStatusAction(team, week.weekStart, week.published ? 'draft' : 'published');
-    setPublishing(false);
+  const publish = async (start: string, published: boolean) => {
+    const end = addDays(start, 6);
+    const q = published
+      ? tr(`Week ${dm(start)} – ${dm(end)}: back to draft? The team will no longer see the shifts.`, `Tuần ${dm(start)} – ${dm(end)}: chuyển về bản nháp? Nhóm sẽ không thấy ca làm nữa.`)
+      : tr(`Publish week ${dm(start)} – ${dm(end)}? The team is notified and day-off requests for it close.`, `Công bố tuần ${dm(start)} – ${dm(end)}? Nhóm sẽ nhận thông báo và không thể xin nghỉ tuần này nữa.`);
+    if (!window.confirm(q)) return;
+    setData({ ...data, week: { ...week, weeks: week.weeks.map((w) => (w.start === start ? { ...w, published: !published } : w)) } });
+    const r = await setWeekStatusAction(team, start, published ? 'draft' : 'published');
     if (r.error) alertSoft(r.error);
     reload();
   };
-
-  const status = (
-    <span>
-      <span style={{ color: week.published ? '#047857' : '#b45309' }}>● {week.published ? tr('Published', 'Đã công bố') : tr('Draft', 'Bản nháp')}</span>
-      <span style={{ color: '#6B7280' }}> · {tr('day-off requests until ', 'hạn xin nghỉ ')}{shortDay(deadline, lang)} {open ? tr('(open)', '(còn mở)') : tr('(closed)', '(đã đóng)')}</span>
-    </span>
-  );
+  const nextDeadline = wishDeadline(addDays(weekStart(hanoiToday()), 7));
 
   return (
     <div className="space-y-2">
-      <WeekHeader week={week} lang={lang} busy={busy} status={status} onPrev={() => setWs(addDays(ws, -7))} onNext={() => setWs(addDays(ws, 7))} />
-      <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>
-        ⟵ {tr('swipe to change week', 'vuốt để đổi tuần')} ⟶ · {monthLabel(week.month, lang)}: {week.allowance} {tr('days off / person (Sundays)', 'ngày nghỉ / người (= số CN)')}
-      </div>
-      <WeekGrid week={week} lang={lang} onCell={(e, day) => setPick({ e, day })} onDay={holiday}
-        onPrev={() => setWs(addDays(ws, -7))} onNext={() => setWs(addDays(ws, 7))} />
+      <MonthHeader month={week.month} lang={lang} busy={busy} onPrev={() => setMonth(addMonths(month, -1))} onNext={() => setMonth(addMonths(month, 1))}
+        sub={tr(`${week.allowance} days off / person (Sundays) · next week's requests close ${shortDay(nextDeadline, 'en')}`, `${week.allowance} ngày nghỉ / người (= số CN) · hạn xin nghỉ tuần sau: ${shortDay(nextDeadline, 'vi')}`)} />
+      <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>⟵ {tr('scroll sideways through the month', 'kéo ngang để xem cả tháng')} ⟶</div>
+      <MonthGrid data={week} lang={lang} focusDay={focus} onCell={(e, day) => setPick({ e, day })} onDay={holiday} onWeek={publish} />
       <Legend lang={lang} />
-      <div className="text-[10px] px-1" style={{ color: '#6B7280' }}>
-        {tr('Tap a cell to change it · tap a day (header) to set a team holiday.', 'Chạm ô để đổi · chạm ngày (tiêu đề) để đặt ngày lễ cho cả nhóm.')}
+      <div className="text-[10px] px-1 leading-relaxed" style={{ color: '#6B7280' }}>
+        {tr('Publish each week with the button above it · tap a cell to change it · tap a day to set a team holiday.', 'Công bố từng tuần bằng nút phía trên tuần đó · chạm ô để đổi · chạm ngày để đặt ngày lễ cho cả nhóm.')}
       </div>
       {alerts.length > 0 && (
         <div className="rounded-2xl px-3.5 py-2.5 space-y-0.5" style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
           {alerts.map((a, i) => <div key={i} className="text-xs leading-snug">⚠ {a}</div>)}
         </div>
       )}
-      <button onClick={togglePublish} disabled={publishing} className="w-full min-h-[50px] rounded-2xl font-bold text-sm disabled:opacity-50"
-        style={week.published ? { background: '#fff', color: '#1A4731', border: '1px solid #1A4731' } : { background: '#1A4731', color: '#FFF4CC' }}>
-        {week.published ? tr('Published ✓ · back to draft', 'Đã công bố ✓ · chuyển về bản nháp') : `${tr('Publish week', 'Công bố tuần')} ${dm(week.weekStart)} – ${dm(week.days[6])}`}
-      </button>
 
       {pick && (
         <Sheet onClose={() => setPick(null)}>

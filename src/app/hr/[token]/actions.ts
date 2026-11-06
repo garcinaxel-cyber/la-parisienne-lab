@@ -8,7 +8,7 @@ import {
   HR_OFF_CODES, HR_PROOF_TYPES, HR_REQUEST_TYPES, dm, dow, hanoiToday, hrTypeLabel, monthEnd, monthStart, offAllowance,
   offLimit, scheduleCode, weekStart, wishDeadline, type HrEmployee, type HrRequest,
 } from '@/lib/hr';
-import { hrLoadWeek, hrOffCount, hrPushLeader, hrRules, hrService, type HrWeekData } from '@/lib/hr-server';
+import { hrLoadMonth, hrOffCount, hrPushLeader, hrRules, hrService, type HrMonthData } from '@/lib/hr-server';
 
 const service = hrService;
 
@@ -20,21 +20,23 @@ async function me(token: string): Promise<HrEmployee | null> {
 
 export type MeOt = { id: string; day: string; time_from: string; time_to: string; hours: number; reason: string | null; status: string; created_by_name: string | null; confirm: 'yes' | 'no' | null };
 export type MeData = {
-  employee: HrEmployee; week: HrWeekData; requests: HrRequest[]; ots: MeOt[]; otMonthHours: number;
+  employee: HrEmployee; week: HrMonthData; requests: HrRequest[]; ots: MeOt[]; otMonthHours: number;
   myOffDays: string[]; // upcoming day-off requests (all months)
 };
 
-export async function loadMeAction(token: string, ws?: string): Promise<{ data?: MeData; error?: string }> {
+export async function loadMeAction(token: string, month?: string): Promise<{ data?: MeData; error?: string }> {
   const e = await me(token);
   if (!e) return { error: 'INVALID' };
   const db = service();
   const today = hanoiToday();
-  const w = ws && /^\d{4}-\d{2}-\d{2}$/.test(ws) ? weekStart(ws) : weekStart(today);
-  const week = await hrLoadWeek(db, e.team, w);
+  const m = month && /^\d{4}-\d{2}-\d{2}$/.test(month) ? monthStart(month) : monthStart(today);
+  const week = await hrLoadMonth(db, e.team, m);
   if ('error' in week) return { error: week.error };
-  // Unpublished week: colleagues only see days off, not the leader's draft shifts.
-  if (!week.published) {
-    for (const k of Object.keys(week.stored)) if (!HR_OFF_CODES.includes(week.stored[k] as any) && week.stored[k] !== 'PH') delete week.stored[k];
+  // Unpublished weeks: colleagues only see days off, not the leader's draft shifts.
+  const pub = new Set(week.weeks.filter((w) => w.published).map((w) => w.start));
+  for (const k of Object.keys(week.stored)) {
+    const d = k.split('|')[1];
+    if (!pub.has(weekStart(d)) && !HR_OFF_CODES.includes(week.stored[k] as any) && week.stored[k] !== 'PH') delete week.stored[k];
   }
   const [reqs, lines, offs] = await Promise.all([
     db.from('hr_requests').select('*').eq('employee_id', e.id).order('created_at', { ascending: false }).limit(30),

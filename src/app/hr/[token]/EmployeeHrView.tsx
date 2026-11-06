@@ -7,9 +7,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   HR_PROOF_TYPES, HR_REQUEST_TYPES, addDays, hanoiToday, hrNeedsGiang, hrTypeLabel, monthLabel, offAllowance,
-  monthStart, scheduleCode, shortDay, weekStart, wishDeadline,
+  monthStart, addMonths, scheduleCode, shortDay, weekStart, wishDeadline,
 } from '@/lib/hr';
-import WeekGrid, { BORDER, Legend, WeekHeader } from '@/components/hr/WeekGrid';
+import MonthGrid, { BORDER, Legend, MonthHeader } from '@/components/hr/WeekGrid';
 import {
   loadMeAction, submitRequestAction, cancelRequestAction, confirmOtAction, requestOffAction, cancelOffAction, uploadProofAction,
   type MeData,
@@ -26,17 +26,17 @@ export default function EmployeeHrView({ token, embedded = false, stationLang }:
   const lang = embedded && stationLang ? stationLang : ownLang;
   const tr: TR = (en, vi) => (lang === 'vi' ? vi : en);
   const [tab, setTab] = useState<Tab>('schedule');
-  const [ws, setWs] = useState(() => weekStart(hanoiToday()));
+  const [month, setMonth] = useState(() => monthStart(hanoiToday()));
   const [data, setData] = useState<MeData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
-    const r = await loadMeAction(token, ws);
+    const r = await loadMeAction(token, month);
     setBusy(false);
     if (r.error) setErr(r.error); else { setErr(null); setData(r.data!); }
-  }, [token, ws]);
+  }, [token, month]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const tick = () => { if (document.visibilityState === 'visible') load(); };
@@ -103,7 +103,7 @@ export default function EmployeeHrView({ token, embedded = false, stationLang }:
         ) : (
           <>
             {pendingOt.map((o) => <OtAsk key={o.id} o={o} token={token} lang={lang} tr={tr} reload={load} />)}
-            {tab === 'schedule' && <ScheduleTab data={data} token={token} lang={lang} tr={tr} ws={ws} setWs={setWs} reload={load} busy={busy} />}
+            {tab === 'schedule' && <ScheduleTab data={data} token={token} lang={lang} tr={tr} month={month} setMonth={setMonth} reload={load} busy={busy} />}
             {tab === 'off' && <OffTab data={data} token={token} lang={lang} tr={tr} reload={load} />}
             {tab === 'requests' && <RequestsTab data={data} token={token} lang={lang} tr={tr} reload={load} />}
             {tab === 'month' && <MonthTab data={data} lang={lang} tr={tr} />}
@@ -139,8 +139,8 @@ function OtAsk({ o, token, lang, tr, reload }: { o: MeData['ots'][number]; token
   );
 }
 
-// ───────────── Team week ─────────────
-function ScheduleTab({ data, token, lang, tr, ws, setWs, reload, busy }: { data: MeData; token: string; lang: string; tr: TR; ws: string; setWs: (w: string) => void; reload: () => void; busy: boolean }) {
+// ───────────── Team schedule (whole month, scroll right) ─────────────
+function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: { data: MeData; token: string; lang: string; tr: TR; month: string; setMonth: (m: string) => void; reload: () => void; busy: boolean }) {
   const week = data.week;
   const me = data.employee;
   const today = hanoiToday();
@@ -148,15 +148,10 @@ function ScheduleTab({ data, token, lang, tr, ws, setWs, reload, busy }: { data:
   const [msg, setMsg] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const wishes = new Set(week.wishes);
-  const deadline = wishDeadline(week.weekStart);
-  const open = today <= deadline && !week.published;
+  const pub = new Set(week.weeks.filter((w) => w.published).map((w) => w.start));
+  const selWeek = sel ? weekStart(sel) : null;
+  const open = !!selWeek && today <= wishDeadline(selWeek) && !pub.has(selWeek);
   const used = week.monthOff[me.id] ?? 0;
-  const status = (
-    <span>
-      <span style={{ color: week.published ? '#047857' : '#b45309' }}>● {week.published ? tr('Published', 'Đã công bố') : tr('Not published yet', 'Chưa công bố')}</span>
-      <span style={{ color: '#6B7280' }}> · {open ? tr(`day off until ${shortDay(deadline, 'en')}`, `xin nghỉ đến ${shortDay(deadline, 'vi')}`) : tr('day-off requests closed', 'đã hết hạn xin nghỉ')}</span>
-    </span>
-  );
   const isWish = sel ? wishes.has(me.id + '|' + sel) : false;
   const code = sel ? scheduleCode(me, sel, week.stored, wishes) : null;
   const doOff = async () => {
@@ -169,18 +164,15 @@ function ScheduleTab({ data, token, lang, tr, ws, setWs, reload, busy }: { data:
   };
   return (
     <div className="space-y-2">
-      <WeekHeader week={week} lang={lang} busy={busy} status={status} onPrev={() => setWs(addDays(ws, -7))} onNext={() => setWs(addDays(ws, 7))} />
-      <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>
-        ⟵ {tr('swipe to change week', 'vuốt để đổi tuần')} ⟶ · {tr(`${used}/${week.allowance} days off used in ${monthLabel(week.month, 'en')}`, `đã nghỉ ${used}/${week.allowance} ngày ${monthLabel(week.month, 'vi')}`)}
-      </div>
-      <WeekGrid week={week} lang={lang} meId={me.id} hideWork={!week.published}
-        onCell={(e, d) => { if (e.id === me.id) { setSel(d); setMsg(null); } }}
-        onPrev={() => setWs(addDays(ws, -7))} onNext={() => setWs(addDays(ws, 7))} />
+      <MonthHeader month={week.month} lang={lang} busy={busy} onPrev={() => setMonth(addMonths(month, -1))} onNext={() => setMonth(addMonths(month, 1))}
+        sub={tr(`${used}/${week.allowance} days off used`, `đã nghỉ ${used}/${week.allowance} ngày`)} />
+      <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>⟵ {tr('scroll sideways through the month', 'kéo ngang để xem cả tháng')} ⟶</div>
+      <MonthGrid data={week} lang={lang} meId={me.id} hideUnpublished
+        onCell={(e, d) => { if (e.id === me.id) { setSel(d); setMsg(null); } }} />
       <Legend lang={lang} />
       <div className="rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed" style={{ background: '#FFFAEE', border: BORDER, color: '#1A4731' }}>
-        {tr('Your row is highlighted. Read only — tap one of YOUR days to take it off (accepted at once if the day has room) or to cancel.',
-          'Dòng của em được tô vàng. Chỉ xem — chạm vào ngày của EM để xin nghỉ (được nhận ngay nếu còn chỗ) hoặc để hủy.')}
-        {!week.published && <><br />{tr('Week not published: only days off are shown.', 'Tuần chưa công bố: chỉ hiện ngày nghỉ.')}</>}
+        {tr('Your row is highlighted. Read only — tap one of YOUR days to take it off (accepted at once if the day has room) or to cancel. Weeks not published yet only show days off.',
+          'Dòng của em được tô vàng. Chỉ xem — chạm vào ngày của EM để xin nghỉ (được nhận ngay nếu còn chỗ) hoặc để hủy. Tuần chưa công bố chỉ hiện ngày nghỉ.')}
       </div>
       {sel && (
         <div className="bg-white rounded-2xl p-3.5 space-y-2" style={{ border: '2px solid #C9A84C' }}>
