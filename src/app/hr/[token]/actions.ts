@@ -1,16 +1,16 @@
 'use server';
-// HR pilot — employee side (personal link /hr/<token>, no password — same posture as the shop order
-// link /order/<token>). Axel, 2026-11-06. The token is the only key: every action re-reads the
-// employee from it and only touches that employee's own rows.
-import { createClient as createServiceClient } from '@supabase/supabase-js';
+// HR pilot — employee side ("Của tôi" tab in the station, or the personal link /hr/<token>).
+// Axel, 2026-11-06. The token is the only key: every action re-reads the employee from it and only
+// touches that employee's own rows. Round 2 (Hưng's review): the employee sees the team's week,
+// cannot change the schedule — only requests a day off (accepted at once while the day has room,
+// first come first served) or cancels it before the Saturday deadline, and adds proof papers.
 import {
-  HR_REQUEST_TYPES, HR_RULES, addMonths, daysInMonth, dayStr, dow, hanoiToday, isWeekend, monthStart,
-  type HrEmployee, type HrRequest,
+  HR_OFF_CODES, HR_PROOF_TYPES, HR_REQUEST_TYPES, dm, dow, hanoiToday, hrTypeLabel, monthEnd, monthStart, offAllowance,
+  offLimit, scheduleCode, weekStart, wishDeadline, type HrEmployee, type HrRequest,
 } from '@/lib/hr';
+import { hrLoadWeek, hrOffCount, hrPushLeader, hrRules, hrService, type HrWeekData } from '@/lib/hr-server';
 
-function service() {
-  return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-}
+const service = hrService;
 
 async function me(token: string): Promise<HrEmployee | null> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !token || token.length < 16) return null;
@@ -18,59 +18,98 @@ async function me(token: string): Promise<HrEmployee | null> {
   return (data as HrEmployee) ?? null;
 }
 
+export type MeOt = { id: string; day: string; time_from: string; time_to: string; hours: number; reason: string | null; status: string; created_by_name: string | null; confirm: 'yes' | 'no' | null };
 export type MeData = {
-  employee: HrEmployee; colleagues: { id: string; full_name: string }[];
-  months: { month: string; published: boolean; stored: Record<string, string>; myWishes: string[] }[];
-  wishMonth: string; wishOpen: boolean; myNextWishes: string[]; wishSubmitted: boolean; teamWishCount: Record<string, number>;
-  requests: HrRequest[];
-  ots: { id: string; day: string; time_from: string; time_to: string; hours: number; reason: string | null; status: string; created_by_name: string | null; confirm: 'yes' | 'no' | null }[];
-  otMonthHours: number;
+  employee: HrEmployee; week: HrWeekData; requests: HrRequest[]; ots: MeOt[]; otMonthHours: number;
+  myOffDays: string[]; // upcoming day-off requests (all months)
 };
 
-export async function loadMeAction(token: string): Promise<{ data?: MeData; error?: string }> {
+export async function loadMeAction(token: string, ws?: string): Promise<{ data?: MeData; error?: string }> {
   const e = await me(token);
   if (!e) return { error: 'INVALID' };
   const db = service();
   const today = hanoiToday();
-  const cur = monthStart(today);
-  const next = addMonths(cur, 1);
-  const end = dayStr(next, daysInMonth(next));
-  const [cols, days, mstat, wishes, submit, reqs, lines] = await Promise.all([
-    db.from('hr_employees').select('id, full_name, is_casual').eq('team', e.team).eq('active', true).order('sort_order'),
-    db.from('hr_schedule_days').select('day, code').eq('employee_id', e.id).gte('day', cur).lte('day', end),
-    db.from('hr_schedule_months').select('month, status').eq('team', e.team).in('month', [cur, next]),
-    db.from('hr_off_wishes').select('employee_id, day').gte('day', cur).lte('day', end),
-    db.from('hr_off_wish_submits').select('month').eq('employee_id', e.id).eq('month', next).maybeSingle(),
+  const w = ws && /^\d{4}-\d{2}-\d{2}$/.test(ws) ? weekStart(ws) : weekStart(today);
+  const week = await hrLoadWeek(db, e.team, w);
+  if ('error' in week) return { error: week.error };
+  // Unpublished week: colleagues only see days off, not the leader's draft shifts.
+  if (!week.published) {
+    for (const k of Object.keys(week.stored)) if (!HR_OFF_CODES.includes(week.stored[k] as any) && week.stored[k] !== 'PH') delete week.stored[k];
+  }
+  const [reqs, lines, offs] = await Promise.all([
     db.from('hr_requests').select('*').eq('employee_id', e.id).order('created_at', { ascending: false }).limit(30),
     db.from('hr_ot_lines').select('confirm, hr_ot_requests(id, day, time_from, time_to, hours, reason, status, created_by_name)').eq('employee_id', e.id),
+    db.from('hr_off_wishes').select('day').eq('employee_id', e.id).gte('day', today).order('day'),
   ]);
-  const teamIds = new Set((cols.data ?? []).map((c: any) => c.id));
-  const regularIds = new Set((cols.data ?? []).filter((c: any) => !c.is_casual).map((c: any) => c.id));
-  const allWishes = (wishes.data ?? []).filter((w: any) => teamIds.has(w.employee_id));
-  const stored: Record<string, string> = {};
-  for (const d of days.data ?? []) stored[d.day] = d.code;
-  const pub = new Set((mstat.data ?? []).filter((m: any) => m.status === 'published').map((m: any) => m.month));
-  const months = [cur, next].map((m) => ({
-    month: m, published: pub.has(m), stored,
-    myWishes: allWishes.filter((w: any) => w.employee_id === e.id && w.day.startsWith(m.slice(0, 7))).map((w: any) => w.day),
-  }));
-  const teamWishCount: Record<string, number> = {};
-  for (const w of allWishes) {
-    if (w.employee_id === e.id || !regularIds.has(w.employee_id) || !w.day.startsWith(next.slice(0, 7))) continue;
-    teamWishCount[w.day] = (teamWishCount[w.day] ?? 0) + 1;
-  }
   const ots = (lines.data ?? []).map((l: any) => ({ ...l.hr_ot_requests, hours: Number(l.hr_ot_requests?.hours ?? 0), confirm: l.confirm }))
     .filter((o: any) => o.id && o.status !== 'cancelled')
     .sort((a: any, b: any) => (a.day < b.day ? 1 : -1));
+  const cur = monthStart(today);
   const otMonthHours = ots.filter((o: any) => o.day.startsWith(cur.slice(0, 7)) && o.status !== 'rejected' && o.confirm !== 'no').reduce((s: number, o: any) => s + o.hours, 0);
   return {
     data: {
-      employee: { ...e, access_token: undefined }, colleagues: (cols.data ?? []).filter((c: any) => c.id !== e.id).map((c: any) => ({ id: c.id, full_name: c.full_name })),
-      months, wishMonth: next, wishOpen: Number(today.slice(8, 10)) <= HR_RULES.wishDeadlineDay,
-      myNextWishes: months[1].myWishes, wishSubmitted: !!submit.data, teamWishCount,
-      requests: (reqs.data ?? []) as HrRequest[], ots, otMonthHours,
+      employee: { ...e, access_token: undefined }, week, requests: (reqs.data ?? []) as HrRequest[], ots, otMonthHours,
+      myOffDays: (offs.data ?? []).map((o: any) => o.day),
     },
   };
+}
+
+// Ask for a day off. Accepted at once if: before the Saturday deadline, the week is not published,
+// the monthly allowance (= Sundays in the month) and the Sat/Sun caps are not reached, and the day
+// still has room in the team (first come, first served — re-checked after the insert for races).
+export async function requestOffAction(token: string, day: string): Promise<{ ok?: boolean; error?: string }> {
+  const e = await me(token);
+  if (!e) return { error: 'INVALID' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: 'Bad day' };
+  const db = service();
+  const today = hanoiToday();
+  const ws = weekStart(day);
+  if (day <= today || today > wishDeadline(ws)) return { error: 'CLOSED' };
+  const { data: wk } = await db.from('hr_schedule_weeks').select('status').eq('team', e.team).eq('week_start', ws).maybeSingle();
+  if (wk?.status === 'published') return { error: 'CLOSED' };
+  const { data: st } = await db.from('hr_schedule_days').select('code').eq('employee_id', e.id).eq('day', day).maybeSingle();
+  if (st?.code && st.code !== '7' && st.code !== '8') return { error: 'ALREADY' };
+  const rules = await hrRules(db, e.team);
+  if (!e.is_casual) {
+    const m = monthStart(day);
+    const [{ data: wi }, { data: so }] = await Promise.all([
+      db.from('hr_off_wishes').select('day').eq('employee_id', e.id).gte('day', m).lte('day', monthEnd(m)),
+      db.from('hr_schedule_days').select('day, code').eq('employee_id', e.id).gte('day', m).lte('day', monthEnd(m)),
+    ]);
+    const stored: Record<string, string> = {};
+    for (const r of so ?? []) stored[e.id + '|' + r.day] = r.code;
+    const wset = new Set<string>((wi ?? []).map((w: any) => e.id + '|' + w.day));
+    const offs: string[] = [];
+    for (const k of Array.from(wset)) { const d = k.split('|')[1]; if (scheduleCode(e, d, stored, wset) === 'O') offs.push(d); }
+    for (const r of so ?? []) if (r.code === 'O' && !wset.has(e.id + '|' + r.day)) offs.push(r.day);
+    if (offs.length >= offAllowance(m)) return { error: 'MAX_DAYS' };
+    if (dow(day) === 6 && rules.max_sat_month != null && offs.filter((d) => dow(d) === 6).length >= rules.max_sat_month) return { error: 'MAX_SAT' };
+    if (dow(day) === 0 && rules.max_sun_month != null && offs.filter((d) => dow(d) === 0).length >= rules.max_sun_month) return { error: 'MAX_SUN' };
+    if ((await hrOffCount(db, e.team, day, e.id)) >= offLimit(rules, day)) return { error: 'FULL' };
+  }
+  const { error } = await db.from('hr_off_wishes').insert({ employee_id: e.id, day });
+  if (error) return { error: error.message.includes('duplicate') ? 'ALREADY' : error.message };
+  if (!e.is_casual && (await hrOffCount(db, e.team, day)) > offLimit(rules, day)) {
+    // Someone else got the last place at the same moment: the first one keeps it.
+    await db.from('hr_off_wishes').delete().eq('employee_id', e.id).eq('day', day);
+    return { error: 'FULL' };
+  }
+  await hrPushLeader(db, e.team, `${e.full_name} xin nghỉ ${dm(day)}`, `${e.full_name} takes ${dm(day)} off`);
+  return { ok: true };
+}
+
+export async function cancelOffAction(token: string, day: string): Promise<{ ok?: boolean; error?: string }> {
+  const e = await me(token);
+  if (!e) return { error: 'INVALID' };
+  const db = service();
+  const ws = weekStart(day);
+  if (hanoiToday() > wishDeadline(ws)) return { error: 'CLOSED' };
+  const { data: wk } = await db.from('hr_schedule_weeks').select('status').eq('team', e.team).eq('week_start', ws).maybeSingle();
+  if (wk?.status === 'published') return { error: 'CLOSED' };
+  const { error } = await db.from('hr_off_wishes').delete().eq('employee_id', e.id).eq('day', day);
+  if (error) return { error: error.message };
+  await hrPushLeader(db, e.team, `${e.full_name} hủy nghỉ ${dm(day)}`, `${e.full_name} cancelled day off ${dm(day)}`);
+  return { ok: true };
 }
 
 export async function submitRequestAction(token: string, input: {
@@ -91,7 +130,9 @@ export async function submitRequestAction(token: string, input: {
     time_from: input.time_from || null, time_to: input.time_to || null, reason: (input.reason ?? '').slice(0, 500) || null,
     swap_with: input.type === 'swap' ? input.swap_with || null : null,
   });
-  return error ? { error: error.message } : { ok: true };
+  if (error) return { error: error.message };
+  await hrPushLeader(db, e.team, `${e.full_name}: ${hrTypeLabel(input.type, 'vi')} ${dm(input.day_from)}`, `${e.full_name}: ${hrTypeLabel(input.type, 'en')} ${dm(input.day_from)}`);
+  return { ok: true };
 }
 
 export async function cancelRequestAction(token: string, id: string): Promise<{ ok?: boolean; error?: string }> {
@@ -102,49 +143,31 @@ export async function cancelRequestAction(token: string, id: string): Promise<{ 
   return error ? { error: error.message } : { ok: true };
 }
 
+// Proof paper (photo) added after the request — e.g. after the doctor.
+export async function uploadProofAction(token: string, id: string, formData: FormData): Promise<{ ok?: boolean; error?: string }> {
+  const e = await me(token);
+  if (!e) return { error: 'INVALID' };
+  const db = service();
+  const { data: r } = await db.from('hr_requests').select('employee_id, type, day_from').eq('id', id).single();
+  if (!r || r.employee_id !== e.id) return { error: 'Not found' };
+  if (!HR_PROOF_TYPES.includes(r.type)) return { error: 'No proof needed' };
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { error: 'No file' };
+  if (!file.type.startsWith('image/')) return { error: 'Only photos' };
+  if (file.size > 4 * 1024 * 1024) return { error: 'Photo too large' };
+  const path = `${e.team}/${e.id}/${id}-${Date.now()}.jpg`;
+  const { error: upErr } = await db.storage.from('hr-proofs').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (upErr) return { error: upErr.message };
+  const { error } = await db.from('hr_requests').update({ proof_path: path, proof_at: new Date().toISOString(), no_proof: false }).eq('id', id);
+  if (error) return { error: error.message };
+  await hrPushLeader(db, e.team, `${e.full_name} đã gửi giấy tờ (${hrTypeLabel(r.type, 'vi')} ${dm(r.day_from)})`, `${e.full_name} added a proof (${hrTypeLabel(r.type, 'en')} ${dm(r.day_from)})`);
+  return { ok: true };
+}
+
 export async function confirmOtAction(token: string, otId: string, answer: 'yes' | 'no'): Promise<{ ok?: boolean; error?: string }> {
   const e = await me(token);
   if (!e) return { error: 'INVALID' };
   const { error } = await service().from('hr_ot_lines').update({ confirm: answer, confirmed_at: new Date().toISOString() })
     .eq('ot_id', otId).eq('employee_id', e.id);
   return error ? { error: error.message } : { ok: true };
-}
-
-// Off-day wishes for next month — rules enforced here too (not only in the screen).
-export async function saveWishesAction(token: string, month: string, days: string[]): Promise<{ ok?: boolean; error?: string }> {
-  const e = await me(token);
-  if (!e) return { error: 'INVALID' };
-  const today = hanoiToday();
-  const next = addMonths(monthStart(today), 1);
-  if (month !== next) return { error: 'Wrong month' };
-  if (Number(today.slice(8, 10)) > HR_RULES.wishDeadlineDay) return { error: 'CLOSED' };
-  const uniq = Array.from(new Set(days)).filter((d) => d.startsWith(month.slice(0, 7))).sort();
-  if (uniq.some((d) => Number(d.slice(8)) > daysInMonth(month))) return { error: 'Bad day' };
-  if (!e.is_casual) {
-    if (uniq.length > HR_RULES.offPerMonth) return { error: 'MAX_DAYS' };
-    if (uniq.filter((d) => dow(d) === 6).length > HR_RULES.maxSat) return { error: 'MAX_SAT' };
-    if (uniq.filter((d) => dow(d) === 0).length > HR_RULES.maxSun) return { error: 'MAX_SUN' };
-  }
-  const db = service();
-  const { data: mine } = await db.from('hr_off_wishes').select('day').eq('employee_id', e.id).gte('day', month).lte('day', dayStr(month, daysInMonth(month)));
-  const already = new Set((mine ?? []).map((w: any) => w.day));
-  const added = uniq.filter((d) => !already.has(d));
-  if (added.length && !e.is_casual) {
-    // First registered, first served: a day already at the team limit cannot be added.
-    const { data: cols } = await db.from('hr_employees').select('id').eq('team', e.team).eq('active', true).eq('is_casual', false).neq('id', e.id);
-    const ids = (cols ?? []).map((c: any) => c.id);
-    const { data: others } = ids.length ? await db.from('hr_off_wishes').select('day').in('employee_id', ids).in('day', added) : { data: [] as any[] };
-    const cnt: Record<string, number> = {};
-    for (const o of others ?? []) cnt[o.day] = (cnt[o.day] ?? 0) + 1;
-    const full = added.find((d) => (cnt[d] ?? 0) >= (isWeekend(d) ? HR_RULES.maxOffWeekend : HR_RULES.maxOffWeekday));
-    if (full) return { error: 'FULL:' + full };
-  }
-  const removed = Array.from(already).filter((d) => !uniq.includes(d));
-  if (removed.length) await db.from('hr_off_wishes').delete().eq('employee_id', e.id).in('day', removed);
-  if (added.length) {
-    const { error } = await db.from('hr_off_wishes').insert(added.map((day) => ({ employee_id: e.id, day })));
-    if (error) return { error: error.message };
-  }
-  await db.from('hr_off_wish_submits').upsert({ employee_id: e.id, month, submitted_at: new Date().toISOString() });
-  return { ok: true };
 }

@@ -1,20 +1,40 @@
 // HR pilot (Axel, 2026-11-06) — schedules, requests and overtime in the app, Team Hưng first.
 // Shared, client-safe helpers: types, team rules, labels (EN/VI) and date helpers.
 // Pay rules (Trang, 2026-11-04): 9 h on site = 1 day (8 h + 1 h break), pro rata; overtime = time beyond
-// 9 h, paid only with an approved request (team leader → Mr Giang). Team rules (Macaron paper schedule):
-// 5 days off a month, max 2 Saturdays and 2 Sundays off, max 2 people off on a weekday and 3 on a
-// weekend day, off-day wishes for next month before the 25th (first registered, first served).
+// 9 h, paid only with an approved request (team leader → Mr Giang).
+// Round 2 after Hưng's review (2026-11-06): the schedule is published WEEK by week; a day-off request
+// is accepted automatically while the day has room (first come, first served — Macaron: 2 off on a
+// weekday, 3 on Saturday/Sunday, rules per team); requests for next week close on the Saturday before;
+// days off allowed a month = number of Sundays in the month; employees see the whole team's week;
+// approved leave is written into the schedule; sick & co need a proof paper, no proof → the leader
+// turns the day into a day off.
 
 export const HR_PILOT_TEAMS = ['hung'];
 
-export type HrCode = '7' | '8' | 'O' | 'AL' | 'PH' | 'SN';
-export const HR_CYCLE: HrCode[] = ['7', '8', 'O', 'AL', 'PH', 'SN'];
-export const HR_OFF_CODES: HrCode[] = ['O', 'AL', 'SN']; // count against the "people off that day" limit
-export const HR_RULES = { offPerMonth: 5, maxSat: 2, maxSun: 2, maxOffWeekday: 2, maxOffWeekend: 3, wishDeadlineDay: 25, otMonthCap: 40 };
+export type HrCode = '7' | '8' | 'O' | 'AL' | 'PH' | 'SN' | 'OM' | 'KL' | 'CD';
+export const HR_PICK: HrCode[] = ['7', '8', 'O', 'AL', 'SN', 'OM', 'KL', 'CD', 'PH'];
+// Codes that count against the "people off that day" limit (PH = everybody off, not counted).
+export const HR_OFF_CODES: HrCode[] = ['O', 'AL', 'SN', 'OM', 'KL', 'CD'];
+export const HR_CODE_LABEL: Record<string, { en: string; vi: string }> = {
+  '7': { en: 'Shift 07:00–16:00', vi: 'Ca 07:00–16:00' },
+  '8': { en: 'Shift 08:00–17:00', vi: 'Ca 08:00–17:00' },
+  O: { en: 'Day off', vi: 'Nghỉ' },
+  AL: { en: 'Annual leave', vi: 'Phép năm' },
+  PH: { en: 'Public holiday', vi: 'Ngày lễ' },
+  SN: { en: 'Birthday leave', vi: 'Nghỉ sinh nhật' },
+  OM: { en: 'Sick', vi: 'Ốm' },
+  KL: { en: 'Unpaid leave', vi: 'Nghỉ không lương' },
+  CD: { en: 'Leave (wedding, bereavement…)', vi: 'Nghỉ chế độ' },
+};
+export const HR_OT_CAP = 40;
+
+export type HrRules = { max_off_weekday: number; max_off_weekend: number; max_sat_month: number | null; max_sun_month: number | null };
+export const HR_DEFAULT_RULES: HrRules = { max_off_weekday: 2, max_off_weekend: 3, max_sat_month: null, max_sun_month: null };
 
 export type HrEmployee = {
   id: string; team: string; full_name: string; position: string | null; base_shift: string;
   clock_id: string | null; is_leader: boolean; is_casual: boolean; access_token?: string; sort_order: number;
+  profile_id?: string | null;
 };
 
 export type HrRequest = {
@@ -22,6 +42,7 @@ export type HrRequest = {
   time_from: string | null; time_to: string | null; swap_with: string | null; reason: string | null;
   status: 'pending_leader' | 'pending_giang' | 'approved' | 'rejected' | 'cancelled';
   leader_name: string | null; leader_at: string | null; giang_name: string | null; giang_at: string | null; created_at: string;
+  proof_path?: string | null; proof_at?: string | null; no_proof?: boolean; proof_url?: string | null;
 };
 
 export type HrOt = {
@@ -30,7 +51,7 @@ export type HrOt = {
   lines: { employee_id: string; confirm: 'yes' | 'no' | null }[];
 };
 
-export const HR_REQUEST_TYPES: { id: string; en: string; vi: string; leaderOnly?: boolean }[] = [
+export const HR_REQUEST_TYPES: { id: string; en: string; vi: string }[] = [
   { id: 'late', en: 'Late', vi: 'Đi muộn' },
   { id: 'early', en: 'Early leave', vi: 'Về sớm' },
   { id: 'annual', en: 'Annual leave', vi: 'Nghỉ phép' },
@@ -43,7 +64,7 @@ export const HR_REQUEST_TYPES: { id: string; en: string; vi: string; leaderOnly?
   { id: 'maternity', en: 'Maternity', vi: 'Nghỉ thai sản' },
   { id: 'business_trip', en: 'Business trip', vi: 'Công tác' },
   { id: 'missed_punch', en: 'Missed punch', vi: 'Quên chấm công' },
-  { id: 'swap', en: 'Shift swap', vi: 'Đổi ca', leaderOnly: true },
+  { id: 'swap', en: 'Shift swap', vi: 'Đổi ca' },
   { id: 'other', en: 'Other', vi: 'Lý do khác' },
 ];
 export const hrTypeLabel = (id: string, lang: string) => {
@@ -52,6 +73,16 @@ export const hrTypeLabel = (id: string, lang: string) => {
 };
 // Shift swaps only need the team leader; everything else goes on to Mr Giang.
 export const hrNeedsGiang = (type: string) => type !== 'swap';
+// Reasons that need a paper (doctor, certificate…) added after the request.
+export const HR_PROOF_TYPES = ['sick', 'child_sick', 'wedding', 'bereavement', 'prenatal', 'maternity'];
+// Code written into the schedule when the leader approves the request (null = schedule unchanged).
+export function hrRequestCode(type: string): HrCode | null {
+  if (type === 'annual') return 'AL';
+  if (type === 'unpaid') return 'KL';
+  if (type === 'sick' || type === 'child_sick') return 'OM';
+  if (['wedding', 'bereavement', 'prenatal', 'maternity'].includes(type)) return 'CD';
+  return null;
+}
 
 // ---------- dates (all YYYY-MM-DD strings, Hanoi calendar) ----------
 export function hanoiToday(): string {
@@ -60,19 +91,35 @@ export function hanoiToday(): string {
 export function monthStart(d: string): string { return d.slice(0, 7) + '-01'; }
 export function addMonths(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1 + n, 1));
-  return dt.toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 10);
 }
 export function daysInMonth(month: string): number {
   const [y, m] = month.split('-').map(Number);
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
+export function monthEnd(d: string): string { return dayStr(d, daysInMonth(d)); }
 export function dayStr(month: string, d: number): string { return month.slice(0, 8) + String(d).padStart(2, '0'); }
+export function addDays(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
 export function dow(day: string): number { // 0 = Sunday
   const [y, m, d] = day.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 export const isWeekend = (day: string) => dow(day) === 0 || dow(day) === 6;
+export function weekStart(day: string): string { return addDays(day, -((dow(day) + 6) % 7)); } // Monday
+export function weekDays(ws: string): string[] { return Array.from({ length: 7 }, (_, i) => addDays(ws, i)); }
+// Day-off requests for a week close at the end of the Saturday before it.
+export function wishDeadline(ws: string): string { return addDays(ws, -2); }
+// The month a week "belongs to" (its Thursday) — used for the monthly day-off counter.
+export function weekMonth(ws: string): string { return monthStart(addDays(ws, 3)); }
+// Days off allowed in a month = number of Sundays in it (Hưng, 2026-11-06).
+export function offAllowance(month: string): number {
+  let n = 0; const last = daysInMonth(month);
+  for (let d = 1; d <= last; d++) if (dow(dayStr(month, d)) === 0) n++;
+  return n;
+}
 export const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export const DOW_VI = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 export const MONTH_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -84,6 +131,7 @@ export function shortDay(day: string, lang: string): string {
   const [, m, d] = day.split('-');
   return `${(lang === 'vi' ? DOW_VI : DOW_EN)[dow(day)]} ${d}/${m}`;
 }
+export const dm = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
 export function hoursBetween(from: string, to: string): number {
   const [h1, m1] = from.split(':').map(Number);
   const [h2, m2] = to.split(':').map(Number);
@@ -91,37 +139,14 @@ export function hoursBetween(from: string, to: string): number {
   return Math.max(0, Math.round(h * 4) / 4);
 }
 
-// ---------- schedule rules ----------
-export function scheduleCode(e: HrEmployee, day: string, stored: Record<string, string>, wishes: Set<string>): HrCode {
+// ---------- schedule ----------
+// Effective code: what the leader set, else a day-off request (auto-accepted), else the base shift.
+export function scheduleCode(e: { id: string; base_shift: string }, day: string, stored: Record<string, string>, wishes: Set<string>): HrCode {
   const s = stored[e.id + '|' + day];
   if (s) return s as HrCode;
   if (wishes.has(e.id + '|' + day)) return 'O';
   return (e.base_shift === '8' ? '8' : '7');
 }
-
-export type HrAlert = { kind: 'day' | 'person'; day?: string; employee_id?: string; en: string; vi: string };
-
-export function scheduleAlerts(month: string, emps: HrEmployee[], codeOf: (e: HrEmployee, day: string) => HrCode): HrAlert[] {
-  const out: HrAlert[] = [];
-  const n = daysInMonth(month);
-  const regular = emps.filter((e) => !e.is_casual);
-  for (let d = 1; d <= n; d++) {
-    const day = dayStr(month, d);
-    const off = regular.filter((e) => HR_OFF_CODES.includes(codeOf(e, day))).length;
-    const lim = isWeekend(day) ? HR_RULES.maxOffWeekend : HR_RULES.maxOffWeekday;
-    if (off > lim) out.push({ kind: 'day', day, en: `${shortDay(day, 'en')}: ${off} people off, max ${lim}`, vi: `${shortDay(day, 'vi')}: ${off} người nghỉ, tối đa ${lim}` });
-  }
-  for (const e of regular) {
-    let o = 0, sat = 0, sun = 0;
-    for (let d = 1; d <= n; d++) {
-      const day = dayStr(month, d);
-      if (codeOf(e, day) === 'O') { o++; if (dow(day) === 6) sat++; if (dow(day) === 0) sun++; }
-    }
-    if (o > HR_RULES.offPerMonth) out.push({ kind: 'person', employee_id: e.id, en: `${e.full_name}: ${o} days off, quota ${HR_RULES.offPerMonth}`, vi: `${e.full_name}: ${o} ngày nghỉ, định mức ${HR_RULES.offPerMonth}` });
-    if (sat > HR_RULES.maxSat) out.push({ kind: 'person', employee_id: e.id, en: `${e.full_name}: ${sat} Saturdays off, max ${HR_RULES.maxSat}`, vi: `${e.full_name}: nghỉ ${sat} Thứ 7, tối đa ${HR_RULES.maxSat}` });
-    if (sun > HR_RULES.maxSun) out.push({ kind: 'person', employee_id: e.id, en: `${e.full_name}: ${sun} Sundays off, max ${HR_RULES.maxSun}`, vi: `${e.full_name}: nghỉ ${sun} Chủ nhật, tối đa ${HR_RULES.maxSun}` });
-  }
-  return out;
-}
+export const offLimit = (rules: HrRules, day: string) => (isWeekend(day) ? rules.max_off_weekend : rules.max_off_weekday);
 
 export const SHIFT_HOURS: Record<string, string> = { '7': '07:00–16:00', '8': '08:00–17:00' };

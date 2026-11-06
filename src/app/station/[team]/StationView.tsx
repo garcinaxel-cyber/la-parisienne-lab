@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users, User as UserIcon,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users, User as UserIcon, LayoutGrid,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { isOemSku } from '@/lib/oem';
@@ -352,6 +352,7 @@ export default function StationView({
   const [blockedReason, setBlockedReason] = useState('');
   const [blockedCustom, setBlockedCustom] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('production');
+  const [moreOpen, setMoreOpen] = useState(false);
   const [upcomingData, setUpcomingData] = useState<DateSummary[]>([]);
   const [historyData, setHistoryData] = useState<DateSummary[]>([]);
   const [loadingDates, setLoadingDates] = useState(false);
@@ -1306,16 +1307,15 @@ export default function StationView({
       count: 0,
       icon: <Package size={14} />,
     }] : []),
-    // HR pilot (Axel, 2026-11-06): schedule, requests, overtime — Team Hưng first, leader/admin only.
+    // HR pilot (Axel, 2026-11-06): ONE HR tab — the leader/admin get "Nhân sự" (team schedule,
+    // requests, overtime + his own space inside), every other linked employee gets "Của tôi".
     ...(HR_PILOT_TEAMS.includes(team) && hrManager ? [{
       id: 'team' as Tab,
-      labelVi: 'Nhóm',
-      labelEn: 'Team',
+      labelVi: 'Nhân sự',
+      labelEn: 'HR',
       count: 0,
       icon: <Users size={14} />,
-    }] : []),
-    // HR pilot: every employee linked to this account sees his own space (schedule, requests, days off).
-    ...(hrMyToken ? [{
+    }] : hrMyToken ? [{
       id: 'me' as Tab,
       labelVi: 'Của tôi',
       labelEn: 'Me',
@@ -1323,6 +1323,11 @@ export default function StationView({
       icon: <UserIcon size={14} />,
     }] : []),
   ];
+
+  const MAIN_TAB_IDS: Tab[] = ['production', 'commande', 'termine', 'upcoming'];
+  const mainTabs = tabs.filter(t => MAIN_TAB_IDS.includes(t.id));
+  const moreTabs = tabs.filter(t => !MAIN_TAB_IDS.includes(t.id));
+  const moreActive = moreTabs.find(t => t.id === activeTab);
 
   // Read-only roles at the station: worker & viewer (legacy 'employee' kept for safety)
   const isEmployee = userRole === 'worker' || userRole === 'viewer' || userRole === 'employee';
@@ -1413,14 +1418,15 @@ export default function StationView({
         <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
           <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
-        {/* Tab navigation */}
+        {/* Tab navigation — Axel, 2026-11-06: the bar had 8-9 tabs squeezed into tiny labels.
+            Now the 4 daily tabs stay in the bar, everything else sits behind "Thêm" (More). */}
         <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
-          {tabs.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 text-[10px] sm:text-xs font-bold transition-all active:scale-95"
+          {mainTabs.map(tab => (
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
+              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
-                : { color: 'rgba(255,255,255,0.55)', borderBottom: '2px solid transparent' }
+                : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }
               }>
               {tab.icon}
               <span className="flex items-center gap-1 truncate max-w-full">
@@ -1434,25 +1440,48 @@ export default function StationView({
                     {tab.count}
                   </span>
                 )}
-                {tab.id === 'analytics' && lowStockAlert && (
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: '#EF4444', boxShadow: '0 0 0 2px rgba(239,68,68,0.35)' }}
-                    title={lang === 'vi' ? 'Có sản phẩm dưới ngưỡng an toàn' : 'Stock below safety threshold'} />
-                )}
               </span>
             </button>
           ))}
-          {team === 'hung' && (
-            // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung station only, for
-            // everyone who opens it (chef via /station/me, admin via the QR /station/hung).
-            // A link styled like the tabs: it opens its own page, the station tabs stay untouched.
-            <Link href={`/station/oem?team=${teamSlug}`}
-              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-1.5 sm:py-2.5 text-[10px] sm:text-xs font-bold transition-all active:scale-95"
-              style={{ color: '#FFF4CC', borderBottom: '2px solid transparent' }}>
-              <Factory size={14} />
-              <span className="truncate max-w-full">{lang === 'vi' ? 'Đơn OEM' : 'OEM Orders'}</span>
-            </Link>
-          )}
+          <button onClick={() => setMoreOpen(o => !o)}
+            className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95 relative"
+            style={moreActive || moreOpen
+              ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
+              : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>
+            {moreActive ? moreActive.icon : <LayoutGrid size={14} />}
+            <span className="truncate max-w-full">{moreActive ? (lang === 'vi' ? moreActive.labelVi : moreActive.labelEn) : (lang === 'vi' ? 'Thêm' : 'More')}</span>
+            {lowStockAlert && !moreActive && (
+              <span className="absolute top-1 right-[22%] w-2 h-2 rounded-full" style={{ backgroundColor: '#EF4444' }} />
+            )}
+          </button>
         </div>
+        {moreOpen && (
+          <div className="border-t px-2.5 py-2.5 grid grid-cols-3 gap-1.5" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#163D29' }}>
+            {moreTabs.map(tab => (
+              <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
+                className="min-h-[52px] rounded-xl flex flex-col items-center justify-center gap-1 text-[11px] font-bold active:scale-95 relative"
+                style={activeTab === tab.id
+                  ? { backgroundColor: '#C9A84C', color: '#1A4731' }
+                  : { backgroundColor: 'rgba(255,255,255,0.08)', color: '#FFF4CC' }}>
+                {tab.icon}
+                <span className="truncate max-w-full px-1">{lang === 'vi' ? tab.labelVi : tab.labelEn}{tab.count > 0 ? ` · ${tab.count}` : ''}</span>
+                {tab.id === 'analytics' && lowStockAlert && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ backgroundColor: '#EF4444' }}
+                    title={lang === 'vi' ? 'Có sản phẩm dưới ngưỡng an toàn' : 'Stock below safety threshold'} />
+                )}
+              </button>
+            ))}
+            {team === 'hung' && (
+              // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung station only; opens its own page.
+              <Link href={`/station/oem?team=${teamSlug}`}
+                className="min-h-[52px] rounded-xl flex flex-col items-center justify-center gap-1 text-[11px] font-bold active:scale-95"
+                style={{ backgroundColor: 'rgba(255,255,255,0.08)', color: '#FFF4CC' }}>
+                <Factory size={14} />
+                <span className="truncate max-w-full px-1">{lang === 'vi' ? 'Đơn OEM' : 'OEM Orders'}</span>
+              </Link>
+            )}
+          </div>
+        )}
       </header>
 
       {/* New-order alert banner (2026-09-04) — dismissed by tapping it (jumps to Commande) or
@@ -2700,12 +2729,12 @@ export default function StationView({
 
       {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && hrManager && (
         <div className="max-w-3xl mx-auto px-3 py-3">
-          <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
+          <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} myToken={hrMyToken} />
         </div>
       )}
 
       {activeTab === 'me' && hrMyToken && (
-        <div className="max-w-xl mx-auto pb-6">
+        <div className="max-w-xl mx-auto px-3 pb-6">
           <EmployeeHrView token={hrMyToken} embedded stationLang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
