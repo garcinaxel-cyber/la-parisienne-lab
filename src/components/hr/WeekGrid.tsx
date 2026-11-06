@@ -11,8 +11,8 @@ import { HR_OFF_CODES, DOW_EN, DOW_VI, dm, dow, hanoiToday, isWeekend, monthLabe
 import type { HrMonthData } from '@/lib/hr-server';
 
 export const BORDER = '1px solid #E0D49A';
-const COL = 40;      // day column width (px)
-const NAME = 104;    // name column width (px)
+const COL = 36;      // day column width (px) — a full week fits a phone screen next to the names
+const NAME = 96;     // name column width (px)
 
 export function codeStyle(c: string): React.CSSProperties {
   switch (c) {
@@ -140,7 +140,7 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
                   const shown = hidden ? '·' : codeText(c, lang);
                   const full = HR_OFF_CODES.includes(c) && !e.is_casual && offOn(d) > offLimit(data.rules, d);
                   const cell = (
-                    <span className={`w-[32px] h-[24px] rounded-md flex items-center justify-center mx-auto whitespace-nowrap ${shown.length > 2 ? 'text-[9px]' : 'text-[11px]'}`}
+                    <span className={`w-[30px] h-[24px] rounded-md flex items-center justify-center mx-auto whitespace-nowrap ${shown.length > 2 ? 'text-[9px]' : 'text-[11px]'}`}
                       style={{ ...codeStyle(c), ...(full ? { outline: '2px solid #DC2626', outlineOffset: '1px' } : {}) }}>{shown}</span>
                   );
                   const st: React.CSSProperties = { background: mine ? '#FFF8DC' : isWeekend(d) ? '#FDFBF3' : undefined, borderBottom: '1px solid #F3EED9', opacity: inMonth(d) ? 1 : 0.45, height: 42, ...sep(d) };
