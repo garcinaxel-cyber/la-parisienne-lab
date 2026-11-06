@@ -53,6 +53,14 @@ import { odooExecute, odooExecuteWrite, odooWriteConfigured, odooDateTimeToLocal
 // here belt-and-suspenders since (2) could in principle still bite even with (1) fixed.
 const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_create_nolog: true, mail_notify_force_send: false };
 
+// Corner partner (res.partner id) → single billed customer (Axel, 2026-11-06). HTM corners:
+// 641 Smart City, 642 Chương Mỹ, 643 Thái Thịnh → 521 HAPPY TRUE MARKET. WinMart corners:
+// 336 Royal, 364 Xuân Diệu, 365 Long Biên, 366 Bắc Ninh → 571 WINCOMMERCE.
+const CORNER_TO_BILLED_PARTNER: Record<number, number> = {
+  641: 521, 642: 521, 643: 521,
+  336: 571, 364: 571, 365: 571, 366: 571,
+};
+
 export interface DeliveryValidateLine { sku: string; product_name_vi: string; qty_checked: number; qty_expected: number }
 
 export interface NeedsSplitEntry {
@@ -424,7 +432,7 @@ async function validateSalesOrder(
   orderRef: string, checklistLines: DeliveryValidateLine[], dryRun: boolean, splits: SplitInput[],
 ): Promise<DeliveryValidateResult> {
   const orders = await odooExecute<any[]>('sale.order', 'search_read',
-    [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status', 'commitment_date'] });
+    [[['name', '=', orderRef]]], { fields: ['id', 'name', 'state', 'picking_ids', 'invoice_ids', 'invoice_status', 'commitment_date', 'partner_id'] });
   const so = orders[0];
   if (!so) return { ok: false, dryRun, error: `Không tìm thấy đơn hàng ${orderRef} trên Odoo` };
 
@@ -599,14 +607,30 @@ async function validateSalesOrder(
       const created = await odooExecute<any[]>('account.move', 'read', [newInvoiceIds], { fields: ['name', 'state'] });
       invoiceCreated = true;
       invoiceName = created[0]?.name;
+      // Corner → single billed customer (Axel, 2026-11-06, R1): HTM and WinMart corners are
+      // invoiced on the parent customer (HAPPY TRUE MARKET 521 / WINCOMMERCE 571); the corner
+      // stays as delivery address. Partner is written BEFORE the dates, in its own call: the
+      // corner's analytic tag is already on the lines (set at creation by the corner's
+      // distribution rule) and Odoo keeps it when no rule matches the parent (tested 09/10/2026).
+      const cornerId: number | undefined = so.partner_id?.[0];
+      const parentId = cornerId ? CORNER_TO_BILLED_PARTNER[cornerId] : undefined;
+      if (parentId) {
+        try {
+          await odooExecuteWrite('account.move', 'write', [newInvoiceIds, { partner_id: parentId, partner_shipping_id: cornerId }], { context: NO_MAIL_CONTEXT });
+        } catch (e: any) {
+          invoiceError = `Hóa đơn ${invoiceName} đã tạo, nhưng không chuyển được sang khách hàng chính (id ${parentId}) — vui lòng chỉnh thủ công trên Odoo: ${String(e?.message ?? e)}`;
+        }
+      }
       const billDate = odooDateTimeToLocal(so.commitment_date).date;
       if (billDate) {
         try {
-          await odooExecuteWrite('account.move', 'write', [newInvoiceIds, { invoice_date: billDate }], { context: NO_MAIL_CONTEXT });
+          // Delivery date = planned delivery date of the SO too (Axel, 2026-11-06, R2) — otherwise
+          // Odoo fills it with the day the picking was validated (≈ 9 % of app invoices off by a day).
+          await odooExecuteWrite('account.move', 'write', [newInvoiceIds, { invoice_date: billDate, delivery_date: billDate }], { context: NO_MAIL_CONTEXT });
         } catch (e: any) {
-          // Non-fatal — the invoice itself was created fine, only its Bill Date field failed to
+          // Non-fatal — the invoice itself was created fine, only its date fields failed to
           // set. Left for manual fixing on Odoo rather than failing the whole validation.
-          invoiceError = `Hóa đơn ${invoiceName} đã tạo, nhưng không set được ngày hóa đơn (Bill Date) — vui lòng chỉnh thủ công trên Odoo: ${String(e?.message ?? e)}`;
+          invoiceError = `Hóa đơn ${invoiceName} đã tạo, nhưng không set được ngày hóa đơn / ngày giao hàng — vui lòng chỉnh thủ công trên Odoo: ${String(e?.message ?? e)}`;
         }
       }
     } else {
