@@ -155,7 +155,7 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
       <MonthGrid data={week} lang={lang} focusDay={focus} onCell={(e, day) => setPick({ e, day })} onDay={holiday} onWeek={publish} />
       <Legend lang={lang} />
       <div className="text-[10px] px-1 leading-relaxed" style={{ color: '#6B7280' }}>
-        {tr('Publish each week with the button above it · tap a cell to change it · tap a day to set a team holiday.', 'Công bố từng tuần bằng nút phía trên tuần đó · chạm ô để đổi · chạm ngày để đặt ngày lễ cho cả nhóm.')}
+        {tr('Publish each week with the button above it — if you forget, next week is published automatically after Saturday · tap a cell to change it · tap a day to set a team holiday.', 'Công bố từng tuần bằng nút phía trên tuần đó — nếu quên, tuần sau sẽ tự động công bố sau Thứ 7 · chạm ô để đổi · chạm ngày để đặt ngày lễ cho cả nhóm.')}
       </div>
       {alerts.length > 0 && (
         <div className="rounded-2xl px-3.5 py-2.5 space-y-0.5" style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
