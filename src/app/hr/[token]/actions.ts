@@ -32,12 +32,8 @@ export async function loadMeAction(token: string, month?: string): Promise<{ dat
   const m = month && /^\d{4}-\d{2}-\d{2}$/.test(month) ? monthStart(month) : monthStart(today);
   const week = await hrLoadMonth(db, e.team, m);
   if ('error' in week) return { error: week.error };
-  // Unpublished weeks: colleagues only see days off, not the leader's draft shifts.
-  const pub = new Set(week.weeks.filter((w) => w.published).map((w) => w.start));
-  for (const k of Object.keys(week.stored)) {
-    const d = k.split('|')[1];
-    if (!pub.has(weekStart(d)) && !HR_OFF_CODES.includes(week.stored[k] as any) && week.stored[k] !== 'PH') delete week.stored[k];
-  }
+  // Unpublished (draft) weeks are shown too, marked as draft (Hưng, 2026-11-06: the team must still see
+  // the draft schedule when he unpublishes a week).
   const [reqs, lines, offs] = await Promise.all([
     db.from('hr_requests').select('*').eq('employee_id', e.id).order('created_at', { ascending: false }).limit(30),
     db.from('hr_ot_lines').select('confirm, hr_ot_requests(id, day, time_from, time_to, hours, reason, status, created_by_name)').eq('employee_id', e.id),

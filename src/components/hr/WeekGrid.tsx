@@ -91,7 +91,7 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
                       </button>
                     ) : (
                       <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: p ? '#047857' : '#b45309' }}>
-                        ● {p ? (lang === 'vi' ? 'Đã công bố' : 'Published') : (lang === 'vi' ? 'Chưa công bố' : 'Not published')}
+                        ● {p ? (lang === 'vi' ? 'Đã công bố' : 'Published') : (lang === 'vi' ? 'Bản nháp · có thể đổi' : 'Draft · may change')}
                       </span>
                     )}
                   </div>
@@ -136,12 +136,13 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
                 {data.days.map((d) => {
                   const c = codeOf(e, d);
                   const isWork = c === '7' || c === '8';
-                  const hidden = hideUnpublished && isWork && !pub.has(weekStart(d));
-                  const shown = hidden ? '·' : codeText(c, lang);
+                  // Draft week (employee view): shifts shown in italics — may still change.
+                  const draft = hideUnpublished && isWork && !pub.has(weekStart(d));
+                  const shown = codeText(c, lang);
                   const full = HR_OFF_CODES.includes(c) && !e.is_casual && offOn(d) > offLimit(data.rules, d);
                   const cell = (
                     <span className={`w-[30px] h-[24px] rounded-md flex items-center justify-center mx-auto whitespace-nowrap ${shown.length > 2 ? 'text-[9px]' : 'text-[11px]'}`}
-                      style={{ ...codeStyle(c), ...(full ? { outline: '2px solid #DC2626', outlineOffset: '1px' } : {}) }}>{shown}</span>
+                      style={{ ...codeStyle(c), ...(draft ? { fontStyle: 'italic', color: '#C4B48A' } : {}), ...(full ? { outline: '2px solid #DC2626', outlineOffset: '1px' } : {}) }}>{shown}</span>
                   );
                   const st: React.CSSProperties = { background: mine ? '#FFF8DC' : isWeekend(d) ? '#FDFBF3' : undefined, borderBottom: '1px solid #F3EED9', opacity: inMonth(d) ? 1 : 0.45, height: 42, ...sep(d) };
                   return (

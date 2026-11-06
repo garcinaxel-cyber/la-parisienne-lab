@@ -171,8 +171,8 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
         onCell={(e, d) => { if (e.id === me.id) { setSel(d); setMsg(null); } }} />
       <Legend lang={lang} />
       <div className="rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed" style={{ background: '#FFFAEE', border: BORDER, color: '#1A4731' }}>
-        {tr('Your row is highlighted. Read only — tap one of YOUR days to take it off (accepted at once if the day has room) or to cancel. Weeks not published yet only show days off.',
-          'Dòng của em được tô vàng. Chỉ xem — chạm vào ngày của EM để xin nghỉ (được nhận ngay nếu còn chỗ) hoặc để hủy. Tuần chưa công bố chỉ hiện ngày nghỉ.')}
+        {tr('Your row is highlighted. Read only — tap one of YOUR days to take it off (accepted at once if the day has room) or to cancel. Draft weeks (not published yet) may still change.',
+          'Dòng của em được tô vàng. Chỉ xem — chạm vào ngày của EM để xin nghỉ (được nhận ngay nếu còn chỗ) hoặc để hủy. Tuần bản nháp (chưa công bố) có thể còn thay đổi.')}
       </div>
       {sel && (
         <div className="bg-white rounded-2xl p-3.5 space-y-2" style={{ border: '2px solid #C9A84C' }}>
