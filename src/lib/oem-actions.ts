@@ -73,7 +73,7 @@ async function brokenReasonTag(): Promise<number[]> {
 async function pushRowToOdoo(supabase: any, row: any): Promise<{ status: string; ref?: string | null; error?: string | null; moId?: number | null }> {
   if (row.kind === 'scrap_bulk' || row.kind === 'found') return { status: 'skipped' };
   if (row.kind === 'packed') {
-    const r = row.odoo_mo_id ? await resumeOemMO(Number(row.odoo_mo_id)) : await createAndProduceOemMO(row.sku, Number(row.qty), row.pack_date);
+    const r = row.odoo_mo_id ? await resumeOemMO(Number(row.odoo_mo_id), row.pack_date) : await createAndProduceOemMO(row.sku, Number(row.qty), row.pack_date);
     return { status: r.ok ? 'done' : 'error', ref: r.moName ?? null, error: r.ok ? null : (r.error ?? 'Odoo error'), moId: r.moId ?? row.odoo_mo_id ?? null };
   }
   // scrap_finished — take the bags out of the location where the OEM MOs put them.
@@ -236,11 +236,25 @@ export async function receiveProductionAction(id: string, receivedKg: number | n
   const kg = receivedKg == null ? declared : Math.round(Number(receivedKg) * 1000) / 1000;
   if (!(kg >= 0) || kg > declared + 0.0005) return { error: 'more-than-declared' };
   if (kg < declared - 0.0005 && !(note ?? '').trim()) return { error: 'reason-required' };
-  const { error } = await svc.from('lab_mm_production_log').update({
+  const { data: upd, error } = await svc.from('lab_mm_production_log').update({
     status: 'received', received_kg: Math.min(kg, declared), received_at: new Date().toISOString(),
     received_by: auth.id, received_by_name: auth.name, receive_note: (note ?? '').trim().slice(0, 300) || null,
-  }).eq('id', id).eq('status', 'pending');
-  return error ? { error: error.message } : { ok: true };
+  }).eq('id', id).eq('status', 'pending').select('id, sku, group_key, prod_date, received_kg');
+  if (error) return { error: error.message };
+  // Bulk by the kg (Axel, 2026-11-06): the client buys in bulk, there is no real packing step and
+  // the staff forgot to enter it, so Odoo never saw the production. The received kg now become the
+  // finished product at once: one 'packed' entry dated on the PRODUCTION day, queued for the
+  // /api/oem/push-queue cron, which makes the Odoo MO dated (stock + accounting) on that day.
+  const b = upd?.[0];
+  if (b && b.sku && /-KG$/.test(b.sku) && Number(b.received_kg) > 0) {
+    const { error: pErr } = await svc.from('lab_mm_packaging_log').insert({
+      pack_date: b.prod_date, kind: 'packed', sku: b.sku, group_key: b.group_key, qty: Number(b.received_kg),
+      odoo_status: 'queued', source: 'reception', created_by: auth.id, created_by_name: auth.name,
+      note: `Tự động khi nhận mẻ ${b.id.slice(0, 8)}`,
+    });
+    if (pErr) console.error('[oem] auto packed entry not written', pErr.message);
+  }
+  return { ok: true };
 }
 
 // Team-lead corrections (Axel, 2026-10-07): the accounts the admin ticked in Settings (key

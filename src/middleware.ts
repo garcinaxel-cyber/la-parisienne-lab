@@ -19,6 +19,8 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/odoo/confirm-mos')) return NextResponse.next();
   // Rooms linked to Odoo (2026-10-29): pg_cron every 15 min, secret-protected in the route itself.
   if (pathname.startsWith('/api/odoo/rooms')) return NextResponse.next();
+  // OEM packaging queue → Odoo MOs dated on the production day (2026-11-06), secret-gated in the route.
+  if (pathname.startsWith('/api/oem/push-queue')) return NextResponse.next();
   // Online-sales late-payment alert cron (2026-09-06), secret-gated itself — see
   // src/app/api/odoo/online-order-payment-alert/route.ts.
   if (pathname.startsWith('/api/odoo/online-order-payment-alert')) return NextResponse.next();

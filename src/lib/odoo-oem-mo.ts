@@ -15,6 +15,38 @@ function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
 }
 
+// Back-dating (Axel, 2026-11-06): production entered late must land on the day it was baked, in
+// stock AND in accounting. Odoo stamps "now" on everything it closes, so for a past lab day:
+//  - button_mark_done runs with context force_period_date → every valuation journal entry (the MO
+//    and the sub-recipe MOs it closes in the same call) is dated on the production day;
+//  - right after, the done stock moves / move lines of the MO and of its sub-recipe MOs (origin =
+//    MO name, recursively) are re-dated to that day (12:00 VN), so stock-at-date is right.
+// The MO record's own date_finished cannot be edited once done (Odoo refuses) — cosmetic only.
+// The valuation layer keeps its creation date (not editable) — the journal entries carry the period.
+export function labTodayIso(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+}
+const isPastDay = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && date < labTodayIso();
+const doneCtx = (date: string) => (isPastDay(date) ? { context: { force_period_date: date } } : {});
+
+async function backdateMoTree(moId: number, moName: string, date: string): Promise<void> {
+  if (!isPastDay(date)) return;
+  const when = `${date} 05:00:00`;
+  const ids = [moId]; let names = [moName];
+  for (let depth = 0; depth < 4 && names.length; depth++) {
+    const kids = await tmo(odooExecute<any[]>('mrp.production', 'search_read', [[['origin', 'in', names]]], { fields: ['id', 'name'], limit: 50 }), 15000, 'kids');
+    const fresh = kids.filter(k => !ids.includes(k.id));
+    ids.push(...fresh.map(k => k.id)); names = fresh.map(k => k.name);
+  }
+  const moves = await tmo(odooExecute<any[]>('stock.move', 'search_read',
+    [['&', ['state', '=', 'done'], '|', ['production_id', 'in', ids], ['raw_material_production_id', 'in', ids]]], { fields: ['id'], limit: 500 }), 20000, 'moves');
+  const moveIds = moves.map(m => m.id);
+  if (!moveIds.length) return;
+  await tmo(odooExecuteWrite('stock.move', 'write', [moveIds, { date: when }]), 30000, 'date-moves');
+  const lines = await tmo(odooExecute<any[]>('stock.move.line', 'search_read', [[['move_id', 'in', moveIds]]], { fields: ['id'], limit: 2000 }), 20000, 'lines');
+  if (lines.length) await tmo(odooExecuteWrite('stock.move.line', 'write', [lines.map(l => l.id), { date: when }]), 30000, 'date-lines');
+}
+
 export interface OemMoResult { ok: boolean; moId?: number; moName?: string; state?: string; error?: string }
 
 export async function createAndProduceOemMO(sku: string, qty: number, date: string): Promise<OemMoResult> {
@@ -50,10 +82,12 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
     if (mo?.has_producible_component) await tmo(odooExecuteWrite('mrp.production', 'action_bypass_subsequent', [[moId]]), 30000, 'bypass');
     await tmo(odooExecuteWrite('mrp.production', 'action_confirm', [[moId]]), 40000, 'confirm');
     await tmo(odooExecuteWrite('mrp.production', 'write', [[moId], { product_qty: qty }]), 30000, 'qty');
-    const done = await tmo(odooExecuteWrite<any>('mrp.production', 'button_mark_done', [[moId]]), 60000, 'done');
+    const done = await tmo(odooExecuteWrite<any>('mrp.production', 'button_mark_done', [[moId]], doneCtx(date)), 60000, 'done');
     if (done && typeof done === 'object' && done.res_model) {
       return { ok: false, moId, moName, state: 'confirmed', error: `Odoo asked for confirmation (${done.res_model}) — finish ${moName} by hand in Odoo` };
     }
+    try { await backdateMoTree(moId, moName ?? '', date); }
+    catch (e: any) { return { ok: false, moId, moName, state: 'done', error: `done, but re-dating failed: ${String(e?.message ?? e)}` }; }
     // Room Hung: bags/cartons (not on any slip) are moved LAB/Stock → Room Hung by the rooms cron
     // (topUpRecentRoomMOs) — one place only, so the transfer is never made twice.
     return { ok: true, moId, moName, state: 'done' };
@@ -64,7 +98,7 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
 
 // Retry an MO that was created but did not reach "done" (e.g. timeout, component issue):
 // resume from its current state instead of creating a second MO for the same entry.
-export async function resumeOemMO(moId: number): Promise<OemMoResult> {
+export async function resumeOemMO(moId: number, date?: string): Promise<OemMoResult> {
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
   try {
     const [mo] = await tmo(odooExecute<any[]>('mrp.production', 'read', [[moId]], { fields: ['name', 'state', 'product_qty', 'has_producible_component'] }), 15000, 'read');
@@ -76,10 +110,11 @@ export async function resumeOemMO(moId: number): Promise<OemMoResult> {
       await tmo(odooExecuteWrite('mrp.production', 'action_confirm', [[moId]]), 40000, 'confirm');
     }
     await tmo(odooExecuteWrite('mrp.production', 'write', [[moId], { product_qty: mo.product_qty }]), 30000, 'qty');
-    const done = await tmo(odooExecuteWrite<any>('mrp.production', 'button_mark_done', [[moId]]), 60000, 'done');
+    const done = await tmo(odooExecuteWrite<any>('mrp.production', 'button_mark_done', [[moId]], date ? doneCtx(date) : {}), 60000, 'done');
     if (done && typeof done === 'object' && done.res_model) {
       return { ok: false, moId, moName: mo.name, state: 'confirmed', error: `Odoo asked for confirmation (${done.res_model}) — finish ${mo.name} by hand in Odoo` };
     }
+    if (date) await backdateMoTree(moId, mo.name, date);
     return { ok: true, moId, moName: mo.name, state: 'done' };
   } catch (e: any) {
     return { ok: false, moId, error: String(e?.message ?? e) };
