@@ -5,6 +5,9 @@ import { createAndProduceOemMO, resumeOemMO } from '@/lib/odoo-oem-mo';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
+// never serve a Supabase read from Next's fetch cache here (06/11: a stale 'queued' read re-ran one entry)
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 // OEM packaging queue (Axel, 2026-11-06). 'packed' entries with odoo_status = 'queued' — made
 // automatically when an assistant receives a batch, or by a back-fill — become Odoo MOs here,
@@ -24,14 +27,11 @@ export async function GET(req: Request) {
 
   const t0 = Date.now(); const out: any[] = [];
   while (Date.now() - t0 < 200_000) {
-    const { data: next } = await sb.from('lab_mm_packaging_log').select('id')
-      .eq('kind', 'packed').eq('odoo_status', 'queued').order('pack_date').order('created_at').limit(1);
-    if (!next?.length) break;
-    // claim it (a parallel run cannot take the same row)
-    const { data: claimed } = await sb.from('lab_mm_packaging_log').update({ odoo_status: 'running' })
-      .eq('id', next[0].id).eq('odoo_status', 'queued').select('id, sku, qty, pack_date, odoo_mo_id');
-    const row = claimed?.[0];
-    if (!row) continue;
+    // atomic claim in the database (oldest queued entry, locked, set to 'running' in one statement)
+    const { data: claimed, error: cErr } = await sb.rpc('lab_mm_claim_packaging');
+    if (cErr) { out.push({ error: cErr.message }); break; }
+    const row = (claimed as any[] | null)?.[0];
+    if (!row) break;
     // Guard (06/11: one entry got 3 MOs): an MO already made for this entry (same product, origin
     // "OEM <day>", same qty, created in the last 6 h) is re-used, never made twice.
     let moId = row.odoo_mo_id ? Number(row.odoo_mo_id) : null;
@@ -54,7 +54,7 @@ export async function GET(req: Request) {
     await sb.from('lab_mm_packaging_log').update({
       odoo_status: r.ok ? 'done' : 'error', odoo_ref: r.moName ?? null, odoo_error: r.ok ? null : (r.error ?? 'Odoo error'),
       ...(r.moId ? { odoo_mo_id: r.moId } : {}),
-    }).eq('id', row.id);
+    }).eq('id', row.id).eq('odoo_status', 'running');
     out.push({ sku: row.sku, date: row.pack_date, ok: r.ok, mo: r.moName, error: r.error });
   }
   const { count } = await sb.from('lab_mm_packaging_log').select('id', { count: 'exact', head: true }).eq('odoo_status', 'queued');
