@@ -5,6 +5,8 @@ import StationView from './StationView';
 import type { Team } from '@/lib/types';
 import { TEAMS } from '@/lib/types';
 import { filterByPublished } from '@/lib/published-cards';
+import { HR_PILOT_TEAMS } from '@/lib/hr';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 
 export const revalidate = 0;
 // Room count start produces the team's MOs after the reply (waitUntil) — room for it.
@@ -260,7 +262,21 @@ export default async function StationPage({ params }: { params: { team: string }
 
   const [todayAssignments, tomorrowAssignments] = await Promise.all([loadDay(today), loadDay(tomorrow)]);
 
+  // HR pilot (2026-11-06): the Team tab is for admins / lab managers and the team's HR leader only
+  // (most team members have a 'chef' account, so the role alone is not enough — see lab_v146).
+  let hrManager = false;
+  if (HR_PILOT_TEAMS.includes(team) && userId) {
+    if (userRole === 'admin' || userRole === 'lab_manager') hrManager = true;
+    else if (userRole === 'chef' && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data: lead } = await service.from('hr_employees').select('id')
+        .eq('team', team).eq('is_leader', true).eq('active', true).eq('profile_id', userId).limit(1);
+      hrManager = !!lead?.length;
+    }
+  }
+
   return <StationView team={team} teamSlug={params.team}
     assignments={todayAssignments} tomorrowAssignments={tomorrowAssignments}
-    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} userId={userId} userName={userName} />;
+    viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} userId={userId} userName={userName}
+    hrManager={hrManager} />;
 }

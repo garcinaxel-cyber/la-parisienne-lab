@@ -230,7 +230,9 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 
 export default function StationView({
   team, teamSlug, assignments: initial, tomorrowAssignments = [], viewDate, today, tomorrow, isHistoryView, userRole, userId = null, userName = null,
+  hrManager = false,
 }: {
+  hrManager?: boolean;
   team: Team;
   teamSlug: string;
   assignments: Assignment[];
@@ -1303,7 +1305,7 @@ export default function StationView({
       icon: <Package size={14} />,
     }] : []),
     // HR pilot (Axel, 2026-11-06): schedule, requests, overtime — Team Hưng first, leader/admin only.
-    ...(HR_PILOT_TEAMS.includes(team) && !(userRole === 'worker' || userRole === 'viewer' || userRole === 'employee') ? [{
+    ...(HR_PILOT_TEAMS.includes(team) && hrManager ? [{
       id: 'team' as Tab,
       labelVi: 'Nhóm',
       labelEn: 'Team',
@@ -2686,7 +2688,7 @@ export default function StationView({
         );
       })()}
 
-      {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && !isEmployee && (
+      {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && hrManager && (
         <div className="max-w-3xl mx-auto px-3 py-3">
           <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>

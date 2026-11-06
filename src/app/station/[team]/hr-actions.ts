@@ -10,6 +10,12 @@ function service() {
   return createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
 }
 
+async function isHrLeader(team: string, userId: string): Promise<boolean> {
+  const { data } = await service().from('hr_employees').select('id')
+    .eq('team', team).eq('is_leader', true).eq('active', true).eq('profile_id', userId).limit(1);
+  return !!data?.length;
+}
+
 async function guard(team: string): Promise<{ name: string } | { error: string }> {
   if (!HR_PILOT_TEAMS.includes(team)) return { error: 'Team not in the HR pilot' };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { error: 'Not configured' };
@@ -19,10 +25,8 @@ async function guard(team: string): Promise<{ name: string } | { error: string }
   const { data: profile } = await supabase.from('profiles').select('role, full_name').eq('id', session.user.id).single();
   const role = profile?.role ?? '';
   if (role === 'admin' || role === 'lab_manager') return { name: profile?.full_name ?? 'Admin' };
-  if (role === 'chef') {
-    const { data: lp } = await supabase.from('lab_profiles').select('team').eq('id', session.user.id).single();
-    if (lp?.team === team) return { name: profile?.full_name ?? 'Chef' };
-  }
+  // Most team members have a 'chef' station account: only the employee flagged leader (v146) manages.
+  if (role === 'chef' && (await isHrLeader(team, session.user.id))) return { name: profile?.full_name ?? 'Chef' };
   return { error: 'Not allowed' };
 }
 
