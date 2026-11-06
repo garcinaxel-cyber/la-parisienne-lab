@@ -275,8 +275,17 @@ export default async function StationPage({ params }: { params: { team: string }
     }
   }
 
+  // "Của tôi" tab (2026-11-06): the signed-in user's own HR space, if an hr_employees row is linked to
+  // the account (profile_id). The token is the same key as the /hr/<token> link — only ever handed to its owner.
+  let hrMyToken: string | null = null;
+  if (userId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const service = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    const { data: me } = await service.from('hr_employees').select('access_token').eq('profile_id', userId).eq('active', true).limit(1);
+    hrMyToken = me?.[0]?.access_token ?? null;
+  }
+
   return <StationView team={team} teamSlug={params.team}
     assignments={todayAssignments} tomorrowAssignments={tomorrowAssignments}
     viewDate={today} today={today} tomorrow={tomorrow} isHistoryView={false} userRole={userRole} userId={userId} userName={userName}
-    hrManager={hrManager} />;
+    hrManager={hrManager} hrMyToken={hrMyToken} />;
 }

@@ -12,10 +12,12 @@ import { loadMeAction, submitRequestAction, cancelRequestAction, confirmOtAction
 type Tab = 'schedule' | 'requests' | 'off' | 'month';
 const BORDER = '1px solid #E0D49A';
 
-export default function EmployeeHrView({ token }: { token: string }) {
-  const [lang, setLangState] = useState<'vi' | 'en'>('vi');
-  useEffect(() => { try { const l = localStorage.getItem('hr-lang'); if (l === 'en' || l === 'vi') setLangState(l); } catch {} }, []);
+// embedded = shown inside the station ("Của tôi" tab, 2026-11-06): no page header, station language.
+export default function EmployeeHrView({ token, embedded = false, stationLang }: { token: string; embedded?: boolean; stationLang?: 'vi' | 'en' }) {
+  const [ownLang, setLangState] = useState<'vi' | 'en'>('vi');
+  useEffect(() => { if (embedded) return; try { const l = localStorage.getItem('hr-lang'); if (l === 'en' || l === 'vi') setLangState(l); } catch {} }, [embedded]);
   const setLang = (l: 'vi' | 'en') => { setLangState(l); try { localStorage.setItem('hr-lang', l); } catch {} };
+  const lang = embedded && stationLang ? stationLang : ownLang;
   const tr = (en: string, vi: string) => (lang === 'vi' ? vi : en);
   const [tab, setTab] = useState<Tab>('schedule');
   const [data, setData] = useState<MeData | null>(null);
@@ -50,8 +52,8 @@ export default function EmployeeHrView({ token }: { token: string }) {
   const e = data?.employee;
 
   return (
-    <div className="min-h-screen" style={{ background: '#FFF4CC' }}>
-      <header className="sticky top-0 z-20" style={{ background: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+    <div className={embedded ? '' : 'min-h-screen'} style={embedded ? undefined : { background: '#FFF4CC' }}>
+      <header className={embedded ? 'rounded-2xl overflow-hidden mt-3 mx-3' : 'sticky top-0 z-20'} style={{ background: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-xl mx-auto px-3 py-2.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-[34px] h-[34px] rounded-xl flex items-center justify-center text-xs font-black text-white shrink-0" style={{ background: 'rgba(255,244,204,0.2)' }}>
@@ -62,12 +64,12 @@ export default function EmployeeHrView({ token }: { token: string }) {
               <div className="text-[11px] truncate" style={{ color: 'rgba(255,255,255,0.75)' }}>{e ? `Team ${e.team === 'hung' ? 'Hưng' : e.team} · ${e.position ?? ''}` : ''}</div>
             </div>
           </div>
-          <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'rgba(255,255,255,0.15)' }}>
+          {!embedded && <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'rgba(255,255,255,0.15)' }}>
             {(['vi', 'en'] as const).map((l) => (
               <button key={l} onClick={() => setLang(l)} className="px-2 min-h-[28px] rounded text-[11px] font-bold"
                 style={lang === l ? { background: '#FFF4CC', color: '#1A4731' } : { color: 'rgba(255,255,255,0.7)' }}>{l.toUpperCase()}</button>
             ))}
-          </div>
+          </div>}
         </div>
         <div className="max-w-xl mx-auto flex" style={{ background: '#163D29' }}>
           {tabBtn('schedule', tr('Schedule', 'Lịch làm'))}

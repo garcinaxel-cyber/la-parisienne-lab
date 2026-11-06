@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users, User as UserIcon,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { isOemSku } from '@/lib/oem';
@@ -15,6 +15,7 @@ import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
 import HrTeamTab from './HrTeamTab';
+import EmployeeHrView from '@/app/hr/[token]/EmployeeHrView';
 import { HR_PILOT_TEAMS } from '@/lib/hr';
 import type { StockProduct } from './actions';
 // Teams on the stock-production screen (Axel, 2026-10-23): all their products are storable and
@@ -146,7 +147,7 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw' | 'team';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw' | 'team' | 'me';
 // Raw materials tab (withdrawals + purchase requests, Axel 2026-10-08) — test phase on team Hưng only.
 const RAW_TEAMS = ['hung', 'baby_mama', 'entremet', 'baker'];
 
@@ -230,9 +231,10 @@ const STATUS_FLOW: Partial<Record<AssignmentStatus, AssignmentStatus>> = {
 
 export default function StationView({
   team, teamSlug, assignments: initial, tomorrowAssignments = [], viewDate, today, tomorrow, isHistoryView, userRole, userId = null, userName = null,
-  hrManager = false,
+  hrManager = false, hrMyToken = null,
 }: {
   hrManager?: boolean;
+  hrMyToken?: string | null;
   team: Team;
   teamSlug: string;
   assignments: Assignment[];
@@ -1311,6 +1313,14 @@ export default function StationView({
       labelEn: 'Team',
       count: 0,
       icon: <Users size={14} />,
+    }] : []),
+    // HR pilot: every employee linked to this account sees his own space (schedule, requests, days off).
+    ...(hrMyToken ? [{
+      id: 'me' as Tab,
+      labelVi: 'Của tôi',
+      labelEn: 'Me',
+      count: 0,
+      icon: <UserIcon size={14} />,
     }] : []),
   ];
 
@@ -2691,6 +2701,12 @@ export default function StationView({
       {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && hrManager && (
         <div className="max-w-3xl mx-auto px-3 py-3">
           <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
+        </div>
+      )}
+
+      {activeTab === 'me' && hrMyToken && (
+        <div className="max-w-xl mx-auto pb-6">
+          <EmployeeHrView token={hrMyToken} embedded stationLang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
