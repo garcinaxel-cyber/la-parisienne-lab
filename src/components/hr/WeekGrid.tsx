@@ -87,7 +87,7 @@ export default function WeekGrid({ week, lang, meId, hideWork, onCell, onDay, on
               const shown = hideWork && isWork ? '·' : codeText(c, lang);
               const full = HR_OFF_CODES.includes(c) && !e.is_casual && offOn(d) > offLimit(week.rules, d);
               const cell = (
-                <span className="w-[28px] h-[24px] rounded-md text-[11px] flex items-center justify-center mx-auto"
+                <span className={`w-[30px] h-[24px] rounded-md flex items-center justify-center mx-auto whitespace-nowrap ${shown.length > 2 ? 'text-[9px]' : 'text-[11px]'}`}
                   style={{ ...codeStyle(c), ...(full ? { outline: '2px solid #DC2626', outlineOffset: '1px' } : {}) }}>{shown}</span>
               );
               const wk = isWeekend(d);
@@ -118,7 +118,7 @@ export function Legend({ lang }: { lang: string }) {
   return (
     <div className="flex flex-wrap gap-x-2.5 gap-y-1 text-[10px] px-1 items-center" style={{ color: '#374151' }}>
       {items.map(([c, l]) => (
-        <span key={c} className="inline-flex items-center gap-1"><span className="w-[22px] h-[16px] rounded text-[9px] inline-flex items-center justify-center" style={codeStyle(c)}>{codeText(c, lang)}</span>{l}</span>
+        <span key={c} className="inline-flex items-center gap-1"><span className="min-w-[22px] px-1 h-[16px] rounded text-[9px] leading-none inline-flex items-center justify-center whitespace-nowrap" style={codeStyle(c)}>{codeText(c, lang)}</span>{l}</span>
       ))}
       <span style={{ color: '#9CA3AF' }}>7 = 07–16h · 8 = 08–17h</span>
     </div>

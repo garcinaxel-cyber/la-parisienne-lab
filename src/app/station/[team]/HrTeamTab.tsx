@@ -186,7 +186,7 @@ function ScheduleView({ data, team, lang, tr, ws, setWs, reload, busy, setData }
               return (
                 <button key={c} onClick={() => setCode(c)} className="min-h-[54px] rounded-xl flex flex-col items-center justify-center gap-0.5 active:scale-95"
                   style={{ border: cur ? '2px solid #1A4731' : BORDER, background: '#fff' }}>
-                  <span className="w-[30px] h-[22px] rounded-md text-[11px] flex items-center justify-center" style={codeStyle(c)}>{codeText(c, lang)}</span>
+                  <span className="min-w-[30px] px-1 h-[22px] rounded-md text-[11px] flex items-center justify-center whitespace-nowrap" style={codeStyle(c)}>{codeText(c, lang)}</span>
                   <span className="text-[10px] leading-tight px-1 text-center" style={{ color: '#374151' }}>{lang === 'vi' ? HR_CODE_LABEL[c].vi : HR_CODE_LABEL[c].en}</span>
                 </button>
               );
