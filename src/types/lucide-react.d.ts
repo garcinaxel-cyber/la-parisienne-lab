@@ -103,4 +103,7 @@ declare module 'lucide-react' {
   export const FolderArchive: LucideIcon;
   export const ListFilter: LucideIcon;
   export const ArrowUpDown: LucideIcon;
+  export const ChefHat: LucideIcon;
+  export const ListChecks: LucideIcon;
+  export const MoreHorizontal: LucideIcon;
 }

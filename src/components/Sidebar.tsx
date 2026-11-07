@@ -1,263 +1,210 @@
 'use client';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ClipboardList, Users, LogOut, BookOpen, Scan, TrendingUp, Ban, PackageCheck, Zap, ShieldCheck, ClipboardCheck, Box, Store, Trash2, ShoppingBag, UserCog, CalendarDays, FolderArchive, Eye, Factory, Truck, Wheat } from 'lucide-react';
+import {
+  ListChecks, ChefHat, ClipboardCheck, Zap, PackageCheck, Boxes, Truck, Factory, Store, TrendingUp,
+  BookOpen, Users, LogOut, MoreHorizontal, X,
+} from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import type { UserRole } from '@/lib/types';
+import { FAMILIES, visibleNav, splitPrimary, activeItem, badgeOf, badgeIsRed, type Badges, type NavItem } from '@/lib/nav';
 
-// `family` groups items under a section header on the DESKTOP sidebar only (Axel, 2026-09-21 —
-// "Atelier" design pass: 20 flat links → 4 pliable families: Aujourd'hui/Production/Boutiques/
-// Pilotage). Purely presentational — same hrefs, same adminOnly gating, same badges as before.
-// The MOBILE top bar stays flat/scrollable and ungrouped on purpose: Axel chose to keep it
-// exactly as-is for the assistant role ("10 onglets à plat, c'est mieux" — zero relearning).
-const FAMILY_LABEL: Record<string, { vi: string; en: string }> = {
-  today:      { vi: 'Hôm nay',      en: "Aujourd'hui" },
-  production: { vi: 'Sản xuất',     en: 'Production' },
-  shops:      { vi: 'Cửa hàng',     en: 'Boutiques' },
-  piloting:   { vi: 'Điều hành',    en: 'Pilotage' },
+// Menu of the lab app (redesign 2026-11-07). Entries, roles and order come from src/lib/nav.ts.
+// Desktop: fixed green sidebar grouped by moment of the day. Phone: slim top bar + bottom bar
+// with 4 entries per role and "More" for the rest (same pattern as the chefs' station).
+const ICONS: Record<string, any> = { ListChecks, ChefHat, ClipboardCheck, Zap, PackageCheck, Boxes, Truck, Factory, Store, TrendingUp, BookOpen, Users };
+
+type Profile = { full_name: string; role: UserRole; can_purchase?: boolean } | null;
+
+function Badge({ n, red, small }: { n: number; red: boolean; small?: boolean }) {
+  if (!n) return null;
+  return (
+    <span className={`${small ? 'text-[9px] px-1 min-w-[16px]' : 'text-[10px] px-1.5 min-w-[20px]'} font-bold rounded-full py-0.5 text-center leading-none tabular-nums`}
+      style={red ? { backgroundColor: '#DC2626', color: '#fff' } : { backgroundColor: '#C9A84C', color: '#1A4731' }}>
+      {n > 99 ? '99+' : n}
+    </span>
+  );
+}
+
+const ROLE_LABEL: Record<string, { vi: string; en: string }> = {
+  admin: { vi: 'Quản trị', en: 'Admin' }, lab_manager: { vi: 'Quản lý Lab', en: 'Lab manager' },
+  assistant: { vi: 'Trợ lý', en: 'Assistant' }, purchasing: { vi: 'Mua hàng', en: 'Purchasing' },
 };
 
-// The purchasing role only gets these two entries (Axel, 2026-10-08).
-const PURCHASING_NAV = ['/purchasing', '/oem-orders'];
-
-const NAV = [
-  { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const, family: 'today' },
-  // "Production Orders" (t('orders')) — hidden from the assistant role specifically (Axel,
-  // 2026-09-21, prod pass: "enlève de la vue des assistantes le production order"). Still
-  // visible to admin/lab_manager. Route + component untouched — visibility only.
-  { href: '/orders',    icon: ClipboardList,   key: 'orders'    as const, family: 'production', hideFor: ['assistant'] as UserRole[] },
-  { href: '/delivery-check', icon: ClipboardCheck, labelVi: 'Kiểm tra giao hàng', labelEn: 'Delivery check', family: 'production' },
-  { href: '/exceptional-orders', icon: Zap,    labelVi: 'Đơn đặc biệt', labelEn: 'Exceptional orders', family: 'production' },
-  { href: '/reception', icon: PackageCheck,   labelVi: 'Nhập kho', labelEn: 'Stock reception', family: 'production' },
-  { href: '/inventory', icon: Box,            labelVi: 'Kiểm kê', labelEn: 'Inventaire', family: 'production' },
-  // LAB's own scrap/loss report (2026-08-27, Axel: "fonction de scrap... pour les produits casse
-  // du lab") — same visibility as the other operational items above, no adminOnly.
-  { href: '/lab-scrap', icon: Trash2,         labelVi: 'Hao hụt Lab', labelEn: 'Lab scrap', family: 'production' },
-  // OEM Orders tracker (Axel, 2026-09-25) — Maison Mooncake + Tianhe Food. The page itself only
-  // lets admin/lab_manager/assistant in; hideFor just keeps the link away from the other roles.
-  { href: '/oem-orders', icon: Factory,       labelVi: 'Đơn hàng OEM', labelEn: 'OEM Orders', family: 'production', hideFor: ['sales', 'viewer', 'shop', 'online_sales', 'shop_manager'] as UserRole[] },
-  // Purchasing (Axel, 2026-10-08): purchase requests, storage withdrawals, history, raw material catalogue.
-  // Only admin and the 'purchasing' role — not the assistant, not the lab manager.
-  { href: '/purchasing', icon: Truck, labelVi: 'Mua hàng', labelEn: 'Purchasing', family: 'production', onlyFor: ['admin', 'purchasing'] as UserRole[] },
-  { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
-  // Online-sales interface (2026-09-06): admin entry point to the online seller's space
-  // (/online-orders lives outside (app) so she never sees this sidebar; admin sees all her orders).
-  // adminOnly already keeps this out of the assistant's view (Axel, 2026-09-21 confirmed it
-  // should stay that way) — literal role === 'admin' below, lab_manager doesn't see it either.
-  { href: '/online-orders', icon: ShoppingBag,     labelVi: 'Bán hàng online', labelEn: 'Ventes en ligne', adminOnly: true, family: 'shops' },
-  // QR codes: moved out of the Admin section so assistants see it too (2026-08-13, Axel —
-  // assistants need to open a chef's station view same as a chef would, e.g. to check what's
-  // showing on their tablet). The page itself has no role gate of its own, just this sidebar
-  // entry, so this alone is enough to unlock it — no adminOnly, visible to admin/lab_manager/
-  // assistant (everyone who reaches this sidebar; chef/worker never do, they're on /station/me).
-  { href: '/admin/qr-codes',  icon: Scan,     key: 'qr_codes'  as const, family: 'shops' },
-];
-const ADMIN_NAV = [
-  { href: '/analytics',       icon: TrendingUp, key: 'analytics' as const, adminOnly: true, family: 'piloting' },
-  // Raw materials taken vs recipes (Axel, 2026-10-08) — costs inside, admin only.
-  { href: '/admin/raw-report', icon: Wheat, labelVi: 'Nguyên liệu: lấy / công thức', labelEn: 'Raw mat.: taken / recipes', adminOnly: true, family: 'piloting' },
-  // Users: admin-only per Axel (2026-08-08) — was already page-blocked for lab_manager,
-  // just wasn't hidden from the sidebar yet.
-  { href: '/admin/users',     icon: Users,    key: 'users'     as const, adminOnly: true, family: 'piloting' },
-  { href: '/admin/fiches',    icon: BookOpen, key: 'fiches'    as const, family: 'piloting' },
-  { href: '/admin/excluded',  icon: Ban,      key: 'excluded'  as const, family: 'piloting' },
-  // Control tool over everyone else's work (4 automated checks: Odoo reconciliation,
-  // delivery-check coverage, production→stock, stock→Odoo), not an operational page — admin
-  // only, deliberately excluded from lab_manager per Axel's explicit request. Renamed "Check"
-  // 2026-08-20 — URL kept as /admin/reconciliation on purpose (zero churn).
-  { href: '/admin/reconciliation', icon: ShieldCheck, labelVi: 'Check', labelEn: 'Check', adminOnly: true, family: 'piloting' },
-  // Shop manager accounts (2026-09-10) — individual logins for the shop managers, admin-only
-  // provisioning (create/update the 3 real accounts) + a read-only roster.
-  { href: '/admin/shop-managers', icon: UserCog, labelVi: 'Quản lý cửa hàng', labelEn: 'Shop managers', adminOnly: true, family: 'shops' },
-  // One-click preview of the managers' own cockpit (Axel, 2026-09-21 — "comme les QR codes des
-  // chefs, accéder à leur interface facilement en un clic"). Opens /shop-manager directly, same
-  // "Open →" pattern as the station QR codes page; admin is now allowed through that route's own
-  // gate too (src/app/shop-manager/page.tsx). Read-only in spirit — the cockpit's own action file
-  // only exposes the two recap reads, no write action lives there.
-  { href: '/shop-manager', icon: Eye, labelVi: 'Xem giao diện quản lý', labelEn: 'Interface managers', adminOnly: true, newTab: true, family: 'shops' },
-  // Temporary "event" shops (2026-09-12) — create/close, linked to an Odoo warehouse Axel
-  // configures himself; the app only looks it up by code, never creates it.
-  // 2026-10-07 (Axel): visible to the lab manager too — she can open an event in one click.
-  // Creating/closing an event and its QR stay admin-only inside the page itself.
-  { href: '/admin/events', icon: CalendarDays, labelVi: 'Event shops', labelEn: 'Event shops', family: 'shops' },
-  // Archives (2026-09-19) — exports Excel mensuels + sauvegardes hebdo (bucket lab-archives) et
-  // état de la rétention. Lecture seule, admin-only.
-  { href: '/admin/archives', icon: FolderArchive, labelVi: 'Lưu trữ', labelEn: 'Archives', adminOnly: true, family: 'piloting' },
-];
-const FAMILY_ORDER = ['today', 'production', 'shops', 'piloting'] as const;
-
-export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptional = 0, pendingOemReceptions = 0, pendingPurchasing = 0, reconciliationIssues = 0, deliveryTasks = 0, cakesNoMessage = 0 }: { profile: { full_name: string; role: UserRole; can_purchase?: boolean } | null; pendingTransfers?: number; pendingExceptional?: number; pendingOemReceptions?: number; pendingPurchasing?: number; reconciliationIssues?: number; deliveryTasks?: number; cakesNoMessage?: number }) {
+export default function Sidebar({ profile, badges = {} }: { profile: Profile; badges?: Badges }) {
   const { t, lang, setLang } = useI18n();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? '';
   const router = useRouter();
-  const labelFor = (it: { key?: string; labelVi?: string; labelEn?: string }) =>
-    it.labelVi ? (lang === 'vi' ? it.labelVi : it.labelEn) : t(it.key as any);
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => { setMoreOpen(false); }, [pathname]);
+
+  const items = visibleNav(profile);
+  const current = activeItem(items, pathname);
+  const { primary, more } = splitPrimary(items, profile?.role);
+  const L = (it: { vi: string; en: string }) => (lang === 'vi' ? it.vi : it.en);
+  const moreCount = more.reduce((t, it) => t + (it.id === 'today' ? 0 : badgeOf(badges, it.badge)), 0);
+  const moreRed = more.some(it => badgeOf(badges, it.badge) > 0 && badgeIsRed(badges, it.badge));
 
   async function logout() {
     await createClient().auth.signOut();
     router.push('/login');
   }
 
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'lab_manager';
+  const LangToggle = ({ dark }: { dark?: boolean }) => (
+    <div className={`flex gap-0.5 rounded-lg p-0.5 ${dark ? 'bg-white/10' : 'bg-navy/5'}`}>
+      {(['vi', 'en'] as const).map(l => (
+        <button key={l} onClick={() => setLang(l)} aria-pressed={lang === l}
+          className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-colors ${lang === l ? 'bg-gold text-navy' : dark ? 'text-white/60 hover:text-white' : 'text-ink-light'}`}>
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <>
-      {/* Desktop sidebar */}
+      {/* ── Desktop sidebar ───────────────────────────────────────────── */}
       <aside className="hidden lg:flex flex-col fixed inset-y-0 left-0 w-64 bg-navy text-white z-30">
-        {/* Logo */}
-        <div className="px-6 py-6 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <img src="/logo-mark-gold.png" alt="" className="w-9 h-9 object-contain shrink-0" />
-            <div>
-              <div className="font-serif font-bold text-white text-sm leading-tight">La Parisienne</div>
-              <div className="text-gold text-xs font-semibold tracking-widest">MANUFACTURING</div>
-            </div>
+        <div className="px-5 py-5 border-b border-white/10 flex items-center gap-3">
+          <img src="/logo-mark-gold.png" alt="" className="w-9 h-9 object-contain shrink-0" />
+          <div>
+            <div className="font-serif font-bold text-white text-[15px] leading-tight">La Paris</div>
+            <div className="text-gold text-[10px] font-semibold tracking-[0.2em]">LAB</div>
           </div>
         </div>
 
-        {/* Nav — scrolls internally now that the list has grown (inventaire + accès boutiques
-            added 2026-08-19) so the footer (lang toggle + logout) never gets pushed off-screen
-            with no way to reach it. min-h-0 is required alongside flex-1 for a flex child to
-            actually be allowed to shrink and scroll instead of just overflowing its parent.
-            Grouped by family (Atelier pass, 2026-09-21) — same items, same hrefs, same badges,
-            just under a small uppercase section header instead of one 20-item flat list. */}
-        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
-          {(() => {
-            const visibleNav = NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role) || (n.href === '/purchasing' && !!profile?.can_purchase)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href)));
-            const visibleAdmin = isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [];
-            const all = [...visibleNav, ...visibleAdmin];
-            return FAMILY_ORDER.map((fam) => {
-              const items = all.filter(it => it.family === fam);
-              if (items.length === 0) return null;
-              return (
-                <div key={fam} className="mb-1">
-                  <p className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/40">
-                    {lang === 'vi' ? FAMILY_LABEL[fam].vi : FAMILY_LABEL[fam].en}
-                  </p>
-                  <div className="space-y-1">
-                    {items.map((item) => {
-                      const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
-                      return (
-                        <Link key={href} href={href} {...((item as any).newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-                            pathname === href || pathname.startsWith(href + '/')
-                              ? 'bg-white/15 text-white'
-                              : 'text-white/70 hover:bg-white/10 hover:text-white'
-                          }`}>
-                          <Icon size={18} /><span className="flex-1">{labelFor(item)}</span>
-                          {href === '/reception' && pendingTransfers > 0 && (
-                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingTransfers}</span>
-                          )}
-                          {href === '/delivery-check' && deliveryTasks > 0 && (
-                            <span title="Delivery gaps to settle" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{deliveryTasks}</span>
-                          )}
-                          {href === '/exceptional-orders' && cakesNoMessage > 0 && (
-                            <span title="Birthday cakes without a message" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{cakesNoMessage}</span>
-                          )}
-                          {href === '/exceptional-orders' && pendingExceptional > 0 && (
-                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{pendingExceptional}</span>
-                          )}
-                          {href === '/purchasing' && pendingPurchasing > 0 && (
-                            <span title="Purchase requests to order + storage slips to confirm" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{pendingPurchasing}</span>
-                          )}
-                          {href === '/oem-orders' && pendingOemReceptions > 0 && (
-                            <span title="OEM batches to receive" className="text-[10px] font-bold rounded-full px-1.5 py-0.5 text-white" style={{ backgroundColor: '#DC2626' }}>{pendingOemReceptions}</span>
-                          )}
-                          {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
-                            <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-gold text-navy">{reconciliationIssues}</span>
-                          )}
-                        </Link>
-                      );
-                    })}
-                  </div>
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-3" aria-label="Main">
+          {FAMILIES.map(fam => {
+            const famItems = items.filter(it => it.family === fam.id);
+            if (!famItems.length) return null;
+            return (
+              <div key={fam.id} className="mb-2">
+                {fam.id !== 'today' && (
+                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/40">{L(fam)}</p>
+                )}
+                <div className="space-y-0.5">
+                  {famItems.map(it => {
+                    const Icon = ICONS[it.icon] ?? ListChecks;
+                    const on = current?.id === it.id;
+                    const n = badgeOf(badges, it.badge);
+                    return (
+                      <Link key={it.id} href={it.href} prefetch={false}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-xl text-[13.5px] font-medium transition-colors ${
+                          on ? 'bg-white/15 text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}>
+                        <Icon size={17} className={on ? 'text-gold' : ''} />
+                        <span className="flex-1 truncate">{L(it)}</span>
+                        <Badge n={n} red={badgeIsRed(badges, it.badge)} />
+                      </Link>
+                    );
+                  })}
                 </div>
-              );
-            });
-          })()}
+              </div>
+            );
+          })}
         </nav>
 
-        {/* Footer */}
-        <div className="px-3 py-4 border-t border-white/10 space-y-3">
-          {/* Lang toggle */}
-          <div className="flex gap-1 px-3">
-            {(['vi','en'] as const).map(l => (
-              <button key={l} onClick={() => setLang(l)}
-                className={`flex-1 rounded-lg py-1 text-xs font-semibold transition-colors ${
-                  lang === l ? 'bg-gold text-navy' : 'text-white/50 hover:text-white'
-                }`}>{l.toUpperCase()}</button>
-            ))}
+        <div className="px-3 py-3 border-t border-white/10 space-y-2">
+          <div className="flex items-center justify-between px-2">
+            <LangToggle dark />
+            <button onClick={logout} className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-white/60 hover:text-white hover:bg-white/10">
+              <LogOut size={14} />{t('logout')}
+            </button>
           </div>
           {profile && (
             <div className="px-3 py-2 rounded-xl bg-white/5">
               <div className="text-sm font-medium text-white truncate">{profile.full_name}</div>
-              <div className="text-xs text-white/50 capitalize">{profile.role.replace('_',' ')}</div>
+              <div className="text-xs text-white/50">{ROLE_LABEL[profile.role] ? L(ROLE_LABEL[profile.role]) : profile.role}</div>
             </div>
           )}
-          <button onClick={logout}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-xl text-sm text-white/60 hover:text-white hover:bg-white/10 transition-colors">
-            <LogOut size={16} />{t('logout')}
-          </button>
         </div>
       </aside>
 
-      {/* Mobile top bar — labels under icons, active state, horizontal scroll if needed */}
-      <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white">
-        <div className="px-3 py-2 flex items-center justify-between gap-2">
+      {/* ── Phone: slim top bar ───────────────────────────────────────── */}
+      <header className="lg:hidden fixed top-0 inset-x-0 z-30 bg-navy text-white"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+        <div className="h-12 px-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain shrink-0" />
-            <span className="font-serif font-bold text-sm truncate">La Parisienne</span>
+            <span className="font-serif font-bold text-[15px] truncate">{current ? L(current) : 'La Paris Lab'}</span>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <div className="flex gap-0.5 rounded-lg p-0.5 bg-white/10">
-              {(['vi','en'] as const).map(l => (
-                <button key={l} onClick={() => setLang(l)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${lang === l ? 'bg-gold text-navy' : 'text-white/60'}`}>
-                  {l.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <button onClick={logout} className="p-1.5 rounded-lg hover:bg-white/10" aria-label={t('logout')}>
-              <LogOut size={16} />
-            </button>
-          </div>
+          <LangToggle dark />
         </div>
-        {/* Fixed-width, non-shrinking tabs (2026-09-21 fix — Axel: "beaucoup d'onglets texte qui
-            se chevauche, pas lisible"). The old flex-1+min-w combo let flex-shrink compress each
-            tab below its label's natural width once there were 10+ of them, so labels and badges
-            bled into the next tab. w-16 + shrink-0 gives every tab the same fixed width and lets
-            overflow-x-auto do the scrolling instead — no more overlap, whatever the tab count. */}
-        <nav className="flex overflow-x-auto border-t border-white/10">
-          {[...NAV.filter(n => (!n.adminOnly || profile?.role === 'admin') && !(n as any).hideFor?.includes(profile?.role) && (!(n as any).onlyFor || (n as any).onlyFor.includes(profile?.role) || (n.href === '/purchasing' && !!profile?.can_purchase)) && (profile?.role !== 'purchasing' || PURCHASING_NAV.includes(n.href))), ...(isAdmin ? ADMIN_NAV.filter(n => !n.adminOnly || profile?.role === 'admin') : [])].map((item) => {
-            const { href, icon: Icon } = item as typeof item & { newTab?: boolean };
-            const active = pathname === href || pathname.startsWith(href + '/');
+      </header>
+
+      {/* ── Phone: bottom bar ─────────────────────────────────────────── */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-border-soft"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }} aria-label="Main">
+        <div className={`grid h-16 ${more.length ? 'grid-cols-5' : primary.length === 2 ? 'grid-cols-2' : 'grid-cols-4'}`}>
+          {primary.map(it => {
+            const Icon = ICONS[it.icon] ?? ListChecks;
+            const on = current?.id === it.id && !moreOpen;
+            const n = badgeOf(badges, it.badge);
             return (
-              <Link key={href} href={href} {...((item as any).newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                className={`relative shrink-0 w-16 flex flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold transition-colors ${
-                  active ? 'text-gold border-b-2 border-gold' : 'text-white/60 border-b-2 border-transparent'
-                }`}>
-                <Icon size={17} />
-                <span className="truncate max-w-[60px] text-center leading-tight">{labelFor(item)}</span>
-                {href === '/reception' && pendingTransfers > 0 && (
-                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{pendingTransfers}</span>
-                )}
-                {href === '/exceptional-orders' && pendingExceptional > 0 && (
-                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{pendingExceptional}</span>
-                )}
-                {href === '/purchasing' && pendingPurchasing > 0 && (
-                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 text-white" style={{ backgroundColor: '#DC2626' }}>{pendingPurchasing}</span>
-                )}
-                {href === '/oem-orders' && pendingOemReceptions > 0 && (
-                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 text-white" style={{ backgroundColor: '#DC2626' }}>{pendingOemReceptions}</span>
-                )}
-                {href === '/admin/reconciliation' && reconciliationIssues > 0 && (
-                  <span className="absolute top-0.5 right-2 text-[9px] font-bold rounded-full px-1 bg-gold text-navy">{reconciliationIssues}</span>
-                )}
+              <Link key={it.id} href={it.href} prefetch={false}
+                className={`relative flex flex-col items-center justify-center gap-1 text-[10.5px] font-semibold ${on ? 'text-navy' : 'text-ink-light'}`}>
+                {on && <span className="absolute top-0 inset-x-4 h-[3px] rounded-b bg-gold" />}
+                <span className="relative">
+                  <Icon size={21} strokeWidth={on ? 2.4 : 1.9} />
+                  {n > 0 && <span className="absolute -top-1.5 -right-3"><Badge n={n} red={badgeIsRed(badges, it.badge)} small /></span>}
+                </span>
+                <span className="truncate max-w-[72px]">{L(it)}</span>
               </Link>
             );
           })}
-        </nav>
-      </header>
+          {more.length > 0 && (
+            <button onClick={() => setMoreOpen(o => !o)} aria-expanded={moreOpen}
+              className={`relative flex flex-col items-center justify-center gap-1 text-[10.5px] font-semibold ${moreOpen || (current && more.includes(current)) ? 'text-navy' : 'text-ink-light'}`}>
+              {(moreOpen || (current && more.includes(current))) && <span className="absolute top-0 inset-x-4 h-[3px] rounded-b bg-gold" />}
+              <span className="relative">
+                <MoreHorizontal size={21} />
+                {moreCount > 0 && <span className="absolute -top-1.5 -right-3"><Badge n={moreCount} red={moreRed} small /></span>}
+              </span>
+              <span>{lang === 'vi' ? 'Thêm' : 'More'}</span>
+            </button>
+          )}
+        </div>
+      </nav>
+
+      {/* ── Phone: "More" sheet ───────────────────────────────────────── */}
+      {moreOpen && (
+        <div className="lg:hidden fixed inset-0 z-40" role="dialog" aria-modal="true">
+          <button className="absolute inset-0 bg-black/30" aria-label="Close" onClick={() => setMoreOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 bg-cream rounded-t-3xl shadow-xl px-4 pt-3"
+            style={{ paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="w-10 h-1 rounded-full bg-navy/15 mx-auto absolute left-1/2 -translate-x-1/2 top-2" />
+              <span className="font-serif font-bold text-navy text-lg mt-2">{lang === 'vi' ? 'Thêm' : 'More'}</span>
+              <button onClick={() => setMoreOpen(false)} className="p-2 rounded-full text-ink-light mt-2" aria-label="Close"><X size={18} /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {more.map(it => {
+                const Icon = ICONS[it.icon] ?? ListChecks;
+                const n = badgeOf(badges, it.badge);
+                const on = current?.id === it.id;
+                return (
+                  <Link key={it.id} href={it.href} prefetch={false}
+                    className={`relative rounded-2xl bg-white border px-2 py-3 flex flex-col items-center gap-1.5 text-center text-[12px] font-semibold ${on ? 'border-gold text-navy' : 'border-border-soft text-ink'}`}>
+                    <Icon size={20} className="text-navy" />
+                    <span className="leading-tight">{L(it)}</span>
+                    {n > 0 && <span className="absolute top-1.5 right-1.5"><Badge n={n} red={badgeIsRed(badges, it.badge)} small /></span>}
+                  </Link>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-between rounded-2xl bg-white border border-border-soft px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-ink truncate">{profile?.full_name}</div>
+                <div className="text-xs text-ink-light">{profile && ROLE_LABEL[profile.role] ? L(ROLE_LABEL[profile.role]) : profile?.role}</div>
+              </div>
+              <button onClick={logout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold text-navy border border-border-soft">
+                <LogOut size={15} />{t('logout')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

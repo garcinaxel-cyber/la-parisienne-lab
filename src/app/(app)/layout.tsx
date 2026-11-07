@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import Sidebar from '@/components/Sidebar';
-import { rawService } from '@/lib/raw-materials-db';
+import SectionTabs from '@/components/SectionTabs';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
@@ -41,77 +41,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const chefAllowed = profile.role === 'chef' && pathname.startsWith('/admin/fiches/');
   if ((profile.role === 'chef' || profile.role === 'worker') && !chefAllowed) redirect('/station/me');
 
-  // Badges: transfer notes awaiting reception (both reception sub-tabs — internal AND
-  // Shop ↔ Lab, Axel 2026-09-16: "l onglet qui averti du nombre de reception a check doit
-  // prendre en compte le deuxieme sous onglet") + manual orders still to enter in Odoo.
-  // Shop ↔ Lab transfers + losses counts mirror shop/actions.ts's since-yesterday (VN calendar
-  // day) cutoff on getMyShopTransfersAction('Lab')/getShopLossesForLabReceptionAction — same
-  // vnYesterdayStartIso() logic, duplicated here since that file is 'use server' (exports must be
-  // async actions, not a plain helper to import).
-  // Axel, 2026-09-17 (2nd correction): the unbounded "however old" losses count above (badge was
-  // showing 318 — everything ever reported, since this reception step is brand new) was reverted
-  // for the same reason the reception query itself was: "on avait rien mis en place avant ...
-  // plus de 300 pertes a check c'est pas possible". Both badges now count only what's actually
-  // reachable in the reception tab: reported since yesterday, still unconfirmed.
-  function vnYesterdayStartIso(): string {
-    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' });
-    const yesterday = fmt.format(new Date(Date.now() - 24 * 3600 * 1000));
-    return new Date(`${yesterday}T00:00:00+07:00`).toISOString();
-  }
-  // Perf (Axel 2026-10-26: "quand je navigue c'est vraiment lent"): every page load AND every
-  // server action that revalidates re-renders this layout. All sidebar counts are now computed in
-  // ONE parallel batch with the service key and cached 20 s (shared by all staff; a badge may lag
-  // by up to 20 s). Who sees which badge is unchanged (role checks below).
-  const db = rawService();
-  const { unstable_cache } = await import('next/cache');
-  const badges = await unstable_cache(async () => {
-    if (!db) return null;
-    const yesterdayVNIso = vnYesterdayStartIso();
-    const { computeDeliveryTaskCount } = await import('@/lib/delivery-tasks');
-    const { countCakesWithoutMessage } = await import('@/lib/birthday-cakes-data');
-    const [a, b, c, d, e, f, g, h, tasks, cakes] = await Promise.all([
-      db.from('lab_stock_transfers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-      db.from('lab_shop_transfers').select('*', { count: 'exact', head: true }).eq('to_shop', 'Lab').eq('status', 'sent').gte('sent_at', yesterdayVNIso),
-      db.from('lab_shop_losses').select('*', { count: 'exact', head: true }).is('lab_received_at', null).is('cancelled_at', null).gte('reported_at', yesterdayVNIso),
-      db.from('lab_manual_cakes').select('*', { count: 'exact', head: true }).eq('needs_odoo', true).is('matched_order_ref', null),
-      // OEM Orders (Axel, 2026-09-28): batches Hưng declared that no assistant has received yet
-      db.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-      // Purchasing (Axel 2026-10-12/13): lines to order (not yet in a draft PO) + slips to confirm
-      db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('po_odoo_id', null),
-      // team ↔ team transfers wait for the other team, not storage (Axel, 2026-11-07)
-      db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm')
-        .or('kind.is.null,kind.neq.transfer,from_team.eq.kho,to_team.eq.kho'),
-      // Check badge (admin only, shown below): sums all 4 checks (2026-08-20)
-      db.from('lab_reconciliation_runs').select('issue_count, delivery_coverage_count, production_stock_count, stock_odoo_count').order('run_at', { ascending: false }).limit(1).maybeSingle(),
-      computeDeliveryTaskCount(db as any).catch(() => ({ base: 0, toSend: 0 })),
-      countCakesWithoutMessage(db as any).catch(() => 0),
-    ]);
-    const run: any = h.data;
-    return {
-      pendingTransfers: (a.count ?? 0) + (b.count ?? 0) + (c.count ?? 0),
-      pendingExceptional: d.count ?? 0,
-      pendingOemReceptions: e.count ?? 0,
-      pendingPurchasing: (f.count ?? 0) + (g.count ?? 0),
-      reconciliationIssues: (run?.issue_count ?? 0) + (run?.delivery_coverage_count ?? 0) + (run?.production_stock_count ?? 0) + (run?.stock_odoo_count ?? 0),
-      tasksBase: tasks.base, tasksToSend: tasks.toSend, cakesNoMessage: cakes,
-    };
-  }, ['layout-badges-v1'], { revalidate: 20, tags: ['layout-badges', 'delivery-tasks', 'birthday-cakes'] })();
-
-  const pendingTransfers = badges?.pendingTransfers ?? 0;
-  const pendingExceptional = badges?.pendingExceptional ?? 0;
-  const pendingOemReceptions = badges?.pendingOemReceptions ?? 0;
-  const canSeePurchasing = profile.role === 'purchasing' || profile.role === 'admin' || !!(profile as any).can_purchase;
-  const pendingPurchasing = canSeePurchasing ? (badges?.pendingPurchasing ?? 0) : 0;
-  const reconciliationIssues = profile.role === 'admin' ? (badges?.reconciliationIssues ?? 0) : 0;
-  const isDeliveryRole = ['admin', 'lab_manager', 'assistant'].includes(profile.role);
-  const deliveryTasks = isDeliveryRole ? (badges?.tasksBase ?? 0) + (['admin', 'lab_manager'].includes(profile.role) ? (badges?.tasksToSend ?? 0) : 0) : 0;
-  const cakesNoMessage = isDeliveryRole ? (badges?.cakesNoMessage ?? 0) : 0;
+  const { loadRawCounts, badgesForRole } = await import('@/lib/nav-badges');
+  const badges = badgesForRole(await loadRawCounts(), profile as any);
+  const { badgeOf } = await import('@/lib/nav');
+  // Control board badge = everything still open for this role (sum of the menu badges).
+  badges.today = (['delivery', 'special', 'reception', 'oem', 'purchasing', 'check'] as const)
+    .reduce((t, k) => t + badgeOf(badges, k), 0);
 
   return (
     <div className="flex min-h-screen bg-cream">
-      <Sidebar profile={profile} pendingTransfers={pendingTransfers ?? 0} pendingExceptional={pendingExceptional ?? 0} pendingOemReceptions={pendingOemReceptions ?? 0} pendingPurchasing={pendingPurchasing} reconciliationIssues={reconciliationIssues} deliveryTasks={deliveryTasks} cakesNoMessage={cakesNoMessage} />
-      <main className="flex-1 overflow-auto lg:ml-64 pt-[88px] lg:pt-0">
-        <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-8">{children}</div>
+      <Sidebar profile={profile} badges={badges} />
+      <main className="flex-1 min-w-0 lg:ml-64 pt-12 lg:pt-0 pb-[calc(64px+env(safe-area-inset-bottom,0px))] lg:pb-0">
+        <SectionTabs profile={profile} badges={badges} />
+        <div className="max-w-6xl mx-auto px-3 py-4 sm:px-4 sm:py-6">{children}</div>
       </main>
     </div>
   );

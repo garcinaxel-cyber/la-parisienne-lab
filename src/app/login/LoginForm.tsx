@@ -7,7 +7,7 @@ import { Loader2, Eye, EyeOff } from 'lucide-react';
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get('redirect') ?? '/dashboard';
+  const redirectTo = searchParams.get('redirect') ?? '/today';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);

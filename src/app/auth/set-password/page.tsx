@@ -73,7 +73,7 @@ export default function SetPasswordPage() {
       ? await supabase.from('profiles').select('role').eq('id', session.user.id).single()
       : { data: null };
     setTimeout(() => {
-      router.push(['chef', 'worker'].includes(profile?.role ?? '') ? '/station/me' : '/dashboard');
+      router.push(['chef', 'worker'].includes(profile?.role ?? '') ? '/station/me' : '/today');
     }, 1200);
   }
 
