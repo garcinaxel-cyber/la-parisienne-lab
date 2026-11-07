@@ -153,10 +153,6 @@ export async function computeDeliveryTaskCount(sb: SupabaseClient): Promise<{ ba
   return { base: a.open.length + b.open.length + loErr + reception, toSend: send };
 }
 
-export async function countOpenProductionTasks(sb: SupabaseClient): Promise<number> {
-  try { return (await computeDeliveryTaskCount(sb)).base; } catch { return 0; }
-}
-
 // Amber "waiting for shops to confirm receipt" (Axel's mockup, 2026-10-24): La Paris shop orders
 // of the last 7 days that left the Lab but have no receipt confirmed yet, counted per shop.
 export async function loadShopsNotConfirmed(sb: SupabaseClient): Promise<{ shop: string; orders: number }[]> {

@@ -142,8 +142,6 @@ export const PIECE_UNITS: Record<string, PieceUnit> = {
 };
 export function pieceUnit(sku: string | null | undefined): PieceUnit | null { return sku ? PIECE_UNITS[sku] ?? null : null; }
 export const kgFromPieces = (pieces: number, pu: PieceUnit) => Math.round(pieces * pu.kg * 1000) / 1000;
-export const piecesFromKg = (kg: number, pu: PieceUnit) => Math.round(kg / pu.kg);
-
 export function fmtQty(v: number): string {
   return (Math.round(v * 1000) / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
 }

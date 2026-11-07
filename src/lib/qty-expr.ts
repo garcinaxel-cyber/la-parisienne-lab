@@ -15,5 +15,3 @@ export function evalQty(raw: string | undefined | null): number | null {
 export const hasOp = (raw: string | undefined | null) => /[+xX×*]/.test(raw ?? '');
 /** what the user may type in a quantity field */
 export const cleanExpr = (raw: string) => raw.replace(/[^0-9.,+xX×*\s]/g, '');
-/** true when the field holds something that is not a valid quantity */
-export const qtyExprBad = (raw: string | undefined | null) => Number.isNaN(evalQty(raw) as number);

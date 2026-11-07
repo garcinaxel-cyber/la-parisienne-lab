@@ -47,10 +47,6 @@ export function roomsLinkStartIso(): string | null {
   return validDay(s) ? labDayUtcRange(s).start : null;
 }
 export function roomOf(team: string | null | undefined) { return team ? ROOMS[team] ?? null : null; }
-export function teamOfType(typeId: number | null | undefined): string | null {
-  return Object.entries(ROOMS).find(([, r]) => r.manufType === typeId)?.[0] ?? null;
-}
-
 function tmo<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error('timeout ' + l)), ms))]);
 }

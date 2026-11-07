@@ -109,11 +109,8 @@ export function dow(day: string): number { // 0 = Sunday
 }
 export const isWeekend = (day: string) => dow(day) === 0 || dow(day) === 6;
 export function weekStart(day: string): string { return addDays(day, -((dow(day) + 6) % 7)); } // Monday
-export function weekDays(ws: string): string[] { return Array.from({ length: 7 }, (_, i) => addDays(ws, i)); }
 // Day-off requests for a week close at the end of the Saturday before it.
 export function wishDeadline(ws: string): string { return addDays(ws, -2); }
-// The month a week "belongs to" (its Thursday) — used for the monthly day-off counter.
-export function weekMonth(ws: string): string { return monthStart(addDays(ws, 3)); }
 // Days off allowed in a month = number of Sundays in it (Hưng, 2026-11-06).
 export function offAllowance(month: string): number {
   let n = 0; const last = daysInMonth(month);
@@ -149,4 +146,3 @@ export function scheduleCode(e: { id: string; base_shift: string }, day: string,
 }
 export const offLimit = (rules: HrRules, day: string) => (isWeekend(day) ? rules.max_off_weekend : rules.max_off_weekday);
 
-export const SHIFT_HOURS: Record<string, string> = { '7': '07:00–16:00', '8': '08:00–17:00' };

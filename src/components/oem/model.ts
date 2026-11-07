@@ -148,8 +148,3 @@ export function qtyBad(raw: string | undefined | null, integer: boolean): boolea
   const v = evalQty(raw);
   return v !== null && (Number.isNaN(v) || (integer && !Number.isInteger(v)));
 }
-// gap needing an admin decision: > 20 bags (2 kg for cashews) or > 2 % of the theoretical stock
-export function gapNeedsAdmin(gap: number, theo: number, unit: 'bag' | 'kg'): boolean {
-  const abs = Math.abs(gap);
-  return abs > (unit === 'kg' ? 2 : 20) || (theo > 0 && abs / theo > 0.02);
-}

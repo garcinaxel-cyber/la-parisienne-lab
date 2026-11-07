@@ -186,10 +186,3 @@ export async function pushPendingStaffPhotos(opts: { budgetMs?: number } = {}): 
   return out;
 }
 
-/** tmpl_id → photo URL and SKU → photo URL, for screens. One small query (~500 rows). */
-export async function loadItemPhotoMaps(db: Db): Promise<{ byTmpl: Map<number, string>; bySku: Map<string, string> }> {
-  const { data } = await db.from('lab_item_photos').select('tmpl_id, sku, image_url');
-  const byTmpl = new Map<number, string>(); const bySku = new Map<string, string>();
-  for (const r of data ?? []) { byTmpl.set(Number(r.tmpl_id), r.image_url); if (r.sku) bySku.set(r.sku, r.image_url); }
-  return { byTmpl, bySku };
-}

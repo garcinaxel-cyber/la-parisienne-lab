@@ -7,7 +7,6 @@
 // In a saved DRAFT only, a birthday line always carries the 🎂 prefix so the form remembers it:
 // "🎂 -" = "no message" ticked, "🎂 ?" = not decided yet.
 export const WISH_MARK = '🎂';
-export const BIRTHDAY_CATEGORY = 'Birthday cake';
 /** Categories whose order line gets the message field (same gate as the assistants' cake message). */
 export const WISH_CATEGORIES = ['Birthday cake', 'Bento cake'];
 

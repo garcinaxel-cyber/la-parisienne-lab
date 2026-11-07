@@ -28,11 +28,7 @@ export const reasonLabel = (code: string | null | undefined, vi: boolean) =>
 
 // Short lines: stock products vs made-to-order. Over lines are handled by GapResolver directly.
 export const SHORT_REASONS_STOCK: ReasonCode[] = ['out_of_stock', 'casse', 'order_changed', 'packing', 'other'];
-export const SHORT_REASONS_MTO: ReasonCode[] = ['not_made', 'casse', 'order_changed', 'packing', 'other'];
 export const SHORT_REASONS_PACKAGING: ReasonCode[] = ['out_of_stock', 'casse', 'order_changed', 'packing', 'other'];
 
 export const OTHER_NOTE_MIN = 5;
 
-// Kept for older imports — the select lists are now built by GapResolver.
-export const DELIVERY_CHECK_REASONS = (['out_of_stock', 'not_made', 'casse', 'order_changed', 'packing', 'other'] as const)
-  .map(v => ({ v, vi: REASON_LABELS[v].vi, en: REASON_LABELS[v].en }));

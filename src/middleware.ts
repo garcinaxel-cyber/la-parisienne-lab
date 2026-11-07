@@ -34,24 +34,6 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/odoo/reconciliation-check')) return NextResponse.next();
   // Same treatment — J+1 order auto-lock cron (2026-08-13), called twice daily by pg_cron.
   if (pathname.startsWith('/api/odoo/lock-orders')) return NextResponse.next();
-  // Same treatment — read-only stock.scrap field diagnostic (2026-08-21), secret-gated itself,
-  // called by hand via curl (no session), not a cron but same "no auth cookie" situation.
-  if (pathname.startsWith('/api/odoo/scrap-debug')) return NextResponse.next();
-  // Same treatment — one-off inventory-date correction diagnostic/fix (2026-08-22), secret-gated
-  // itself, called by hand via curl (no session).
-  if (pathname.startsWith('/api/odoo/inventory-date-fix')) return NextResponse.next();
-  // Same treatment — read-only Odoo ref diagnostic (2026-09-03), secret-gated itself, called by
-  // hand (no session).
-  if (pathname.startsWith('/api/admin/odoo-ref-debug')) return NextResponse.next();
-  if (pathname.startsWith('/api/admin/shop-order-skus-debug')) return NextResponse.next();
-  // Same treatment — read-only batch stock.scrap state diagnostic (2026-09-04), secret-gated
-  // itself, called by hand (no session). Deliberately its own narrow route rather than exempting
-  // /api/admin/odoo-scrap-debug here, which also carries write actions (validate/cancel/
-  // testwizard/invset/...) that must stay behind a real staff session, not a shared secret.
-  if (pathname.startsWith('/api/admin/scrap-states-debug')) return NextResponse.next();
-  // Same treatment — read-only vendor-bill lookup (2026-09-05), secret-gated itself, called by
-  // hand (no session). Read-only, never a write.
-  if (pathname.startsWith('/api/admin/vendor-bill-debug')) return NextResponse.next();
   // Same treatment — one-off order-date-change chef notification (2026-09-16), secret-gated
   // itself, called by hand via curl (no session). Learned the same lesson again: forgetting
   // this exemption silently redirects the curl call to /login (200 OK, no error, no push sent).
