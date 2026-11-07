@@ -5,7 +5,7 @@
 import { pushSlipToOdoo, roomsLinkStartIso } from '@/lib/rooms-odoo';
 import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, isPurchasing, mapMaterial, loadLines, loadWithdrawals } from '@/lib/raw-materials-db';
-import { classifyRaw, parsePacks, packHint, TEAM_SHORT, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
+import { classifyRaw, parsePacks, packHint, TEAM_SHORT, isTeamTransfer, type RawMaterial, type PurchaseLine, type Withdrawal, type RawPack } from '@/lib/raw-materials';
 import { labDayUtcRange, odooExecuteWrite } from '@/lib/odoo';
 import { syncOdooItemPhotos, pushPendingStaffPhotos } from '@/lib/item-photos';
 import { sendTeamPush, awaitPush } from '@/lib/push-notify';
@@ -226,12 +226,16 @@ export async function correctWithdrawalLineAction(lineId: string, qty: number | 
   return { ok: true };
 }
 
+const L_TEAM_TRANSFER = 'Phiếu chuyển giữa các team: team kia xác nhận, không phải kho. / Team-to-team transfer: the other team validates it, not storage.';
+
 // Slips waiting for storage to confirm, any day (Axel, 2026-10-09: "hien confirm d'abord").
 export async function getPendingWithdrawalsAction(): Promise<{ items?: Withdrawal[]; error?: string }> {
   const g = await guard();
   if (!g) return { error: 'Forbidden' };
   try {
-    return { items: await loadWithdrawals(g.db, q => q.eq('status', 'to_confirm').order('created_at', { ascending: true })) };
+    // Team ↔ team transfers are validated by the other team, not storage (Axel, 2026-11-07).
+    const items = await loadWithdrawals(g.db, q => q.eq('status', 'to_confirm').order('created_at', { ascending: true }));
+    return { items: items.filter(w => !isTeamTransfer(w.kind, w.fromTeam, w.toTeam)) };
   } catch (e: any) { return { error: e.message }; }
 }
 
@@ -243,6 +247,7 @@ export async function confirmWithdrawalAction(withdrawalId: string, qtys: { line
   const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status, kind, from_team, to_team').eq('id', withdrawalId).maybeSingle();
   if (!w) return { error: 'Not found' };
   if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xác nhận. / Already confirmed.' };
+  if (isTeamTransfer(w.kind, w.from_team, w.to_team)) return { error: L_TEAM_TRANSFER };
   const { data: lines } = await g.db.from('lab_raw_withdrawal_lines').select('id, qty').eq('withdrawal_id', w.id);
   const byId = new Map((lines ?? []).map(l => [l.id as string, Number(l.qty)]));
   const now = new Date().toISOString();
@@ -293,6 +298,7 @@ export async function refuseTransferAction(withdrawalId: string): Promise<{ ok?:
   const { data: w } = await g.db.from('lab_raw_withdrawals').select('id, no, team, status, kind, from_team, to_team').eq('id', withdrawalId).maybeSingle();
   if (!w) return { error: 'Not found' };
   if (w.kind !== 'transfer') return { error: 'Only transfers can be refused.' };
+  if (isTeamTransfer(w.kind, w.from_team, w.to_team)) return { error: L_TEAM_TRANSFER };
   if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xử lý. / Already handled.' };
   const now = new Date().toISOString();
   const { data: upd, error } = await g.db.from('lab_raw_withdrawals')

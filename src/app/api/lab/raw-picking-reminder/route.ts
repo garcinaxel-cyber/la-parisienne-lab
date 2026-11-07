@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendUsersPush, sendAdminPush, type PushPayload } from '@/lib/push-notify';
-import { TEAM_SHORT } from '@/lib/raw-materials';
+import { sendUsersPush, sendAdminPush, sendTeamPush, type PushPayload } from '@/lib/push-notify';
+import { TEAM_SHORT, isTeamTransfer, transferValidator } from '@/lib/raw-materials';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -22,12 +22,29 @@ export async function GET(req: Request) {
   }
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const now = Date.now();
-  const { data: ws, error } = await db.from('lab_raw_withdrawals')
-    .select('id, no, team, taken_by, created_at, reminded_at, escalated_at')
+  const iso0 = new Date(now).toISOString();
+  let { data: ws, error } = await db.from('lab_raw_withdrawals')
+    .select('id, no, team, taken_by, created_at, reminded_at, escalated_at, kind, from_team, to_team')
     .eq('status', 'to_confirm').lte('created_at', new Date(now - 10 * 60000).toISOString())
     .order('created_at', { ascending: true }).limit(200);
   if (error) return NextResponse.json({ error: error.message }, { status: 502 });
-  if (!ws?.length) return NextResponse.json({ ok: true, waiting: 0 });
+  // Team ↔ team transfers (Axel, 2026-11-07) wait for the other team, not storage: one reminder to that
+  // team after 1 h (the rooms cron validates them anyway once their lab day is over).
+  const teamTr = (ws ?? []).filter(w => isTeamTransfer(w.kind, w.from_team, w.to_team));
+  let teamReminded = 0;
+  for (const w of teamTr) {
+    if (w.reminded_at || now - new Date(w.created_at).getTime() < 60 * 60000) continue;
+    const v = transferValidator(w.team, w.from_team, w.to_team);
+    const gives = v === w.from_team;
+    const dir = `${TEAM_SHORT[w.from_team]?.vi ?? w.from_team} → ${TEAM_SHORT[w.to_team]?.vi ?? w.to_team}`;
+    await sendTeamPush(db, v,
+      { title: 'La Parisienne Lab', body: `⏰ Phiếu chuyển #${w.no} (${dir}) chờ bạn: bấm "${gives ? 'Đã giao' : 'Đã nhận'}" hoặc "Từ chối"`, url: `/station/${v}`, tag: `raw-pick-${w.no}` },
+      { title: 'La Parisienne Lab', body: `⏰ Transfer #${w.no} (${dir}) waits for you: tap "${gives ? 'Handed over' : 'Received'}" or "Refuse"`, url: `/station/${v}`, tag: `raw-pick-${w.no}` });
+    await db.from('lab_raw_withdrawals').update({ reminded_at: iso0 }).eq('id', w.id);
+    teamReminded++;
+  }
+  ws = (ws ?? []).filter(w => !isTeamTransfer(w.kind, w.from_team, w.to_team));
+  if (!ws.length) return NextResponse.json({ ok: true, waiting: 0, teamReminded });
 
   const mins = (iso: string) => Math.round((now - new Date(iso).getTime()) / 60000);
   const label = (w: any) => `#${w.no} ${TEAM_SHORT[w.team]?.vi ?? w.team}`;

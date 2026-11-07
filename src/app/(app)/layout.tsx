@@ -78,7 +78,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       db.from('lab_mm_production_log').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       // Purchasing (Axel 2026-10-12/13): lines to order (not yet in a draft PO) + slips to confirm
       db.from('lab_purchase_request_lines').select('*', { count: 'exact', head: true }).eq('status', 'pending').is('po_odoo_id', null),
-      db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm'),
+      // team ↔ team transfers wait for the other team, not storage (Axel, 2026-11-07)
+      db.from('lab_raw_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'to_confirm')
+        .or('kind.is.null,kind.neq.transfer,from_team.eq.kho,to_team.eq.kho'),
       // Check badge (admin only, shown below): sums all 4 checks (2026-08-20)
       db.from('lab_reconciliation_runs').select('issue_count, delivery_coverage_count, production_stock_count, stock_odoo_count').order('run_at', { ascending: false }).limit(1).maybeSingle(),
       computeDeliveryTaskCount(db as any).catch(() => ({ base: 0, toSend: 0 })),

@@ -4,8 +4,8 @@
 import { pushSlipToOdoo, receivingTeam } from '@/lib/rooms-odoo';
 import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads, purchasingUserIds, mapMaterial, loadLines, loadWithdrawals, type RawActor } from '@/lib/raw-materials-db';
-import { sendUsersPush, awaitPush } from '@/lib/push-notify';
-import { TEAM_SHORT, TRANSFER_TEAMS, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
+import { sendUsersPush, sendTeamPush, awaitPush } from '@/lib/push-notify';
+import { TEAM_SHORT, TRANSFER_TEAMS, isTeamTransfer, transferValidator, type RawMaterial, type PurchaseLine, type Withdrawal } from '@/lib/raw-materials';
 import { labDayUtcRange, vnTodayStr } from '@/lib/odoo';
 
 export async function getRawCatalogForChefAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
@@ -76,6 +76,16 @@ async function notifyStorage(db: NonNullable<ReturnType<typeof rawService>>, tea
   await awaitPush(sendUsersPush(db, ids, p, p));
 }
 
+// Team ↔ team transfer (Axel, 2026-11-07): the other team is told it has a transfer to validate.
+async function notifyTeamTransfer(db: NonNullable<ReturnType<typeof rawService>>, validator: string, no: number, count: number, who: string, from: string, to: string, reminder: boolean) {
+  const dirVi = `${TEAM_SHORT[from]?.vi ?? from} → ${TEAM_SHORT[to]?.vi ?? to}`;
+  const gives = validator === from;   // the validator gave the goods: "Đã giao"; otherwise it receives them: "Đã nhận"
+  const btnVi = gives ? 'Đã giao' : 'Đã nhận', btnEn = gives ? 'Handed over' : 'Received';
+  await awaitPush(sendTeamPush(db, validator,
+    { title: 'La Parisienne Lab', body: `${reminder ? '⏰ ' : '⇄ '}Phiếu chuyển #${no} · ${dirVi} · ${who || '—'} · ${count} dòng — bấm "${btnVi}" hoặc "Từ chối"`, url: `/station/${validator}`, tag: `raw-pick-${no}` },
+    { title: 'La Parisienne Lab', body: `${reminder ? '⏰ ' : '⇄ '}Transfer #${no} · ${dirVi} · ${who || '—'} · ${count} lines — tap "${btnEn}" or "Refuse"`, url: `/station/${validator}`, tag: `raw-pick-${no}` }));
+}
+
 // "Nhắc kho" on the chef's waiting slip: pushes storage again, at most once every 3 minutes.
 export async function remindStorageAction(team: string, withdrawalId: string): Promise<{ ok?: boolean; error?: string }> {
   const a = await rawActor();
@@ -89,6 +99,10 @@ export async function remindStorageAction(team: string, withdrawalId: string): P
   if (w.reminded_at && Date.now() - new Date(w.reminded_at).getTime() < 3 * 60 * 1000) return { ok: true };
   const { count } = await db.from('lab_raw_withdrawal_lines').select('id', { count: 'exact', head: true }).eq('withdrawal_id', w.id);
   await db.from('lab_raw_withdrawals').update({ reminded_at: new Date().toISOString() }).eq('id', w.id);
+  if (isTeamTransfer(w.kind, w.from_team, w.to_team)) {
+    await notifyTeamTransfer(db, transferValidator(w.team, w.from_team, w.to_team), Number(w.no), count ?? 0, w.taken_by || a.name || '', w.from_team, w.to_team, true);
+    return { ok: true };
+  }
   await notifyStorage(db, team, Number(w.no), count ?? 0, w.taken_by || a.name || '', true,
     w.kind === 'transfer' ? { from: w.from_team, to: w.to_team } : null);
   return { ok: true };
@@ -99,8 +113,9 @@ const teamOr = (team: string) => { const t = /^[a-z_]+$/.test(team) ? team : '__
 
 export type TransferInput = { tmplId: number; qty: number; packLabel?: string | null; packCount?: number | null; brand?: string | null };
 
-// Transfer between teams (Axel, 2026-10-16): both directions, recorded by either team, waits for
-// storage to confirm like a withdrawal. Nothing to Odoo; off-recipe never applies (not a storage take).
+// Transfer between teams (Axel, 2026-10-16): both directions, recorded by either team. Off-recipe never
+// applies (not a storage take). Since 2026-11-07 a team ↔ team transfer waits for the OTHER team (not
+// storage): see confirmTeamTransferAction. A give-back to the Kho still waits for storage.
 export async function recordTransferAction(team: string, doneBy: string, direction: 'give' | 'receive', otherTeam: string, lines: TransferInput[], note?: string | null): Promise<{ ok?: boolean; no?: number; error?: string }> {
   const a = await rawActor();
   if (!a) return { error: 'Not authenticated' };
@@ -133,7 +148,8 @@ export async function recordTransferAction(team: string, doneBy: string, directi
   });
   const { error: lErr } = await db.from('lab_raw_withdrawal_lines').insert(rows);
   if (lErr) { await db.from('lab_raw_withdrawals').delete().eq('id', w.id); return { error: lErr.message }; }
-  await notifyStorage(db, team, Number(w.no), rows.length, who || '', false, { from, to });
+  if (toStorage) await notifyStorage(db, team, Number(w.no), rows.length, who || '', false, { from, to });
+  else await notifyTeamTransfer(db, otherTeam, Number(w.no), rows.length, who || '', from, to, false);
   return { ok: true, no: Number(w.no) };
 }
 
@@ -386,6 +402,37 @@ export async function receiveSlipAction(team: string, withdrawalId: string): Pro
       .eq('id', w.id).is('received_at', null);
     if (error) return { error: error.message };
   }
+  const p = pushSlipToOdoo(db, w.id).catch(() => null);   // after the reply; the cron retries a failure
+  try { waitUntil(p); } catch { await p; }
+  return { ok: true };
+}
+
+// The other team validates a team ↔ team transfer (Axel, 2026-11-07) — no storage step. Accept = the
+// goods changed hands: the slip is confirmed AND received at once, and Odoo moves Room A → Room B now.
+// Refuse = closed like a storage refusal (every line corrected to 0, nothing moves).
+export async function confirmTeamTransferAction(team: string, withdrawalId: string, accept: boolean): Promise<{ ok?: boolean; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, team)) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data: w } = await db.from('lab_raw_withdrawals').select('id, no, team, kind, from_team, to_team, status').eq('id', withdrawalId).maybeSingle();
+  if (!w) return { error: 'Not found' };
+  if (!isTeamTransfer(w.kind, w.from_team, w.to_team)) return { error: 'Not a team transfer' };
+  if (transferValidator(w.team, w.from_team, w.to_team) !== team) return { error: 'Forbidden' };
+  if (w.status !== 'to_confirm') return { error: 'Phiếu này đã được xử lý. / Already handled.' };
+  const now = new Date().toISOString(), who = a.name || null;
+  const v = accept
+    ? { status: 'confirmed', confirmed_at: now, confirmed_by_name: who, received_at: now, received_by_name: who }
+    : { status: 'confirmed', confirmed_at: now, confirmed_by_name: who, refused_at: now, refused_by_name: who };
+  const { data: upd, error } = await db.from('lab_raw_withdrawals').update(v).eq('id', w.id).eq('status', 'to_confirm').select('id');
+  if (error) return { error: error.message };
+  if (!upd?.length) return { error: 'Phiếu này đã được xử lý. / Already handled.' };
+  if (!accept) await db.from('lab_raw_withdrawal_lines').update({ corrected_qty: 0, corrected_by_name: who, corrected_at: now }).eq('withdrawal_id', w.id);
+  const dir = `${TEAM_SHORT[w.from_team]?.vi ?? w.from_team} → ${TEAM_SHORT[w.to_team]?.vi ?? w.to_team}`;
+  await awaitPush(sendTeamPush(db, w.team,
+    { title: 'La Parisienne Lab', body: accept ? `✅ ${TEAM_SHORT[team]?.vi ?? team} đã xác nhận phiếu chuyển #${w.no} (${dir})` : `❌ ${TEAM_SHORT[team]?.vi ?? team} từ chối phiếu chuyển #${w.no} (${dir})`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` },
+    { title: 'La Parisienne Lab', body: accept ? `✅ ${TEAM_SHORT[team]?.en ?? team} validated transfer #${w.no} (${dir})` : `❌ ${TEAM_SHORT[team]?.en ?? team} refused transfer #${w.no} (${dir})`, url: `/station/${w.team}`, tag: `raw-pick-${w.no}` }));
   const p = pushSlipToOdoo(db, w.id).catch(() => null);   // after the reply; the cron retries a failure
   try { waitUntil(p); } catch { await p; }
   return { ok: true };

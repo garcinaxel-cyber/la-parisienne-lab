@@ -174,10 +174,13 @@ export async function pushSlipToOdoo(db: Db, withdrawalId: string): Promise<Slip
 
     const take = (w.kind ?? 'take') === 'take';
     const kindVi = take ? 'phiếu lấy kho' : 'phiếu chuyển';
+    const teamTr = !take && w.from_team !== 'kho' && w.to_team !== 'kho';
     const origin = `App ${kindVi} #${w.no}`;
     const pk = await moveInOdoo({
       origin, src, dst, knownPickingId: w.odoo_picking_id,
-      note: `<p>Lab app — ${kindVi} #${w.no} · ${w.team} · ${w.taken_by ?? ''} · kho xác nhận: ${w.confirmed_by_name ?? ''} · đã nhận: ${w.received_by_name ?? ''}</p><p>Lab app — ${take ? 'storage slip' : 'transfer'} #${w.no}, confirmed by storage, received by ${w.received_by_name ?? 'storage'}.</p>`,
+      note: teamTr
+        ? `<p>Lab app — phiếu chuyển #${w.no} · ${w.from_team} → ${w.to_team} · ghi bởi ${w.team} (${w.taken_by ?? ''}) · team xác nhận: ${w.confirmed_by_name ?? ''}</p><p>Lab app — team transfer #${w.no}, recorded by ${w.team}, validated by the other team (${w.confirmed_by_name ?? ''}), no storage step.</p>`
+        : `<p>Lab app — ${kindVi} #${w.no} · ${w.team} · ${w.taken_by ?? ''} · kho xác nhận: ${w.confirmed_by_name ?? ''} · đã nhận: ${w.received_by_name ?? ''}</p><p>Lab app — ${take ? 'storage slip' : 'transfer'} #${w.no}, confirmed by storage, received by ${w.received_by_name ?? 'storage'}.</p>`,
       lines: tmplIds.map(t => { const p = prodOf.get(t); return { productId: p.id, uomId: m2o(p.uom_id)!, qty: qtyByTmpl.get(t)! }; }),
       onCreated: async id => { if (id !== w.odoo_picking_id) await db.from('lab_raw_withdrawals').update({ odoo_picking_id: id }).eq('id', w.id); },
     });
@@ -230,6 +233,21 @@ export async function chaseUnreceivedSlips(db: Db): Promise<{ reminded: number; 
   const { data } = await db.from('lab_raw_withdrawals').select('id, no, team, kind, to_team, confirmed_at, chef_reminded_at')
     .eq('status', 'confirmed').is('refused_at', null).is('received_at', null).gte('confirmed_at', start).limit(200);
   const today = labDayUtcRange(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())).start;
+  // Team ↔ team transfer the other team never validated (Axel, 2026-11-07): once its lab day is over it
+  // is validated anyway, at its creation time (i.e. before any end-of-day room count), and pushed by
+  // pushPendingSlips. Same rule as a storage slip nobody marked received.
+  {
+    const { data: tt } = await db.from('lab_raw_withdrawals').select('id, created_at, kind, from_team, to_team')
+      .eq('status', 'to_confirm').eq('kind', 'transfer').neq('from_team', 'kho').neq('to_team', 'kho')
+      .gte('created_at', start).lt('created_at', today).limit(200);
+    const auto = 'auto (cuối ngày / end of day)';
+    for (const w of tt ?? []) {
+      const { data: upd } = await db.from('lab_raw_withdrawals')
+        .update({ status: 'confirmed', confirmed_at: w.created_at, confirmed_by_name: auto, received_at: w.created_at, received_by_name: auto })
+        .eq('id', w.id).eq('status', 'to_confirm').select('id');
+      if (upd?.length) out.autoReceived++;
+    }
+  }
   const { sendTeamPush, awaitPush } = await import('@/lib/push-notify');
   for (const w of (data ?? []).filter((x: any) => needsChefReceipt(x))) {
     if (Date.parse(w.confirmed_at) < Date.parse(today)) {

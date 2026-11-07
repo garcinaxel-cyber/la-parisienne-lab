@@ -206,6 +206,18 @@ export function slipSign(w: Pick<Withdrawal, 'kind' | 'team' | 'fromTeam' | 'toT
 }
 export const TRANSFER_TEAMS = ['baby_mama', 'hung', 'entremet', 'baker'] as const;
 
+// Transfer between two teams' rooms (Axel, 2026-11-07: "seulement les équipes valident les transferts
+// entre rooms, pas besoin de l'autorisation du storage manager"). Storage stays out of it; the team that
+// did NOT record the slip validates it ("Đã nhận" when it receives, "Đã giao" when it gave). A give-back
+// to the Kho keeps the storage confirmation (storage takes the goods back).
+export function isTeamTransfer(kind: string | null | undefined, from: string | null | undefined, to: string | null | undefined): boolean {
+  return kind === 'transfer' && !!from && !!to && from !== 'kho' && to !== 'kho';
+}
+/** The team that validates a team ↔ team transfer: the one that did not record it. */
+export function transferValidator(recorder: string, from: string | null | undefined, to: string | null | undefined): string {
+  return recorder === from ? String(to ?? '') : String(from ?? '');
+}
+
 // Odoo vendor names are long legal names ("CHI NHÁNH CÔNG TY TNHH ... TẠI HÀ NỘI") — a short form for lists.
 export function shortVendor(name: string | null | undefined): string {
   if (!name) return '';

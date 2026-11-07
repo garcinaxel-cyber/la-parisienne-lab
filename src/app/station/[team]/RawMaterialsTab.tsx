@@ -9,14 +9,14 @@
 // Phase 1: nothing is written to Odoo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Minus, Plus, Search, Check, Package, ShoppingBag, Upload, Loader2, X, User, Camera, ImageIcon, ArrowRightLeft, CheckCircle2, ShieldCheck, RotateCcw, ClipboardCheck } from 'lucide-react';
-import { RAW_TYPES, TEAM_SHORT, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, packHint } from '@/lib/raw-materials';
+import { RAW_TYPES, TEAM_SHORT, isTeamTransfer, transferValidator, TRANSFER_TEAMS, slipSign, subLabel, typeLabel, rawName, fmtQty, vnDayTime, isOffRecipe, type RawMaterial, type RawType, type PurchaseLine, type Withdrawal, pieceUnit, kgFromPieces, packHint } from '@/lib/raw-materials';
 import { Track } from '@/components/raw/PurchaseTrack';
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
 import RoomCountHistory from './RoomCountHistory';
 import {
   getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
-  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, receiveSlipAction, type TeamRequestsMeta,
+  getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, receiveSlipAction, confirmTeamTransferAction, type TeamRequestsMeta,
 } from './raw-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
@@ -108,11 +108,20 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: L(`Đã nhận phiếu #${w.no}.`, `Slip #${w.no} received.`) });
     loadToday(); loadHist();
   }
+  // Team ↔ team transfer validated by the other team (Axel, 2026-11-07): no storage step.
+  async function decideTransfer(w: Withdrawal, accept: boolean) {
+    setReceiving(w.id);
+    const r = await confirmTeamTransferAction(team, w.id, accept);
+    setReceiving(null);
+    setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: accept ? L(`Đã xác nhận phiếu chuyển #${w.no}.`, `Transfer #${w.no} validated.`) : L(`Đã từ chối phiếu chuyển #${w.no}.`, `Transfer #${w.no} refused.`) });
+    loadToday(); loadHist();
+  }
   const [reminded, setReminded] = useState<Record<string, number>>({});
   async function remind(w: Withdrawal) {
     setReminded(r => ({ ...r, [w.id]: Date.now() }));
     const r = await remindStorageAction(team, w.id);
-    setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: L('Đã nhắc kho.', 'Storage reminded.') });
+    const tt = isTeamTransfer(w.kind, w.fromTeam, w.toTeam);
+    setMsg(r.error ? { ok: false, text: r.error } : { ok: true, text: tt ? L('Đã nhắc team kia.', 'Other team reminded.') : L('Đã nhắc kho.', 'Storage reminded.') });
   }
   const loadHist = useCallback(() => {
     if (period === 'today') return;
@@ -172,7 +181,10 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     setBusy(false);
     if (res.error) { setMsg({ ok: false, text: res.error }); return; }
     setQty({}); setUnit({}); setQtyTxt({}); setTNote(''); setSheet(null); setView('history'); setPeriod('today');
-    setMsg({ ok: true, text: L(`Đã gửi phiếu chuyển #${res.no}. Chờ kho xác nhận.`, `Transfer #${res.no} sent. Waiting for storage to confirm.`) });
+    const oName = TEAM_SHORT[other] ?? null;
+    setMsg({ ok: true, text: other === 'kho'
+      ? L(`Đã gửi phiếu chuyển #${res.no}. Chờ kho xác nhận.`, `Transfer #${res.no} sent. Waiting for storage to confirm.`)
+      : L(`Đã gửi phiếu chuyển #${res.no}. Chờ ${oName?.vi ?? other} xác nhận.`, `Transfer #${res.no} sent. Waiting for ${oName?.en ?? other} to validate.`) });
     loadToday();
   }
   async function sendRequest() {
@@ -456,6 +468,9 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               {period === '7d' && <div className="px-1 pt-1 text-[12px] font-extrabold" style={{ color: GOLD_TEXT }}>{g.day} · {g.items.length} {L('phiếu', g.items.length > 1 ? 'slips' : 'slip')}</div>}
               {g.items.map(w => {
                 const corrected = w.lines.some(l => l.correctedQty != null);
+                const tt = isTeamTransfer(w.kind, w.fromTeam, w.toTeam);
+                const validator = tt ? transferValidator(w.team, w.fromTeam, w.toTeam) : null;
+                const vName = validator ? (TEAM_SHORT[validator]?.[lang] ?? validator) : '';
                 return (
                 <div key={w.id} className="bg-white rounded-2xl px-3 pt-2.5 pb-1" style={{ border: `1px solid ${BORDER}` }}>
                   <div className="flex items-center gap-2 pb-1.5">
@@ -463,19 +478,32 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                       ? <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5 flex-none tabular-nums" style={{ backgroundColor: '#8A6D14', color: '#fff' }}>⇄ #{w.no}</span>
                       : <b className="text-[14px] tabular-nums">#{w.no}</b>}
                     <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{w.kind === 'transfer' && w.fromTeam && w.toTeam ? <b style={{ color: '#1A2C24' }}>{TEAM_SHORT[w.fromTeam]?.[lang] ?? w.fromTeam} → {TEAM_SHORT[w.toTeam]?.[lang] ?? w.toTeam} · </b> : null}{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
-                    {w.refused ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FBEAE8', color: LATE }}>✕ {L('Kho từ chối', 'Refused')}</span>
-                      : w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {L('Chờ kho xác nhận', 'Waiting for storage')}</span>
+                    {w.refused ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FBEAE8', color: LATE }}>✕ {tt ? L(`${w.refusedBy ?? vName} từ chối`, `Refused by ${w.refusedBy ?? vName}`) : L('Kho từ chối', 'Refused')}</span>
+                      : w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {tt ? (validator === team ? L('Chờ bạn xác nhận', 'Waiting for you') : L(`Chờ ${vName} xác nhận`, `Waiting for ${vName}`)) : L('Chờ kho xác nhận', 'Waiting for storage')}</span>
                       : corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
-                      : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>✓ {L('Kho đã xác nhận', 'Confirmed')}</span>}
+                      : <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>✓ {tt ? L('Team đã xác nhận', 'Validated') : L('Kho đã xác nhận', 'Confirmed')}</span>}
                   </div>
-                  {w.status === 'to_confirm' && (() => {
+                  {w.status === 'to_confirm' && tt && validator === team && (
+                    <div className="rounded-lg px-2.5 py-2 mb-1.5 text-[12px]" style={{ backgroundColor: '#ECFDF3', color: '#067647' }}>
+                      <div className="pb-1.5">{validator === w.fromTeam
+                        ? L(`${TEAM_SHORT[w.team]?.vi ?? w.team} ghi đã nhận hàng từ team bạn — bấm "Đã giao" nếu đúng.`, `${TEAM_SHORT[w.team]?.en ?? w.team} says it received these goods from your team — tap "Handed over" if right.`)
+                        : L(`${TEAM_SHORT[w.team]?.vi ?? w.team} ghi đã giao hàng cho team bạn — bấm "Đã nhận" khi đã có hàng trong tay.`, `${TEAM_SHORT[w.team]?.en ?? w.team} says it gave you these goods — tap "Received" once you have them.`)}</div>
+                      <div className="flex gap-2">
+                        <button disabled={receiving === w.id} onClick={() => decideTransfer(w, true)} className="flex-1 rounded-md px-3 py-1.5 text-[12.5px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#067647', color: '#fff' }}>
+                          ✓ {validator === w.fromTeam ? L('Đã giao', 'Handed over') : L('Đã nhận', 'Received')}</button>
+                        <button disabled={receiving === w.id} onClick={() => decideTransfer(w, false)} className="flex-none rounded-md px-3 py-1.5 text-[12.5px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#fff', color: LATE, border: `1px solid ${LATE}` }}>
+                          ✕ {L('Từ chối', 'Refuse')}</button>
+                      </div>
+                    </div>
+                  )}
+                  {w.status === 'to_confirm' && !(tt && validator === team) && (() => {
                     const mins = Math.max(0, Math.round((Date.now() - new Date(w.createdAt).getTime()) / 60000));
                     const recent = reminded[w.id] && Date.now() - reminded[w.id] < 3 * 60 * 1000;
                     return (
                       <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 mb-1.5 text-[12px]" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>
-                        <span className="flex-1">{w.kind === 'transfer' ? L(`Chờ kho xác nhận phiếu chuyển (${mins} phút).`, `Waiting for storage to confirm the transfer (${mins} min).`) : L(`Chưa lấy hàng: chờ kho xác nhận (${mins} phút).`, `Do not take yet: waiting for storage (${mins} min).`)}</span>
+                        <span className="flex-1">{tt ? L(`Chờ ${vName} xác nhận phiếu chuyển (${mins} phút).`, `Waiting for ${vName} to validate the transfer (${mins} min).`) : w.kind === 'transfer' ? L(`Chờ kho xác nhận phiếu chuyển (${mins} phút).`, `Waiting for storage to confirm the transfer (${mins} min).`) : L(`Chưa lấy hàng: chờ kho xác nhận (${mins} phút).`, `Do not take yet: waiting for storage (${mins} min).`)}</span>
                         {mins >= 2 && <button disabled={!!recent} onClick={() => remind(w)} className="flex-none rounded-md px-2.5 py-1 text-[12px] font-extrabold disabled:opacity-50" style={{ backgroundColor: '#8A5A00', color: '#fff' }}>
-                          {recent ? L('Đã nhắc', 'Reminded') : L('Nhắc kho', 'Remind storage')}</button>}
+                          {recent ? L('Đã nhắc', 'Reminded') : tt ? L(`Nhắc ${vName}`, `Remind ${vName}`) : L('Nhắc kho', 'Remind storage')}</button>}
                       </div>
                     );
                   })()}
@@ -487,7 +515,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                     </div>
                   )}
                   {w.receivedAt && !w.awaitingReceipt && w.receivedBy && (
-                    <div className="text-[11.5px] pb-1.5 font-semibold" style={{ color: '#067647' }}>✓ {L('Đã nhận', 'Received')} {vnDayTime(w.receivedAt).time} · {w.receivedBy}</div>
+                    <div className="text-[11.5px] pb-1.5 font-semibold" style={{ color: '#067647' }}>✓ {tt && validator === w.fromTeam ? L('Đã giao', 'Handed over') : L('Đã nhận', 'Received')} {vnDayTime(w.receivedAt).time} · {w.receivedBy}</div>
                   )}
                   {w.note && <div className="text-[12px] pb-1.5" style={{ color: '#6B7280' }}>“{w.note}”</div>}
                   {w.lines.map(l => (
@@ -638,9 +666,12 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
               <label className="block mt-2"><span className="block text-[11px] font-extrabold uppercase tracking-wide mb-1" style={{ color: '#9CA3AF' }}>{L('Lý do / dùng cho món nào (tuỳ chọn)', 'Why / for which product (optional)')}</span>
                 <input value={tNote} onChange={e => setTNote(e.target.value)} maxLength={200} className="w-full rounded-lg px-3 py-2 text-[13.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
               <div className="rounded-xl px-3 py-2 text-xs mt-2 flex items-start gap-2" style={{ backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${BORDER}` }}><ShieldCheck size={14} className="flex-none mt-0.5" />
-                {L(`Kho xác nhận trước khi tính. Sau đó số lượng được trừ khỏi Team ${TEAM_SHORT[from]?.vi ?? from} và cộng cho Team ${TEAM_SHORT[to]?.vi ?? to}.`,
-                  `Storage confirms before it counts. Then it comes off Team ${TEAM_SHORT[from]?.en ?? from} and is added to Team ${TEAM_SHORT[to]?.en ?? to}.`)}</div>
-              <button disabled={busy} onClick={confirmTransfer} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Gửi kho xác nhận', 'Send to storage for confirmation')}</button>
+                {other === 'kho'
+                  ? L(`Kho xác nhận trước khi tính. Sau đó số lượng được trừ khỏi Team ${TEAM_SHORT[from]?.vi ?? from} và cộng cho Team ${TEAM_SHORT[to]?.vi ?? to}.`,
+                    `Storage confirms before it counts. Then it comes off Team ${TEAM_SHORT[from]?.en ?? from} and is added to Team ${TEAM_SHORT[to]?.en ?? to}.`)
+                  : L(`Team ${TEAM_SHORT[other]?.vi ?? other} xác nhận trước khi tính (không cần kho). Sau đó số lượng được trừ khỏi Team ${TEAM_SHORT[from]?.vi ?? from} và cộng cho Team ${TEAM_SHORT[to]?.vi ?? to}.`,
+                    `Team ${TEAM_SHORT[other]?.en ?? other} validates before it counts (no storage step). Then it comes off Team ${TEAM_SHORT[from]?.en ?? from} and is added to Team ${TEAM_SHORT[to]?.en ?? to}.`)}</div>
+              <button disabled={busy} onClick={confirmTransfer} className="w-full mt-3 rounded-xl py-3 font-extrabold text-white disabled:opacity-60" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : (other === 'kho' ? L('Gửi kho xác nhận', 'Send to storage for confirmation') : L(`Gửi ${TEAM_SHORT[other ?? '']?.vi ?? ''} xác nhận`, `Send to ${TEAM_SHORT[other ?? '']?.en ?? ''} to validate`))}</button>
               <button onClick={() => setSheet(null)} className="w-full mt-2 rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, color: GOLD_TEXT }}>{L('Sửa lại', 'Keep editing')}</button>
             </>); })()}
             {sheet === 'cart' && (<>
