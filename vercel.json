@@ -16,5 +16,6 @@
       "path": "/api/lab/photo-sync-weekly",
       "schedule": "0 19 * * 6"
     }
-  ]
+  ],
+  "ignoreCommand": "exit 1"
 }
