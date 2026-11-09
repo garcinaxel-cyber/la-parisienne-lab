@@ -20,24 +20,28 @@ export default function PhotosView() {
   const [items, setItems] = useState<PhotoTodo[] | null>(null);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [tab, setTab] = useState<'todo' | 'done' | 'nis'>('todo');
+  // Separate lists per kind (Axel, 2026-11-09): raw materials and packaging are never mixed.
+  const [kind, setKind] = useState<'raw' | 'packaging'>('raw');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { missingPhotosAction().then(r => setItems(r.items ?? [])); }, []);
 
   const groups = useMemo(() => {
-    const list = (items ?? []).filter(i => (tab === 'done' ? done.has(i.tmplId) : tab === 'nis' ? !done.has(i.tmplId) && i.status === 'not_in_stock' : !done.has(i.tmplId) && i.status !== 'not_in_stock'));
+    const list = (items ?? []).filter(i => i.kind === kind).filter(i => (tab === 'done' ? done.has(i.tmplId) : tab === 'nis' ? !done.has(i.tmplId) && i.status === 'not_in_stock' : !done.has(i.tmplId) && i.status !== 'not_in_stock'));
     const g = new Map<string, PhotoTodo[]>();
     for (const i of list) {
       const k = i.kind === 'packaging' ? L('Bao bì', 'Packaging') : `${L(RAW_TYPES[i.type as 'dry']?.vi ?? '', ({ dry: 'Sec', fresh: 'Frais', frozen: 'Surgelé' } as any)[i.type] ?? '')}`;
       g.set(k, [...(g.get(k) ?? []), i]);
     }
     return Array.from(g.entries());
-  }, [items, tab, done, vi]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [items, tab, done, vi, kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const counts = { todo: (items ?? []).filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').length, done: done.size, nis: (items ?? []).filter(i => !done.has(i.tmplId) && i.status === 'not_in_stock').length };
+  const ofKind = (items ?? []).filter(i => i.kind === kind);
+  const counts = { todo: ofKind.filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').length, done: ofKind.filter(i => done.has(i.tmplId)).length, nis: ofKind.filter(i => !done.has(i.tmplId) && i.status === 'not_in_stock').length };
+  const kindTodo = (k: 'raw' | 'packaging') => (items ?? []).filter(i => i.kind === k && !done.has(i.tmplId) && i.status !== 'not_in_stock').length;
   const ask = async () => {
     setBusy(true);
-    const r = await requestPhotosAction((items ?? []).filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').map(i => i.tmplId));
+    const r = await requestPhotosAction(ofKind.filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').map(i => i.tmplId));
     setBusy(false); setMsg(r.error ?? L('Đã gửi yêu cầu cho kho.', 'Demande envoyée au storage.'));
     setItems(x => (x ?? []).map(i => (i.status ? i : { ...i, status: 'open' })));
   };
@@ -53,7 +57,11 @@ export default function PhotosView() {
           <button aria-label="Back" onClick={() => router.push('/inventory')} className="p-1 -ml-1"><ChevronLeft size={22} /></button>
           <div className="flex-1"><div className="text-[16px] font-extrabold">{L('Ảnh cần chụp', 'Photos à prendre')}</div>
             <div className="text-[11.5px]" style={{ color: '#D7E3DC' }}>{L('Ảnh chụp ở đây cập nhật cả Odoo', 'La photo met aussi à jour Odoo')}</div></div>
-          <div className="text-[13px] font-extrabold" style={{ color: '#E9D9A0' }}>{counts.done}/{(items ?? []).length}</div>
+          <div className="text-[13px] font-extrabold" style={{ color: '#E9D9A0' }}>{counts.done}/{ofKind.length}</div>
+        </div>
+        <div className="grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: 'rgba(255,255,255,.12)' }}>
+          {([['raw', L('Nguyên liệu', 'Matières premières')], ['packaging', L('Bao bì', 'Packaging')]] as const).map(([k, l]) =>
+            <button key={k} onClick={() => setKind(k)} className="rounded-lg py-2 text-[13px] font-extrabold" style={kind === k ? { backgroundColor: '#fff', color: NAVY } : { color: '#fff' }}>{l} · {kindTodo(k)}</button>)}
         </div>
         <div className="flex gap-1.5">
           {([['todo', L('Cần chụp', 'À faire')], ['done', L('Đã chụp', 'Faites')], ['nis', L('Hết hàng', 'Pas en stock')]] as const).map(([k, l]) =>
@@ -83,7 +91,7 @@ export default function PhotosView() {
         <div className="fixed bottom-0 left-0 right-0 z-20 bg-white px-3 pt-2 pb-3 max-w-2xl mx-auto" style={{ borderTop: '1px solid #EFE9CF' }}>
           {msg && <div className="text-[12px] pb-1.5 font-semibold" style={{ color: NAVY }}>{msg}</div>}
           <button disabled={busy} onClick={ask} className="w-full rounded-xl py-3 text-[14px] font-extrabold text-white disabled:opacity-60 flex items-center justify-center gap-2" style={{ backgroundColor: GOLD_TEXT }}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} {L(`Báo kho chụp ${counts.todo} ảnh`, `Demander ${counts.todo} photos au storage`)}</button>
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} {kind === 'raw' ? L(`Báo kho chụp ${counts.todo} ảnh nguyên liệu`, `Demander ${counts.todo} photos matières au storage`) : L(`Báo kho chụp ${counts.todo} ảnh bao bì`, `Demander ${counts.todo} photos packaging au storage`)}</button>
         </div>
       )}
     </div>
