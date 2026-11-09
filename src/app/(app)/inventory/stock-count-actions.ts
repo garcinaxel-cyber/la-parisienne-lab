@@ -282,16 +282,19 @@ export async function missingPhotosAction(): Promise<{ items?: PhotoTodo[]; requ
     db.from('lab_raw_materials').select('tmpl_id, sku, name, name_vi, kind, type, sub').in('kind', ['raw', 'packaging']).eq('active', true).limit(3000),
     db.from('lab_item_photos').select('tmpl_id').limit(5000),
     db.from('lab_photo_requests').select('tmpl_id, status').limit(5000),
-    db.from('lab_stock_counts').select('id').eq('status', 'draft'),
+    db.from('lab_stock_counts').select('id, kind').eq('status', 'draft'),
   ]);
   const has = new Set((photos ?? []).map((p: any) => Number(p.tmpl_id)));
   const st = new Map<number, string>((reqs ?? []).map((r: any) => [Number(r.tmpl_id), r.status]));
-  let inScope: Set<number> | null = null;
-  if (drafts?.length) {
-    const { data: ls } = await db.from('lab_stock_count_lines').select('tmpl_id').in('count_id', drafts.map((d: any) => d.id)).eq('in_scope', true).limit(5000);
-    inScope = new Set((ls ?? []).map((l: any) => Number(l.tmpl_id)));
+  // A kind with an open count: only its list to count. A kind without: its whole catalogue.
+  const draftKinds = new Set<string>();
+  const inScope = new Set<number>();
+  for (const d of (drafts ?? []) as any[]) {
+    draftKinds.add(d.kind);
+    const { data: ls } = await db.from('lab_stock_count_lines').select('tmpl_id').eq('count_id', d.id).eq('in_scope', true).limit(3000);
+    for (const l of ls ?? []) inScope.add(Number((l as any).tmpl_id));
   }
-  const items = (mats ?? []).filter((m: any) => !has.has(m.tmpl_id) && (!inScope || inScope.has(m.tmpl_id)))
+  const items = (mats ?? []).filter((m: any) => !has.has(m.tmpl_id) && (!draftKinds.has(m.kind) || inScope.has(m.tmpl_id)))
     .map((m: any) => ({ tmplId: m.tmpl_id, sku: m.sku ?? null, name: m.name, nameVi: m.name_vi ?? null, kind: m.kind, type: m.type ?? 'dry', sub: m.sub ?? 'other',
       status: (st.get(m.tmpl_id) as any) ?? null }));
   return { items, requested: items.some(i => i.status) };
