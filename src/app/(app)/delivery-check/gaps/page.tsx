@@ -34,6 +34,9 @@ export default async function DeliveryGapsPage() {
   const dmgByShop: Record<string, number> = {};
   for (const g of damagedList) dmgByShop[g.shopName] = (dmgByShop[g.shopName] ?? 0) + 1;
   const damaged = { shops: Object.keys(dmgByShop).length, items: damagedList.length, byShop: Object.entries(dmgByShop).map(([shop, n]) => ({ shop, n })) };
+  const asWait = (g: typeof gaps[number]) => ({ key: g.key, product: g.product, shop: g.shopName, orderRef: g.orderRef, deliveryDate: g.deliveryDate, qty: g.qty, deliveriesSince: g.deliveriesSince, late: g.returnOverdue, photos: g.photoUrls });
+  const damagedItems = [...damagedList].sort((x, y) => x.deliveryDate.localeCompare(y.deliveryDate)).map(asWait);
+  const waitingShop = gaps.filter(g => g.status === 'waiting_shop').map(asWait);
   // Settled gaps the Lab manager / admin still has to send to Odoo (final validation), one per order.
   const sendMap: Record<string, { key: string; orderRef: string; shop: string; lines: number }> = {};
   for (const g of gaps.filter(g => g.status === 'closed' && g.odooMode !== 'sent' && g.labCause !== 'shop_miscount' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra'))) {
@@ -44,7 +47,7 @@ export default async function DeliveryGapsPage() {
     .map(g => `${g.orderRef} · ${g.shopName} · ${g.product} · ${g.kind === 'extra' ? '+' : '−'}${g.qty} · ${CAUSE_EN[g.labCause ?? ''] ?? g.labCause ?? ''}${g.decidedBy ? ` · ${g.decidedBy}` : ''}`);
   const reception = gaps.filter(g => g.kind !== 'damaged' && g.status === 'open')
     .sort((a, b) => (a.deadlineAt ?? '9').localeCompare(b.deadlineAt ?? '9'))
-    .map(g => ({ key: g.key, product: g.product, shop: g.shopName, orderRef: g.orderRef, deliveryDate: g.deliveryDate, kind: g.kind, qty: g.qty, sent: g.sent, received: g.received, deadlineAt: g.deadlineAt }));
+    .map(g => ({ key: g.key, product: g.product, shop: g.shopName, orderRef: g.orderRef, deliveryDate: g.deliveryDate, kind: g.kind, qty: g.qty, sent: g.sent, received: g.received, deadlineAt: g.deadlineAt, photos: g.photoUrls }));
   return <GapsView top={<TasksPanel leftovers={lo.open} leftoverDone={lo.done} open={prod.open} resolved={prod.resolved} recounts={prod.recounts}
-      reception={reception} offslipOpen={offslipOpen ?? 0} shopsNotConfirmed={notConfirmed} damaged={damaged} receptionDoneToday={receptionDoneToday} toSend={toSend} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} today={today} />} initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />;
+      reception={reception} offslipOpen={offslipOpen ?? 0} shopsNotConfirmed={notConfirmed} damaged={damaged} damagedList={damagedItems} waitingShop={waitingShop} receptionDoneToday={receptionDoneToday} toSend={toSend} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} today={today} />} initialGaps={gaps} schemaReady={schemaReady} odooMode={receptionOdooMode()} canSendOdoo={['admin', 'lab_manager'].includes(profile?.role ?? '')} extra={<><StuckInPanel /><OffslipPanel mode="open" /></>} extraClosed={<OffslipPanel mode="closed" />} />;
 }

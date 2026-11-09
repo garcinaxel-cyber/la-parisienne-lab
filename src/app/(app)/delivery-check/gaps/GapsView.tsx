@@ -1,6 +1,6 @@
 'use client';
-// Delivery gaps — Lab side (preview 2026-10-13). Layout follows the validated mockup
-// (Lab 1 / Lab 2): list on the left (closest to its 48h deadline first), decision on the right.
+// Delivery gaps — Lab side (preview 2026-10-13; two views Today / History since 2026-11-09).
+// The decision card opens in place from the tasks panel; history is a separate filterable table.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -9,7 +9,6 @@ import { ArrowLeft, AlertTriangle, Loader2, FlaskConical } from 'lucide-react';
 import type { DeliveryGap, LabCause } from '@/lib/reception-gaps';
 import type { ReceptionPlan, PlannedStep, InValidationResult } from '@/lib/reception-odoo';
 
-type Tab = 'decide' | 'shop' | 'return' | 'send' | 'closed';
 
 // Sales orders (Moon Flower): no shop IN — effects are a return / extra delivery + draft invoice change.
 const SO_EFFECT: Partial<Record<LabCause, { vi: string; fr: string }>> = {
@@ -205,11 +204,42 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
   );
 }
 
+// Two views (Axel, 2026-11-09 — mockup « Delivery Gaps Redesign »): « Today » = only what is open
+// (to do now, waiting for someone else, settled today), with the decision card opening in place;
+// « History » = settled lines in a compact filterable table, the Odoo detail and photos only when
+// a line is expanded. Before, history, open gaps and Odoo documents were all mixed in one scroll.
+type View = 'today' | 'history';
+type Period = 'today' | '7d' | 'all';
+
+const CAUSE_LABEL = (k: string | null, vi: boolean) => {
+  if (!k) return '';
+  const c = [...CAUSES.missing, ...CAUSES.extra, ...CAUSES.damaged].find(x => x.key === k);
+  return c ? (vi ? c.vi : c.fr) : k;
+};
+const gapLabel = (g: DeliveryGap, vi: boolean) => g.kind === 'damaged' ? `${g.qty} ${vi ? 'hỏng' : 'damaged'}` : g.kind === 'extra' ? `+${g.qty} ${vi ? 'thừa' : 'extra'}` : `−${g.qty} ${vi ? 'thiếu' : 'missing'}`;
+const gapColor = (g: DeliveryGap) => g.kind === 'extra' ? '#1F5FAD' : g.kind === 'damaged' ? '#92400E' : '#B42318';
+const shortShop = (s: string) => s.replace(/^La Paris\s*/i, '');
+const ddmm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+
+function Thumbs({ urls, size = 40 }: { urls: string[]; size?: number }) {
+  if (!urls.length) return null;
+  return (
+    <span className="inline-flex gap-1 shrink-0">
+      {urls.slice(0, 3).map(u => (
+        <a key={u} href={u} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+          <img src={u} alt="" className="rounded-md object-cover border border-gray-200" style={{ width: size, height: size }} />
+        </a>
+      ))}
+      {urls.length > 3 && <span className="text-xs text-gray-500 self-center">+{urls.length - 3}</span>}
+    </span>
+  );
+}
+
 export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOdoo, extra, extraClosed, top }: { initialGaps: DeliveryGap[]; schemaReady: boolean; odooMode: 'simulated' | 'live'; canSendOdoo: boolean; extra?: React.ReactNode; extraClosed?: React.ReactNode; top?: React.ReactNode }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>('decide');
+  const [view, setView] = useState<View>('today');
   const [selected, setSelected] = useState<string | null>(null);
   const [cause, setCause] = useState<LabCause | null>(null);
   const [message, setMessage] = useState('');
@@ -218,37 +248,45 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
   const [plan, setPlan] = useState<ReceptionPlan | null>(null);
   const [inPlan, setInPlan] = useState<{ result: InValidationResult; complete: boolean; done?: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
-  // Section ② detail (Axel, 2026-10-24): the tasks panel lists the gaps; this screen opens on "Do it".
-  const [detailOpen, setDetailOpen] = useState(false);
-  const detailRef = useRef<HTMLDivElement>(null);
+  const [period, setPeriod] = useState<Period>('7d');
+  const [shopF, setShopF] = useState('');
+  const [kindF, setKindF] = useState('');
+  const [q, setQ] = useState('');
+  const [showN, setShowN] = useState(40);
+  const workRef = useRef<HTMLDivElement>(null);
+
+  function pick(key: string | null) { setSelected(key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
+
+  // The tasks panel's « Do it » opens the decision card right here, in the Today view.
   useEffect(() => {
     const on = (e: Event) => {
       const key = (e as CustomEvent).detail as string | null;
-      setDetailOpen(true);
-      if (key === 'closed') { setTab('closed'); setSelected(null); }
-      else if (key && key.startsWith('send:')) { setTab('send'); setSelected(key.slice(5)); setPlan(null); setInPlan(null); setErr(null); }
-      else if (key && key !== 'offslip') { setTab('decide'); setSelected(key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
-      setTimeout(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      if (key === 'closed') { setView('history'); pick(null); return; }
+      if (key === 'offslip') { setView('today'); pick(null); setTimeout(() => document.getElementById('offslip-open')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); return; }
+      setView('today');
+      pick(key && key.startsWith('send:') ? key.slice(5) : key);
+      setTimeout(() => workRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     };
     window.addEventListener('lp-open-gap', on);
     return () => window.removeEventListener('lp-open-gap', on);
   }, []);
 
-  // Damaged with a photo is settled automatically (Lab loss) and goes straight to "send".
-  // The physical return is optional: the "return" tab only lists what has not come back yet.
-  const since7 = new Date(Date.now() + 7 * 3600_000 - 7 * 86400000).toISOString().slice(0, 10); // Vietnam day
-  const byTab = useMemo(() => ({
-    decide: initialGaps.filter(g => g.status === 'open'),
-    shop: initialGaps.filter(g => g.status === 'waiting_shop'),
-    return: initialGaps.filter(g => (g.kind === 'damaged' || g.labCause === 'damaged_returned') && g.labCause !== 'shop_miscount' && g.status !== 'waiting_shop' && !g.returnConfirmedAt && g.deliveryDate >= since7), // last 7 days only (Axel, 2026-10-24)
-    send: initialGaps.filter(g => g.status === 'closed' && g.odooMode !== 'sent' && g.labCause !== 'shop_miscount' && !(g.kind === 'extra' && g.labCause !== 'lab_sent_extra')),
-    closed: initialGaps.filter(g => g.status === 'closed'),
-  }), [initialGaps, since7]);
-  const list = byTab[tab];
-  const current = list.find(g => g.key === selected) ?? list[0] ?? null;
-  const overdueCount = initialGaps.filter(g => g.overdue).length; // a damaged unit not back is no longer a to-do (2026-10-19)
+  const current = selected ? initialGaps.find(g => g.key === selected) ?? null : null;
+  const overdueCount = initialGaps.filter(g => g.overdue).length;
 
-  function pick(g: DeliveryGap) { setSelected(g.key); setEditing(false); setCause(null); setMessage(''); setPlan(null); setInPlan(null); setErr(null); }
+  const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10); // Vietnam day
+  const since7 = new Date(Date.now() + 7 * 3600_000 - 7 * 86400000).toISOString().slice(0, 10);
+  const closed = useMemo(() => initialGaps.filter(g => g.status === 'closed').sort((a, b) => (b.decidedAt ?? b.deliveryDate).localeCompare(a.decidedAt ?? a.deliveryDate)), [initialGaps]);
+  const shops = useMemo(() => Array.from(new Set(closed.map(g => g.shopName))).sort(), [closed]);
+  const history = closed.filter(g => {
+    const day = g.decidedAt ? new Date(g.decidedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }) : g.deliveryDate;
+    if (period === 'today' && day !== today) return false;
+    if (period === '7d' && day < since7) return false;
+    if (shopF && g.shopName !== shopF) return false;
+    if (kindF && g.kind !== kindF) return false;
+    if (q.trim()) { const s = q.trim().toLowerCase(); if (!`${g.product} ${g.sku ?? ''} ${g.orderRef}`.toLowerCase().includes(s)) return false; }
+    return true;
+  });
 
   async function submit() {
     if (!current || !cause) return;
@@ -281,190 +319,227 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
     if (res.result) setInPlan({ result: res.result, complete: true, done: true });
   }
 
-  const tabs: { key: Tab; vi: string; fr: string }[] = [
-    { key: 'decide', vi: 'Cần xử lý', fr: 'To decide' },
-    { key: 'shop', vi: 'Chờ shop', fr: 'Waiting shop' },
-    { key: 'return', vi: 'Hỏng chưa về Lab', fr: 'Damaged not back' },
-    { key: 'send', vi: 'Chờ gửi Odoo', fr: 'To send to Odoo' },
-    { key: 'closed', vi: 'Đã đóng', fr: 'Closed' },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Link href="/delivery-check" className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 bg-white"><ArrowLeft size={16} /></Link>
-        <div>
-          <h1 className="font-serif text-2xl font-bold text-navy">{vi ? 'Việc cần làm · Lệch giao hàng' : 'Tasks · Delivery gaps'}</h1>
-          <p className="text-ink-light text-sm">{vi ? 'Sản xuất → giao hàng · giao hàng → cửa hàng' : 'Production → delivery · delivery → shop'}</p>
+  // The decision / detail card of one gap (unchanged content: sent / received, photos, cause, Odoo).
+  const detail = (g: DeliveryGap) => (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <div className="flex justify-between items-start gap-3">
+        <div className="min-w-0">
+          <div className="text-lg font-bold">{g.product}</div>
+          <div className="text-sm text-gray-500">{g.shopName} · {g.orderRef} · {ddmm(g.deliveryDate)}</div>
         </div>
-      </div>
-
-      {/* Tasks panel (Axel, 2026-10-24): counter, ① production → delivery, waiting, done. */}
-      {top}
-
-      <button type="button" onClick={() => { if (!detailOpen) { setTab('closed'); setSelected(null); } setDetailOpen(o => !o); }} className="text-sm font-semibold underline text-ink-light">
-        {detailOpen ? (vi ? 'Ẩn lịch sử' : 'Hide history') : (vi ? 'Lịch sử lệch nhận hàng (đã đóng, 7 ngày)' : 'History of shop receipt gaps (closed)')}
-      </button>
-
-      <div ref={detailRef} hidden={!detailOpen} className="space-y-4">
-
-      <div className="rounded-xl px-4 py-2.5 text-xs flex items-start gap-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE', color: '#4C1D95' }}>
-        <FlaskConical size={14} className="shrink-0 mt-0.5" />
-        <span>
-          {vi ? 'Odoo: nhập kho shop tự xác nhận khi đủ số. Có lệch: chọn nguyên nhân từng dòng (hàng hỏng có ảnh = tự xử lý), rồi bấm « Gửi Odoo xác nhận cuối » cho cả đơn — Odoo tự làm trả hàng, scrap, chuyển kho, hoá đơn. '
-                : 'Odoo: the shop receipt is validated by itself when everything matches. Gap: cause line by line (damaged with photo = settled automatically), then « Gửi Odoo xác nhận cuối » for the whole order — return, scrap, transfers, invoice done by the app. '}
-          {schemaReady ? '' : (vi ? 'Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật) — các lệch được tính từ xác nhận của shop.' : 'Decisions cannot be saved yet (database not updated) — gaps computed from shop receipts.')}
+        <span className="text-xs font-bold rounded-full px-2.5 py-1 shrink-0"
+          style={g.kind === 'extra' ? { backgroundColor: '#E7F0FA', color: '#1F5FAD' } : g.kind === 'damaged' ? { backgroundColor: '#FEF3C7', color: '#92400E' } : { backgroundColor: '#FDECEA', color: '#B42318' }}>
+          {gapLabel(g, vi)}
         </span>
       </div>
+      <div className="grid grid-cols-2 gap-2.5">
+        <div className="rounded-lg bg-gray-50 px-3.5 py-2.5">
+          <div className="text-[11px] font-bold text-gray-500">{vi ? 'BẾP GỬI' : 'SENT'}</div>
+          <div className="text-xl font-bold">×{g.sent}</div>
+          <div className="text-xs text-gray-500">{g.checkedBy ?? '—'}{g.checkedAt ? ` · ${new Date(g.checkedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}</div>
+        </div>
+        <div className="rounded-lg bg-gray-50 px-3.5 py-2.5">
+          <div className="text-[11px] font-bold text-gray-500">{vi ? 'SHOP NHẬN' : 'RECEIVED'}</div>
+          <div className="text-xl font-bold" style={{ color: g.kind === 'extra' ? '#1F5FAD' : '#B42318' }}>×{g.received}{g.damaged > 0 ? ` (${g.damaged} ${vi ? 'hỏng' : 'damaged'})` : ''}</div>
+          <div className="text-xs text-gray-500">{g.confirmedBy ?? '—'}{g.confirmedAt ? ` · ${new Date(g.confirmedAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}{g.shopNote ? ` · “${g.shopNote}”` : ''}</div>
+        </div>
+      </div>
+      {g.photoUrls.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-bold text-gray-500">{vi ? 'ẢNH CỦA SHOP' : 'PHOTOS FROM THE SHOP'}</div>
+          <div className="flex gap-2 flex-wrap">
+            {g.photoUrls.map(u => (
+              <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-28 h-28 rounded-lg object-cover border border-gray-200" /></a>
+            ))}
+          </div>
+        </div>
+      )}
+      {g.shopCause && (
+        <div className="text-xs text-gray-600">{vi ? 'Shop chọn:' : 'The shop says:'} <b>{g.shopCause === 'wrong_product' ? (vi ? 'Sai sản phẩm' : 'Wrong product') : (vi ? 'Thiếu hàng' : 'Missing')}</b></div>
+      )}
 
-      {/* Products received that were on no slip (Axel, 2026-10-16) — see OffslipPanel. */}
-      {extra}
-
-      {overdueCount > 0 && (
-        <div className="rounded-xl px-4 py-2.5 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
-          <AlertTriangle size={16} /> {overdueCount} {vi ? 'quá hạn (48h / 2 chuyến) — báo Axel' : 'late (48h / 2 deliveries) — alert Axel'}
+      {(g.status === 'open' || editing) && (
+        <>
+          <fieldset className="space-y-2">
+            <legend className="text-[11px] font-bold tracking-wide text-gray-500 mb-2">
+              {g.kind === 'missing' ? (vi ? `${g.qty} CÁI THIẾU ĐI ĐÂU?` : `WHERE ARE THE ${g.qty} MISSING?`) : g.kind === 'damaged' ? (vi ? 'ẢNH CÓ CHO THẤY HỎNG?' : 'DOES THE PHOTO SHOW THE DAMAGE?') : (vi ? 'CÁI THỪA TỪ ĐÂU RA?' : 'WHERE DOES THE EXTRA COME FROM?')}
+            </legend>
+            {CAUSES[g.kind].map(c => (
+              <label key={c.key} className="flex items-center gap-3 rounded-lg px-3.5 py-2.5 cursor-pointer"
+                style={{ border: cause === c.key ? '1.5px solid #1A4731' : '1px solid #E5E7EB', backgroundColor: cause === c.key ? '#EAF2ED' : 'white' }}>
+                <input type="radio" name="cause" checked={cause === c.key} onChange={() => setCause(c.key)} style={{ accentColor: '#1A4731' }} />
+                <span className="flex-1 text-sm font-semibold">{vi ? c.vi : c.fr}</span>
+                <span className="text-xs text-gray-500">{g.sourceType === 'sales_order' && SO_EFFECT[c.key] ? (vi ? SO_EFFECT[c.key]!.vi : SO_EFFECT[c.key]!.fr) : (vi ? c.effVi : c.effFr)}</span>
+              </label>
+            ))}
+          </fieldset>
+          <input value={message} onChange={e => setMessage(e.target.value)} maxLength={300}
+            placeholder={vi ? 'Lời nhắn cho shop (tuỳ chọn)' : 'Message to the shop (optional)'}
+            className="w-full text-sm rounded-lg px-3 py-2.5 border border-gray-300" />
+        </>
+      )}
+      {g.kind === 'damaged' && g.labCause !== 'shop_miscount' && (
+        <div className="rounded-lg bg-gray-50 px-3.5 py-2.5 text-sm text-gray-700">
+          {vi ? 'Hỏng khi nhận, có ảnh = hao hụt Lab, tự xử lý. Mang hàng hỏng về Lab (Nhập kho LỖI LAB) là tuỳ chọn.'
+              : 'Damaged on arrival with a photo = Lab loss, settled automatically. Bringing the broken items back (Nhập kho LỖI LAB) is a plus.'}
+          {g.returnConfirmedAt && <div className="font-semibold mt-1" style={{ color: '#15803D' }}>{vi ? '✓ Hàng hỏng đã về Lab' : '✓ Damaged items back at the Lab'}{g.returnConfirmedBy ? ` · ${g.returnConfirmedBy}` : ''}</div>}
+          {g.returnOverdue && <div className="font-bold mt-1" style={{ color: '#B42318' }}>{vi ? `Chưa về sau ${g.deliveriesSince} chuyến — báo Axel` : `Not back after ${g.deliveriesSince} deliveries — alert Axel`}</div>}
+        </div>
+      )}
+      {g.labCause && g.status !== 'open' && !editing && (
+        <div className="text-sm text-gray-700 flex items-center gap-3 flex-wrap">
+          <span>{vi ? 'Đã chọn:' : 'Decided:'} <b>{CAUSE_LABEL(g.labCause, vi)}</b>{g.decidedBy ? ` · ${g.decidedBy}` : ''}</span>
+          {g.odooMode !== 'sent' && (
+            <button onClick={() => { setEditing(true); setCause(g.labCause); }} className="text-xs font-semibold underline text-gray-600">{vi ? 'Đổi' : 'Edit'}</button>
+          )}
         </div>
       )}
 
-      <div className="flex gap-1.5 flex-wrap">
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => { setTab(t.key); setSelected(null); setPlan(null); setInPlan(null); }}
-            className="text-xs font-semibold rounded-full px-3.5 py-1.5"
-            style={{ border: `1px solid ${tab === t.key ? '#1f2937' : '#D1D5DB'}`, backgroundColor: tab === t.key ? '#F3F4F6' : 'white' }}>
-            {vi ? t.vi : t.fr} · {byTab[t.key].length}
+      {err && <div className="text-sm font-semibold" style={{ color: '#B42318' }}>{err}</div>}
+      {plan && <PlanBox plan={plan} vi={vi} />}
+      {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} canSend={canSendOdoo} />}
+
+      <div className="flex justify-between items-center gap-2 flex-wrap">
+        <SendBox key={g.deliveryOrderId} deliveryOrderId={g.deliveryOrderId} vi={vi} onDone={() => router.refresh()} canSend={canSendOdoo} />
+        {g.sourceType !== 'sales_order' && g.status !== 'closed' && (
+          <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
+            {vi ? 'Chỉ nhập kho shop trên Odoo' : 'Validate the shop receipt only'}
           </button>
-        ))}
-      </div>
-
-      {tab === 'closed' && extraClosed}
-
-      <div className="flex flex-col lg:flex-row gap-4">
-        <div className="lg:w-[380px] shrink-0 bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {!list.length && <div className="px-4 py-6 text-sm text-center text-gray-500">{vi ? 'Không có' : 'Nothing here'}</div>}
-          {list.map(g => {
-            const h = hoursLeft(g.deadlineAt);
-            const sign = g.kind === 'extra' ? '+' : '−';
-            const color = g.kind === 'extra' ? '#1F5FAD' : g.kind === 'damaged' ? '#92400E' : '#B42318';
-            return (
-              <button key={g.key} onClick={() => pick(g)} className="w-full text-left px-4 py-3 border-b border-gray-200 space-y-1"
-                style={{ backgroundColor: current?.key === g.key ? '#F3F4F6' : 'white' }}>
-                <div className="flex justify-between gap-2">
-                  <span className="text-sm font-semibold truncate">{g.product}</span>
-                  <span className="text-sm font-bold shrink-0" style={{ color }}>{g.kind === 'damaged' ? `${g.qty} ${vi ? 'hỏng' : 'damaged'}` : `${sign}${g.qty}`}</span>
-                </div>
-                <div className="flex justify-between gap-2 text-xs text-gray-500">
-                  <span className="truncate">{g.shopName} · {vi ? 'gửi' : 'sent'} {g.sent}, {vi ? 'nhận' : 'received'} {g.received}</span>
-                  {tab === 'decide' && h != null && (
-                    <span className="font-semibold shrink-0" style={{ color: g.overdue ? '#B42318' : '#374151' }}>
-                      {g.overdue ? (vi ? 'quá hạn' : 'late') : vi ? `còn ${h}h` : `${h}h left`}
-                    </span>
-                  )}
-                  {tab === 'return' && (
-                    <span className="font-semibold shrink-0" style={{ color: g.returnOverdue ? '#B42318' : '#374151' }}>
-                      {g.deliveriesSince} {vi ? 'chuyến sau' : 'deliv. since'}
-                    </span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-          <div className="px-4 py-2.5 text-xs text-gray-500">{vi ? 'Dòng trên cùng = sắp hết hạn 48h.' : 'Top = closest to its 48h deadline.'}</div>
-        </div>
-
-        {current && (
-          <div className="flex-1 min-w-0 bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            <div className="flex justify-between items-start gap-3">
-              <div>
-                <div className="text-lg font-bold">{current.product}</div>
-                <div className="text-sm text-gray-500">{current.shopName} · {current.orderRef} · {current.deliveryDate.slice(8, 10)}/{current.deliveryDate.slice(5, 7)}</div>
-              </div>
-              <span className="text-xs font-bold rounded-full px-2.5 py-1 shrink-0"
-                style={current.kind === 'extra' ? { backgroundColor: '#E7F0FA', color: '#1F5FAD' } : current.kind === 'damaged' ? { backgroundColor: '#FEF3C7', color: '#92400E' } : { backgroundColor: '#FDECEA', color: '#B42318' }}>
-                {current.kind === 'extra' ? `${vi ? 'Thừa' : 'Extra'} +${current.qty}` : current.kind === 'damaged' ? `${vi ? 'Hỏng' : 'Damaged'} ${current.qty}` : `${vi ? 'Thiếu' : 'Missing'} −${current.qty}`}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-lg bg-gray-50 px-3.5 py-2.5">
-                <div className="text-[11px] font-bold text-gray-500">{vi ? 'BẾP GỬI' : 'SENT'}</div>
-                <div className="text-xl font-bold">×{current.sent}</div>
-                <div className="text-xs text-gray-500">{current.checkedBy ?? '—'}{current.checkedAt ? ` · ${new Date(current.checkedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}</div>
-              </div>
-              <div className="rounded-lg bg-gray-50 px-3.5 py-2.5">
-                <div className="text-[11px] font-bold text-gray-500">{vi ? 'SHOP NHẬN' : 'RECEIVED'}</div>
-                <div className="text-xl font-bold" style={{ color: current.kind === 'extra' ? '#1F5FAD' : '#B42318' }}>×{current.received}{current.damaged > 0 ? ` (${current.damaged} ${vi ? 'hỏng' : 'damaged'})` : ''}</div>
-                <div className="text-xs text-gray-500">{current.confirmedBy ?? '—'}{current.confirmedAt ? ` · ${new Date(current.confirmedAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}` : ''}{current.shopNote ? ` · “${current.shopNote}”` : ''}</div>
-              </div>
-            </div>
-            {current.photoUrls.length > 0 && (
-              <div className="flex gap-2 flex-wrap">
-                {current.photoUrls.map(u => (
-                  <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" className="w-20 h-20 rounded-lg object-cover border border-gray-200" /></a>
-                ))}
-              </div>
-            )}
-            {current.shopCause && (
-              <div className="text-xs text-gray-600">{vi ? 'Shop chọn:' : 'The shop says:'} <b>{current.shopCause === 'wrong_product' ? (vi ? 'Sai sản phẩm' : 'Wrong product') : (vi ? 'Thiếu hàng' : 'Missing')}</b></div>
-            )}
-
-            {(current.status === 'open' || editing) && (
-              <>
-                <fieldset className="space-y-2">
-                  <legend className="text-[11px] font-bold tracking-wide text-gray-500 mb-2">
-                    {current.kind === 'missing' ? (vi ? `${current.qty} CÁI THIẾU ĐI ĐÂU?` : `WHERE ARE THE ${current.qty} MISSING?`) : current.kind === 'damaged' ? (vi ? 'ẢNH CÓ CHO THẤY HỎNG?' : 'DOES THE PHOTO SHOW THE DAMAGE?') : (vi ? 'CÁI THỪA TỪ ĐÂU RA?' : 'WHERE DOES THE EXTRA COME FROM?')}
-                  </legend>
-                  {CAUSES[current.kind].map(c => (
-                    <label key={c.key} className="flex items-center gap-3 rounded-lg px-3.5 py-2.5 cursor-pointer"
-                      style={{ border: cause === c.key ? '1.5px solid #1A4731' : '1px solid #E5E7EB', backgroundColor: cause === c.key ? '#EAF2ED' : 'white' }}>
-                      <input type="radio" name="cause" checked={cause === c.key} onChange={() => setCause(c.key)} style={{ accentColor: '#1A4731' }} />
-                      <span className="flex-1 text-sm font-semibold">{vi ? c.vi : c.fr}</span>
-                      <span className="text-xs text-gray-500">{current.sourceType === 'sales_order' && SO_EFFECT[c.key] ? (vi ? SO_EFFECT[c.key]!.vi : SO_EFFECT[c.key]!.fr) : (vi ? c.effVi : c.effFr)}</span>
-                    </label>
-                  ))}
-                </fieldset>
-                <input value={message} onChange={e => setMessage(e.target.value)} maxLength={300}
-                  placeholder={vi ? 'Lời nhắn cho shop (tuỳ chọn)' : 'Message to the shop (optional)'}
-                  className="w-full text-sm rounded-lg px-3 py-2.5 border border-gray-300" />
-              </>
-            )}
-            {current.kind === 'damaged' && current.labCause !== 'shop_miscount' && (
-              <div className="rounded-lg bg-gray-50 px-3.5 py-2.5 text-sm text-gray-700">
-                {vi ? 'Hỏng khi nhận, có ảnh = hao hụt Lab, tự xử lý: « Gửi Odoo » sẽ trả về + scrap. Nhận lại hàng hỏng trong Nhập kho (LỖI LAB) là tuỳ chọn.'
-                    : 'Abîmé à l’arrivée avec photo = perte Lab, réglé automatiquement : « Envoyer à Odoo » fait retour + scrap. Le retour physique en Nhập kho (LỖI LAB) est un plus.'}
-                {current.returnConfirmedAt && <div className="font-semibold mt-1" style={{ color: '#15803D' }}>{vi ? '✓ Hàng hỏng đã về Lab' : '✓ Damaged items back at the Lab'}{current.returnConfirmedBy ? ` · ${current.returnConfirmedBy}` : ''}</div>}
-                {current.returnOverdue && <div className="font-bold mt-1" style={{ color: '#B42318' }}>{vi ? `Chưa về sau ${current.deliveriesSince} chuyến — báo Axel` : `Not back after ${current.deliveriesSince} deliveries — alert Axel`}</div>}
-              </div>
-            )}
-            {current.labCause && current.status !== 'open' && !editing && (
-              <div className="text-sm text-gray-700 flex items-center gap-3 flex-wrap">
-                <span>{vi ? 'Đã chọn:' : 'Decided:'} <b>{[...CAUSES.missing, ...CAUSES.extra, ...CAUSES.damaged].find(c => c.key === current.labCause)?.[vi ? 'vi' : 'fr']}</b>{current.decidedBy ? ` · ${current.decidedBy}` : ''}</span>
-                {current.odooMode !== 'sent' && (
-                  <button onClick={() => { setEditing(true); setCause(current.labCause); }} className="text-xs font-semibold underline text-gray-600">{vi ? 'Đổi' : 'Edit'}</button>
-                )}
-              </div>
-            )}
-
-            {err && <div className="text-sm font-semibold" style={{ color: '#B42318' }}>{err}</div>}
-            {plan && <PlanBox plan={plan} vi={vi} />}
-            {inPlan && <InBox data={inPlan} vi={vi} busy={busy} onValidate={validateIn} canSend={canSendOdoo} />}
-
-            <div className="flex justify-between items-center gap-2 flex-wrap">
-              <SendBox key={current.deliveryOrderId} deliveryOrderId={current.deliveryOrderId} vi={vi} onDone={() => router.refresh()} canSend={canSendOdoo} />
-              {current.sourceType !== 'sales_order' && (
-                <button onClick={showInPlan} disabled={busy} className="text-xs font-semibold underline text-gray-600 disabled:opacity-40">
-                  {vi ? 'Chỉ nhập kho shop trên Odoo' : 'Validate the shop receipt only'}
-                </button>
-              )}
-              {(current.status === 'open' || editing) && (
-                <button onClick={submit} disabled={!cause || busy}
-                  className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#1A4731' }}>
-                  {busy && <Loader2 size={14} className="animate-spin" />}{vi ? 'Xác nhận nguyên nhân' : 'Confirm the cause'}
-                </button>
-              )}
-            </div>
-          </div>
+        )}
+        {(g.status === 'open' || editing) && (
+          <button onClick={submit} disabled={!cause || busy}
+            className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#1A4731' }}>
+            {busy && <Loader2 size={14} className="animate-spin" />}{vi ? 'Xác nhận nguyên nhân' : 'Confirm the cause'}
+          </button>
         )}
       </div>
+    </div>
+  );
+
+  const pill = (v: View, label: string) => (
+    <button type="button" onClick={() => { setView(v); pick(null); }} className="px-4 py-2 rounded-full text-sm font-semibold"
+      style={view === v ? { backgroundColor: '#1A4731', color: '#FFFFFF' } : { color: '#374151' }}>{label}</button>
+  );
+  const sel = 'h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Link href="/delivery-check" className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 bg-white"><ArrowLeft size={16} /></Link>
+        <div className="flex-1 min-w-[200px]">
+          <h1 className="font-serif text-2xl font-bold text-navy">{vi ? 'Lệch giao hàng' : 'Delivery gaps'}</h1>
+          <p className="text-ink-light text-sm">{vi ? 'Lab làm → Lab giao → shop nhận' : 'Lab made → Lab delivered → shop received'}</p>
+        </div>
+        <nav className="flex gap-1 rounded-full border border-gray-200 bg-white p-1">
+          {pill('today', vi ? 'Hôm nay' : 'Today')}
+          {pill('history', vi ? 'Lịch sử' : 'History')}
+        </nav>
       </div>
+
+      {view === 'today' && (
+        <>
+          {overdueCount > 0 && (
+            <div className="rounded-xl px-4 py-2.5 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+              <AlertTriangle size={16} /> {overdueCount} {vi ? 'quá hạn (48h / 2 chuyến) — báo Axel' : 'late (48h / 2 deliveries) — alert Axel'}
+            </div>
+          )}
+
+          {/* The decision card opens here, above the task list, when a task is opened. */}
+          <div ref={workRef}>
+            {current && (
+              <div className="space-y-2">
+                <div className="flex justify-end">
+                  <button onClick={() => pick(null)} className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">✕ {vi ? 'Đóng' : 'Close'}</button>
+                </div>
+                {detail(current)}
+              </div>
+            )}
+          </div>
+
+          {/* Counter, ① production → delivery, ② delivery → shop, waiting, settled today. */}
+          {top}
+
+          {/* Still to do, shown only when there is something: shop receipts stuck in Odoo, products off the slip. */}
+          <div id="offslip-open" className="space-y-4">{extra}</div>
+        </>
+      )}
+
+      {view === 'history' && (
+        <div className="space-y-4">
+          <div className="flex gap-2 flex-wrap items-end">
+            <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700">{vi ? 'Thời gian' : 'Period'}
+              <select value={period} onChange={e => setPeriod(e.target.value as Period)} className={sel}>
+                <option value="today">{vi ? 'Hôm nay' : 'Today'}</option>
+                <option value="7d">{vi ? '7 ngày' : 'Last 7 days'}</option>
+                <option value="all">{vi ? '14 ngày' : 'Last 14 days'}</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700">{vi ? 'Cửa hàng' : 'Shop'}
+              <select value={shopF} onChange={e => setShopF(e.target.value)} className={sel}>
+                <option value="">{vi ? 'Tất cả' : 'All shops'}</option>
+                {shops.map(s => <option key={s} value={s}>{shortShop(s)}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700">{vi ? 'Loại' : 'Type'}
+              <select value={kindF} onChange={e => setKindF(e.target.value)} className={sel}>
+                <option value="">{vi ? 'Tất cả' : 'All types'}</option>
+                <option value="missing">{vi ? 'Thiếu' : 'Missing'}</option>
+                <option value="extra">{vi ? 'Thừa' : 'Extra'}</option>
+                <option value="damaged">{vi ? 'Hỏng' : 'Damaged'}</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold text-gray-700 flex-1 min-w-[200px]">{vi ? 'Tìm' : 'Search'}
+              <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder={vi ? 'Sản phẩm hoặc đơn (REP/…)' : 'Product or order (REP/…)'} className={sel} />
+            </label>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <div className="min-w-[760px]">
+                <div className="grid gap-3 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-gray-500" style={{ gridTemplateColumns: '60px minmax(0,2fr) minmax(0,1.1fr) 110px minmax(0,1.6fr) 120px 90px', backgroundColor: '#FAF7EC' }}>
+                  <span>{vi ? 'Ngày' : 'Date'}</span><span>{vi ? 'Sản phẩm' : 'Product'}</span><span>{vi ? 'Cửa hàng' : 'Shop'}</span><span>{vi ? 'Lệch' : 'Gap'}</span><span>{vi ? 'Quyết định' : 'Decision'}</span><span>{vi ? 'Ảnh' : 'Photos'}</span><span>Odoo</span>
+                </div>
+                {!history.length && <div className="px-4 py-6 text-sm text-center text-gray-500">{vi ? 'Không có' : 'Nothing here'}</div>}
+                {history.slice(0, showN).map(g => {
+                  const isOpen = selected === g.key;
+                  return (
+                    <div key={g.key} className="border-t border-gray-100" style={{ backgroundColor: isOpen ? '#FFFDF5' : undefined }}>
+                      <button type="button" onClick={() => pick(isOpen ? null : g.key)} className="w-full text-left grid gap-3 items-center px-4 py-2.5 text-[13px]"
+                        style={{ gridTemplateColumns: '60px minmax(0,2fr) minmax(0,1.1fr) 110px minmax(0,1.6fr) 120px 90px' }}>
+                        <span className="text-gray-500">{ddmm(g.deliveryDate)}</span>
+                        <span className="font-semibold truncate">{g.product}<span className="block text-[11px] font-normal text-gray-500">{g.orderRef}</span></span>
+                        <span className="truncate">{shortShop(g.shopName)}</span>
+                        <span className="font-semibold" style={{ color: gapColor(g) }}>{gapLabel(g, vi)}</span>
+                        <span className="truncate text-gray-700">{CAUSE_LABEL(g.labCause, vi)}{g.decidedBy ? <span className="text-gray-500"> · {g.decidedBy}</span> : null}</span>
+                        <span>{g.photoUrls.length ? <Thumbs urls={g.photoUrls} size={32} /> : <span className="text-gray-300">—</span>}</span>
+                        <span className="font-semibold" style={{ color: g.odooMode === 'sent' ? '#15803D' : '#B45309' }}>{g.odooMode === 'sent' ? (vi ? '✓ xong' : '✓ done') : (vi ? 'chờ gửi' : 'to send')}</span>
+                      </button>
+                      {isOpen && <div className="px-4 pb-4">{detail(g)}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex justify-between items-center px-4 py-2.5 border-t border-gray-100 text-xs text-gray-500">
+              <span>{history.length} {vi ? 'dòng đã xử lý' : 'settled lines'}</span>
+              {history.length > showN && <button onClick={() => setShowN(n => n + 40)} className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-semibold text-gray-700">{vi ? 'Xem thêm' : 'Show more'}</button>}
+            </div>
+          </div>
+
+          <details className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+            <summary className="cursor-pointer text-sm font-bold text-navy">{vi ? 'Sản phẩm ngoài phiếu — đã xử lý' : 'Products not on the slip — settled'}</summary>
+            <div className="pt-3">{extraClosed}</div>
+          </details>
+
+          <div className="text-xs text-gray-500 flex items-start gap-2">
+            <FlaskConical size={13} className="shrink-0 mt-0.5" />
+            <span>{vi ? 'Nhập kho shop tự xác nhận khi đủ số. Có lệch: chọn nguyên nhân từng dòng (hỏng có ảnh = tự xử lý), rồi « Gửi Odoo xác nhận cuối » cho cả đơn.'
+                    : 'The shop receipt validates itself when everything matches. Gap: cause line by line (damaged with a photo = automatic), then « Gửi Odoo xác nhận cuối » for the whole order.'}
+              {odooMode === 'simulated' ? (vi ? ' Odoo: mô phỏng.' : ' Odoo: simulation.') : ''}
+              {schemaReady ? '' : (vi ? ' Chưa lưu được quyết định (cơ sở dữ liệu chưa cập nhật).' : ' Decisions cannot be saved yet (database not updated).')}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

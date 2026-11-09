@@ -12,13 +12,14 @@ import { ChevronDown, ChevronRight, Camera } from 'lucide-react';
 
 const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647', NAVY = '#1A4731';
 
-export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null };
+export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null; photos?: string[] };
+export type WaitingGap = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; qty: number; deliveriesSince: number; late: boolean; photos: string[] };
 
 export default function TasksPanel({ open, resolved, recounts, reception, offslipOpen, today, leftovers = [], leftoverDone = [],
-  shopsNotConfirmed = [], damaged = { shops: 0, items: 0, byShop: [] }, receptionDoneToday = [], toSend = [], canSendOdoo = false }: {
+  shopsNotConfirmed = [], damaged = { shops: 0, items: 0, byShop: [] }, damagedList = [], waitingShop = [], receptionDoneToday = [], toSend = [], canSendOdoo = false }: {
   open: ProdTask[]; resolved: ProdTask[]; recounts: RecountTask[]; leftovers?: LeftoverTask[]; leftoverDone?: LeftoverDone[];
   reception: ReceptionTask[]; offslipOpen: number; today: string;
-  shopsNotConfirmed?: { shop: string; orders: number }[]; damaged?: { shops: number; items: number; byShop: { shop: string; n: number }[] }; receptionDoneToday?: string[];
+  shopsNotConfirmed?: { shop: string; orders: number }[]; damaged?: { shops: number; items: number; byShop: { shop: string; n: number }[] }; damagedList?: WaitingGap[]; waitingShop?: WaitingGap[]; receptionDoneToday?: string[];
   toSend?: { key: string; orderRef: string; shop: string; lines: number }[]; canSendOdoo?: boolean;
 }) {
   const { lang } = useI18n();
@@ -82,7 +83,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
   }
 
   // One red task card, mockup style: small caps label, bold title, one grey line, "Do it →".
-  const card = (key: string, label: string, title: string, line: string, onDo: () => void, body?: React.ReactNode, late?: string | null, doLabel?: string) => {
+  const card = (key: string, label: string, title: string, line: string, onDo: () => void, body?: React.ReactNode, late?: string | null, doLabel?: string, photos?: string[]) => {
     const isOpen = openKey === key && !!body;
     return (
       <div key={key} className="rounded-xl bg-white shadow-sm" style={{ border: `1px solid ${isOpen ? RED : '#F3D0CC'}`, borderLeft: `4px solid ${RED}` }}>
@@ -94,6 +95,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             <div className="font-bold text-stone-900">{title}</div>
             <div className="truncate text-xs text-stone-500">{line}</div>
           </div>
+          {photos && photos.length > 0 && <Thumbs urls={photos} />}
           {isOpen
             ? <button onClick={() => setOpenKey(null)} className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">▾ {vi ? 'Đóng' : 'Close'}</button>
             : <button onClick={onDo} className="inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-2 text-sm font-semibold text-white" style={{ backgroundColor: NAVY }}>{doLabel ?? (vi ? 'Xử lý' : 'Do it')} <ChevronRight size={14} /></button>}
@@ -195,7 +197,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             `${g.kind === 'extra' ? (vi ? `CỬA HÀNG NHẬN DƯ ${g.qty}` : `SHOP GOT ${g.qty} EXTRA`) : (vi ? `CỬA HÀNG THIẾU ${g.qty}` : `SHOP MISSING ${g.qty}`)} · ${g.orderRef} · ${g.shop.replace(/^La Paris\s*/i, '')}${h != null ? ` · ${h > 0 ? (vi ? `còn ${h}h` : `${h}h left`) : (vi ? 'quá hạn' : 'late')}` : ''}`,
             g.product,
             `${vi ? 'Lab giao' : 'Lab sent'} ${g.sent} · ${vi ? 'cửa hàng nhận' : 'shop received'} ${g.received}`,
-            () => openGap(g.key), undefined, g.deliveryDate < today ? fmt(g.deliveryDate) : null);
+            () => openGap(g.key), undefined, g.deliveryDate < today ? fmt(g.deliveryDate) : null, undefined, g.photos);
         })}
         {offslipOpen > 0 && card('offslip', vi ? `NGOÀI PHIẾU · ${offslipOpen}` : `OFF-SLIP · ${offslipOpen}`,
           vi ? 'Cửa hàng nhận sản phẩm không có trên phiếu' : 'Shop received products not on the slip',
@@ -208,7 +210,7 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
       </section>
 
       {/* Waiting for someone else */}
-      {(shopsNotConfirmed.length > 0 || damaged.items > 0 || recounts.length > 0 || (!canSendOdoo && toSend.length > 0)) && (
+      {(shopsNotConfirmed.length > 0 || damaged.items > 0 || waitingShop.length > 0 || recounts.length > 0 || (!canSendOdoo && toSend.length > 0)) && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold" style={{ color: AMBER }}>● {vi ? 'Đang chờ người khác — không cần làm gì' : 'Waiting for someone else — nothing to do'}</h2>
           {shopsNotConfirmed.length > 0 && (
@@ -218,10 +220,28 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
             </div>
           )}
           {damaged.items > 0 && (
-            <div className="rounded-xl bg-white p-3 shadow-sm" style={{ borderLeft: `4px solid ${AMBER}` }}>
-              <div className="font-bold text-stone-900">{vi ? 'Hàng hỏng chưa mang về Lab' : 'Damaged items not back at the Lab yet'}</div>
-              <div className="text-xs text-stone-600">{vi ? 'Đã ghi hao hụt rồi. Cửa hàng chỉ cần gửi bánh hỏng về Lab theo chuyến giao sau.' : 'Already recorded as Lab loss. The shop only has to send the broken items back with a next delivery.'}</div>
-              <div className="text-xs text-stone-500">{damaged.byShop.map(d => `${d.shop.replace(/^La Paris\s*/i, '')} ${d.n}`).join(' · ')} · {vi ? '7 ngày gần nhất' : 'last 7 days'}</div>
+            <div className="rounded-xl bg-white shadow-sm" style={{ borderLeft: `4px solid ${AMBER}` }}>
+              <button type="button" onClick={() => setGreenOpen(g => g === 'dmg' ? null : 'dmg')} className="flex w-full items-center gap-3 p-3 text-left">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-bold text-stone-900">{vi ? `Hàng hỏng chưa mang về Lab · ${damaged.items}` : `Damaged items to bring back · ${damaged.items}`}</span>
+                  <span className="block text-xs text-stone-600">{vi ? 'Đã ghi hao hụt rồi. Cửa hàng chỉ cần gửi bánh hỏng về Lab theo chuyến giao sau.' : 'Already recorded as Lab loss. The shop only has to send the broken items back with a next delivery.'}</span>
+                  <span className="block text-xs text-stone-500">{damaged.byShop.map(d => `${d.shop.replace(/^La Paris\s*/i, '')} ${d.n}`).join(' · ')} · {vi ? '7 ngày gần nhất' : 'last 7 days'}</span>
+                </span>
+                {greenOpen === 'dmg' ? <ChevronDown size={16} className="text-stone-500" /> : <ChevronRight size={16} className="text-stone-500" />}
+              </button>
+              {greenOpen === 'dmg' && <WaitList items={damagedList} vi={vi} fmt={fmt} onOpen={openGap} lateText={n => vi ? `chưa về sau ${n} chuyến` : `not back after ${n} deliveries`} />}
+            </div>
+          )}
+          {waitingShop.length > 0 && (
+            <div className="rounded-xl bg-white shadow-sm" style={{ borderLeft: `4px solid ${AMBER}` }}>
+              <button type="button" onClick={() => setGreenOpen(g => g === 'ws' ? null : 'ws')} className="flex w-full items-center gap-3 p-3 text-left">
+                <span className="min-w-0 flex-1">
+                  <span className="block font-bold text-stone-900">{vi ? `Chờ cửa hàng đếm lại · ${waitingShop.length}` : `Waiting for the shop to recount · ${waitingShop.length}`}</span>
+                  <span className="block text-xs text-stone-500">{Array.from(new Set(waitingShop.map(w => w.shop.replace(/^La Paris\s*/i, '')))).join(' · ')}</span>
+                </span>
+                {greenOpen === 'ws' ? <ChevronDown size={16} className="text-stone-500" /> : <ChevronRight size={16} className="text-stone-500" />}
+              </button>
+              {greenOpen === 'ws' && <WaitList items={waitingShop} vi={vi} fmt={fmt} onOpen={openGap} />}
             </div>
           )}
           {!canSendOdoo && toSend.length > 0 && (
@@ -264,6 +284,38 @@ export default function TasksPanel({ open, resolved, recounts, reception, offsli
           );
         })()}
       </section>
+    </div>
+  );
+}
+
+function Thumbs({ urls, size = 40 }: { urls: string[]; size?: number }) {
+  return (
+    <span className="inline-flex shrink-0 gap-1">
+      {urls.slice(0, 3).map(u => (
+        <a key={u} href={u} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+          <img src={u} alt="" className="rounded-md border border-stone-200 object-cover" style={{ width: size, height: size }} />
+        </a>
+      ))}
+      {urls.length > 3 && <span className="self-center text-xs text-stone-500">+{urls.length - 3}</span>}
+    </span>
+  );
+}
+
+// Lines waiting for someone else, one row each: product, shop, order, photo; a tap opens the gap.
+function WaitList({ items, vi, fmt, onOpen, lateText }: { items: WaitingGap[]; vi: boolean; fmt: (d: string) => string; onOpen: (k: string) => void; lateText?: (n: number) => string }) {
+  return (
+    <div className="border-t border-stone-100">
+      {items.map(w => (
+        <button key={w.key} type="button" onClick={() => onOpen(w.key)} className="flex w-full items-center gap-3 border-b border-stone-100 px-3 py-2 text-left last:border-b-0">
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-stone-900">{w.product} <span className="font-normal text-stone-500">×{w.qty}</span></span>
+            <span className="block truncate text-xs text-stone-500">{w.shop.replace(/^La Paris\s*/i, '')} · {w.orderRef} · {fmt(w.deliveryDate)}</span>
+            {lateText && w.late && <span className="block text-xs font-bold" style={{ color: RED }}>{lateText(w.deliveriesSince)} — {vi ? 'báo Axel' : 'alert Axel'}</span>}
+          </span>
+          {w.photos.length > 0 && <Thumbs urls={w.photos} size={36} />}
+          <ChevronRight size={14} className="shrink-0 text-stone-400" />
+        </button>
+      ))}
     </div>
   );
 }
