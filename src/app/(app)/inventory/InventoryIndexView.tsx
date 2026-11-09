@@ -73,14 +73,12 @@ export default function InventoryIndexView({ sessions, role }: { sessions: Sessi
   const kindLabel = (k: Hist['kind']) => (k === 'raw' ? L('Nguyên liệu', 'Matières') : k === 'packaging' ? L('Bao bì', 'Packaging') : L('Thành phẩm', 'Produits finis'));
 
   const Tile = ({ icon: Icon, title, sub, onClick, progress, action, spin }: { icon: any; title: string; sub: string; onClick: () => void; progress?: { done: number; total: number; extra?: string }; action: string; spin?: boolean }) => (
-    <button onClick={onClick} disabled={!!busy} className="card p-3.5 text-left flex flex-col gap-2.5 min-h-[128px]" style={progress ? { border: `2px solid ${NAVY}` } : undefined}>
-      <div className="flex items-start gap-2.5">
-        <span className="w-10 h-10 rounded-xl flex items-center justify-center flex-none" style={{ backgroundColor: '#E6EFE9' }}><Icon size={19} color={NAVY} /></span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[14.5px] font-extrabold text-navy leading-tight">{title}</div>
-          <div className="text-[11.5px] text-ink-light leading-snug mt-0.5">{sub}</div>
-        </div>
+    <button onClick={onClick} disabled={!!busy} className="card p-3 text-left flex flex-col gap-2 min-h-[118px] min-w-0" style={progress ? { border: `2px solid ${NAVY}` } : undefined}>
+      <div className="flex items-center gap-2">
+        <span className="w-8 h-8 rounded-lg flex items-center justify-center flex-none" style={{ backgroundColor: '#E6EFE9' }}><Icon size={16} color={NAVY} /></span>
+        <div className="text-[14px] font-extrabold text-navy leading-tight min-w-0">{title}</div>
       </div>
+      <div className="text-[11.5px] text-ink-light leading-snug line-clamp-2">{sub}</div>
       <div className="mt-auto space-y-1">
         {progress && <>
           <div className="h-1.5 rounded bg-[#EFE9CF] overflow-hidden"><div className="h-1.5" style={{ width: `${progress.total ? (Math.min(progress.done, progress.total) / progress.total) * 100 : 0}%`, backgroundColor: NAVY }} /></div>
@@ -106,7 +104,7 @@ export default function InventoryIndexView({ sessions, role }: { sessions: Sessi
         </button>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2.5">
         <Tile icon={Wheat} title={L('Nguyên liệu', 'Matières premières')} sub={L('Khô · Mát · Đông lạnh', 'Sec · Frais · Surgelé')} onClick={() => startStock('raw')}
           progress={raw ? { done: raw.counted, total: raw.scope, extra: raw.unknownOpen ? `${raw.unknownOpen} ${L('ảnh', 'photo(s)')}` : raw.countDate } : undefined}
           action={raw ? L('Tiếp tục', 'Continuer') : L('Bắt đầu', 'Démarrer')} spin={busy === 'raw'} />
