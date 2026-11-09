@@ -39,7 +39,7 @@ const NO_MAIL_CONTEXT = { tracking_disable: true, mail_notrack: true, mail_creat
 
 let cachedLabLocationId: number | null = null;
 
-async function getLabStockLocationId(): Promise<number> {
+export async function getLabStockLocationId(): Promise<number> {
   if (cachedLabLocationId) return cachedLabLocationId;
   const whs = await odooExecute<any[]>('stock.warehouse', 'search_read',
     [[['code', '=', 'LAB']]], { fields: ['lot_stock_id'], limit: 1 });

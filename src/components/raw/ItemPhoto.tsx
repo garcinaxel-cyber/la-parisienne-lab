@@ -31,7 +31,7 @@ async function compress(file: File): Promise<Blob> {
   return b ?? file;
 }
 
-export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false, canReplace = false }: { tmplId?: number | null; sku?: string | null; size?: number; canAdd?: boolean; canReplace?: boolean }) {
+export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false, canReplace = false, onAdded }: { tmplId?: number | null; sku?: string | null; size?: number; canAdd?: boolean; canReplace?: boolean; onAdded?: () => void }) {
   const [, force] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false, canR
       fd.set('file', await compress(f), 'photo.jpg');
       const r = await (url ? replaceItemPhotoAction(fd) : addItemPhotoAction(fd));
       if (r.error || !r.url) { setErr(r.error ?? 'Error'); window.alert(r.error ?? 'Error'); }
-      else { cache?.byTmpl.set(tmplId, r.url); if (sku) cache?.bySku.set(sku, r.url); listeners.forEach(x => x()); }
+      else { cache?.byTmpl.set(tmplId, r.url); if (sku) cache?.bySku.set(sku, r.url); listeners.forEach(x => x()); onAdded?.(); }
     } finally { setBusy(false); if (input.current) input.current.value = ''; }
   };
   if (url && canReplace && tmplId) {
@@ -85,4 +85,11 @@ export default function ItemPhoto({ tmplId, sku, size = 40, canAdd = false, canR
       {err ? <span className="sr-only">{err}</span> : null}
     </>
   );
+}
+
+/** True when the item already has a photo in the app (list loaded once per page). */
+export function useHasPhoto(): (tmplId: number) => boolean | null {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force(x => x + 1); listeners.add(f); load(); return () => { listeners.delete(f); }; }, []);
+  return (tmplId: number) => (cache ? cache.byTmpl.has(tmplId) : null);
 }

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { ClipboardList, ClipboardCheck, Plus, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
+import StockCountCards from './StockCountCards';
 
 type Session = {
   id: string; inventory_date: string; status: string;
@@ -14,7 +15,7 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
-export default function InventoryIndexView({ sessions }: { sessions: Session[] }) {
+export default function InventoryIndexView({ sessions, role }: { sessions: Session[]; role?: string }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const router = useRouter();
@@ -31,12 +32,17 @@ export default function InventoryIndexView({ sessions }: { sessions: Session[] }
     router.push(`/inventory/${res.id}`);
   }
 
+  // Purchasing (storage) sees only raw materials / packaging and the photos (Axel, 2026-11-09).
+  const finishedToo = role !== 'purchasing';
   return (
     <div className="space-y-4">
       <h1 className="font-serif text-xl sm:text-2xl font-bold text-navy mb-1 flex items-center gap-2">
         <ClipboardList size={22} className="text-gold" />
-        {vi ? 'Kiểm kê thành phẩm' : 'Inventaire produits finis'}
+        {vi ? 'Kiểm kê Lab' : 'Inventaire Lab'}
       </h1>
+      <StockCountCards />
+      {finishedToo && <>
+      <h2 className="font-serif text-lg font-bold text-navy pt-2">{vi ? 'Kiểm kê thành phẩm' : 'Inventaire produits finis'}</h2>
       <p className="text-sm text-ink-light">
         {vi
           ? 'Đếm số lượng thực tế (Macaron, Bánh quy du lịch, Tiramisu) và gửi lên Odoo.'
@@ -103,6 +109,7 @@ export default function InventoryIndexView({ sessions }: { sessions: Session[] }
           </div>
         )}
       </div>
+      </>}
     </div>
   );
 }

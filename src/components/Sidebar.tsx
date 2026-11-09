@@ -19,7 +19,7 @@ const FAMILY_LABEL: Record<string, { vi: string; en: string }> = {
 };
 
 // The purchasing role only gets these two entries (Axel, 2026-10-08).
-const PURCHASING_NAV = ['/purchasing', '/oem-orders'];
+const PURCHASING_NAV = ['/purchasing', '/oem-orders', '/inventory'];   // + Lab inventory (Axel, 2026-11-09)
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, key: 'dashboard' as const, family: 'today' },

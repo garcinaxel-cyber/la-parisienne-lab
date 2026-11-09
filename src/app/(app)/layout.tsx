@@ -33,7 +33,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Purchasing (Axel, 2026-10-08): storage manager + purchasing assistant — their own pages
   // (/purchasing) and the OEM orders screen, nothing else of the admin app.
   const purchasingPath = headers().get('x-pathname') ?? '';
-  if (profile.role === 'purchasing' && !purchasingPath.startsWith('/purchasing') && !purchasingPath.startsWith('/oem-orders')) redirect('/purchasing');
+  if (profile.role === 'purchasing' && !purchasingPath.startsWith('/purchasing') && !purchasingPath.startsWith('/oem-orders') && !purchasingPath.startsWith('/inventory')) redirect('/purchasing');
 
   // Chefs and workers go to their station — they don't use the full admin layout.
   // Exception: chefs may open the fiche editor (recipe-only mode, gated again in the page + RLS).

@@ -1,7 +1,8 @@
-import { createClient } from '@/lib/supabase-server';
+import { createClient, getSafeSession } from '@/lib/supabase-server';
 import InventoryIndexView from './InventoryIndexView';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;   // Odoo scope / send can take a while
 
 export default async function InventoryPage() {
   const supabase = createClient();
@@ -12,5 +13,7 @@ export default async function InventoryPage() {
     .order('created_at', { ascending: false })
     .limit(30);
 
-  return <InventoryIndexView sessions={sessions ?? []} />;
+  const { data: { session } } = await getSafeSession(supabase);
+  const { data: profile } = session ? await supabase.from('profiles').select('role').eq('id', session.user.id).maybeSingle() : { data: null };
+  return <InventoryIndexView sessions={sessions ?? []} role={profile?.role ?? undefined} />;
 }
