@@ -51,7 +51,7 @@ export default function PhotosView() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto -mx-4 sm:mx-auto min-h-screen" style={{ backgroundColor: '#FAF7EE' }}>
+    <div className="w-full max-w-2xl mx-auto min-h-screen" style={{ backgroundColor: '#FAF7EE' }}>
       <div className="sticky top-0 z-20 text-white px-4 pt-3 pb-3 space-y-2.5" style={{ backgroundColor: NAVY }}>
         <div className="flex items-center gap-2">
           <button aria-label="Back" onClick={() => router.push('/inventory')} className="p-1 -ml-1"><ChevronLeft size={22} /></button>

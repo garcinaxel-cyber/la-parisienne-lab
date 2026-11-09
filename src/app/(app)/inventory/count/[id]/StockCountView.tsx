@@ -96,8 +96,18 @@ export default function StockCountView({ id }: { id: string }) {
     if (words.length) list = items.filter(i => words.every(w => hay.get(i.tmplId)!.includes(w)));   // search: whole catalogue
     else list = items.filter(i => scopeIds.has(i.tmplId) && (zone === 'all' || zoneOf(i) === zone) && (!onlyTodo || !isCounted(i.tmplId)));
     const subOrder = kind === 'raw' ? Object.keys(RAW_TYPES.dry.subs).concat(Object.keys(RAW_TYPES.fresh.subs), Object.keys(RAW_TYPES.frozen.subs)) : [];
-    return list.sort((a, b) => (kind === 'raw' ? subOrder.indexOf(a.sub) - subOrder.indexOf(b.sub) : 0) || nameOf(a).localeCompare(nameOf(b))).slice(0, 300);
+    return list.sort((a, b) => (kind === 'raw' ? subOrder.indexOf(a.sub) - subOrder.indexOf(b.sub) : 0) || nameOf(a).localeCompare(nameOf(b)));
   }, [q, items, hay, scopeIds, zone, onlyTodo, lines, kind, vi]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // long lists render in steps of 60 while scrolling (433 cards at once is slow on a phone)
+  const [limit, setLimit] = useState(60);
+  useEffect(() => { setLimit(60); }, [q, zone, onlyTodo]);
+  const more = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = more.current; if (!el) return;
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) setLimit(l => l + 60); }, { rootMargin: '600px' });
+    io.observe(el); return () => io.disconnect();
+  }, [shown.length, limit]);
 
   // ---- background saving: one timer per item, retried while offline / failing
   const timers = useRef<Map<number, any>>(new Map());
@@ -131,7 +141,7 @@ export default function StockCountView({ id }: { id: string }) {
   const openUnknown = unknowns.filter(u => u.status === 'open').length;
 
   return (
-    <div className="max-w-2xl mx-auto -mx-4 sm:mx-auto" style={{ backgroundColor: PALE, minHeight: '100vh' }}>
+    <div className="w-full max-w-2xl mx-auto" style={{ backgroundColor: PALE, minHeight: '100vh' }}>
       <div className="sticky top-0 z-20 text-white px-4 pt-3 pb-3 space-y-2.5" style={{ backgroundColor: NAVY }}>
         <div className="flex items-center gap-2">
           <button aria-label="Back" onClick={() => (view === 'recap' ? setView('count') : router.push('/inventory'))} className="p-1 -ml-1"><ChevronLeft size={22} /></button>
@@ -157,13 +167,13 @@ export default function StockCountView({ id }: { id: string }) {
             })}
           </div>
           <div className="flex gap-2">
-            <label className="flex-1 flex items-center gap-2 bg-white rounded-lg px-2.5 py-2">
+            <label className="flex-1 min-w-0 flex items-center gap-2 bg-white rounded-lg px-2.5 py-2">
               <Search size={16} color="#5B6B63" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm: tên, mã, hiệu…', 'Chercher : nom, code, marque…')} className="flex-1 outline-none text-[14px] text-[#1A2C24] bg-transparent" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm: tên, mã, hiệu…', 'Chercher : nom, code, marque…')} className="flex-1 min-w-0 outline-none text-[15px] text-[#1A2C24] bg-transparent" />
               {q && <button aria-label="Clear" onClick={() => setQ('')}><X size={15} color="#5B6B63" /></button>}
             </label>
-            {!locked && <button onClick={() => setUnkOpen(true)} className="flex-none flex items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-extrabold" style={{ backgroundColor: GOLD_TEXT }}>
-              <Camera size={16} /> {L('Không tìm thấy', 'Introuvable')}</button>}
+            {!locked && <button onClick={() => setUnkOpen(true)} aria-label={L('Không tìm thấy — chụp ảnh', 'Introuvable — photo')} className="flex-none flex flex-col items-center justify-center rounded-lg w-[64px] text-[10px] font-extrabold leading-tight" style={{ backgroundColor: GOLD_TEXT }}>
+              <Camera size={17} /> {L('Không thấy', 'Introuvable')}</button>}
           </div>
         </>)}
       </div>
@@ -176,10 +186,11 @@ export default function StockCountView({ id }: { id: string }) {
           </div>}
           {q && <div className="px-1 text-[12px]" style={{ color: '#5B6B63' }}>{shown.length} {L('kết quả trong toàn bộ danh mục', 'résultats dans tout le catalogue')}</div>}
           {shown.length === 0 && <div className="card p-8 text-center text-sm" style={{ color: '#5B6B63' }}>{q ? L('Không thấy. Bấm "Không tìm thấy" để chụp ảnh.', 'Rien trouvé. « Introuvable » pour prendre une photo.') : L('Khu này đã đếm xong ✓', 'Zone terminée ✓')}</div>}
-          <div className="grid grid-cols-2 gap-2">
-            {shown.map(i => <ItemCard key={i.tmplId} item={i} line={lines[i.tmplId]} name={nameOf(i)} vi={vi} locked={locked} open={open === i.tmplId}
+          <div className="space-y-2">
+            {shown.slice(0, limit).map(i => <ItemCard key={i.tmplId} item={i} line={lines[i.tmplId]} name={nameOf(i)} vi={vi} locked={locked} open={open === i.tmplId}
               onOpen={() => setOpen(open === i.tmplId ? null : i.tmplId)} onSet={(qty, entry, nf) => setQty(i.tmplId, qty, entry, nf)} outOfList={!scopeIds.has(i.tmplId)} />)}
           </div>
+          {shown.length > limit && <div ref={more} className="py-4 text-center text-[12px]" style={{ color: '#5B6B63' }}><Loader2 size={14} className="animate-spin inline" /></div>}
         </div>
       ) : (
         <Recap id={id} vi={vi} header={header} items={items} byTmpl={byTmpl} lines={lines} scopeIds={scopeIds} unknowns={unknowns} setUnknowns={setUnknowns}
@@ -226,20 +237,22 @@ function ItemCard({ item, line, name, vi, locked, open, onOpen, onSet, outOfList
   };
   const step = (d: number) => { const v = Math.max(0, (parseNum(n) || 0) + d); const s = String(v); setN(s); push(s, x, b); };
   const summary = line?.notFound ? L('Không thấy', 'Pas trouvé') : line?.qty != null ? `${fmt(line.qty)} ${item.uom}` : null;
+  const otherName = vi ? item.name : item.nameVi;
+  const other = otherName && norm(otherName) !== norm(name) ? otherName : null;
   return (
-    <div className={`bg-white rounded-2xl overflow-hidden flex flex-col ${open ? 'col-span-2' : ''}`} style={{ border: open ? `2px solid ${NAVY}` : `1px solid ${BORDER}` }}>
-      <button onClick={onOpen} className={`text-left flex ${open ? 'flex-row gap-3 p-3' : 'flex-col'}`}>
-        <div className={`relative ${open ? '' : 'w-full flex justify-center pt-2'}`}>
-          <ItemPhoto tmplId={item.tmplId} sku={item.sku} size={open ? 84 : 128} canAdd={!locked} />
-          {summary && !open && <span className="absolute top-3 right-2 text-[11px] font-extrabold rounded-md px-1.5 py-0.5 text-white" style={{ backgroundColor: line?.notFound ? '#5B6B63' : line?.qty === 0 ? '#5B6B63' : OK }}>✓ {summary}</span>}
-        </div>
-        <div className={`${open ? 'flex-1 min-w-0' : 'px-2.5 py-2'} space-y-0.5`}>
-          <div className="text-[13px] font-extrabold leading-tight" style={{ color: '#1A2C24' }}>{name}</div>
-          <div className="text-[11px] leading-tight" style={{ color: '#5B6B63' }}>{[vi ? item.name : item.nameVi, item.sku].filter(Boolean).join(' · ')}{pack ? ` · ${pack.label}` : ` · ${item.uom}`}</div>
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: open ? `2px solid ${NAVY}` : `1px solid ${counted ? '#BFD9C8' : BORDER}` }}>
+      <button onClick={onOpen} className="w-full text-left flex items-center gap-3 p-2.5">
+        <ItemPhoto tmplId={item.tmplId} sku={item.sku} size={open ? 76 : 60} canAdd={!locked} />
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="text-[14px] font-extrabold leading-snug line-clamp-2" style={{ color: '#1A2C24' }}>{name}</div>
+          <div className="text-[11.5px] leading-snug line-clamp-2" style={{ color: '#5B6B63' }}>{[other, item.sku, pack ? pack.label : item.uom].filter(Boolean).join(' · ')}</div>
           {outOfList && <div className="text-[10.5px] font-bold" style={{ color: GOLD_TEXT }}>{L('Ngoài danh sách', 'Hors liste')}</div>}
           {line?.saving && <div className="text-[10.5px]" style={{ color: '#5B6B63' }}>…</div>}
           {line?.failed && <div className="text-[10.5px] font-bold" style={{ color: LATE }}>{L('Chưa lưu, đang thử lại', 'Pas encore enregistré, nouvel essai')}</div>}
         </div>
+        {summary && !open
+          ? <span className="flex-none text-[12px] font-extrabold rounded-lg px-2 py-1 text-white max-w-[38%] truncate" style={{ backgroundColor: line?.notFound || line?.qty === 0 ? '#5B6B63' : OK }}>✓ {summary}</span>
+          : !open ? <span className="flex-none w-9 h-9 rounded-full flex items-center justify-center text-[20px] font-extrabold text-white" style={{ backgroundColor: NAVY }} aria-hidden>+</span> : null}
       </button>
       {open && !locked && (
         <div className="px-3 pb-3 space-y-2.5">
