@@ -49,7 +49,11 @@ export async function GET(req: Request) {
         const day = labDateOf(String(mo.date_start).replace(' ', 'T') + 'Z');
         const disp = String(mo.product_id?.[1] ?? '');
         const code = disp.match(/^\[([^\]]+)\]/)?.[1] ?? String(mo.product_id?.[0] ?? '');
-        const name = disp.replace(/^\[[^\]]+\]\s*/, '').replace(/\s*\(kg\)\s*$/i, '').trim();
+        const full = disp.replace(/^\[[^\]]+\]\s*/, '').replace(/\s*\(kg\)\s*$/i, '').trim();
+        // "Bánh quy socola nho khô (Chocolate Grape Cookie)" → the English name in brackets, if any
+        // (not a size like "(6 g)").
+        const en = full.match(/\(([^()]*[A-Za-z][^()]*)\)\s*$/)?.[1];
+        const name = en && !/^\d/.test(en.trim()) ? en.trim() : full;
         if (!day || !code) continue;
         const k = `${day}|${code}`;
         const a = acc.get(k) ?? { day, code, name, kg: 0 };
