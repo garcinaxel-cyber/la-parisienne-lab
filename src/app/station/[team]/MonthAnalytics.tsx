@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import type { TeamMonthAnalytics, MonthRow } from './month-analytics-actions';
+import type { TeamMonthAnalytics, MonthRow } from './month-analytics-types';
 
 // Station Analytics › "This month" (Axel, 2026-11-11). Produced (sent to stock) vs sent by the
 // Lab, by category, expandable to products. Current month compared with the same days of the
@@ -34,7 +34,7 @@ export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { getTeamMonthAnalyticsAction } = await import('./month-analytics-actions');
+      const { getTeamMonthAnalyticsAction } = await import('./actions');
       const res = await getTeamMonthAnalyticsAction(team);
       if (!alive) return;
       if (res.data) setData(res.data); else setError(res.error ?? 'Error');

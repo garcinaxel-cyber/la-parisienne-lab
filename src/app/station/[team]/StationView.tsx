@@ -16,6 +16,7 @@ import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
 import HrTeamTab from './HrTeamTab';
 import MonthAnalytics from './MonthAnalytics';
+import LabStockPanel from './LabStockPanel';
 import EmployeeHrView from '@/app/hr/[token]/EmployeeHrView';
 import { HR_PILOT_TEAMS } from '@/lib/hr';
 import type { StockProduct } from './actions';
@@ -2675,64 +2676,11 @@ export default function StationView({
                 </div>
 
                 {stats.stock.length > 0 && (
-                  <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
-                    <div className="mb-3">
-                      <div className="font-bold text-xs" style={{ color: '#1A4731' }}>
-                        {lang === 'vi' ? 'Tồn kho Lab' : 'Lab stock'}
-                      </div>
-                      <div className="text-[10px] mt-0.5" style={{ color: '#6B6455' }}>
-                        {lang === 'vi' ? 'Trực tiếp từ Odoo (kho LAB)' : 'Live from Odoo (LAB warehouse)'}
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      {stats.stock.map(group => (
-                        <div key={group.category}>
-                          <div className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: '#92600A' }}>
-                            {group.category}
-                          </div>
-                          <div className="space-y-1.5">
-                            {group.items.map(s => {
-                              const low = s.found && s.threshold != null && s.qty < s.threshold;
-                              const editing = thresholdEdit === s.sku;
-                              return (
-                                <div key={s.sku} className="rounded-lg px-2 py-1.5 -mx-2" style={low ? { backgroundColor: '#FEF2F2' } : undefined}>
-                                  <div className="flex justify-between items-center text-[13px]">
-                                    <span className="overflow-x-auto whitespace-nowrap no-scrollbar pr-3" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>{s.name}</span>
-                                    <span className="font-bold shrink-0" style={{ color: s.found ? (low ? '#B42318' : '#1A4731') : '#B45309' }}>
-                                      {s.found ? s.qty : '—'}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center mt-0.5">
-                                    {low
-                                      ? <span className="text-[10px] font-bold" style={{ color: '#B42318' }}>{lang === 'vi' ? 'Cần sản xuất' : 'Faut produire'}</span>
-                                      : <span />}
-                                    {editing ? (
-                                      <span className="flex items-center gap-1 shrink-0">
-                                        <input type="number" value={thresholdDraft} onChange={e => setThresholdDraft(e.target.value)}
-                                          autoFocus className="w-14 text-center rounded-lg px-1.5 py-0.5 text-[11px]" style={{ border: '1px solid #D1D5DB' }} />
-                                        <button onClick={() => saveThreshold(s.sku)} disabled={savingThreshold === s.sku}
-                                          className="text-[10px] font-bold px-2 py-0.5 rounded-full disabled:opacity-50"
-                                          style={{ backgroundColor: '#1A4731', color: '#FFF4CC' }}>
-                                          OK
-                                        </button>
-                                      </span>
-                                    ) : (
-                                      <button onClick={() => { setThresholdEdit(s.sku); setThresholdDraft(s.threshold != null ? String(s.threshold) : ''); }}
-                                        className="text-[10px] shrink-0" style={{ color: '#6B6455' }}>
-                                        {s.threshold != null
-                                          ? `${lang === 'vi' ? 'Ngưỡng' : 'Seuil'}: ${s.threshold}`
-                                          : (lang === 'vi' ? 'Đặt ngưỡng' : 'Définir seuil')}
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <LabStockPanel stock={stats.stock} lang={lang === 'vi' ? 'vi' : 'en'} userName={userName}
+                    onThresholdSaved={(sku, val) => setAnalyticsData(prev => prev ? {
+                      ...prev,
+                      stock: prev.stock.map(g => ({ ...g, items: g.items.map(x => x.sku === sku ? { ...x, threshold: val } : x) })),
+                    } : prev)} />
                 )}
               </>
             )}
