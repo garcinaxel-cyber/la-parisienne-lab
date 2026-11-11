@@ -163,14 +163,16 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
             </button>
             {isOpen && (
               <div className="border-t" style={{ borderColor: '#F5EFC8', background: '#FFFCF3' }}>
-                <div className="grid gap-1.5 px-3.5 py-1.5 text-[9.5px] font-extrabold tracking-wide" style={{ gridTemplateColumns: isCur ? '1fr 44px 44px 44px' : '1fr 48px 48px', color: '#9CA3AF' }}>
-                  <span>{vi ? 'SẢN PHẨM' : 'PRODUCT'}</span><span className="text-right">{vi ? 'SX' : 'MADE'}</span><span className="text-right">{vi ? 'GIAO' : 'SENT'}</span>
-                  {isCur && <span className="text-right">{`1–${prevDay}/${data.prevMonth.slice(5, 7)}`}</span>}
+                <div className="grid gap-1.5 px-3.5 py-1.5 text-[9.5px] font-extrabold tracking-wide" style={{ gridTemplateColumns: isCur ? 'minmax(0,1fr) 46px 46px 50px' : 'minmax(0,1fr) 52px 52px', color: '#9CA3AF' }}>
+                  <span>{vi ? 'SẢN PHẨM' : 'PRODUCT'}</span>
+                  <span className="text-right whitespace-nowrap" style={{ color: '#92600A' }}>{vi ? 'SX' : 'MADE'}</span>
+                  <span className="text-right whitespace-nowrap" style={{ color: GREEN }}>{vi ? 'GIAO' : 'SENT'}</span>
+                  {isCur && <span className="text-right whitespace-nowrap" title={`1–${prevDay}/${data.prevMonth.slice(5, 7)}`}>{vi ? `T${Number(data.prevMonth.slice(5, 7))}` : MONTHS_EN[prevIdx].slice(0, 3).toUpperCase()}</span>}
                 </div>
                 {c.items.map(i => {
                   const gap = Math.abs(i.sent - i.made) >= Math.max(5, i.made * 0.2);
                   return (
-                    <div key={i.name} className="grid gap-1.5 px-3.5 py-1.5 border-t items-center" style={{ gridTemplateColumns: isCur ? '1fr 44px 44px 44px' : '1fr 48px 48px', borderColor: '#F5EFC8' }}>
+                    <div key={i.name} className="grid gap-1.5 px-3.5 py-1.5 border-t items-center" style={{ gridTemplateColumns: isCur ? 'minmax(0,1fr) 46px 46px 50px' : 'minmax(0,1fr) 52px 52px', borderColor: '#F5EFC8' }}>
                       <span className="flex flex-col gap-0.5 min-w-0">
                         <span className="text-[12.5px] font-semibold leading-tight" style={{ color: '#1A2C24' }}>{i.name}</span>
                         {i.sizes.length > 0 && <span className="text-[10.5px]" style={{ color: MUTED }}>{i.sizes.join(' · ')}</span>}
@@ -205,7 +207,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
               <span className="text-lg font-bold inline-block" style={{ color: GOLD, transform: `rotate(${oemOpen ? 90 : 0}deg)` }}>›</span>
             </button>
             {oemOpen && oemList.map(o => (
-              <div key={o.name} className="grid gap-1.5 px-3.5 py-1.5 border-t items-center" style={{ gridTemplateColumns: '1fr 64px 56px', borderColor: '#F5EFC8' }}>
+              <div key={o.name} className="grid gap-1.5 px-3.5 py-1.5 border-t items-center" style={{ gridTemplateColumns: 'minmax(0,1fr) 72px 56px', borderColor: '#F5EFC8' }}>
                 <span className="flex flex-col gap-0.5">
                   <span className="text-[12.5px] font-semibold" style={{ color: '#1A2C24' }}>{o.name}</span>
                   <span className="h-1 rounded overflow-hidden" style={{ background: '#F5EFC8' }}><span className="block h-full rounded" style={{ background: GOLD, width: barW(o.v, oemMax) }} /></span>
