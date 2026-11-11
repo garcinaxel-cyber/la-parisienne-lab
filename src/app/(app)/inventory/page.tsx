@@ -1,5 +1,6 @@
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import InventoryIndexView from './InventoryIndexView';
+import { stockKindsFor, canCountFinished } from '@/lib/inventory-access';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;   // Odoo scope / send can take a while
@@ -14,6 +15,8 @@ export default async function InventoryPage() {
     .limit(30);
 
   const { data: { session } } = await getSafeSession(supabase);
-  const { data: profile } = session ? await supabase.from('profiles').select('role').eq('id', session.user.id).maybeSingle() : { data: null };
-  return <InventoryIndexView sessions={sessions ?? []} role={profile?.role ?? undefined} />;
+  const { data: profile } = session ? await supabase.from('profiles').select('role, can_purchase').eq('id', session.user.id).maybeSingle() : { data: null };
+  const role = (profile as any)?.role as string | undefined;
+  const finished = canCountFinished(role);
+  return <InventoryIndexView sessions={finished ? sessions ?? [] : []} kinds={stockKindsFor(role, !!(profile as any)?.can_purchase)} finished={finished} />;
 }

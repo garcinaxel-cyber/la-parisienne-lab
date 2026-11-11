@@ -5,7 +5,7 @@
 //                     over two days stays right), with the October rule: a vendor receipt validated
 //                     late but scheduled before the count belongs before the count.
 //   3. createDraftSheet — on send: ONE stock.inventory at LAB/Stock in progress, lines written with
-//                     theoretical + counted quantities, never applied (Axel checks and applies it).
+//                     counted quantities only (Odoo computes the system quantity), never applied.
 import { odooExecuteWrite, odooWriteConfigured } from './odoo';
 import { getLabStockLocationId, addMissingCountLines } from './odoo-inventory';
 
@@ -108,12 +108,14 @@ export async function createDraftSheet(args: { name: string; countDate: string; 
   let lineIds = await readLines();
   const missing = pids.filter(p => !lineIds[p]);
   if (missing.length) { await addMissingCountLines(invId, loc, missing); lineIds = await readLines(); }
+  // Counted quantities only: the "System Quantity at Cut-off" is read-only in Odoo and computed by
+  // the module on Begin Adjustments (Liêm, 2026-11-10: the app only writes what a user can type).
   const cmds = args.lines.filter(l => lineIds[l.productId]).map(l =>
-    [1, lineIds[l.productId], { theoretical_qty: l.theoretical, counted_qty: l.counted, counted_set: true }]);
+    [1, lineIds[l.productId], { counted_qty: l.counted, counted_set: true }]);
   for (const c of chunks(cmds, 150)) await odooExecuteWrite('stock.inventory', 'write', [[invId], { count_line_ids: c }], { context: NO_MAIL });
   try {
     await odooExecuteWrite('stock.inventory', 'message_post', [[invId]], {
-      body: `<p>Lab app — kiểm kê ${args.lines.length} dòng, lý thuyết tính theo giờ đếm của từng dòng. Chưa áp dụng: kiểm tra rồi Apply.</p><p>Lab app — ${args.lines.length} lines, theoretical at each line's count time. Not applied: check, then apply.</p>`,
+      body: `<p>Lab app — kiểm kê ${args.lines.length} dòng, chỉ nhập số đếm (tồn sổ do Odoo tính). Chưa áp dụng: kiểm tra rồi Apply.</p><p>Lab app — ${args.lines.length} lines, counted quantities only (system quantity computed by Odoo). Not applied: check, then apply.</p>`,
       message_type: 'comment', subtype_id: 2,
     });
   } catch { /* note is best-effort */ }

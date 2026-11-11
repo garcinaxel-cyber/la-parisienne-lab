@@ -19,12 +19,13 @@ type Hist = { key: string; kind: 'finished' | 'raw' | 'packaging'; date: string;
 const NAVY = '#1A4731', GOLD_TEXT = '#8A6D14', BORDER = '#E0D49A';
 function todayISO() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }); }
 
-export default function InventoryIndexView({ sessions, role }: { sessions: Session[]; role?: string }) {
+// Each role sees its own part (Axel, 2026-11-11): storage the raw materials; assistants the
+// packaging, the finished goods and the chefs' rooms; admins and lab managers everything.
+export default function InventoryIndexView({ sessions, kinds, finished }: { sessions: Session[]; kinds: ('raw' | 'packaging')[]; finished: boolean }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const L = (v: string, f: string) => (vi ? v : f);
   const router = useRouter();
-  const purchasingOnly = role === 'purchasing';
   const [counts, setCounts] = useState<Count[] | null>(null);
   const [missing, setMissing] = useState<{ raw: number; packaging: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export default function InventoryIndexView({ sessions, role }: { sessions: Sessi
   const fgDraft = sessions.find(s => s.status === 'draft');
 
   const hist: Hist[] = [
-    ...(purchasingOnly ? [] : sessions.map(s => ({
+    ...(!finished ? [] : sessions.map(s => ({
       key: `f-${s.id}`, kind: 'finished' as const, date: s.inventory_date, at: s.submitted_at ?? s.inventory_date,
       who: (s.status === 'submitted' ? s.submitted_by_name : s.created_by_name) ?? '—',
       status: s.status === 'draft' ? 'draft' as const : s.odoo_push_status === 'success' ? 'ok' as const : 'error' as const, href: `/inventory/${s.id}`,
@@ -99,19 +100,19 @@ export default function InventoryIndexView({ sessions, role }: { sessions: Sessi
       {missing != null && missing.raw + missing.packaging > 0 && (
         <button onClick={() => router.push('/inventory/photos')} className="w-full rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 text-left" style={{ backgroundColor: '#FBF3DD', border: '1px solid #E8C979' }}>
           <Camera size={17} color={GOLD_TEXT} className="flex-none" />
-          <span className="flex-1 text-[13px]" style={{ color: '#1A2C24' }}>{L('Chưa có ảnh', 'Sans photo')} : <b>{missing.raw}</b> {L('nguyên liệu', 'matières')} · <b>{missing.packaging}</b> {L('bao bì', 'packaging')} <span className="text-ink-light">— {L('nhờ kho chụp trước kiểm kê', 'à demander au storage avant l\'inventaire')}</span></span>
+          <span className="flex-1 text-[13px]" style={{ color: '#1A2C24' }}>{L('Chưa có ảnh', 'Sans photo')} : {[kinds.includes('raw') ? <span key="r"><b>{missing.raw}</b> {L('nguyên liệu', 'matières')}</span> : null, kinds.includes('packaging') ? <span key="p"><b>{missing.packaging}</b> {L('bao bì', 'packaging')}</span> : null].filter(Boolean).reduce((acc: any[], el, k) => (k ? [...acc, ' · ', el] : [el]), [])} <span className="text-ink-light">— {L('chụp trước kiểm kê', 'à prendre avant l\'inventaire')}</span></span>
           <ChevronRight size={16} color={GOLD_TEXT} />
         </button>
       )}
 
       <div className="grid grid-cols-2 gap-2.5">
-        <Tile icon={Wheat} title={L('Nguyên liệu', 'Matières premières')} sub={L('Khô · Mát · Đông lạnh', 'Sec · Frais · Surgelé')} onClick={() => startStock('raw')}
+        {kinds.includes('raw') && <Tile icon={Wheat} title={L('Nguyên liệu', 'Matières premières')} sub={L('Khô · Mát · Đông lạnh', 'Sec · Frais · Surgelé')} onClick={() => startStock('raw')}
           progress={raw ? { done: raw.counted, total: raw.scope, extra: raw.unknownOpen ? `${raw.unknownOpen} ${L('ảnh', 'photo(s)')}` : raw.countDate } : undefined}
-          action={raw ? L('Tiếp tục', 'Continuer') : L('Bắt đầu', 'Démarrer')} spin={busy === 'raw'} />
-        <Tile icon={Package} title={L('Bao bì', 'Packaging')} sub={L('Toàn bộ nhóm bao bì', 'Toute la catégorie packaging')} onClick={() => startStock('packaging')}
+          action={raw ? L('Tiếp tục', 'Continuer') : L('Bắt đầu', 'Démarrer')} spin={busy === 'raw'} />}
+        {kinds.includes('packaging') && <Tile icon={Package} title={L('Bao bì', 'Packaging')} sub={L('Toàn bộ nhóm bao bì', 'Toute la catégorie packaging')} onClick={() => startStock('packaging')}
           progress={pk ? { done: pk.counted, total: pk.scope, extra: pk.unknownOpen ? `${pk.unknownOpen} ${L('ảnh', 'photo(s)')}` : pk.countDate } : undefined}
-          action={pk ? L('Tiếp tục', 'Continuer') : L('Bắt đầu', 'Démarrer')} spin={busy === 'packaging'} />
-        {!purchasingOnly && <>
+          action={pk ? L('Tiếp tục', 'Continuer') : L('Bắt đầu', 'Démarrer')} spin={busy === 'packaging'} />}
+        {finished && <>
           <Tile icon={Box} title={L('Thành phẩm', 'Produits finis')} sub={L('Macaron, bánh quy, tiramisu', 'Macaron, biscuit voyage, tiramisu')}
             onClick={() => (fgDraft ? router.push(`/inventory/${fgDraft.id}`) : setFgOpen(true))}
             action={fgDraft ? `${L('Tiếp tục', 'Continuer')} · ${fgDraft.inventory_date}` : L('Bắt đầu', 'Démarrer')} spin={busy === 'finished'} />

@@ -1,6 +1,7 @@
 'use server';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
+import { rawService } from '@/lib/raw-materials-db';
 import { ensureSessionCountLine, tryCancelInventoryLine, tryRemoveCountLine, moveSessionCutoff, labCutoffFor, applyInventoryLines, type InventoryLineResult } from '@/lib/odoo-inventory';
 
 async function requireProfile(supabase: ReturnType<typeof createClient>) {
@@ -151,6 +152,12 @@ export async function confirmSubmitAction(sessionId: string, inventoryDate: stri
   const auth = await requireProfile(supabase);
   if ('error' in auth) return { error: auth.error };
 
+  const db = rawService();
+  if (db) {
+    const { count: open } = await db.from('lab_stock_count_unknowns').select('*', { count: 'exact', head: true }).eq('session_id', sessionId).eq('status', 'open');
+    if (open) return { error: `Còn ${open} ảnh cần xác định / Encore ${open} photo(s) à identifier` };
+  }
+
   const { data: lines, error } = await supabase.from('lab_inventory_lines')
     .select('id, sku, qty_counted, odoo_count_line_id, qty_theoretical').eq('session_id', sessionId);
   if (error) return { error: error.message };
@@ -223,4 +230,75 @@ export async function confirmSubmitAction(sessionId: string, inventoryDate: stri
   revalidatePath('/inventory');
   revalidatePath(`/inventory/${sessionId}`);
   return { ok: true, lines: allResultLines };
+}
+
+// ---- "Không thấy" on the finished goods (Axel, 2026-11-11): photo + quantity + unit + a word; the
+// assistant puts the SKU on it in the recap, its quantity is added to that product's line. ----------
+export type FgUnknown = {
+  id: string; photoUrl: string | null; qty: number | null; unit: string | null; note: string | null;
+  createdBy: string | null; createdAt: string; status: string; resolvedSku: string | null;
+};
+const mapFg = (u: any): FgUnknown => ({ id: u.id, photoUrl: u.photo_url, qty: u.qty == null ? null : Number(u.qty), unit: u.unit, note: u.note,
+  createdBy: u.created_by_name, createdAt: u.created_at, status: u.status, resolvedSku: u.resolved_sku ?? null });
+
+export async function listFgUnknownsAction(sessionId: string): Promise<{ unknowns?: FgUnknown[]; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const db = rawService(); if (!db) return { error: 'Server not configured' };
+  const { data } = await db.from('lab_stock_count_unknowns').select('*').eq('session_id', sessionId).order('created_at');
+  return { unknowns: (data ?? []).map(mapFg) };
+}
+
+export async function addFgUnknownAction(form: FormData): Promise<{ unknown?: FgUnknown; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const db = rawService(); if (!db) return { error: 'Server not configured' };
+  const sessionId = String(form.get('sessionId') ?? '');
+  const { data: sess } = await db.from('lab_inventory_sessions').select('status').eq('id', sessionId).maybeSingle();
+  if (!sess || sess.status !== 'draft') return { error: 'Not found' };
+  const qtyRaw = String(form.get('qty') ?? '').replace(',', '.');
+  const qty = qtyRaw ? Number(qtyRaw) : null;
+  if (qty != null && (!Number.isFinite(qty) || qty < 0)) return { error: 'Số lượng không hợp lệ / Quantité invalide' };
+  const file = form.get('file');
+  let path: string | null = null, url: string | null = null;
+  if (file instanceof Blob && file.size > 0) {
+    if (file.size > 8_000_000) return { error: 'Ảnh quá lớn / Photo trop lourde' };
+    path = `inventory/unknown/fg-${sessionId}/${Date.now()}.jpg`;
+    const { error } = await db.storage.from('lab-images').upload(path, Buffer.from(await file.arrayBuffer()), { contentType: 'image/jpeg', upsert: true });
+    if (error) return { error: error.message };
+    url = db.storage.from('lab-images').getPublicUrl(path).data.publicUrl;
+  }
+  const note = String(form.get('note') ?? '').slice(0, 200) || null;
+  if (!path && !note) return { error: 'Chụp ảnh hoặc ghi chú / Photo ou un mot requis' };
+  const { data: u, error } = await db.from('lab_stock_count_unknowns').insert({
+    session_id: sessionId, photo_path: path, photo_url: url, qty, unit: String(form.get('unit') ?? '') || null, note,
+    created_by_name: auth.profile?.full_name ?? null,
+  }).select('*').single();
+  if (error || !u) return { error: error?.message ?? 'Insert failed' };
+  return { unknown: mapFg(u) };
+}
+
+export async function resolveFgUnknownAction(unknownId: string, v: {
+  status: 'matched' | 'ignored';
+  product?: { fiche_id: string | null; variant_id: string | null; sku: string; product_name_vi: string; product_name_en: string | null; category: string | null };
+  qty?: number;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const supabase = createClient();
+  const auth = await requireProfile(supabase);
+  if ('error' in auth) return { error: auth.error };
+  const db = rawService(); if (!db) return { error: 'Server not configured' };
+  const { data: u } = await db.from('lab_stock_count_unknowns').select('*').eq('id', unknownId).maybeSingle();
+  if (!u || !u.session_id) return { error: 'Not found' };
+  if (u.status !== 'open') return { error: 'Đã xử lý / Déjà traité' };
+  if (v.status === 'matched') {
+    if (!v.product?.sku || v.qty == null || !Number.isFinite(v.qty) || v.qty < 0) return { error: 'Chọn sản phẩm và số lượng / Produit et quantité requis' };
+    const { data: line } = await supabase.from('lab_inventory_lines').select('qty_counted').eq('session_id', u.session_id).eq('sku', v.product.sku).maybeSingle();
+    const res = await saveLineAction(u.session_id, { ...v.product, qty_counted: Number(line?.qty_counted ?? 0) + v.qty });
+    if (res.error) return { error: res.error };
+  }
+  await db.from('lab_stock_count_unknowns').update({ status: v.status, resolved_sku: v.product?.sku ?? null, resolved_qty: v.qty ?? null,
+    resolved_by_name: auth.profile?.full_name ?? null, resolved_at: new Date().toISOString() }).eq('id', unknownId);
+  return { ok: true };
 }

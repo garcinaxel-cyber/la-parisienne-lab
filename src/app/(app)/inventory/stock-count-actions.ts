@@ -4,9 +4,9 @@
 // count time), and written once on send (one draft sheet). See lib/stock-count-odoo.ts.
 import { waitUntil } from '@vercel/functions';
 import { revalidateTag } from 'next/cache';
-import { rawActor, rawService, purchasingUserIds, type RawActor } from '@/lib/raw-materials-db';
+import { rawActor, rawService, type RawActor } from '@/lib/raw-materials-db';
 import { addItemPhoto } from '@/lib/item-photos';
-import { sendUsersPush, awaitPush } from '@/lib/push-notify';
+import { stockKindsFor } from '@/lib/inventory-access';
 import { scopeAtLab, theoreticals, createDraftSheet, productCosts } from '@/lib/stock-count-odoo';
 
 export type CountKind = 'raw' | 'packaging';
@@ -27,9 +27,13 @@ export type CountHeader = {
   submittedAt: string | null; submittedBy: string | null; odooInventoryId: number | null; pushStatus: string | null; pushError: string | null;
 };
 
-// Admin, lab manager, assistants and purchasing (storage) — Axel, 2026-11-09.
-function canCount(a: RawActor | null): a is RawActor {
-  return !!a && (['admin', 'lab_manager', 'assistant', 'purchasing'].includes(a.role) || a.canPurchase);
+// Each role counts its own part (Axel, 2026-11-11): storage (purchasing) the raw materials,
+// assistants the packaging, admins and lab managers both. See lib/inventory-access.ts.
+function kindsOf(a: RawActor | null): CountKind[] { return a ? stockKindsFor(a.role, a.canPurchase) : []; }
+function canCount(a: RawActor | null): a is RawActor { return kindsOf(a).length > 0; }
+async function countAllowed(db: NonNullable<ReturnType<typeof rawService>>, a: RawActor, countId: string): Promise<boolean> {
+  const { data } = await db.from('lab_stock_counts').select('kind').eq('id', countId).maybeSingle();
+  return !!data && kindsOf(a).includes(data.kind);
 }
 function vnToday(): string { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); }
 const mapHeader = (c: any): CountHeader => ({
@@ -47,7 +51,7 @@ export async function listCountsAction(): Promise<{ counts?: (CountHeader & { co
   const a = await rawActor();
   if (!canCount(a)) return { error: 'Forbidden' };
   const db = rawService(); if (!db) return { error: 'Server not configured' };
-  const { data } = await db.from('lab_stock_counts').select('*').order('created_at', { ascending: false }).limit(20);
+  const { data } = await db.from('lab_stock_counts').select('*').in('kind', kindsOf(a)).order('created_at', { ascending: false }).limit(20);
   const out = [];
   for (const c of data ?? []) {
     const [{ count: scope }, { count: counted }, { count: unknownOpen }] = await Promise.all([
@@ -66,6 +70,7 @@ export async function startCountAction(kind: CountKind, countDate?: string): Pro
   const a = await rawActor();
   if (!canCount(a)) return { error: 'Forbidden' };
   if (kind !== 'raw' && kind !== 'packaging') return { error: 'Bad kind' };
+  if (!kindsOf(a).includes(kind)) return { error: 'Forbidden' };
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   const { data: open } = await db.from('lab_stock_counts').select('id').eq('kind', kind).eq('status', 'draft').maybeSingle();
   if (open) return { id: open.id };
@@ -89,6 +94,7 @@ export async function getCountAction(id: string): Promise<{ header?: CountHeader
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   const { data: c } = await db.from('lab_stock_counts').select('*').eq('id', id).maybeSingle();
   if (!c) return { error: 'Not found' };
+  if (!kindsOf(a).includes(c.kind)) return { error: 'Forbidden' };
   const [items, { data: lines }, { data: unk }, { data: al }] = await Promise.all([
     catalog(db, c.kind),
     db.from('lab_stock_count_lines').select('tmpl_id, in_scope, qty, entry, not_found, counted_at, counted_by_name').eq('count_id', id).limit(3000),
@@ -118,8 +124,9 @@ export async function saveCountLineAction(countId: string, tmplId: number, v: { 
   if (!canCount(a)) return { error: 'Forbidden' };
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   if (v.qty != null && (!Number.isFinite(v.qty) || v.qty < 0 || v.qty > 1e7)) return { error: 'Số lượng không hợp lệ / Quantité invalide' };
-  const { data: c } = await db.from('lab_stock_counts').select('status').eq('id', countId).maybeSingle();
+  const { data: c } = await db.from('lab_stock_counts').select('status, kind').eq('id', countId).maybeSingle();
   if (!c) return { error: 'Not found' };
+  if (!kindsOf(a).includes(c.kind)) return { error: 'Forbidden' };
   if (c.status !== 'draft') return { error: 'Đã gửi / Déjà envoyé' };
   const { data: prev } = await db.from('lab_stock_count_lines').select('id, counted_at').eq('count_id', countId).eq('tmpl_id', tmplId).maybeSingle();
   const counted = v.qty != null || !!v.notFound;
@@ -146,8 +153,8 @@ export async function addUnknownAction(form: FormData): Promise<{ unknown?: Unkn
   const qtyRaw = String(form.get('qty') ?? '').replace(',', '.');
   const qty = qtyRaw ? Number(qtyRaw) : null;
   if (qty != null && (!Number.isFinite(qty) || qty < 0)) return { error: 'Số lượng không hợp lệ / Quantité invalide' };
-  const { data: c } = await db.from('lab_stock_counts').select('status').eq('id', countId).maybeSingle();
-  if (!c || c.status !== 'draft') return { error: 'Not found' };
+  const { data: c } = await db.from('lab_stock_counts').select('status, kind').eq('id', countId).maybeSingle();
+  if (!c || c.status !== 'draft' || !kindsOf(a).includes(c.kind)) return { error: 'Not found' };
   let path: string | null = null, url: string | null = null;
   if (file instanceof Blob && file.size > 0) {
     if (file.size > 8_000_000) return { error: 'Ảnh quá lớn / Photo trop lourde' };
@@ -174,6 +181,7 @@ export async function resolveUnknownAction(unknownId: string, v: { status: 'matc
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   const { data: u } = await db.from('lab_stock_count_unknowns').select('*').eq('id', unknownId).maybeSingle();
   if (!u) return { error: 'Not found' };
+  if (!(await countAllowed(db, a, u.count_id))) return { error: 'Forbidden' };
   if (u.status !== 'open') return { error: 'Đã xử lý / Déjà traité' };
   const now = new Date().toISOString();
   if (v.status === 'matched') {
@@ -211,6 +219,7 @@ export async function recapCountAction(countId: string): Promise<{ lines?: Recap
   const a = await rawActor();
   if (!canCount(a)) return { error: 'Forbidden' };
   const db = rawService(); if (!db) return { error: 'Server not configured' };
+  if (!(await countAllowed(db, a, countId))) return { error: 'Forbidden' };
   const { data: ls } = await db.from('lab_stock_count_lines').select('id, tmpl_id, product_id, qty, counted_at').eq('count_id', countId).not('qty', 'is', null).limit(3000);
   const lines = (ls ?? []).filter((l: any) => l.product_id && l.counted_at);
   let theo: Record<number, number>;
@@ -236,6 +245,7 @@ export async function submitCountAction(countId: string): Promise<{ ok?: boolean
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   const { data: c } = await db.from('lab_stock_counts').select('*').eq('id', countId).maybeSingle();
   if (!c) return { error: 'Not found' };
+  if (!kindsOf(a).includes(c.kind)) return { error: 'Forbidden' };
   if (c.status !== 'draft') return { error: 'Đã gửi / Déjà envoyé' };
   const { count: open } = await db.from('lab_stock_count_unknowns').select('*', { count: 'exact', head: true }).eq('count_id', countId).eq('status', 'open');
   if (open) return { error: `Còn ${open} ảnh cần xác định / Encore ${open} photo(s) à identifier` };
@@ -279,10 +289,10 @@ export async function missingPhotosAction(): Promise<{ items?: PhotoTodo[]; requ
   if (!canCount(a)) return { error: 'Forbidden' };
   const db = rawService(); if (!db) return { error: 'Server not configured' };
   const [{ data: mats }, { data: photos }, { data: reqs }, { data: drafts }] = await Promise.all([
-    db.from('lab_raw_materials').select('tmpl_id, sku, name, name_vi, kind, type, sub').in('kind', ['raw', 'packaging']).eq('active', true).limit(3000),
+    db.from('lab_raw_materials').select('tmpl_id, sku, name, name_vi, kind, type, sub').in('kind', kindsOf(a)).eq('active', true).limit(3000),
     db.from('lab_item_photos').select('tmpl_id').limit(5000),
     db.from('lab_photo_requests').select('tmpl_id, status').limit(5000),
-    db.from('lab_stock_counts').select('id, kind').eq('status', 'draft'),
+    db.from('lab_stock_counts').select('id, kind').eq('status', 'draft').in('kind', kindsOf(a)),
   ]);
   const has = new Set((photos ?? []).map((p: any) => Number(p.tmpl_id)));
   const st = new Map<number, string>((reqs ?? []).map((r: any) => [Number(r.tmpl_id), r.status]));
@@ -298,21 +308,6 @@ export async function missingPhotosAction(): Promise<{ items?: PhotoTodo[]; requ
     .map((m: any) => ({ tmplId: m.tmpl_id, sku: m.sku ?? null, name: m.name, nameVi: m.name_vi ?? null, kind: m.kind, type: m.type ?? 'dry', sub: m.sub ?? 'other',
       status: (st.get(m.tmpl_id) as any) ?? null }));
   return { items, requested: items.some(i => i.status) };
-}
-
-// "Demander": every missing photo becomes a request; purchasing (storage) gets a push.
-export async function requestPhotosAction(tmplIds: number[]): Promise<{ ok?: boolean; error?: string }> {
-  const a = await rawActor();
-  if (!canCount(a)) return { error: 'Forbidden' };
-  const db = rawService(); if (!db) return { error: 'Server not configured' };
-  const now = new Date().toISOString();
-  const rows = tmplIds.filter(Number.isInteger).map(t => ({ tmpl_id: t, status: 'open', requested_at: now, requested_by_name: a.name || null, updated_at: now }));
-  for (let k = 0; k < rows.length; k += 500) await db.from('lab_photo_requests').upsert(rows.slice(k, k + 500), { onConflict: 'tmpl_id' });
-  const ids = await purchasingUserIds(db);
-  await awaitPush(sendUsersPush(db, ids,
-    { title: 'La Parisienne Lab', body: `📷 ${rows.length} sản phẩm chưa có ảnh — chụp trước kiểm kê`, url: '/inventory/photos', tag: 'photo-requests' },
-    { title: 'La Parisienne Lab', body: `📷 ${rows.length} items without a photo — take them before the inventory`, url: '/inventory/photos', tag: 'photo-requests' }));
-  return { ok: true };
 }
 
 export async function setPhotoStatusAction(tmplId: number, status: 'open' | 'not_in_stock'): Promise<{ ok?: boolean; error?: string }> {

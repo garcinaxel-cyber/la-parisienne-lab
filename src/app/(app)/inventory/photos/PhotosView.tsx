@@ -1,18 +1,18 @@
 'use client';
-// Photos missing before an inventory (Axel, 2026-11-09): the storage (purchasing) is asked, assistants
-// can take them too. A photo taken here goes to the app and to the Odoo product. "Pas en stock" =
-// nothing to photograph now.
+// Photos missing before an inventory: each role photographs its own items (Axel, 2026-11-11 —
+// storage the raw materials, assistants the packaging; no request sent to another person).
+// A photo taken here goes to the app and to the Odoo product. "Pas en stock" = nothing to photograph now.
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import { RAW_TYPES } from '@/lib/raw-materials';
-import { ChevronLeft, Loader2, Send } from 'lucide-react';
-import { missingPhotosAction, requestPhotosAction, setPhotoStatusAction, type PhotoTodo } from '../stock-count-actions';
+import { ChevronLeft, Loader2 } from 'lucide-react';
+import { missingPhotosAction, setPhotoStatusAction, type PhotoTodo } from '../stock-count-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', BORDER = '#E0D49A', OK = '#067647';
 
-export default function PhotosView() {
+export default function PhotosView({ kinds }: { kinds: ('raw' | 'packaging')[] }) {
   const { lang } = useI18n();
   const vi = lang === 'vi';
   const L = (v: string, f: string) => (vi ? v : f);
@@ -21,9 +21,7 @@ export default function PhotosView() {
   const [done, setDone] = useState<Set<number>>(new Set());
   const [tab, setTab] = useState<'todo' | 'done' | 'nis'>('todo');
   // Separate lists per kind (Axel, 2026-11-09): raw materials and packaging are never mixed.
-  const [kind, setKind] = useState<'raw' | 'packaging'>('raw');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [kind, setKind] = useState<'raw' | 'packaging'>(kinds[0] ?? 'raw');
   useEffect(() => { missingPhotosAction().then(r => setItems(r.items ?? [])); }, []);
 
   const groups = useMemo(() => {
@@ -39,12 +37,6 @@ export default function PhotosView() {
   const ofKind = (items ?? []).filter(i => i.kind === kind);
   const counts = { todo: ofKind.filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').length, done: ofKind.filter(i => done.has(i.tmplId)).length, nis: ofKind.filter(i => !done.has(i.tmplId) && i.status === 'not_in_stock').length };
   const kindTodo = (k: 'raw' | 'packaging') => (items ?? []).filter(i => i.kind === k && !done.has(i.tmplId) && i.status !== 'not_in_stock').length;
-  const ask = async () => {
-    setBusy(true);
-    const r = await requestPhotosAction(ofKind.filter(i => !done.has(i.tmplId) && i.status !== 'not_in_stock').map(i => i.tmplId));
-    setBusy(false); setMsg(r.error ?? L('Đã gửi yêu cầu cho kho.', 'Demande envoyée au storage.'));
-    setItems(x => (x ?? []).map(i => (i.status ? i : { ...i, status: 'open' })));
-  };
   const nis = async (i: PhotoTodo, on: boolean) => {
     setItems(x => (x ?? []).map(y => (y.tmplId === i.tmplId ? { ...y, status: on ? 'not_in_stock' : 'open' } : y)));
     await setPhotoStatusAction(i.tmplId, on ? 'not_in_stock' : 'open');
@@ -59,16 +51,16 @@ export default function PhotosView() {
             <div className="text-[11.5px]" style={{ color: '#D7E3DC' }}>{L('Ảnh chụp ở đây cập nhật cả Odoo', 'La photo met aussi à jour Odoo')}</div></div>
           <div className="text-[13px] font-extrabold" style={{ color: '#E9D9A0' }}>{counts.done}/{ofKind.length}</div>
         </div>
-        <div className="grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: 'rgba(255,255,255,.12)' }}>
+        {kinds.length > 1 && <div className="grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: 'rgba(255,255,255,.12)' }}>
           {([['raw', L('Nguyên liệu', 'Matières premières')], ['packaging', L('Bao bì', 'Packaging')]] as const).map(([k, l]) =>
             <button key={k} onClick={() => setKind(k)} className="rounded-lg py-2 text-[13px] font-extrabold" style={kind === k ? { backgroundColor: '#fff', color: NAVY } : { color: '#fff' }}>{l} · {kindTodo(k)}</button>)}
-        </div>
+        </div>}
         <div className="flex gap-1.5">
           {([['todo', L('Cần chụp', 'À faire')], ['done', L('Đã chụp', 'Faites')], ['nis', L('Hết hàng', 'Pas en stock')]] as const).map(([k, l]) =>
             <button key={k} onClick={() => setTab(k)} className="rounded-full px-3 py-1.5 text-[12px] font-extrabold" style={tab === k ? { backgroundColor: GOLD, color: '#1A2C24' } : { backgroundColor: 'rgba(255,255,255,.14)' }}>{l} · {counts[k]}</button>)}
         </div>
       </div>
-      <div className="px-3 py-3 space-y-2 pb-24">
+      <div className="px-3 py-3 space-y-2 pb-10">
         {items === null && <div className="p-10 text-center"><Loader2 className="animate-spin inline" /></div>}
         {items && !groups.length && <div className="card p-8 text-center text-sm" style={{ color: '#5B6B63' }}>{L('Không còn gì.', 'Rien ici.')}</div>}
         {groups.map(([g, list]) => (
@@ -87,13 +79,6 @@ export default function PhotosView() {
           </div>
         ))}
       </div>
-      {items && counts.todo > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-20 bg-white px-3 pt-2 pb-3 max-w-2xl mx-auto" style={{ borderTop: '1px solid #EFE9CF' }}>
-          {msg && <div className="text-[12px] pb-1.5 font-semibold" style={{ color: NAVY }}>{msg}</div>}
-          <button disabled={busy} onClick={ask} className="w-full rounded-xl py-3 text-[14px] font-extrabold text-white disabled:opacity-60 flex items-center justify-center gap-2" style={{ backgroundColor: GOLD_TEXT }}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} {kind === 'raw' ? L(`Báo kho chụp ${counts.todo} ảnh nguyên liệu`, `Demander ${counts.todo} photos matières au storage`) : L(`Báo kho chụp ${counts.todo} ảnh bao bì`, `Demander ${counts.todo} photos packaging au storage`)}</button>
-        </div>
-      )}
     </div>
   );
 }

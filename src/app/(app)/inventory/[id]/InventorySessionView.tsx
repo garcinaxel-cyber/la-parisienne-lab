@@ -3,10 +3,12 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
-import { ArrowLeft, Search, CheckCircle2, AlertTriangle, Loader2, Check, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Search, CheckCircle2, AlertTriangle, Loader2, Check, RotateCcw, Camera } from 'lucide-react';
 import type { InventoryLineResult } from '@/lib/odoo-inventory';
 import QtyExprInput from '@/components/QtyExprInput';
 import { evalQty } from '@/lib/qty-expr';
+import { FgUnknownSheet, FgUnknownRow } from './FgUnknowns';
+import type { FgUnknown } from '../actions';
 
 type Product = {
   sku: string; product_name_vi: string; product_name_en: string | null;
@@ -68,6 +70,12 @@ export default function InventorySessionView({
   const [finalLines, setFinalLines] = useState<InventoryLineResult[] | null>(null);
 
   const allCats = [...categories, 'Autre'];
+
+  // "Không thấy": photos of products not found, identified in the recap (Axel, 2026-11-11)
+  const [unknowns, setUnknowns] = useState<FgUnknown[]>([]);
+  const [unkOpen, setUnkOpen] = useState(false);
+  useEffect(() => { import('../actions').then(m => m.listFgUnknownsAction(session.id)).then(r => setUnknowns(r.unknowns ?? [])); }, [session.id]);
+  const openUnknowns = unknowns.filter(u => u.status === 'open').length;
 
   // Backup of typed-but-not-yet-saved quantities in this browser, so leaving the page (another tab
   // of the app) never loses a count: restored on return, cleared line by line once saved.
@@ -158,13 +166,16 @@ export default function InventorySessionView({
   const badSkus = useMemo(() => Object.keys(lines).filter(sku => Number.isNaN(evalQty(lines[sku].qty) as number)), [lines]);
 
   async function goToRecap() {
-    if (!countedSkus.length) return;
+    if (!countedSkus.length && !unknowns.length) return;
     if (badSkus.length) return; // shown in red above the button — fix before the recap
     setStep('recap'); setRecapLoading(true); setSubmitError(null);
     const { previewSubmitAction } = await import('../actions');
     const res = await previewSubmitAction(session.id);
     setRecapLoading(false);
-    if (res.error) { setSubmitError(res.error); return; }
+    if (res.error) {
+      if (!countedSkus.length) { setRecapLines([]); return; }   // only unknown photos so far
+      setSubmitError(res.error); return;
+    }
     setRecapLines(res.lines ?? []);
   }
 
@@ -216,6 +227,10 @@ export default function InventorySessionView({
                 backgroundColor: activeCat === '__search__' ? '#F3F4F6' : 'transparent', color: '#1f2937',
               }}>
               <Search size={13} /> {vi ? 'Thêm sản phẩm khác' : 'Ajouter un autre produit'}
+            </button>
+            <button onClick={() => setUnkOpen(true)}
+              className="text-xs font-bold rounded-full px-3.5 py-1.5 inline-flex items-center gap-1.5 text-white" style={{ backgroundColor: '#8A6D14' }}>
+              <Camera size={13} /> {vi ? 'Không thấy — chụp ảnh' : 'Introuvable — photo'}{openUnknowns ? ` · ${openUnknowns}` : ''}
             </button>
           </div>
 
@@ -304,12 +319,13 @@ export default function InventorySessionView({
             </div>
           )}
           <div className="flex justify-end pt-2">
-            <button onClick={goToRecap} disabled={!countedSkus.length || badSkus.length > 0 || unsavedSkus.length > 0}
+            <button onClick={goToRecap} disabled={(!countedSkus.length && !unknowns.length) || badSkus.length > 0 || unsavedSkus.length > 0}
               className="text-sm font-bold px-5 py-2.5 rounded-xl text-white disabled:opacity-40"
               style={{ backgroundColor: '#1f2937' }}>
-              {vi ? `Xem lại (${countedSkus.length})` : `Voir le récapitulatif (${countedSkus.length})`}
+              {vi ? `Xem lại (${countedSkus.length})` : `Voir le récapitulatif (${countedSkus.length})`}{openUnknowns ? ` · ${openUnknowns} ${vi ? 'ảnh cần xác định' : 'photo(s) à identifier'}` : ''}
             </button>
           </div>
+          {unkOpen && <FgUnknownSheet sessionId={session.id} vi={vi} onClose={() => setUnkOpen(false)} onAdded={u => { setUnknowns(x => [...x, u]); setUnkOpen(false); }} />}
         </>
       )}
 
@@ -321,6 +337,24 @@ export default function InventorySessionView({
             <div className="card p-4 text-sm font-semibold" style={{ color: '#DC2626' }}>{submitError}</div>
           ) : (
             <>
+              {unknowns.length > 0 && (
+                <div className="card p-3 space-y-2" style={{ border: `2px solid ${openUnknowns ? '#C9A84C' : '#E0D49A'}` }}>
+                  <div className="text-[14px] font-extrabold flex items-center gap-2"><Camera size={16} color="#8A6D14" /> {vi ? 'Ảnh cần xác định' : 'Photos à identifier'} · {openUnknowns}/{unknowns.length}</div>
+                  {openUnknowns > 0 && <div className="text-[12px]" style={{ color: '#6B4A00' }}>{vi ? 'Phải xử lý trước khi gửi.' : "À traiter avant l'envoi."}</div>}
+                  {unknowns.map(u => <FgUnknownRow key={u.id} u={u} vi={vi} onDone={(nu, m) => {
+                    setUnknowns(x => x.map(y => (y.id === u.id ? nu : y)));
+                    if (m) {
+                      setLines(prev => {
+                        const cur = prev[m.sku];
+                        const base = cur && cur.qty.trim() !== '' ? Number(evalQty(cur.qty) ?? 0) : 0;
+                        return { ...prev, [m.sku]: { qty: String(base + m.qty), product_name_vi: m.product.product_name_vi, product_name_en: m.product.product_name_en,
+                          category: m.product.category, fiche_id: m.product.fiche_id, variant_id: m.product.variant_id, saving: false, saved: true } };
+                      });
+                      goToRecap();
+                    }
+                  }} />)}
+                </div>
+              )}
               <div className="card p-4 flex items-center gap-2">
                 <label className="text-sm font-semibold text-navy shrink-0">{vi ? 'Ngày kiểm kê' : "Date d'inventaire"}</label>
                 <input type="date" value={inventoryDate} onChange={e => setInventoryDate(e.target.value)}
@@ -359,18 +393,18 @@ export default function InventorySessionView({
               </div>
               <p className="text-xs text-ink-light">
                 {vi
-                  ? 'Mỗi sản phẩm đã được "chốt" trên Odoo ngay khi bạn nhập lần đầu — "Odoo hiện tại" là số liệu tại thời điểm đó. Bấm "Gửi lên Odoo" sẽ tính chênh lệch thực tế và áp dụng lên tồn kho hiện tại trên Odoo, không ghi đè.'
-                  : 'Chaque produit a été "figé" sur Odoo dès sa première saisie — "Odoo actuel" est la valeur à cet instant-là. Cliquer sur "Envoyer à Odoo" calcule l’écart réel et l’applique sur le stock actuel dans Odoo, sans écraser.'}
+                  ? '"Odoo hiện tại" là tồn sổ Odoo tại thời điểm chốt. Bấm "Gửi lên Odoo" chỉ gửi số đếm vào phiếu nháp: tồn kho chưa thay đổi cho đến khi phiếu được kiểm tra và áp dụng trên Odoo.'
+                  : '"Odoo actuel" est le stock Odoo au moment du cut-off. "Envoyer à Odoo" envoie seulement les quantités comptées dans une feuille brouillon : le stock ne change qu’après contrôle et application dans Odoo.'}
               </p>
               {submitError && <div className="text-sm font-semibold" style={{ color: '#DC2626' }}>{submitError}</div>}
               <div className="flex justify-between items-center pt-2">
                 <button onClick={() => setStep('count')} className="text-sm font-semibold text-ink-light hover:text-navy">
                   {vi ? '← Sửa số lượng' : '← Modifier les quantités'}
                 </button>
-                <button onClick={confirmSend} disabled={submitting}
+                <button onClick={confirmSend} disabled={submitting || openUnknowns > 0}
                   className="text-sm font-bold px-5 py-2.5 rounded-xl text-white disabled:opacity-50"
                   style={{ backgroundColor: '#16A34A' }}>
-                  {submitting ? '…' : (vi ? 'Gửi lên Odoo' : 'Envoyer à Odoo')}
+                  {submitting ? '…' : openUnknowns ? (vi ? `Còn ${openUnknowns} ảnh cần xác định` : `Encore ${openUnknowns} photo(s) à identifier`) : (vi ? 'Gửi lên Odoo' : 'Envoyer à Odoo')}
                 </button>
               </div>
             </>

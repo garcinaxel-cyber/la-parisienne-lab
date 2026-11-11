@@ -490,10 +490,8 @@ export async function getLabStockLevels(skus: string[]): Promise<LabStockLevel[]
 //   - a past date      → that day at 15:00 VN (same convention as the 30/09 official count).
 // The first SKU opens it and `action_state_to_in_progress` lets the module freeze theoretical_qty
 // rolled back to T0. Every later SKU is added to the SAME adjustment: product added to product_ids
-// (writable while in progress, verified live 12/10), count line created on its quant, and its
-// theoretical_qty written by us with the module's own rule — on hand now minus the moves done
-// after T0 at LAB/Stock — because a manually added line gets 0 (verified live 12/10). That rule
-// was checked against the module on 7 tiramisus with T0 = 30/09 15:00: identical to the unit.
+// (writable while in progress, verified live 12/10) and its count line created. Since 2026-11-10
+// (Liêm) the app no longer writes theoretical_qty: it keeps the value Odoo gives the line.
 
 const VN_OFFSET_MS = 7 * 3600 * 1000;
 const toOdooDatetime = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
@@ -589,15 +587,10 @@ export async function ensureSessionCountLine(args: {
       }
       let line = await lineFor(invId);
       if (!line) {
-        // no quant at LAB now → the module made no line; add it and roll its theoretical back to T0
-        // ourselves (a product at 0 today may still have had stock at a past cut-off)
+        // no quant at LAB now → the module made no line; add it as a user would. Its system quantity
+        // stays what Odoo gives it (Liêm, 2026-11-10: the app never writes theoretical_qty).
         await addMissingCountLines(invId, locationId, [prod.id]);
         line = await lineFor(invId);
-        if (line) {
-          const theo = (await theoreticalAtCutoff([prod.id], locationId, cutoff))[prod.id] ?? 0;
-          await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[line.id], { theoretical_qty: theo }], { context: NO_MAIL_CONTEXT });
-          line = { ...line, theoretical_qty: theo };
-        }
       }
       if (!line) {
         await tryCancelInventoryLine(invId);
@@ -620,9 +613,6 @@ export async function ensureSessionCountLine(args: {
       await addMissingCountLines(sessionInventoryId, locationId, [prod.id]);
       line = await lineFor(sessionInventoryId);
       if (!line) return { ok: false, error: 'Ligne de comptage introuvable pour ce produit sur Odoo' };
-      const theo = (await theoreticalAtCutoff([prod.id], locationId, cutoff))[prod.id] ?? 0;
-      await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[line.id], { theoretical_qty: theo }], { context: NO_MAIL_CONTEXT });
-      line = { ...line, theoretical_qty: theo };
     }
     return { ok: true, odooInventoryId: sessionInventoryId, odooCountLineId: line.id, qtyTheoretical: Number(line.theoretical_qty ?? 0), createdInventory: false, cutoffIso: cutoff.toISOString() };
   } catch (e: any) {
@@ -650,16 +640,11 @@ export async function tryRemoveCountLine(odooCountLineId: number): Promise<void>
 export async function moveSessionCutoff(odooInventoryId: number, inventoryDate: string, cutoff: Date): Promise<Record<number, number>> {
   const locationId = await getLabStockLocationId();
   await odooExecuteWrite('stock.inventory', 'write', [[odooInventoryId], { date: toOdooDatetime(cutoff), accounting_date: inventoryDate, name: `Kiểm kê LAB — ${inventoryDate}` }], { context: NO_MAIL_CONTEXT });
+  // The system quantities are Odoo's own (Liêm, 2026-11-10): read back, never rewritten.
+  void locationId;
   const rows = await odooExecuteWrite<any[]>('lpr.stock.inventory.line', 'search_read',
-    [[['inventory_id', '=', odooInventoryId]]], { fields: ['id', 'product_id'], limit: 5000 });
-  const pids = Array.from(new Set(rows.map(r => (Array.isArray(r.product_id) ? r.product_id[0] : r.product_id) as number)));
-  const theo = await theoreticalAtCutoff(pids, locationId, cutoff);
+    [[['inventory_id', '=', odooInventoryId]]], { fields: ['id', 'theoretical_qty'], limit: 5000 });
   const byLine: Record<number, number> = {};
-  for (const r of rows) {
-    const pid = Array.isArray(r.product_id) ? r.product_id[0] : r.product_id;
-    const v = theo[pid] ?? 0;
-    await odooExecuteWrite('lpr.stock.inventory.line', 'write', [[r.id], { theoretical_qty: v }], { context: NO_MAIL_CONTEXT });
-    byLine[r.id] = v;
-  }
+  for (const r of rows) byLine[r.id] = Number(r.theoretical_qty ?? 0);
   return byLine;
 }
