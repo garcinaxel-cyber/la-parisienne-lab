@@ -15,6 +15,7 @@ import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
 import HrTeamTab from './HrTeamTab';
+import MonthAnalytics from './MonthAnalytics';
 import EmployeeHrView from '@/app/hr/[token]/EmployeeHrView';
 import { HR_PILOT_TEAMS } from '@/lib/hr';
 import type { StockProduct } from './actions';
@@ -375,6 +376,8 @@ export default function StationView({
 
   // Analytics tab — today's Completion by team (delivery) + Lab stock (2026-08-21 rework)
   const [analyticsData, setAnalyticsData] = useState<TeamTodaySnapshot | null>(null);
+  // Analytics › Today (existing) / This month (2026-11-11, Axel: produced vs sent by category).
+  const [analyticsView, setAnalyticsView] = useState<'today' | 'month'>('today');
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   // Safety stock threshold — inline edit per Lab stock line (Axel, 2026-08-21)
   const [thresholdEdit, setThresholdEdit] = useState<string | null>(null); // sku being edited
@@ -2626,6 +2629,16 @@ export default function StationView({
         const stats = analyticsData;
         return (
           <div className="max-w-3xl mx-auto px-4 py-5 space-y-4 pb-16">
+            <div className="grid grid-cols-2 gap-1 bg-white rounded-xl p-1" style={{ border: '1px solid #E0D49A' }}>
+              {(['today', 'month'] as const).map(v => (
+                <button key={v} onClick={() => setAnalyticsView(v)} className="py-2 rounded-lg text-[13px] font-extrabold"
+                  style={analyticsView === v ? { background: '#1A4731', color: '#FFFFFF' } : { background: 'transparent', color: '#6B7280' }}>
+                  {v === 'today' ? (lang === 'vi' ? 'Hôm nay' : 'Today') : (lang === 'vi' ? 'Tháng này' : 'This month')}
+                </button>
+              ))}
+            </div>
+            {analyticsView === 'month' && <MonthAnalytics team={team} lang={lang === 'vi' ? 'vi' : 'en'} />}
+            {analyticsView === 'today' && <>
             {loadingAnalytics && !stats && (
               <div className="space-y-3">
                 <SkeletonRow /><SkeletonRow />
@@ -2723,6 +2736,7 @@ export default function StationView({
                 )}
               </>
             )}
+            </>}
           </div>
         );
       })()}

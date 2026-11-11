@@ -15,6 +15,10 @@
     {
       "path": "/api/lab/photo-sync-weekly",
       "schedule": "0 19 * * 6"
+    },
+    {
+      "path": "/api/lab/analytics-sync",
+      "schedule": "10 17 * * *"
     }
   ]
 }

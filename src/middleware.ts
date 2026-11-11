@@ -53,6 +53,8 @@ export function middleware(req: NextRequest) {
   // ever went out (same trap as confirm-mos on 2026-08-05).
   if (pathname.startsWith('/api/odoo/chef-stock-reminder')) return NextResponse.next();
   if (pathname.startsWith('/api/lab/raw-photo-cleanup')) return NextResponse.next();
+  // Station Analytics nightly sync (2026-11-11): Vercel cron, CRON_SECRET-gated in the route.
+  if (pathname.startsWith('/api/lab/analytics-sync')) return NextResponse.next();
   // Public shop order form — the token in the URL is the access key (validated server-side)
   if (pathname.startsWith('/order')) return NextResponse.next();
   // HR pilot (2026-11-06): employee personal space — the token in the URL is the key, validated in
