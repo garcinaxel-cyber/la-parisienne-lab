@@ -378,7 +378,7 @@ export default function StationView({
   // Analytics tab — today's Completion by team (delivery) + Lab stock (2026-08-21 rework)
   const [analyticsData, setAnalyticsData] = useState<TeamTodaySnapshot | null>(null);
   // Analytics › Today (existing) / This month (2026-11-11, Axel: produced vs sent by category).
-  const [analyticsView, setAnalyticsView] = useState<'today' | 'month'>('today');
+  const [analyticsView, setAnalyticsView] = useState<'today' | 'stock' | 'month'>('today');
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   // Safety stock threshold — inline edit per Lab stock line (Axel, 2026-08-21)
   const [thresholdEdit, setThresholdEdit] = useState<string | null>(null); // sku being edited
@@ -2630,16 +2630,28 @@ export default function StationView({
         const stats = analyticsData;
         return (
           <div className="max-w-3xl mx-auto px-4 py-5 space-y-4 pb-16">
-            <div className="grid grid-cols-2 gap-1 bg-white rounded-xl p-1" style={{ border: '1px solid #E0D49A' }}>
-              {(['today', 'month'] as const).map(v => (
-                <button key={v} onClick={() => setAnalyticsView(v)} className="py-2 rounded-lg text-[13px] font-extrabold"
-                  style={analyticsView === v ? { background: '#1A4731', color: '#FFFFFF' } : { background: 'transparent', color: '#6B7280' }}>
-                  {v === 'today' ? (lang === 'vi' ? 'Hôm nay' : 'Today') : (lang === 'vi' ? 'Tháng này' : 'This month')}
-                </button>
-              ))}
-            </div>
+            {(() => {
+              // Analytics sub-tabs (Axel, 2026-11-11): Delivery (today) · Stock (teams with a Lab stock)
+              // · Production (month). One tab, sub-tabs instead of everything stacked.
+              const subs: { id: 'today' | 'stock' | 'month'; vi: string; en: string; alert?: boolean }[] = [
+                { id: 'today', vi: 'Giao hôm nay', en: 'Delivery' },
+                ...((stats?.stock.length ?? 0) > 0 ? [{ id: 'stock' as const, vi: 'Tồn kho', en: 'Stock', alert: lowStockAlert }] : []),
+                { id: 'month', vi: 'Sản xuất', en: 'Production' },
+              ];
+              return (
+                <div className="grid gap-1 bg-white rounded-xl p-1" style={{ border: '1px solid #E0D49A', gridTemplateColumns: `repeat(${subs.length}, 1fr)` }}>
+                  {subs.map(v => (
+                    <button key={v.id} onClick={() => setAnalyticsView(v.id)} className="py-2 rounded-lg text-[13px] font-extrabold relative"
+                      style={analyticsView === v.id ? { background: '#1A4731', color: '#FFFFFF' } : { background: 'transparent', color: '#6B7280' }}>
+                      {lang === 'vi' ? v.vi : v.en}
+                      {v.alert && <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full" style={{ background: '#DC2626' }} />}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             {analyticsView === 'month' && <MonthAnalytics team={team} lang={lang === 'vi' ? 'vi' : 'en'} />}
-            {analyticsView === 'today' && <>
+            {analyticsView !== 'month' && <>
             {loadingAnalytics && !stats && (
               <div className="space-y-3">
                 <SkeletonRow /><SkeletonRow />
@@ -2648,7 +2660,7 @@ export default function StationView({
 
             {!loadingAnalytics && stats && (
               <>
-                <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
+                {analyticsView === 'today' && <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E0D49A' }}>
                   <div className="font-bold text-xs mb-3" style={{ color: '#1A4731' }}>
                     {lang === 'vi' ? 'Hoàn thành hôm nay (delivery-check)' : "Completion by team (delivery) — today"}
                   </div>
@@ -2673,9 +2685,9 @@ export default function StationView({
                       ))}
                     </div>
                   )}
-                </div>
+                </div>}
 
-                {stats.stock.length > 0 && (
+                {analyticsView === 'stock' && stats.stock.length > 0 && (
                   <LabStockPanel stock={stats.stock} lang={lang === 'vi' ? 'vi' : 'en'} userName={userName}
                     onThresholdSaved={(sku, val) => setAnalyticsData(prev => prev ? {
                       ...prev,

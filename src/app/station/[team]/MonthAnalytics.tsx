@@ -23,8 +23,8 @@ const barW = (v: number, max: number) => `${max > 0 ? Math.max(2, Math.round((v 
 type Item = { name: string; made: number; sent: number; same: number; sizes: string[] };
 type Cat = { name: string; made: number; sent: number; same: number; sameSent: number; items: Item[] };
 
-export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi' | 'en' }) {
-  const [data, setData] = useState<TeamMonthAnalytics | null>(null);
+export default function MonthAnalytics({ team, lang, initialData }: { team: string; lang: 'vi' | 'en'; initialData?: TeamMonthAnalytics }) {
+  const [data, setData] = useState<TeamMonthAnalytics | null>(initialData ?? null);
   const [error, setError] = useState<string | null>(null);
   const [month, setMonth] = useState<'cur' | 'prev'>('cur');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -32,6 +32,7 @@ export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi
   const vi = lang === 'vi';
 
   useEffect(() => {
+    if (initialData) return;
     let alive = true;
     (async () => {
       const { getTeamMonthAnalyticsAction } = await import('./actions');
@@ -40,7 +41,7 @@ export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi
       if (res.data) setData(res.data); else setError(res.error ?? 'Error');
     })();
     return () => { alive = false; };
-  }, [team]);
+  }, [team, initialData]);
 
   const isCur = month === 'cur';
   const cats = useMemo<Cat[]>(() => {
@@ -117,8 +118,12 @@ export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi
             {dSent && <div className="inline-block mt-1.5 text-[11px] font-extrabold rounded-full px-2 py-0.5" style={darkBadge(dSent.up)}>{dSent.text}</div>}
           </div>
         </div>
-        <div className="mt-3 h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: GOLD, width: barW(totMade, heroMax) }} /></div>
-        <div className="mt-1 h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: '#4ADE80', width: barW(totSent, heroMax) }} /></div>
+        <div className="mt-3 grid items-center gap-x-2 gap-y-1" style={{ gridTemplateColumns: '64px 1fr' }}>
+          <span className="text-[10px] font-bold" style={{ color: GOLD }}>{vi ? 'Sản xuất' : 'Produced'}</span>
+          <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: GOLD, width: barW(totMade, heroMax) }} /></div>
+          <span className="text-[10px] font-bold" style={{ color: '#A7E3BF' }}>{vi ? 'Đã giao' : 'Sent'}</span>
+          <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: '#4ADE80', width: barW(totSent, heroMax) }} /></div>
+        </div>
         {isCur && <div className="mt-2.5 text-[10.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
           {vi ? `▲▼ so với cùng kỳ tháng trước (1 – ${prevDay}/${data.prevMonth.slice(5, 7)})` : `▲▼ compared with the same days of ${names[prevIdx]} (1 – ${prevDay})`}
         </div>}
@@ -147,9 +152,11 @@ export default function MonthAnalytics({ team, lang }: { team: string; lang: 'vi
                 <span className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{c.items.length}</span>
                 <span className="text-lg font-bold inline-block transition-transform" style={{ color: GOLD, transform: `rotate(${isOpen ? 90 : 0}deg)` }}>›</span>
               </span>
-              <span className="grid items-center gap-2 w-full" style={{ gridTemplateColumns: '1fr 52px' }}>
+              <span className="grid items-center gap-x-2 gap-y-1.5 w-full" style={{ gridTemplateColumns: '64px 1fr 52px' }}>
+                <span className="text-[10.5px] font-bold" style={{ color: '#92600A' }}>{vi ? 'Sản xuất' : 'Produced'}</span>
                 <span className="h-[7px] rounded overflow-hidden" style={{ background: '#F5EFC8' }}><span className="block h-full rounded" style={{ background: GOLD, width: barW(c.made, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: '#92600A' }}>{fmt(c.made)}</span>
+                <span className="text-[10.5px] font-bold" style={{ color: GREEN }}>{vi ? 'Đã giao' : 'Sent'}</span>
                 <span className="h-[7px] rounded overflow-hidden" style={{ background: '#EAF5EE' }}><span className="block h-full rounded" style={{ background: GREEN, width: barW(c.sent, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: GREEN }}>{fmt(c.sent)}</span>
               </span>
