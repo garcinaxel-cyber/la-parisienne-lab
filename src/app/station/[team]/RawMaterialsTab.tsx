@@ -15,9 +15,10 @@ import ItemPhoto from '@/components/raw/ItemPhoto';
 import RoomCountPanel from './RoomCountPanel';
 import RoomCountHistory from './RoomCountHistory';
 import {
-  getRawCatalogForChefAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
+  getRawCatalogForChefAction, getPackagingCatalogAction, recordWithdrawalAction, recordTransferAction, getTeamWithdrawalsTodayAction, getTeamWithdrawalsAction, submitPurchaseRequestAction,
   getTeamRequestsAction, uploadRawPhotoAction, decideRequestLinesAction, reopenForApprovalAction, remindStorageAction, cancelOwnRequestLineAction, receiveSlipAction, confirmTeamTransferAction, type TeamRequestsMeta,
 } from './raw-actions';
+import { getItemPhotosAction } from '@/app/item-photo-actions';
 
 const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
 const NAME_KEY = 'lab_raw_name';
@@ -34,9 +35,16 @@ async function compressImage(file: File): Promise<Blob> {
   return await new Promise<Blob>(res => c.toBlob(b => res(b!), 'image/jpeg', 0.82));
 }
 
-export default function RawMaterialsTab({ team, lang, userName }: { team: string; lang: 'vi' | 'en'; userName: string | null }) {
+// packaging (Axel, 2026-11-10): the same request screen for the assistants / lab managers, ordering
+// packaging only (team 'packaging', straight to purchasing, received into the Lab storage). The chefs
+// never see packaging: the catalogue is chosen on the server by role.
+export default function RawMaterialsTab({ team, lang, userName, packaging = false }: { team: string; lang: 'vi' | 'en'; userName: string | null; packaging?: boolean }) {
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
-  const [mode, setMode] = useState<'take' | 'transfer' | 'request' | 'count'>('take');
+  const [mode, setMode] = useState<'take' | 'transfer' | 'request' | 'count'>(packaging ? 'request' : 'take');
+  // Packaging list scope (Axel, 2026-11-10): already purchased by default, all on demand, and the
+  // purchased items still without a photo so the assistants add it. A search always covers everything.
+  const [scope, setScope] = useState<'bought' | 'all' | 'nophoto'>('bought');
+  const [photoIds, setPhotoIds] = useState<Set<number> | null>(null);
   // Both pick raw materials with quantities (same list, same steppers) and show the same slips.
   const takeLike = mode === 'take' || mode === 'transfer';
   const [direction, setDirection] = useState<'give' | 'receive'>('give');
@@ -88,8 +96,9 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
   useEffect(() => {
     try { setName(localStorage.getItem(NAME_KEY) || userName || ''); } catch { setName(userName || ''); }
-    getRawCatalogForChefAction().then(r => setItems(r.items ?? []));
-  }, [userName]);
+    (packaging ? getPackagingCatalogAction() : getRawCatalogForChefAction()).then(r => { setItems(r.items ?? []); if (r.error) setMsg({ ok: false, text: r.error }); });
+    if (packaging) getItemPhotosAction().then(r => setPhotoIds(new Set((r.rows ?? []).map(x => x[0]))));
+  }, [userName, packaging]);
   const loadToday = useCallback(() => getTeamWithdrawalsTodayAction(team).then(r => setToday(r.items ?? [])), [team]);
   const loadMine = useCallback(() => getTeamRequestsAction(team, days).then(r => { setMine(r.items ?? []); if (r.meta) setMeta(r.meta); }), [team, days]);
   useEffect(() => { loadToday(); }, [loadToday]);
@@ -142,12 +151,18 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
     name: `${m.name} · ${b}`, nameVi: m.nameVi ? `${m.nameVi} · ${b}` : null,
   }))), [items]);
   const byId = useMemo(() => new Map<number, TakeMat>([...(items ?? []), ...takeItems].map(m => [m.tmplId, m])), [items, takeItems]);
+  const hasPhoto = (m: RawMaterial) => !photoIds || photoIds.has(m.tmplId);
+  const inScope = (m: RawMaterial) => scope === 'all' ? true : scope === 'bought' ? m.purchased : m.purchased && !hasPhoto(m);
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return ((mode === 'take' || mode === 'transfer') ? takeItems : (items ?? [])).filter(m => (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub)
-      && (!s || m.name.toLowerCase().includes(s) || (m.nameVi ?? '').toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s)))
+    const match = (m: RawMaterial) => !s || m.name.toLowerCase().includes(s) || (m.nameVi ?? '').toLowerCase().includes(s) || (m.sku ?? '').toLowerCase().includes(s)
+      || (packaging && ((m.vendorName ?? '').toLowerCase().includes(s) || m.vendors.some(v => (v.name ?? '').toLowerCase().includes(s))));
+    return ((mode === 'take' || mode === 'transfer') ? takeItems : (items ?? [])).filter(m => packaging
+        ? (s ? match(m) : inScope(m))
+        : (type === 'all' || m.type === type) && (sub === 'all' || m.sub === sub) && match(m))
       .sort((a, b) => rawName(a, lang).localeCompare(rawName(b, lang), lang === 'vi' ? 'vi' : 'en'));
-  }, [items, takeItems, mode, type, sub, q, lang]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, takeItems, mode, type, sub, q, lang, packaging, scope, photoIds]);
   // Lines already saved keep the Odoo name of the day; show them in the screen's language when the product is known.
   const lineName = (l: { tmplId: number | null; name: string; brand?: string | null }) => { const m = l.tmplId != null ? byId.get(l.tmplId) : undefined; return (m ? rawName(m, lang) : l.name) + (l.brand ? ` · ${l.brand}` : ''); };
   const toBase = (m: RawMaterial, n: number) => { const u = unit[m.tmplId] ?? -1; return u >= 0 && m.packs[u] ? n * m.packs[u].factor : n; };
@@ -258,6 +273,13 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
   // Arrived (2026-10-26): goods counted in app receiving — newest first so the team sees what just came in.
   const arrived0 = mine.filter(l => l.status === 'received').sort((a, b) => (b.receivedAt ?? '').localeCompare(a.receivedAt ?? ''));
   const cancelled0 = mine.filter(l => l.status === 'cancelled');
+  // Already requested (Axel, 2026-11-10): an item waiting for purchase shows who asked, how much and
+  // when, so two assistants do not order the same packaging twice.
+  const openReq = useMemo(() => {
+    const m = new Map<number, PurchaseLine>();
+    for (const l of mine) if (l.tmplId != null && (l.status === 'to_approve' || l.status === 'pending' || l.status === 'ordered') && !m.has(l.tmplId)) m.set(l.tmplId, l);
+    return m;
+  }, [mine]);
   const sections: [string, PurchaseLine[]][] = [
     ...(meta.canApprove ? [] : [[L(`Chờ ${lead} duyệt`, `Waiting for ${lead}`), toApprove] as [string, PurchaseLine[]]]),
     [L('Đang chờ', 'Waiting'), pending], [L('Đã đặt — chờ hàng về', 'Ordered — on the way'), ordered0], [L('📦 Đã về', '📦 Arrived'), arrived0], [L('Đã huỷ', 'Cancelled'), cancelled0],
@@ -279,7 +301,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
         ))}
       </div>
   );
-  if (mode === 'count') return (
+  if (mode === 'count' && !packaging) return (
     <div className="space-y-3 pb-24">
       {modeBar}
       <RoomCountPanel team={team} lang={lang} items={items} />
@@ -289,7 +311,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
   return (
     <div className="space-y-3 pb-24">
-      {modeBar}
+      {!packaging && modeBar}
       <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 text-[12.5px]" style={{ border: `1px solid ${BORDER}` }}>
         <User size={14} style={{ color: '#9CA3AF' }} />
         <span style={{ color: '#6B7280' }}>{mode === 'take' ? L('Người lấy', 'Taken by') : mode === 'transfer' ? L('Người thực hiện', 'Done by') : L('Người yêu cầu', 'Requested by')}</span>
@@ -309,7 +331,7 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
       <div className="flex gap-1.5">
         {([['list', L('Chọn nguyên liệu', 'Pick items'), null],
-           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : mode === 'transfer' ? L('Phiếu hôm nay', "Today's slips") : L('Yêu cầu của team', "Team's requests"), takeLike ? today.length : mine.filter(l => l.status !== 'to_approve' || !meta.canApprove).length]] as const).map(([k, label, n]) => (
+           ['history', mode === 'take' ? L('Phiếu lấy hôm nay', "Today's slips") : mode === 'transfer' ? L('Phiếu hôm nay', "Today's slips") : packaging ? L('Yêu cầu bao bì', 'Packaging requests') : L('Yêu cầu của team', "Team's requests"), takeLike ? today.length : mine.filter(l => l.status !== 'to_approve' || !meta.canApprove).length]] as const).map(([k, label, n]) => (
           <button key={k} onClick={() => setView(k)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12.5px] font-extrabold"
             style={{ backgroundColor: view === k ? PALE : '#fff', color: view === k ? GOLD_TEXT : '#6B7280', border: `1.5px solid ${view === k ? GOLD : BORDER}` }}>
             {label}
@@ -320,11 +342,21 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
 
       {view === 'list' && (<>
 
+      {packaging ? (
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+        {([['bought', L('Đã từng mua', 'Already purchased'), (items ?? []).filter(m => m.purchased).length],
+           ['all', L('Tất cả', 'All'), (items ?? []).length],
+           ['nophoto', L('Thiếu ảnh', 'Missing photo'), photoIds ? (items ?? []).filter(m => m.purchased && !photoIds.has(m.tmplId)).length : null]] as const).map(([k, label, n]) => (
+          <button key={k} onClick={() => setScope(k)} className="flex-shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-bold"
+            style={k === 'nophoto' && scope !== k ? { backgroundColor: PALE, color: GOLD_TEXT, border: `1px solid ${GOLD}` } : chip(scope === k)}>{label}{n != null ? ` · ${n}` : ''}</button>))}
+      </div>
+      ) : (
       <div className="flex gap-1.5 overflow-x-auto pb-0.5">
         {(['all', 'dry', 'fresh', 'frozen'] as const).map(t => (
           <button key={t} onClick={() => { setType(t); setSub('all'); }} className="flex-shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-bold" style={chip(type === t)}>{t === 'all' ? L('Tất cả', 'All') : typeLabel(t, lang)}</button>))}
       </div>
-      {type !== 'all' && (
+      )}
+      {!packaging && type !== 'all' && (
         <div className="flex gap-1.5 overflow-x-auto pb-0.5">
           {['all', ...Object.keys(RAW_TYPES[type].subs)].map(s => (
             <button key={s} onClick={() => setSub(s)} className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-bold" style={chipSm(sub === s)}>{s === 'all' ? L('Tất cả nhóm', 'All groups') : subLabel(type, s, lang)}</button>))}
@@ -352,15 +384,19 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
       )}
       <label className="flex items-center gap-2 bg-white rounded-xl px-3" style={{ border: `1px solid ${BORDER}` }}>
         <Search size={14} style={{ color: '#9CA3AF' }} />
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm nguyên liệu hoặc mã…', 'Search a raw material or code…')} className="flex-1 py-2.5 text-[13.5px] outline-none bg-transparent" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder={packaging ? L('Tìm bao bì: tên (Việt / Anh), mã, nhà cung cấp…', 'Search packaging: name (VI / EN), code, supplier…') : L('Tìm nguyên liệu hoặc mã…', 'Search a raw material or code…')} className="flex-1 py-2.5 text-[13.5px] outline-none bg-transparent" />
       </label>
       {/* Axel, 2026-10-09: every station that gets this tab shows it. */}
       <div className="rounded-xl px-3 py-2 text-[12px] font-semibold leading-snug" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
-        {L('Thiếu nguyên liệu trong danh sách? Liên hệ anh Lân hoặc Axel: ghi rõ tên nguyên liệu còn thiếu và dùng cho công thức nào.',
+        {packaging
+          ? (scope === 'nophoto'
+            ? L('Các bao bì đã mua nhưng chưa có ảnh: bấm vào ô ảnh để chụp hoặc chọn ảnh — ảnh được cập nhật cả trên Odoo.', 'Purchased packaging without a photo: tap the photo box to take or pick one — it is updated in Odoo too.')
+            : L('Không thấy? Chọn « Tất cả » hoặc gõ tên — tìm kiếm luôn tìm trong toàn bộ bao bì. Bao bì chưa có mã: dùng « Sản phẩm mới ».', 'Not there? Pick « All » or type the name — the search always covers all packaging. No code yet: use « New product ».'))
+          : L('Thiếu nguyên liệu trong danh sách? Liên hệ anh Lân hoặc Axel: ghi rõ tên nguyên liệu còn thiếu và dùng cho công thức nào.',
           'A raw material missing from the list? Contact Lân or Axel with the missing item\'s name and the recipe it is for.')}
       </div>
       {mode === 'request' && (
-        <button onClick={() => { setDraft({ name: '', qty: 1, uom: 'kg', note: '', photoUrl: null }); setDraftQtyTxt(null); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
+        <button onClick={() => { setDraft({ name: '', qty: 1, uom: packaging ? 'Unit' : 'kg', note: '', photoUrl: null }); setDraftQtyTxt(null); setSheet('new'); }} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm mới (chưa có trong danh sách)', 'New product (not in the list)')}</button>
       )}
 
@@ -375,7 +411,14 @@ export default function RawMaterialsTab({ team, lang, userName }: { team: string
                 <ItemPhoto tmplId={m.tmplId} sku={m.sku} size={44} canAdd />
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-bold leading-snug">{rawName(m, lang)}</div>
+                  {packaging ? (
+                    <div className="text-[11px] mt-0.5" style={{ color: '#6B7280' }}>{m.sku ?? '—'} · {L('Đơn vị', 'Unit')}: <b style={{ color: NAVY, fontSize: 12.5 }}>{m.uom === 'Unit' ? L('cái', 'pcs') : m.uom}</b>{lang === 'vi' && m.nameVi && m.nameVi !== m.name ? <span className="block truncate" style={{ color: '#9CA3AF' }}>{m.name}</span> : null}</div>
+                  ) : (
                   <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>{subLabel(m.type, m.sub, lang)} · {m.sku ?? '—'}{mode === 'request' ? ` · ${m.uom}` : ''}</div>
+                  )}
+                  {packaging && openReq.has(m.tmplId) && (() => { const r = openReq.get(m.tmplId)!; return (
+                    <div className="inline-block mt-1 text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FFF4CC', color: '#8A5A00', border: '1px solid #F0D98A' }}>
+                      {r.status === 'ordered' ? L('Đã đặt hàng', 'Ordered') : L('Đang chờ mua', 'Already requested')} · {fmtQty(r.qty)} {r.uom === 'Unit' ? L('cái', 'pcs') : r.uom} · {r.requestedBy ?? '—'} {vnDayTime(r.createdAt).day}</div>); })()}
                   {takeLike && m.packs.length > 0 && (
                     <div className="flex gap-1 mt-1 flex-wrap">
                       {[-1, ...m.packs.map((_, i) => i)].map(i => (

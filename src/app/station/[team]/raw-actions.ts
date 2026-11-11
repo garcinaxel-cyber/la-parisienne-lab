@@ -13,7 +13,22 @@ export async function getRawCatalogForChefAction(): Promise<{ items?: RawMateria
   if (!a) return { error: 'Not authenticated' };
   const db = rawService();
   if (!db) return { error: 'Server not configured' };
-  const { data, error } = await db.from('lab_raw_materials').select('*').eq('active', true).eq('visible', true).order('name').limit(2000);
+  // Packaging is never shown to the chefs (Axel, 2026-11-10): it has its own screen for the assistants.
+  const { data, error } = await db.from('lab_raw_materials').select('*').eq('active', true).eq('visible', true)
+    .or('kind.is.null,kind.neq.packaging').order('name').limit(2000);
+  if (error) return { error: error.message };
+  return { items: (data ?? []).map(mapMaterial) };
+}
+
+// Packaging catalogue for the assistants / lab managers (Axel, 2026-11-10): every active packaging
+// item (purchased ones first on screen, the search covers all of them). Never prices, never stock.
+export async function getPackagingCatalogAction(): Promise<{ items?: RawMaterial[]; error?: string }> {
+  const a = await rawActor();
+  if (!a) return { error: 'Not authenticated' };
+  if (!canActForTeam(a, 'packaging')) return { error: 'Forbidden' };
+  const db = rawService();
+  if (!db) return { error: 'Server not configured' };
+  const { data, error } = await db.from('lab_raw_materials').select('*').eq('active', true).eq('kind', 'packaging').order('name').limit(2000);
   if (error) return { error: error.message };
   return { items: (data ?? []).map(mapMaterial) };
 }
@@ -219,10 +234,13 @@ export async function submitPurchaseRequestAction(team: string, requestedBy: str
   const news = (newItems ?? []).filter(n => String(n.name ?? '').trim() && Number(n.qty) > 0).slice(0, 10);
   if (!clean.length && !news.length) return { error: 'Empty' };
   const { data: mats } = clean.length
-    ? await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name, packs').in('tmpl_id', clean.map(l => l.tmplId))
+    ? await db.from('lab_raw_materials').select('tmpl_id, sku, name, uom, vendor_id, vendor_name, packs, kind').in('tmpl_id', clean.map(l => l.tmplId))
     : { data: [] as any[] };
   const byId = new Map((mats ?? []).map((m: any) => [m.tmpl_id, m]));
   if (clean.some(l => !byId.has(l.tmplId))) return { error: 'Unknown raw material' };
+  // Packaging only on the packaging screen, and never on a chef team's request (Axel, 2026-11-10).
+  const isPkg = (id: number) => (byId.get(id) as any)?.kind === 'packaging';
+  if (team === 'packaging' ? clean.some(l => !isPkg(l.tmplId)) : clean.some(l => isPkg(l.tmplId))) return { error: 'Forbidden item' };
   const leads = await teamLeads(db, team);
   const wait = needsApproval(a, team, leads);
   const status = wait ? 'to_approve' : 'pending';

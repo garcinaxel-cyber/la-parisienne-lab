@@ -23,7 +23,7 @@ const PEOPLE: { keys: string[]; team?: string; full: string; teamLabel: string }
   { keys: ['lam anh', 'mai anh', 'lam mai anh'], full: 'Lâm Mai Anh', teamLabel: 'Team Baker' },
   { keys: ['miss flavor', 'flavor', 'thu huong', 'nguyen thi thu huong'], team: 'kho', full: 'Nguyễn Thị Thu Hương', teamLabel: 'Kho' },
 ];
-const TEAM_PRINT: Record<string, string> = { hung: 'Team Macaron', entremet: 'Team Entremet', baker: 'Team Baker', baby_mama: 'Team Gato', kho: 'Kho' };
+const TEAM_PRINT: Record<string, string> = { hung: 'Team Macaron', entremet: 'Team Entremet', baker: 'Team Baker', baby_mama: 'Team Gato', kho: 'Kho', packaging: 'Bao bì (trợ lý)' };
 function person(name: string | null, team: string): { full: string; teamLabel: string } {
   const n = norm(name ?? '');
   const hit = PEOPLE.find(p => p.keys.includes(n) && (!p.team || p.team === team || n.split(' ').length > 1))

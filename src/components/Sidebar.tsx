@@ -39,6 +39,8 @@ const NAV = [
   { href: '/oem-orders', icon: Factory,       labelVi: 'Đơn hàng OEM', labelEn: 'OEM Orders', family: 'production', hideFor: ['sales', 'viewer', 'shop', 'online_sales', 'shop_manager'] as UserRole[] },
   // Purchasing (Axel, 2026-10-08): purchase requests, storage withdrawals, history, raw material catalogue.
   // Only admin and the 'purchasing' role — not the assistant, not the lab manager.
+  // Packaging requests (Axel, 2026-11-10): assistants + lab managers (+ admin) order packaging from purchasing.
+  { href: '/packaging', icon: ShoppingBag, labelVi: 'Đặt bao bì', labelEn: 'Packaging order', family: 'production', onlyFor: ['admin', 'lab_manager', 'assistant'] as UserRole[] },
   { href: '/purchasing', icon: Truck, labelVi: 'Mua hàng', labelEn: 'Purchasing', family: 'production', onlyFor: ['admin', 'purchasing'] as UserRole[] },
   { href: '/admin/shop-access', icon: Store,  labelVi: 'Truy cập cửa hàng', labelEn: 'Accès boutiques', family: 'shops' },
   // Online-sales interface (2026-09-06): admin entry point to the online seller's space

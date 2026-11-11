@@ -6,7 +6,7 @@
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCw, ChevronLeft, Minus, Plus, Check } from 'lucide-react';
-import { fmtQty, vnDayTime, TEAM_SHORT, type RawPack } from '@/lib/raw-materials';
+import { fmtQty, vnDayTime, TEAM_SHORT, isStorageTeam, type RawPack } from '@/lib/raw-materials';
 import { getOpenReceiptsAction, getReceiptAction, validateReceiptAction, getPendingHandoversAction, handoverToTeamAction, type OpenReceiptRow, type ReceiptView, type Handover, type PendingHandover } from '@/app/(app)/purchasing/receive-actions';
 import type { ShortReason, ValidateResult } from '@/lib/odoo-po-receive';
 
@@ -23,7 +23,7 @@ const uuid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? c
 const parseQty = (t: string) => { const v = parseFloat(t.replace(/\s+/g, '').replace(',', '.')); return isNaN(v) ? 0 : Math.max(0, v); };
 const todayYmd = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
 
-const roomLabel = (team: string, L: (vi: string, en: string) => string) => team === 'kho' ? L('Kho chung', 'Lab storage') : `Room ${TEAM_SHORT[team]?.vi ?? team}`;
+const roomLabel = (team: string, L: (vi: string, en: string) => string) => isStorageTeam(team) ? L('Kho chung', 'Lab storage') : `Room ${TEAM_SHORT[team]?.vi ?? team}`;
 
 // Hand-over to the teams (Axel, 2026-10-29): since the rooms are linked to Odoo, what a team ordered
 // reaches its room through a slip. One card per room; "Đã giao cho team" records the team's slip
@@ -289,7 +289,7 @@ export default function ReceiveTab({ L, lang }: { L: (vi: string, en: string) =>
 
 // Where a product goes once received (open request lines on this PO): team rooms first, the rest to the Kho.
 function DestChips({ dest, expected, uom, L }: { dest: { team: string; qty: number; uom: string }[]; expected: number; uom: string; L: (vi: string, en: string) => string }) {
-  const teams = dest.filter(d => d.team !== 'kho');
+  const teams = dest.filter(d => !isStorageTeam(d.team));
   if (!teams.length) return <div className="pt-1"><span className="rounded-full px-2 py-0.5 text-[11.5px] font-extrabold" style={{ color: TEAM_SHORT.kho.color, backgroundColor: TEAM_SHORT.kho.bg }}>→ {L('Kho chung', 'Lab storage')}</span></div>;
   const sameUnit = teams.every(d => d.uom.toLowerCase() === uom.toLowerCase());
   const forTeams = teams.reduce((s, d) => s + d.qty, 0);

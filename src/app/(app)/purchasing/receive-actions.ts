@@ -5,7 +5,7 @@
 // Until PO_RECEIVING_OPEN=1 the screen is admin-only (test on a real PO first).
 import { rawService, rawActor, isPurchasing, purchasingUserIds } from '@/lib/raw-materials-db';
 import { sendUsersPush, sendTeamPush, awaitPush } from '@/lib/push-notify';
-import { TEAM_SHORT } from '@/lib/raw-materials';
+import { TEAM_SHORT, isStorageTeam } from '@/lib/raw-materials';
 import { listOpenReceipts, getReceipt, validateReceipt, SHORT_REASONS, type OpenReceipt, type ReceiptDetail, type ValidateLine, type ValidateResult, type ShortReason } from '@/lib/odoo-po-receive';
 import type { RawPack } from '@/lib/raw-materials';
 
@@ -149,7 +149,7 @@ export async function validateReceiptAction(clientId: string, pickingId: number,
         ...(full ? { status: 'received', received_at: now, received_by_name: by } : {}),
       }).eq('id', l.id);
       const req: any = reqOf.get(l.request_id);
-      if (give > 0 && req?.team && req.team !== 'kho') {
+      if (give > 0 && req?.team && !isStorageTeam(req.team)) {
         const m: any = matOf.get(l.tmpl_id);
         const byT = toTeam.get(req.team) ?? new Map<number, HandoverLine>(); toTeam.set(req.team, byT);
         const e = byT.get(l.tmpl_id);

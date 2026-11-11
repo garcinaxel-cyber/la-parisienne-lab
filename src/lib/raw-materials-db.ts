@@ -26,6 +26,8 @@ export async function rawActor(): Promise<RawActor | null> {
 
 // Chefs act for their own team; admin / lab manager may act for any team (testing, cover).
 export function canActForTeam(a: RawActor, team: string): boolean {
+  // Packaging requests (Axel, 2026-11-10): assistants + lab managers + admin, never a chef.
+  if (team === 'packaging') return a.role === 'admin' || a.role === 'lab_manager' || a.role === 'assistant';
   if (a.role === 'admin' || a.role === 'lab_manager') return true;
   return a.role === 'chef' && a.team === team;
 }

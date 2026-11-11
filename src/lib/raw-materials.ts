@@ -153,7 +153,15 @@ export const TEAM_SHORT: Record<string, { vi: string; en: string; color: string;
   baker: { vi: 'Baker', en: 'Baker', color: '#047857', bg: '#ecfdf5' },
   // Requests typed by storage / purchasing itself (Axel, 2026-10-09: Hien's own needs).
   kho: { vi: 'Kho', en: 'Storage', color: '#344054', bg: '#F2F4F7' },
+  // Packaging requests from the assistants and lab managers (Axel, 2026-11-10/11). No team lead, no
+  // room: received goods stay in the Lab storage, exactly like the 'kho' requests.
+  packaging: { vi: 'Bao bì', en: 'Packaging', color: '#8A6D14', bg: '#FFFAEE' },
 };
+// Requesters whose goods are received into the Lab storage itself (no handover to a team room).
+export const STORAGE_TEAMS = ['kho', 'packaging'] as const;
+export const isStorageTeam = (t: string | null | undefined) => !!t && (STORAGE_TEAMS as readonly string[]).includes(t);
+// Who may order packaging (Axel, 2026-11-10): assistants and lab managers (+ admin). Never chefs.
+export const PACKAGING_ROLES = ['admin', 'lab_manager', 'assistant'] as const;
 
 // 'to_approve' (Axel, 2026-10-08): a request sent by a team member waits for the team lead
 // (lab_profiles.is_team_lead — Hưng for team hung) before purchasing sees it.
