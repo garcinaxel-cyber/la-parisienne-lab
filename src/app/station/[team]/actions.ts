@@ -354,16 +354,22 @@ export async function getTeamMonthAnalyticsAction(team: string): Promise<{ data?
   const prevSameTo = `${prev.slice(0, 8)}${String(Math.min(day, prevLast)).padStart(2, '0')}`;
   const prevEnd = `${prev.slice(0, 8)}${String(prevLast).padStart(2, '0')}`;
 
-  const [{ data: daily, error }, { data: excl }] = await Promise.all([
-    sb.from('lab_analytics_daily').select('day, sku, made, sent').eq('team', team).gte('day', prev).lte('day', today).limit(10000),
-    sb.from('lab_excluded_skus').select('sku'),
-  ]);
-  if (error) return { error: error.message };
+  // Page by page: Supabase returns at most 1000 rows per request (two months of a busy team is
+  // more — November was cut off on the first release, 2026-11-11).
+  const daily: { day: string; sku: string; made: number; sent: number }[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await sb.from('lab_analytics_daily').select('day, sku, made, sent')
+      .eq('team', team).gte('day', prev).lte('day', today).order('day').order('sku').range(f, f + 999);
+    if (error) return { error: error.message };
+    daily.push(...((data ?? []) as any[]));
+    if (!data || data.length < 1000) break;
+  }
+  const { data: excl } = await sb.from('lab_excluded_skus').select('sku');
   const excluded = new Set((excl ?? []).map((r: any) => r.sku));
 
   type Acc = { made: number; sent: number; prevMade: number; prevSent: number; sameMade: number; sameSent: number };
   const bySku = new Map<string, Acc>();
-  for (const r of daily ?? []) {
+  for (const r of daily) {
     if (!r.sku || excluded.has(r.sku) || isOemSkuLib(r.sku)) continue;
     const a = bySku.get(r.sku) ?? { made: 0, sent: 0, prevMade: 0, prevSent: 0, sameMade: 0, sameSent: 0 };
     const m = Number(r.made) || 0, s = Number(r.sent) || 0;
@@ -411,7 +417,7 @@ export async function getTeamMonthAnalyticsAction(team: string): Promise<{ data?
 
   let oem: OemRow[] | null = null;
   if (MONTH_OEM_TEAMS.includes(team)) {
-    const { data: o } = await sb.from('lab_analytics_oem_daily').select('day, code, name, kg').gte('day', prev).lte('day', today).limit(5000);
+    const { data: o } = await sb.from('lab_analytics_oem_daily').select('day, code, name, kg').gte('day', prev).lte('day', today).order('day').range(0, 999);
     const byCode = new Map<string, OemRow>();
     for (const r of (o ?? []) as any[]) {
       const x = byCode.get(r.code) ?? { name: r.name || r.code, kg: 0, prevKg: 0, sameKg: 0 };

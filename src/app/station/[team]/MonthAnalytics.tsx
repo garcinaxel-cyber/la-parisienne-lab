@@ -118,10 +118,10 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
             {dSent && <div className="inline-block mt-1.5 text-[11px] font-extrabold rounded-full px-2 py-0.5" style={darkBadge(dSent.up)}>{dSent.text}</div>}
           </div>
         </div>
-        <div className="mt-3 grid items-center gap-x-2 gap-y-1" style={{ gridTemplateColumns: '64px 1fr' }}>
-          <span className="text-[10px] font-bold" style={{ color: GOLD }}>{vi ? 'Sản xuất' : 'Produced'}</span>
+        <div className="mt-3 grid items-center gap-x-2 gap-y-1" style={{ gridTemplateColumns: '76px 1fr' }}>
+          <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: GOLD }}>{vi ? 'Sản xuất' : 'Produced'}</span>
           <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: GOLD, width: barW(totMade, heroMax) }} /></div>
-          <span className="text-[10px] font-bold" style={{ color: '#A7E3BF' }}>{vi ? 'Đã giao' : 'Sent'}</span>
+          <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: '#A7E3BF' }}>{vi ? 'Đã giao' : 'Sent'}</span>
           <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: '#4ADE80', width: barW(totSent, heroMax) }} /></div>
         </div>
         {isCur && <div className="mt-2.5 text-[10.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
@@ -152,11 +152,11 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
                 <span className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{c.items.length}</span>
                 <span className="text-lg font-bold inline-block transition-transform" style={{ color: GOLD, transform: `rotate(${isOpen ? 90 : 0}deg)` }}>›</span>
               </span>
-              <span className="grid items-center gap-x-2 gap-y-1.5 w-full" style={{ gridTemplateColumns: '64px 1fr 52px' }}>
-                <span className="text-[10.5px] font-bold" style={{ color: '#92600A' }}>{vi ? 'Sản xuất' : 'Produced'}</span>
+              <span className="grid items-center gap-x-2 gap-y-1.5 w-full" style={{ gridTemplateColumns: '76px 1fr 52px' }}>
+                <span className="text-[10.5px] font-bold whitespace-nowrap" style={{ color: '#92600A' }}>{vi ? 'Sản xuất' : 'Produced'}</span>
                 <span className="h-[7px] rounded overflow-hidden" style={{ background: '#F5EFC8' }}><span className="block h-full rounded" style={{ background: GOLD, width: barW(c.made, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: '#92600A' }}>{fmt(c.made)}</span>
-                <span className="text-[10.5px] font-bold" style={{ color: GREEN }}>{vi ? 'Đã giao' : 'Sent'}</span>
+                <span className="text-[10.5px] font-bold whitespace-nowrap" style={{ color: GREEN }}>{vi ? 'Đã giao' : 'Sent'}</span>
                 <span className="h-[7px] rounded overflow-hidden" style={{ background: '#EAF5EE' }}><span className="block h-full rounded" style={{ background: GREEN, width: barW(c.sent, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: GREEN }}>{fmt(c.sent)}</span>
               </span>
