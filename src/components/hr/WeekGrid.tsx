@@ -7,7 +7,7 @@
 // shifts stay light grey — Axel's palette rule.
 import { useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { HR_OFF_CODES, DOW_EN, DOW_VI, dm, dow, hanoiToday, isWeekend, monthLabel, offLimit, scheduleCode, weekStart, type HrEmployee } from '@/lib/hr';
+import { HR_OFF_CODES, fmtDays, DOW_EN, DOW_VI, dm, dow, hanoiToday, isWeekend, monthLabel, offLimit, scheduleCode, weekStart, type HrEmployee } from '@/lib/hr';
 import type { HrMonthData } from '@/lib/hr-server';
 
 export const BORDER = '1px solid #E0D49A';
@@ -17,6 +17,9 @@ const NAME = 96;     // name column width (px)
 export function codeStyle(c: string): React.CSSProperties {
   switch (c) {
     case 'O': return { background: '#C9A84C', color: '#fff', fontWeight: 800 };
+    // Half day: works one half, the other half is off → half-gold.
+    case 'S': return { background: 'linear-gradient(90deg, #fff 50%, #EAD9A0 50%)', color: '#8B5E34', border: '1.5px solid #C9A84C', fontWeight: 800 };
+    case 'C': return { background: 'linear-gradient(90deg, #EAD9A0 50%, #fff 50%)', color: '#8B5E34', border: '1.5px solid #C9A84C', fontWeight: 800 };
     case 'AL': case 'SN': return { background: '#8B5E34', color: '#fff', fontWeight: 800 };
     case 'PH': return { background: '#1A4731', color: '#FFF4CC', fontWeight: 800 };
     case 'OM': return { background: '#fff', color: '#B91C1C', border: '1.5px dashed #B91C1C', fontWeight: 800 };
@@ -49,7 +52,7 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
   focusDay?: string;
 }) {
   const wishes = new Set(data.wishes);
-  const codeOf = (e: HrEmployee, d: string) => scheduleCode(e, d, data.stored, wishes);
+  const codeOf = (e: HrEmployee, d: string) => scheduleCode(e, d, data.stored, wishes, data.wishParts);
   const regular = data.employees.filter((e) => !e.is_casual);
   const offOn = (d: string) => regular.filter((e) => HR_OFF_CODES.includes(codeOf(e, d))).length;
   const pub = new Set(data.weeks.filter((w) => w.published).map((w) => w.start));
@@ -129,7 +132,7 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
                 <td style={{ ...stickyName, background: rowBg, borderBottom: '1px solid #F3EED9', boxShadow: '2px 0 4px rgba(0,0,0,0.04)' }} className="pl-2 pr-1 py-1">
                   <div className="text-[11px] font-bold leading-tight" style={{ color: mine ? '#8B5E34' : '#1A4731' }}>{e.full_name}</div>
                   <div className="text-[9px] leading-tight mt-0.5" style={{ color: over ? '#DC2626' : '#9CA3AF', fontWeight: over ? 800 : 400 }}>
-                    {e.is_casual ? (lang === 'vi' ? 'thời vụ' : 'seasonal') : `${lang === 'vi' ? 'nghỉ' : 'off'} ${used}/${data.allowance}`}
+                    {e.is_casual ? (lang === 'vi' ? 'thời vụ' : 'seasonal') : `${lang === 'vi' ? 'nghỉ' : 'off'} ${fmtDays(used)}/${data.allowance}`}
                     {!e.profile_id ? (lang === 'vi' ? ' · không app' : ' · no app') : ''}
                   </div>
                 </td>
@@ -170,7 +173,7 @@ export default function MonthGrid({ data, lang, meId, hideUnpublished, onCell, o
 }
 
 export function Legend({ lang }: { lang: string }) {
-  const items: [string, string][] = [['O', lang === 'vi' ? 'nghỉ' : 'off'], ['AL', lang === 'vi' ? 'phép' : 'leave'], ['PH', lang === 'vi' ? 'lễ' : 'holiday'], ['OM', lang === 'vi' ? 'ốm' : 'sick'], ['CD', lang === 'vi' ? 'chế độ' : 'special'], ['KL', lang === 'vi' ? 'không lương' : 'unpaid']];
+  const items: [string, string][] = [['O', lang === 'vi' ? 'nghỉ' : 'off'], ['S', lang === 'vi' ? 'làm sáng' : 'morning'], ['C', lang === 'vi' ? 'làm chiều' : 'afternoon'], ['AL', lang === 'vi' ? 'phép' : 'leave'], ['PH', lang === 'vi' ? 'lễ' : 'holiday'], ['OM', lang === 'vi' ? 'ốm' : 'sick'], ['CD', lang === 'vi' ? 'chế độ' : 'special'], ['KL', lang === 'vi' ? 'không lương' : 'unpaid']];
   return (
     <div className="flex flex-wrap gap-x-2.5 gap-y-1 text-[10px] px-1 items-center" style={{ color: '#374151' }}>
       {items.map(([c, l]) => (

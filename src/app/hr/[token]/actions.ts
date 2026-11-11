@@ -6,7 +6,7 @@
 // first come first served) or cancels it before the Saturday deadline, and adds proof papers.
 import {
   HR_OFF_CODES, HR_PROOF_TYPES, HR_REQUEST_TYPES, dm, dow, hanoiToday, hrTypeLabel, monthEnd, monthStart, offAllowance,
-  offLimit, scheduleCode, weekStart, wishDeadline, type HrEmployee, type HrRequest,
+  offLimit, offWeight, scheduleCode, weekStart, wishDeadline, type HrEmployee, type HrRequest,
 } from '@/lib/hr';
 import { hrLoadMonth, hrOffCount, hrPushLeader, hrRules, hrService, type HrMonthData } from '@/lib/hr-server';
 
@@ -22,6 +22,7 @@ export type MeOt = { id: string; day: string; time_from: string; time_to: string
 export type MeData = {
   employee: HrEmployee; week: HrMonthData; requests: HrRequest[]; ots: MeOt[]; otMonthHours: number;
   myOffDays: string[]; // upcoming day-off requests (all months)
+  myOffParts: Record<string, string>; // day → S / C for half days off
 };
 
 export async function loadMeAction(token: string, month?: string): Promise<{ data?: MeData; error?: string }> {
@@ -37,7 +38,7 @@ export async function loadMeAction(token: string, month?: string): Promise<{ dat
   const [reqs, lines, offs] = await Promise.all([
     db.from('hr_requests').select('*').eq('employee_id', e.id).order('created_at', { ascending: false }).limit(30),
     db.from('hr_ot_lines').select('confirm, hr_ot_requests(id, day, time_from, time_to, hours, reason, status, created_by_name)').eq('employee_id', e.id),
-    db.from('hr_off_wishes').select('day').eq('employee_id', e.id).gte('day', today).order('day'),
+    db.from('hr_off_wishes').select('day, part').eq('employee_id', e.id).gte('day', today).order('day'),
   ]);
   const ots = (lines.data ?? []).map((l: any) => ({ ...l.hr_ot_requests, hours: Number(l.hr_ot_requests?.hours ?? 0), confirm: l.confirm }))
     .filter((o: any) => o.id && o.status !== 'cancelled')
@@ -48,6 +49,7 @@ export async function loadMeAction(token: string, month?: string): Promise<{ dat
     data: {
       employee: { ...e, access_token: undefined }, week, requests: (reqs.data ?? []) as HrRequest[], ots, otMonthHours,
       myOffDays: (offs.data ?? []).map((o: any) => o.day),
+      myOffParts: Object.fromEntries((offs.data ?? []).filter((o: any) => o.part).map((o: any) => [o.day, o.part])),
     },
   };
 }
@@ -55,10 +57,13 @@ export async function loadMeAction(token: string, month?: string): Promise<{ dat
 // Ask for a day off. Accepted at once if: before the Saturday deadline, the week is not published,
 // the monthly allowance (= Sundays in the month) and the Sat/Sun caps are not reached, and the day
 // still has room in the team (first come, first served — re-checked after the insert for races).
-export async function requestOffAction(token: string, day: string): Promise<{ ok?: boolean; error?: string }> {
+// part = 'S' | 'C' → half day off (works the morning / the afternoon): 0.5 of the allowance, always
+// accepted, outside the per-day limit and the Sat/Sun caps (Axel, 2026-11-11).
+export async function requestOffAction(token: string, day: string, part?: 'S' | 'C'): Promise<{ ok?: boolean; error?: string }> {
   const e = await me(token);
   if (!e) return { error: 'INVALID' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: 'Bad day' };
+  const half = part === 'S' || part === 'C' ? part : null;
   const db = service();
   const today = hanoiToday();
   const ws = weekStart(day);
@@ -71,28 +76,39 @@ export async function requestOffAction(token: string, day: string): Promise<{ ok
   if (!e.is_casual) {
     const m = monthStart(day);
     const [{ data: wi }, { data: so }] = await Promise.all([
-      db.from('hr_off_wishes').select('day').eq('employee_id', e.id).gte('day', m).lte('day', monthEnd(m)),
+      db.from('hr_off_wishes').select('day, part').eq('employee_id', e.id).gte('day', m).lte('day', monthEnd(m)),
       db.from('hr_schedule_days').select('day, code').eq('employee_id', e.id).gte('day', m).lte('day', monthEnd(m)),
     ]);
     const stored: Record<string, string> = {};
     for (const r of so ?? []) stored[e.id + '|' + r.day] = r.code;
     const wset = new Set<string>((wi ?? []).map((w: any) => e.id + '|' + w.day));
-    const offs: string[] = [];
-    for (const k of Array.from(wset)) { const d = k.split('|')[1]; if (scheduleCode(e, d, stored, wset) === 'O') offs.push(d); }
-    for (const r of so ?? []) if (r.code === 'O' && !wset.has(e.id + '|' + r.day)) offs.push(r.day);
-    if (offs.length >= offAllowance(m)) return { error: 'MAX_DAYS' };
-    if (dow(day) === 6 && rules.max_sat_month != null && offs.filter((d) => dow(d) === 6).length >= rules.max_sat_month) return { error: 'MAX_SAT' };
-    if (dow(day) === 0 && rules.max_sun_month != null && offs.filter((d) => dow(d) === 0).length >= rules.max_sun_month) return { error: 'MAX_SUN' };
-    if ((await hrOffCount(db, e.team, day, e.id)) >= offLimit(rules, day)) return { error: 'FULL' };
+    const parts: Record<string, string> = {};
+    for (const w of wi ?? []) if ((w as any).part) parts[e.id + '|' + w.day] = (w as any).part;
+    const days = new Set<string>([...(wi ?? []).map((w: any) => w.day), ...(so ?? []).map((r: any) => r.day)]);
+    let used = 0;
+    const fullOffs: string[] = [];
+    for (const d of Array.from(days)) {
+      const c = scheduleCode(e, d, stored, wset, parts);
+      used += offWeight(c);
+      if (c === 'O') fullOffs.push(d);
+    }
+    if (used + (half ? 0.5 : 1) > offAllowance(m)) return { error: 'MAX_DAYS' };
+    if (!half) {
+      if (dow(day) === 6 && rules.max_sat_month != null && fullOffs.filter((d) => dow(d) === 6).length >= rules.max_sat_month) return { error: 'MAX_SAT' };
+      if (dow(day) === 0 && rules.max_sun_month != null && fullOffs.filter((d) => dow(d) === 0).length >= rules.max_sun_month) return { error: 'MAX_SUN' };
+      if ((await hrOffCount(db, e.team, day, e.id)) >= offLimit(rules, day)) return { error: 'FULL' };
+    }
   }
-  const { error } = await db.from('hr_off_wishes').insert({ employee_id: e.id, day });
+  const { error } = await db.from('hr_off_wishes').insert({ employee_id: e.id, day, part: half });
   if (error) return { error: error.message.includes('duplicate') ? 'ALREADY' : error.message };
-  if (!e.is_casual && (await hrOffCount(db, e.team, day)) > offLimit(rules, day)) {
+  if (!half && !e.is_casual && (await hrOffCount(db, e.team, day)) > offLimit(rules, day)) {
     // Someone else got the last place at the same moment: the first one keeps it.
     await db.from('hr_off_wishes').delete().eq('employee_id', e.id).eq('day', day);
     return { error: 'FULL' };
   }
-  await hrPushLeader(db, e.team, `${e.full_name} xin nghỉ ${dm(day)}`, `${e.full_name} takes ${dm(day)} off`);
+  const what = half === 'S' ? ' (nghỉ buổi chiều)' : half === 'C' ? ' (nghỉ buổi sáng)' : '';
+  const whatEn = half === 'S' ? ' (afternoon off)' : half === 'C' ? ' (morning off)' : '';
+  await hrPushLeader(db, e.team, `${e.full_name} xin nghỉ ${dm(day)}${what}`, `${e.full_name} takes ${dm(day)} off${whatEn}`);
   return { ok: true };
 }
 

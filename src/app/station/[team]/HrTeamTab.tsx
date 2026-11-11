@@ -5,7 +5,7 @@
 // here, group overtime. The leader's own space ("Của tôi") is a sub-tab so the station keeps one tab.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  HR_CODE_LABEL, HR_OFF_CODES, HR_OT_CAP, HR_PICK, HR_PROOF_TYPES, addDays, dm, dow, hanoiToday, hoursBetween, hrRequestCode,
+  HR_CODE_LABEL, HR_OFF_CODES, fmtDays, halfHours, HR_OT_CAP, HR_PICK, HR_PROOF_TYPES, addDays, dm, dow, hanoiToday, hoursBetween, hrRequestCode,
   hrTypeLabel, monthLabel, monthStart, addMonths, offLimit, scheduleCode, shortDay, weekStart, wishDeadline, type HrEmployee,
 } from '@/lib/hr';
 import MonthGrid, { BORDER, Legend, MonthHeader, codeStyle, codeText } from '@/components/hr/WeekGrid';
@@ -102,7 +102,7 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
   const week = data.week;
   const [pick, setPick] = useState<{ e: HrEmployee; day: string } | null>(null);
   const wishes = new Set(week.wishes);
-  const codeOf = (e: HrEmployee, d: string) => scheduleCode(e, d, week.stored, wishes);
+  const codeOf = (e: HrEmployee, d: string) => scheduleCode(e, d, week.stored, wishes, week.wishParts);
   const regular = week.employees.filter((e) => !e.is_casual);
   const inMonth = (d: string) => d.slice(0, 7) === week.month.slice(0, 7);
 
@@ -113,7 +113,7 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
   }
   for (const e of regular) {
     const u = week.monthOff[e.id] ?? 0;
-    if (u > week.allowance) alerts.push(tr(`${e.full_name}: ${u} days off in ${monthLabel(week.month, 'en')}, allowed ${week.allowance}`, `${e.full_name}: ${u} ngày nghỉ ${monthLabel(week.month, 'vi')}, được ${week.allowance}`));
+    if (u > week.allowance) alerts.push(tr(`${e.full_name}: ${fmtDays(u)} days off in ${monthLabel(week.month, 'en')}, allowed ${week.allowance}`, `${e.full_name}: ${fmtDays(u)} ngày nghỉ ${monthLabel(week.month, 'vi')}, được ${week.allowance}`));
   }
 
   const setCode = async (code: string) => {
@@ -177,13 +177,13 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
                 <button key={c} onClick={() => setCode(c)} className="min-h-[54px] rounded-xl flex flex-col items-center justify-center gap-0.5 active:scale-95"
                   style={{ border: cur ? '2px solid #1A4731' : BORDER, background: '#fff' }}>
                   <span className="min-w-[30px] px-1 h-[22px] rounded-md text-[11px] flex items-center justify-center whitespace-nowrap" style={codeStyle(c)}>{codeText(c, lang)}</span>
-                  <span className="text-[10px] leading-tight px-1 text-center" style={{ color: '#374151' }}>{lang === 'vi' ? HR_CODE_LABEL[c].vi : HR_CODE_LABEL[c].en}</span>
+                  <span className="text-[10px] leading-tight px-1 text-center" style={{ color: '#374151' }}>{c === 'S' || c === 'C' ? `${lang === 'vi' ? (c === 'S' ? 'Làm sáng' : 'Làm chiều') : (c === 'S' ? 'Morning' : 'Afternoon')} ${halfHours(c, pick.e.base_shift)}` : (lang === 'vi' ? HR_CODE_LABEL[c].vi : HR_CODE_LABEL[c].en)}</span>
                 </button>
               );
             })}
           </div>
           <button onClick={() => setCode('')} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold mt-2" style={{ border: BORDER, color: '#6B7280', background: '#FFFAEE' }}>
-            {tr('Back to default', 'Về mặc định')} ({wishes.has(pick.e.id + '|' + pick.day) ? 'O' : pick.e.base_shift})
+            {tr('Back to default', 'Về mặc định')} ({wishes.has(pick.e.id + '|' + pick.day) ? (week.wishParts[pick.e.id + '|' + pick.day] ?? 'O') : pick.e.base_shift})
           </button>
         </Sheet>
       )}
@@ -427,7 +427,7 @@ function TeamView({ data, team, lang, tr, reload }: { data: TeamHrData; team: st
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-bold truncate">{e.full_name}</div>
             <div className="text-[11px]" style={{ color: '#6B7280' }}>
-              {e.position ?? ''} · {tr('shift', 'ca')} {e.base_shift} · {monthLabel(data.week.month, lang)}: {tr('off', 'nghỉ')} {data.week.monthOff[e.id] ?? 0}/{data.week.allowance} · OT {data.otHours[e.id] ?? 0} h
+              {e.position ?? ''} · {tr('shift', 'ca')} {e.base_shift} · {monthLabel(data.week.month, lang)}: {tr('off', 'nghỉ')} {fmtDays(data.week.monthOff[e.id] ?? 0)}/{data.week.allowance} · OT {data.otHours[e.id] ?? 0} h
             </div>
             <div className="text-[11px] font-semibold" style={{ color: e.profile_id ? '#047857' : '#8B5E34' }}>
               {e.profile_id ? tr('✓ Uses the app', '✓ Có app') : tr('No app — you fill the schedule', 'Không app — trưởng nhóm nhập lịch')}

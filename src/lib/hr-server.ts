@@ -3,7 +3,7 @@
 import { createClient as createServiceClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   HR_DEFAULT_RULES, HR_OFF_CODES, addDays, dayStr, daysInMonth, dow, hrRequestCode, monthEnd, monthStart,
-  offAllowance, scheduleCode, weekStart, type HrEmployee, type HrRules,
+  offAllowance, offWeight, scheduleCode, weekStart, type HrEmployee, type HrRules,
 } from '@/lib/hr';
 import { awaitPush, sendUsersPush } from '@/lib/push-notify';
 
@@ -19,7 +19,7 @@ export async function hrRules(db: SupabaseClient, team: string): Promise<HrRules
 export type HrMonthData = {
   month: string; days: string[]; // Monday of the month's first week → Sunday of its last week
   weeks: { start: string; published: boolean }[];
-  allowance: number; employees: HrEmployee[]; stored: Record<string, string>; wishes: string[]; rules: HrRules;
+  allowance: number; employees: HrEmployee[]; stored: Record<string, string>; wishes: string[]; wishParts: Record<string, string>; rules: HrRules;
   monthOff: Record<string, number>; monthSat: Record<string, number>; monthSun: Record<string, number>;
 };
 
@@ -39,7 +39,7 @@ export async function hrLoadMonth(db: SupabaseClient, team: string, month: strin
   const ids = employees.map((e) => e.id);
   const [st, wi, wk, rules] = await Promise.all([
     ids.length ? db.from('hr_schedule_days').select('employee_id, day, code').in('employee_id', ids).gte('day', from).lte('day', to) : Promise.resolve({ data: [] as any[] }),
-    ids.length ? db.from('hr_off_wishes').select('employee_id, day').in('employee_id', ids).gte('day', from).lte('day', to) : Promise.resolve({ data: [] as any[] }),
+    ids.length ? db.from('hr_off_wishes').select('employee_id, day, part').in('employee_id', ids).gte('day', from).lte('day', to) : Promise.resolve({ data: [] as any[] }),
     db.from('hr_schedule_weeks').select('week_start, status').eq('team', team).in('week_start', starts),
     hrRules(db, team),
   ]);
@@ -47,6 +47,8 @@ export async function hrLoadMonth(db: SupabaseClient, team: string, month: strin
   for (const r of (st as any).data ?? []) stored[r.employee_id + '|' + r.day] = r.code;
   const wishes = ((wi as any).data ?? []).map((w: any) => w.employee_id + '|' + w.day);
   const wset = new Set<string>(wishes);
+  const wishParts: Record<string, string> = {};
+  for (const w of (wi as any).data ?? []) if (w.part) wishParts[w.employee_id + '|' + w.day] = w.part;
   const pub = new Set(((wk as any).data ?? []).filter((w: any) => w.status === 'published').map((w: any) => w.week_start));
   const monthOff: Record<string, number> = {}, monthSat: Record<string, number> = {}, monthSun: Record<string, number> = {};
   const n = daysInMonth(m);
@@ -54,13 +56,15 @@ export async function hrLoadMonth(db: SupabaseClient, team: string, month: strin
     let o = 0, sa = 0, su = 0;
     for (let d = 1; d <= n; d++) {
       const day = dayStr(m, d);
-      if (scheduleCode(e, day, stored, wset) === 'O') { o++; if (dow(day) === 6) sa++; if (dow(day) === 0) su++; }
+      const c = scheduleCode(e, day, stored, wset, wishParts);
+      o += offWeight(c);
+      if (c === 'O') { if (dow(day) === 6) sa++; if (dow(day) === 0) su++; }
     }
     monthOff[e.id] = o; monthSat[e.id] = sa; monthSun[e.id] = su;
   }
   return {
     month: m, days, weeks: starts.map((start) => ({ start, published: pub.has(start) })),
-    allowance: offAllowance(m), employees, stored, wishes, rules, monthOff, monthSat, monthSun,
+    allowance: offAllowance(m), employees, stored, wishes, wishParts, rules, monthOff, monthSat, monthSun,
   };
 }
 
@@ -72,12 +76,15 @@ export async function hrOffCount(db: SupabaseClient, team: string, day: string, 
   if (!ids.length) return 0;
   const [st, wi] = await Promise.all([
     db.from('hr_schedule_days').select('employee_id, day, code').in('employee_id', ids).eq('day', day),
-    db.from('hr_off_wishes').select('employee_id, day').in('employee_id', ids).eq('day', day),
+    db.from('hr_off_wishes').select('employee_id, day, part').in('employee_id', ids).eq('day', day),
   ]);
   const stored: Record<string, string> = {};
   for (const r of st.data ?? []) stored[r.employee_id + '|' + r.day] = r.code;
   const wset = new Set<string>((wi.data ?? []).map((w: any) => w.employee_id + '|' + w.day));
-  return list.filter((e: any) => HR_OFF_CODES.includes(scheduleCode(e, day, stored, wset))).length;
+  const parts: Record<string, string> = {};
+  for (const w of wi.data ?? []) if ((w as any).part) parts[w.employee_id + '|' + w.day] = (w as any).part;
+  // Half days (S / C) are not in HR_OFF_CODES: they never take a place in the daily limit.
+  return list.filter((e: any) => HR_OFF_CODES.includes(scheduleCode(e, day, stored, wset, parts))).length;
 }
 
 // Days covered by a request (inclusive), capped at 62 days.

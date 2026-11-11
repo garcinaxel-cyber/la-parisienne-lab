@@ -11,13 +11,27 @@
 
 export const HR_PILOT_TEAMS = ['hung'];
 
-export type HrCode = '7' | '8' | 'O' | 'AL' | 'PH' | 'SN' | 'OM' | 'KL' | 'CD';
-export const HR_PICK: HrCode[] = ['7', '8', 'O', 'AL', 'SN', 'OM', 'KL', 'CD', 'PH'];
+// Half days (2026-11-11): S = works the morning only, C = the afternoon only (fixed halves of the base
+// shift). A half day off = 0.5 of the monthly days off, always accepted, outside the per-day limit.
+export type HrCode = '7' | '8' | 'S' | 'C' | 'O' | 'AL' | 'PH' | 'SN' | 'OM' | 'KL' | 'CD';
+export const HR_PICK: HrCode[] = ['7', '8', 'S', 'C', 'O', 'AL', 'SN', 'OM', 'KL', 'CD', 'PH'];
+export const HR_HALF_CODES: HrCode[] = ['S', 'C'];
+// Weight of a code in the monthly days-off counter.
+export const offWeight = (c: string) => (c === 'O' ? 1 : c === 'S' || c === 'C' ? 0.5 : 0);
+// Hours of each half, from the base shift (7 → 07–16, 8 → 08–17, 1 h break at midday).
+export function halfHours(code: string, baseShift: string): string {
+  const s = baseShift === '8' ? 8 : 7;
+  const p = (h: number) => String(h).padStart(2, '0') + ':00';
+  return code === 'S' ? `${p(s)}–${p(s + 4)}` : `${p(s + 5)}–${p(s + 9)}`;
+}
+export const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1).replace('.', ','));
 // Codes that count against the "people off that day" limit (PH = everybody off, not counted).
 export const HR_OFF_CODES: HrCode[] = ['O', 'AL', 'SN', 'OM', 'KL', 'CD'];
 export const HR_CODE_LABEL: Record<string, { en: string; vi: string }> = {
   '7': { en: 'Shift 07:00–16:00', vi: 'Ca 07:00–16:00' },
   '8': { en: 'Shift 08:00–17:00', vi: 'Ca 08:00–17:00' },
+  S: { en: 'Morning only (half day)', vi: 'Làm buổi sáng (nửa ngày)' },
+  C: { en: 'Afternoon only (half day)', vi: 'Làm buổi chiều (nửa ngày)' },
   O: { en: 'Day off', vi: 'Nghỉ' },
   AL: { en: 'Annual leave', vi: 'Phép năm' },
   PH: { en: 'Public holiday', vi: 'Ngày lễ' },
@@ -137,11 +151,13 @@ export function hoursBetween(from: string, to: string): number {
 }
 
 // ---------- schedule ----------
-// Effective code: what the leader set, else a day-off request (auto-accepted), else the base shift.
-export function scheduleCode(e: { id: string; base_shift: string }, day: string, stored: Record<string, string>, wishes: Set<string>): HrCode {
-  const s = stored[e.id + '|' + day];
+// Effective code: what the leader set, else a day-off request (auto-accepted; a half-day request gives
+// S or C via `parts`), else the base shift.
+export function scheduleCode(e: { id: string; base_shift: string }, day: string, stored: Record<string, string>, wishes: Set<string>, parts?: Record<string, string>): HrCode {
+  const k = e.id + '|' + day;
+  const s = stored[k];
   if (s) return s as HrCode;
-  if (wishes.has(e.id + '|' + day)) return 'O';
+  if (wishes.has(k)) return (parts?.[k] as HrCode) || 'O';
   return (e.base_shift === '8' ? '8' : '7');
 }
 export const offLimit = (rules: HrRules, day: string) => (isWeekend(day) ? rules.max_off_weekend : rules.max_off_weekday);

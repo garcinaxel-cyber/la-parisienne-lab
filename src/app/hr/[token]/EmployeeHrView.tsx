@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   HR_PROOF_TYPES, HR_REQUEST_TYPES, addDays, hanoiToday, hrNeedsGiang, hrTypeLabel, monthLabel, offAllowance,
-  monthStart, addMonths, scheduleCode, shortDay, weekStart, wishDeadline,
+  monthStart, addMonths, fmtDays, halfHours, scheduleCode, shortDay, weekStart, wishDeadline,
 } from '@/lib/hr';
 import MonthGrid, { BORDER, Legend, MonthHeader } from '@/components/hr/WeekGrid';
 import {
@@ -153,11 +153,11 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
   const open = !!selWeek && today <= wishDeadline(selWeek) && !pub.has(selWeek);
   const used = week.monthOff[me.id] ?? 0;
   const isWish = sel ? wishes.has(me.id + '|' + sel) : false;
-  const code = sel ? scheduleCode(me, sel, week.stored, wishes) : null;
-  const doOff = async () => {
+  const code = sel ? scheduleCode(me, sel, week.stored, wishes, week.wishParts) : null;
+  const doOff = async (part?: 'S' | 'C') => {
     if (!sel) return;
     setWorking(true);
-    const r = isWish ? await cancelOffAction(token, sel) : await requestOffAction(token, sel);
+    const r = isWish ? await cancelOffAction(token, sel) : await requestOffAction(token, sel, part);
     setWorking(false);
     if (r.error) { setMsg(offErr(r.error, tr)); return; }
     setSel(null); setMsg(null); reload();
@@ -165,7 +165,7 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
   return (
     <div className="space-y-2">
       <MonthHeader month={week.month} lang={lang} busy={busy} onPrev={() => setMonth(addMonths(month, -1))} onNext={() => setMonth(addMonths(month, 1))}
-        sub={tr(`${used}/${week.allowance} days off used`, `đã nghỉ ${used}/${week.allowance} ngày`)} />
+        sub={tr(`${fmtDays(used)}/${week.allowance} days off used`, `đã nghỉ ${fmtDays(used)}/${week.allowance} ngày`)} />
       <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>⟵ {tr('scroll sideways through the month', 'kéo ngang để xem cả tháng')} ⟶</div>
       <MonthGrid data={week} lang={lang} meId={me.id} hideUnpublished
         onCell={(e, d) => { if (e.id === me.id) { setSel(d); setMsg(null); } }} />
@@ -178,18 +178,38 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
         <div className="bg-white rounded-2xl p-3.5 space-y-2" style={{ border: '2px solid #C9A84C' }}>
           <div className="text-sm font-bold">{shortDay(sel, lang)}</div>
           {isWish ? (
-            <div className="text-xs" style={{ color: '#6B7280' }}>{tr('You have this day off.', 'Em đang nghỉ ngày này.')}</div>
+            <div className="text-xs" style={{ color: '#6B7280' }}>
+              {code === 'S' ? tr(`Afternoon off — you work ${halfHours('S', me.base_shift)}.`, `Nghỉ buổi chiều — em làm ${halfHours('S', me.base_shift)}.`)
+                : code === 'C' ? tr(`Morning off — you work ${halfHours('C', me.base_shift)}.`, `Nghỉ buổi sáng — em làm ${halfHours('C', me.base_shift)}.`)
+                : tr('You have this day off.', 'Em đang nghỉ ngày này.')}
+            </div>
           ) : code === '7' || code === '8' ? (
             <div className="text-xs" style={{ color: '#6B7280' }}>{tr('Working day.', 'Ngày làm.')}</div>
           ) : (
             <div className="text-xs" style={{ color: '#6B7280' }}>{tr('Set by your leader — ask him to change it.', 'Do trưởng nhóm xếp — liên hệ trưởng nhóm để đổi.')}</div>
           )}
           {msg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{msg}</div>}
+          {!isWish && (code === '7' || code === '8') && sel > today && (
+            <div className="space-y-1.5">
+              <button disabled={working || !open} onClick={() => doOff()} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40" style={{ background: '#1A4731' }}>
+                {tr('Full day off', 'Nghỉ cả ngày')}
+              </button>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button disabled={working || !open} onClick={() => doOff('C')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FFFAEE' }}>
+                  {tr('Morning off', 'Nghỉ buổi sáng')}<br /><span className="font-normal text-[10px]">{tr('work ', 'làm ')}{halfHours('C', me.base_shift)}</span>
+                </button>
+                <button disabled={working || !open} onClick={() => doOff('S')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FFFAEE' }}>
+                  {tr('Afternoon off', 'Nghỉ buổi chiều')}<br /><span className="font-normal text-[10px]">{tr('work ', 'làm ')}{halfHours('S', me.base_shift)}</span>
+                </button>
+              </div>
+              <div className="text-[10px]" style={{ color: '#6B7280' }}>{tr('A half day off = 0.5 day off, always accepted.', 'Nghỉ nửa ngày = 0,5 ngày nghỉ, luôn được nhận.')}</div>
+            </div>
+          )}
           <div className="grid grid-cols-[1fr_1.6fr] gap-2">
             <button onClick={() => setSel(null)} className="min-h-[44px] rounded-xl text-[13px] font-bold bg-white" style={{ border: BORDER }}>{tr('Close', 'Đóng')}</button>
-            {(isWish || code === '7' || code === '8') && sel > today && (
-              <button disabled={working || !open} onClick={doOff} className="min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40" style={{ background: isWish ? '#8B5E34' : '#1A4731' }}>
-                {isWish ? tr('Cancel my day off', 'Hủy nghỉ') : tr('Take this day off', 'Xin nghỉ ngày này')}
+            {isWish && sel > today && (
+              <button disabled={working || !open} onClick={() => doOff()} className="min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40" style={{ background: '#8B5E34' }}>
+                {tr('Cancel my day off', 'Hủy nghỉ')}
               </button>
             )}
           </div>
@@ -206,9 +226,10 @@ function OffTab({ data, token, lang, tr, reload }: { data: MeData; token: string
   const [day, setDay] = useState(addDays(weekStart(today), today <= wishDeadline(addDays(weekStart(today), 7)) ? 7 : 14));
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [part, setPart] = useState<'' | 'S' | 'C'>('');
   const ask = async () => {
     setBusy(true);
-    const r = await requestOffAction(token, day);
+    const r = await requestOffAction(token, day, part || undefined);
     setBusy(false);
     setMsg(r.error ? { ok: false, text: offErr(r.error, tr) } : { ok: true, text: tr(`✓ ${shortDay(day, 'en')} off — it is in the schedule.`, `✓ Đã nghỉ ${shortDay(day, 'vi')} — đã vào lịch.`) });
     reload();
@@ -220,16 +241,23 @@ function OffTab({ data, token, lang, tr, reload }: { data: MeData; token: string
   };
   const byMonth: Record<string, string[]> = {};
   for (const d of data.myOffDays) (byMonth[monthStart(d)] ??= []).push(d);
+  const weightOf = (d: string) => (data.myOffParts[d] ? 0.5 : 1);
   return (
     <div className="space-y-2.5">
       <div className="bg-white rounded-2xl p-3.5 space-y-2.5" style={{ border: BORDER }}>
         <div className="text-sm font-bold">{tr('Take a day off', 'Xin nghỉ một ngày')}</div>
         <input type="date" value={day} min={addDays(today, 1)} onChange={(e) => setDay(e.target.value)} className="w-full min-h-[44px] rounded-xl px-2.5 text-sm bg-white" style={{ border: BORDER }} />
+        <div className="grid grid-cols-3 gap-1.5">
+          {([['', tr('Full day', 'Cả ngày')], ['C', tr('Morning off', 'Nghỉ sáng')], ['S', tr('Afternoon off', 'Nghỉ chiều')]] as const).map(([v, l]) => (
+            <button key={v} onClick={() => setPart(v)} className="min-h-[40px] rounded-xl text-[12px] font-bold"
+              style={part === v ? { background: '#1A4731', color: '#FFF4CC', border: '1px solid #1A4731' } : { background: '#fff', color: '#1A4731', border: BORDER }}>{l}</button>
+          ))}
+        </div>
         <button disabled={busy || !day} onClick={ask} className="w-full min-h-[48px] rounded-2xl font-bold text-sm text-white disabled:opacity-50" style={{ background: '#1A4731' }}>{tr('Take this day off', 'Xin nghỉ ngày này')}</button>
         {msg && <div className="text-xs font-semibold" style={{ color: msg.ok ? '#047857' : '#DC2626' }}>{msg.text}</div>}
         <div className="text-[11px] leading-relaxed" style={{ color: '#6B7280' }}>
-          {tr('Accepted at once if the day has room (first come, first served). For next week: before the end of Saturday. You can book weeks or months ahead. Days off per month = number of Sundays.',
-            'Được nhận ngay nếu ngày đó còn chỗ (ai đăng ký trước được trước). Cho tuần sau: trước hết Thứ 7. Có thể đăng ký trước nhiều tuần, nhiều tháng. Số ngày nghỉ mỗi tháng = số Chủ nhật.')}
+          {tr('Accepted at once if the day has room (first come, first served). For next week: before the end of Saturday. You can book weeks or months ahead. Days off per month = number of Sundays. A half day off = 0.5, always accepted.',
+            'Được nhận ngay nếu ngày đó còn chỗ (ai đăng ký trước được trước). Cho tuần sau: trước hết Thứ 7. Có thể đăng ký trước nhiều tuần, nhiều tháng. Số ngày nghỉ mỗi tháng = số Chủ nhật. Nghỉ nửa ngày = 0,5, luôn được nhận.')}
         </div>
       </div>
       <div className="text-xs font-bold px-1" style={{ color: '#1A4731' }}>{tr('My coming days off', 'Ngày nghỉ sắp tới của em')}</div>
@@ -237,13 +265,13 @@ function OffTab({ data, token, lang, tr, reload }: { data: MeData; token: string
       {Object.keys(byMonth).sort().map((m) => (
         <div key={m} className="bg-white rounded-2xl overflow-hidden" style={{ border: BORDER }}>
           <div className="px-3.5 py-2 text-xs font-bold flex justify-between" style={{ background: '#FFFAEE', color: '#1A4731' }}>
-            <span>{monthLabel(m, lang)}</span><span style={{ color: '#8B5E34' }}>{byMonth[m].length}/{offAllowance(m)}</span>
+            <span>{monthLabel(m, lang)}</span><span style={{ color: '#8B5E34' }}>{fmtDays(byMonth[m].reduce((a, d) => a + weightOf(d), 0))}/{offAllowance(m)}</span>
           </div>
           {byMonth[m].map((d) => {
             const canCancel = today <= wishDeadline(weekStart(d));
             return (
               <div key={d} className="px-3.5 py-2 flex justify-between items-center text-sm" style={{ borderTop: '1px solid #F3EED9' }}>
-                <span className="font-semibold">{shortDay(d, lang)}</span>
+                <span className="font-semibold">{shortDay(d, lang)}{data.myOffParts[d] === 'S' ? tr(' · afternoon off', ' · nghỉ chiều') : data.myOffParts[d] === 'C' ? tr(' · morning off', ' · nghỉ sáng') : ''}</span>
                 {canCancel ? <button onClick={() => cancel(d)} className="text-xs underline min-h-[32px]" style={{ color: '#6B7280' }}>{tr('Cancel', 'Hủy')}</button>
                   : <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{tr('locked', 'đã chốt')}</span>}
               </div>
@@ -419,8 +447,8 @@ function MonthTab({ data, lang, tr }: { data: MeData; lang: string; tr: TR }) {
     <div className="space-y-2.5">
       <div className="font-bold text-[16px] px-1" style={{ color: '#1A4731' }}>{monthLabel(w.month, lang)}</div>
       <div className="grid grid-cols-2 gap-1.5">
-        {box(tr('Days off used', 'Ngày nghỉ đã dùng'), `${used} / ${w.allowance}`)}
-        {box(tr('Days off left', 'Ngày nghỉ còn lại'), String(Math.max(0, w.allowance - used)))}
+        {box(tr('Days off used', 'Ngày nghỉ đã dùng'), `${fmtDays(used)} / ${w.allowance}`)}
+        {box(tr('Days off left', 'Ngày nghỉ còn lại'), fmtDays(Math.max(0, w.allowance - used)))}
         {box(tr('Overtime this month', 'Tăng ca tháng này'), `${data.otMonthHours} ${tr('h', 'giờ')}`)}
         {box(tr('Requests in progress', 'Yêu cầu đang chờ'), String(pendingReq))}
       </div>
