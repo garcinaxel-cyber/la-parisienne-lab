@@ -222,8 +222,8 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
 
       <div className="text-[11px] leading-relaxed px-0.5" style={{ color: MUTED }}>
         {vi
-          ? <><b style={{ color: DARK }}>Sản xuất</b> = số lượng đã nhập kho (= lệnh sản xuất Odoo). <b style={{ color: DARK }}>Đã giao</b> = số lượng đã kiểm khi giao hàng. Hai số khác nhau khi giao từ hàng tồn kho hoặc để lại trong kho.</>
-          : <><b style={{ color: DARK }}>Produced</b> = quantities sent to stock (= Odoo manufacturing orders). <b style={{ color: DARK }}>Sent</b> = quantities checked at delivery. They differ when products are delivered from stock or kept in stock for later.</>}
+          ? <><b style={{ color: DARK }}>Sản xuất</b> = số lượng đã nhập kho, tính vào <b>ngày giao</b> (hàng làm hôm trước cho ngày mai tính vào ngày mai; hàng làm để tồn kho tính vào ngày nhập kho). <b style={{ color: DARK }}>Đã giao</b> = số lượng đã kiểm khi giao hàng. Hai số khác nhau khi giao từ hàng tồn kho hoặc để lại trong kho.</>
+          : <><b style={{ color: DARK }}>Produced</b> = quantities sent to stock, counted on the <b>delivery day</b> they were made for (stock production on the day sent to stock). <b style={{ color: DARK }}>Sent</b> = quantities checked at delivery. They differ when products are delivered from stock or kept in stock for later.</>}
       </div>
     </div>
   );

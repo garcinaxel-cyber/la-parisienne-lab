@@ -32,7 +32,10 @@ export async function GET(req: Request) {
   const from = fromParam && /^\d{4}-\d{2}-\d{2}$/.test(fromParam) ? fromParam : prevMonthStart(today);
   const summary: Record<string, unknown> = { from, to: today };
 
-  const { data: rebuilt, error: rbErr } = await sb.rpc('lab_analytics_rebuild', { p_from: from, p_to: today });
+  // Made-to-order production counts on its DELIVERY day (lab_v153), which can be a few days ahead.
+  const [ty, tm, td] = today.split('-').map(Number);
+  const ahead = new Date(Date.UTC(ty, tm - 1, td + 3)).toISOString().slice(0, 10);
+  const { data: rebuilt, error: rbErr } = await sb.rpc('lab_analytics_rebuild', { p_from: from, p_to: ahead });
   summary.rebuilt = rebuilt; if (rbErr) summary.rebuildError = rbErr.message;
 
   if (odooConfigured()) {

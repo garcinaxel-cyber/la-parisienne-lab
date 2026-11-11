@@ -320,7 +320,8 @@ export async function getStockProductionCatalogAction(team: string): Promise<{ p
 
 // ── Station Analytics › "This month" (Axel, 2026-11-11) ──────────────────────────────────────
 // Reads the pre-summed lab_analytics_daily table (lab_v152, kept current by triggers) — no Odoo
-// call. made = sent to stock (= Odoo MOs "Lab YYYY-MM-DD"), sent = checked at delivery (= LAB/OUT).
+// call. made = sent to stock, dated on the delivery day it was made for (lab_v153; stock production
+// on its send day), sent = checked at delivery (= LAB/OUT).
 // Current month vs the same days of the previous month; previous month in full. OEM (Team Hưng)
 // from lab_analytics_oem_daily (copied nightly from Odoo MOs, kg). Lives in this file because a
 // server action in its own file, only dynamically imported by a client component, was not
