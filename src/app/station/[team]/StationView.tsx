@@ -1499,7 +1499,7 @@ export default function StationView({
           </button>
         </div>
         {moreOpen && (
-          <div className="border-t hidden sm:grid grid-cols-3 gap-1.5 px-2.5 py-2.5" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
+          <div className="hidden" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
             <div className="col-span-2 sm:hidden flex items-center justify-between pb-2">
               <img src="/logo-laparis-cream.png" alt="la Paris" className="h-8 w-auto" />
               <span className="text-xs font-bold tracking-[0.2em] uppercase" style={{ color: '#C9A84C' }}>Menu</span>
@@ -1559,7 +1559,7 @@ export default function StationView({
           ].filter(f => f.items.length > 0);
           const tile = (it: Item, i: number, alone = false) => {
             // A family with a single module takes the full width as a row — no half-empty line.
-            const cls = `relative rounded-2xl p-3.5 text-left lp-press lp-rise flex ${alone ? 'col-span-2 flex-row items-center gap-3 min-h-[68px]' : 'flex-col justify-between min-h-[104px]'}`;
+            const cls = `relative rounded-2xl p-3.5 text-left lp-press lp-rise flex ${alone ? 'col-span-2 sm:col-span-1 flex-row items-center gap-3 min-h-[68px] sm:min-h-[56px]' : 'flex-col justify-between min-h-[104px] sm:flex-row sm:justify-start sm:items-center sm:gap-3 sm:min-h-[56px]'}`;
             const style = { animationDelay: `${i * 35}ms`, ...(it.active
               ? { backgroundColor: '#C9A84C', color: '#2A1810' }
               : { backgroundColor: 'rgba(255,255,255,0.07)', color: '#F6F1EA', border: '1px solid rgba(255,255,255,0.08)' }) };
@@ -1579,23 +1579,25 @@ export default function StationView({
           };
           let n = 0;
           return (
-            <div className="sm:hidden fixed inset-x-0 top-0 bottom-[58px] z-20 overflow-y-auto px-4 pt-4 pb-8 lp-overlay"
+            <div className="fixed inset-x-0 top-0 bottom-[58px] z-20 overflow-y-auto px-4 pt-4 pb-8 lp-overlay sm:static sm:overflow-visible sm:pt-1 sm:pb-5 sm:border-t sm:border-white/10"
               style={{ background: 'radial-gradient(120% 60% at 100% 0%, rgba(201,168,76,.16), transparent 60%), #1F120C' }}>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between sm:hidden">
                 <img src="/logo-laparis-cream.png" alt="la Paris" className="h-8 w-auto" />
                 <button onClick={() => setMoreOpen(false)} aria-label="close" className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(255,255,255,0.1)', color: '#F6F1EA' }}><X size={18} /></button>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 sm:hidden">
                 <div className="lp-display text-[26px] font-bold leading-tight text-white">{lang === 'vi' ? meta.vi : meta.en}</div>
                 <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.6)' }}>{formatDate(today)}</div>
               </div>
+              <div className="sm:max-w-5xl sm:mx-auto sm:grid sm:gap-5" style={{ gridTemplateColumns: `repeat(${families.length}, minmax(0, 1fr))` }}>
               {families.map(f => (
-                <div key={f.title} className="mt-5">
+                <div key={f.title} className="mt-5 sm:mt-4">
                   <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase pb-2" style={{ color: '#C9A84C' }}>{f.title}</div>
-                  <div className="grid grid-cols-2 gap-2.5">{f.items.map(it => tile(it, n++, f.items.length === 1))}</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-1 gap-2.5 sm:gap-2">{f.items.map(it => tile(it, n++, f.items.length === 1))}</div>
                 </div>
               ))}
-              <div className="mt-6 rounded-2xl p-1.5" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              </div>
+              <div className="mt-6 rounded-2xl p-1.5 sm:hidden" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="flex items-center justify-between px-2.5 h-12">
                   <span className="text-[13.5px] font-semibold text-white">{L2('Ngôn ngữ', 'Language')}</span>
                   <div className="flex gap-0.5 rounded-full p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.12)' }}>

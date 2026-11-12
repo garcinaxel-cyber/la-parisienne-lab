@@ -231,7 +231,7 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
           <div className="text-[10.5px] font-extrabold tracking-wider" style={{ color: GOLD_TEXT }}>{q ? L('KẾT QUẢ', 'RESULTS') : L('HAY BỊ HỎNG / HAY DÙNG NHẤT TRƯỚC', 'MOST LOST / MOST USED FIRST')}</div>
           <div className="bg-white rounded-[22px] overflow-hidden sm:grid sm:grid-cols-2" style={{ border: `1px solid ${BORDER}` }}>
             {items.map((i, n) => (
-              <button key={i.key} onClick={() => open(i)} className="w-full text-left px-3 py-2.5 flex items-center gap-3 min-h-[68px] active:bg-[#FBF7F0]" style={{ borderTop: n ? `1px solid ${HAIR}` : undefined }}>
+              <button key={i.key} onClick={() => open(i)} className="w-full text-left px-3 py-2.5 flex items-center gap-3 min-h-[68px] active:bg-[#FBF7F0]" style={{ borderBottom: `1px solid ${HAIR}` }}>
                 <Thumb i={i} size={50} />
                 <span className="flex-1 min-w-0">
                   <span className="block text-[14px] font-bold leading-tight truncate" style={{ color: NAVY }}>{itemName(i)}</span>
