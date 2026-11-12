@@ -361,7 +361,7 @@ export default function StationView({
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
     if (t === 'menu') setMoreOpen(true);
-    else if (t && ['production', 'commande', 'termine', 'upcoming', 'history', 'analytics', 'raw', 'team', 'me'].includes(t)) setActiveTab(t as Tab);
+    else if (t && ['production', 'commande', 'termine', 'upcoming', 'history', 'analytics', 'raw', 'tests', 'loss', 'team', 'me'].includes(t)) setActiveTab(t as Tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -1552,6 +1552,7 @@ export default function StationView({
               { key: 'fiches', label: L2('Phiếu kỹ thuật', 'Recipe cards'), hint: L2('Công thức, quy trình', 'Recipes and methods'), icon: <BookOpen size={18} />, href: `/station/fiches?team=${team}` },
               ...(team === 'hung' ? [{ key: 'oem', label: L2('Đơn OEM', 'OEM orders'), hint: L2('Kế hoạch theo kg', 'Baking plan in kg'), icon: <Factory size={18} />, href: `/station/oem?team=${teamSlug}` }] : []),
             ] },
+            { title: L2('Thử nghiệm & hao hụt', 'Tests & losses'), items: [...tabItem('tests', L2('Công thức thử, chi phí nguyên liệu', 'Test recipes and their material cost')), ...tabItem('loss', L2('Ghi hao hụt của bếp', 'Record what the kitchen lost'))] },
             { title: L2('Kho & nguyên liệu', 'Stock & materials'), items: tabItem('raw', L2('Lấy, chuyển, mua, kiểm phòng', 'Take, transfer, purchase, room count')) },
             { title: L2('Phân tích', 'Insights'), items: tabItem('analytics', L2('Giao hàng, tồn kho, sản lượng', 'Delivery, stock, production')) },
             { title: L2('Đội', 'Team'), items: [...tabItem('team', L2('Lịch, đơn nghỉ, tăng ca', 'Schedule, requests, overtime')), ...tabItem('me', L2('Lịch và ngày nghỉ của tôi', 'My schedule and days off'))] },
