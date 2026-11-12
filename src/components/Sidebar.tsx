@@ -110,11 +110,8 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
         {/* Logo */}
         <div className="px-6 py-6 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <img src="/logo-mark-gold.png" alt="" className="w-9 h-9 object-contain shrink-0" />
-            <div>
-              <div className="font-serif font-bold text-white text-sm leading-tight">La Parisienne</div>
-              <div className="text-gold text-xs font-semibold tracking-widest">MANUFACTURING</div>
-            </div>
+            <img src="/logo-laparis-cream.png" alt="la Paris — Honestly French" className="h-10 w-auto shrink-0" />
+            <div className="text-gold text-xs font-semibold tracking-widest">LAB</div>
           </div>
         </div>
 
@@ -207,8 +204,7 @@ export default function Sidebar({ profile, pendingTransfers = 0, pendingExceptio
       <header className="lg:hidden fixed top-0 inset-x-0 z-20 bg-navy text-white">
         <div className="px-3 py-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <img src="/logo-mark-gold.png" alt="" className="w-6 h-6 object-contain shrink-0" />
-            <span className="font-serif font-bold text-sm truncate">La Parisienne</span>
+            <img src="/logo-laparis-cream.png" alt="la Paris" className="h-6 w-auto shrink-0" />
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <div className="flex gap-0.5 rounded-lg p-0.5 bg-white/10">

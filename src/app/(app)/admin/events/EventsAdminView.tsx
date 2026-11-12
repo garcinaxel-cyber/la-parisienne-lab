@@ -172,7 +172,7 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
 
         <button onClick={submit} disabled={creating || !code.trim()}
           className="inline-flex items-center gap-2 text-sm font-bold rounded-lg px-4 py-2.5 text-white disabled:opacity-50"
-          style={{ backgroundColor: '#1A4731' }}>
+          style={{ backgroundColor: '#2A1810' }}>
           {creating && <Loader2 size={14} className="animate-spin" />}
           ＋ Create event (link existing warehouse)
         </button>
@@ -183,9 +183,9 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
           </div>
         )}
         {created?.event && created?.pin && (
-          <div className="rounded-xl px-4 py-3 text-center" style={{ background: '#FFFAEE', border: '1.5px dashed #C9A84C' }}>
+          <div className="rounded-xl px-4 py-3 text-center" style={{ background: '#FBF7F0', border: '1.5px dashed #C9A84C' }}>
             <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#92600A' }}>Staff PIN</div>
-            <div className="text-3xl font-extrabold tracking-widest" style={{ color: '#1A4731' }}>{created.pin.split('').join(' ')}</div>
+            <div className="text-3xl font-extrabold tracking-widest" style={{ color: '#2A1810' }}>{created.pin.split('').join(' ')}</div>
             <div className="text-xs text-gray-500 mt-1.5">
               ✓ Linked to warehouse &quot;{created.event.warehouseCode}&quot;. Give this PIN to staff at the counter — no account needed.
             </div>
@@ -200,9 +200,9 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
         </div>
       )}
       {newPin && (
-        <div className="rounded-xl px-4 py-3 text-center" style={{ background: '#FFFAEE', border: '1.5px dashed #C9A84C' }}>
+        <div className="rounded-xl px-4 py-3 text-center" style={{ background: '#FBF7F0', border: '1.5px dashed #C9A84C' }}>
           <div className="text-[10.5px] font-extrabold uppercase tracking-wide" style={{ color: '#92600A' }}>New staff PIN — {newPin.name}</div>
-          <div className="text-3xl font-extrabold tracking-widest" style={{ color: '#1A4731' }}>{newPin.pin.split('').join(' ')}</div>
+          <div className="text-3xl font-extrabold tracking-widest" style={{ color: '#2A1810' }}>{newPin.pin.split('').join(' ')}</div>
           <div className="text-xs text-gray-500 mt-1.5">The previous PIN no longer works. Shown once — note it now.</div>
         </div>
       )}
@@ -222,7 +222,7 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
             <div className="text-xs text-gray-500 shrink-0">Warehouse {e.warehouseCode}</div>
             <button onClick={() => openEvent(e.id)} disabled={openingId === e.id}
               className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 shrink-0 text-white disabled:opacity-60"
-              style={{ backgroundColor: '#1A4731' }}>
+              style={{ backgroundColor: '#2A1810' }}>
               {openingId === e.id ? <Loader2 size={12} className="animate-spin" /> : <Store size={12} />}
               Open
             </button>
@@ -248,7 +248,7 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
             <button onClick={() => regeneratePin(e)} disabled={pinBusyId === e.id}
               title="Issue a new staff PIN for this event"
               className="text-xs font-bold rounded-lg px-2.5 py-1.5 shrink-0 disabled:opacity-50"
-              style={{ background: '#FFFAEE', border: '1px solid #E0D49A', color: '#8A6D14' }}>
+              style={{ background: '#FBF7F0', border: '1px solid #E6DCCF', color: '#8A6D14' }}>
               {pinBusyId === e.id ? '…' : 'New PIN'}
             </button>
             )}
@@ -273,7 +273,7 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
                   className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
                 {dateDraft[e.id] && (
                   <button onClick={() => saveDates(e)} disabled={dateBusyId === e.id}
-                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#2A1810' }}>
                     {dateBusyId === e.id ? '…' : 'Save'}
                   </button>
                 )}
@@ -306,7 +306,7 @@ export default function EventsAdminView({ canManage = false }: { canManage?: boo
                   className="rounded-lg px-2 py-1 text-xs" style={{ border: '1px solid #E5E7EB' }} />
                 {targetDraft[e.id] && (
                   <button onClick={() => saveTarget(e)} disabled={targetBusyId === e.id}
-                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                    className="text-xs font-bold rounded-lg px-2.5 py-1 text-white disabled:opacity-50" style={{ backgroundColor: '#2A1810' }}>
                     {targetBusyId === e.id ? '…' : 'Save'}
                   </button>
                 )}

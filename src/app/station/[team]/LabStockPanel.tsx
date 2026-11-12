@@ -10,7 +10,7 @@ import type { StockCategoryGroup, StockLevel } from './actions';
 //   4. a search box and an "alerts only" switch.
 // Threshold editing is unchanged (same server action), just a small tap on the tile.
 
-const DARK = '#1A4731', RED = '#B42318', AMBER = '#B45309', MUTED = '#6B6455', GOLD = '#C9A84C';
+const DARK = '#2A1810', RED = '#B42318', AMBER = '#B45309', MUTED = '#6B6455', GOLD = '#C9A84C';
 
 const shortName = (n: string) => n.replace(/^\s*Bánh\s+/i, '').trim();
 const isLow = (s: StockLevel) => s.found && s.threshold != null && s.qty < s.threshold;
@@ -52,7 +52,7 @@ export default function LabStockPanel({ stock, lang, userName, onThresholdSaved 
     const t = Math.min(100, (s.threshold / max) * 100);
     return (
       <div className="relative h-1.5 rounded-full" style={{ background: '#F3EFDD' }}>
-        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${w}%`, background: isLow(s) ? RED : '#2D6A4F' }} />
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${w}%`, background: isLow(s) ? RED : '#572C1A' }} />
         <div className="absolute -top-0.5 -bottom-0.5 w-0.5 rounded" style={{ left: `${t}%`, background: GOLD }} />
       </div>
     );
@@ -66,7 +66,7 @@ export default function LabStockPanel({ stock, lang, userName, onThresholdSaved 
         <input type="number" inputMode="numeric" value={draft} onChange={e => setDraft(e.target.value)} autoFocus
           className="w-14 text-center rounded-md px-1 py-0.5 text-[12px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ border: '1px solid #D1D5DB' }} />
         <button onClick={() => save(s.sku)} disabled={saving} className="text-[10px] font-bold px-2 py-0.5 rounded-full disabled:opacity-50"
-          style={{ backgroundColor: DARK, color: '#FFF4CC' }}>OK</button>
+          style={{ backgroundColor: DARK, color: '#F6F1EA' }}>OK</button>
       </span>
     );
     return (
@@ -80,17 +80,17 @@ export default function LabStockPanel({ stock, lang, userName, onThresholdSaved 
   const qtyColor = (s: StockLevel) => !s.found ? AMBER : s.qty < 0 ? AMBER : isLow(s) ? RED : DARK;
 
   return (
-    <div className="rounded-2xl bg-white p-4 space-y-3" style={{ border: '1px solid #E0D49A' }}>
+    <div className="rounded-2xl bg-white p-4 space-y-3" style={{ border: '1px solid #E6DCCF' }}>
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-bold text-xs" style={{ color: DARK }}>{vi ? 'Tồn kho Lab' : 'Lab stock'}</div>
           <div className="text-[10px] mt-0.5" style={{ color: MUTED }}>{vi ? 'Trực tiếp từ Odoo (kho LAB)' : 'Live from Odoo (LAB warehouse)'}</div>
         </div>
         <div className="flex gap-1.5 flex-wrap justify-end">
-          <span className="text-[10.5px] font-bold rounded-full px-2 py-0.5" style={{ background: low.length ? '#FEF2F2' : '#EAF5EE', color: low.length ? RED : '#2D6A4F' }}>
+          <span className="text-[10.5px] font-bold rounded-full px-2 py-0.5" style={{ background: low.length ? '#FEF2F2' : '#EAF5EE', color: low.length ? RED : '#572C1A' }}>
             {low.length} {vi ? 'cần SX' : 'to produce'}
           </span>
-          <span className="text-[10.5px] font-bold rounded-full px-2 py-0.5" style={{ background: '#EAF5EE', color: '#2D6A4F' }}>{okCount} OK</span>
+          <span className="text-[10.5px] font-bold rounded-full px-2 py-0.5" style={{ background: '#EAF5EE', color: '#572C1A' }}>{okCount} OK</span>
           {noThreshold > 0 && <span className="text-[10.5px] rounded-full px-2 py-0.5" style={{ background: '#F5F3EA', color: MUTED }}>{noThreshold} {vi ? 'chưa ngưỡng' : 'no min'}</span>}
         </div>
       </div>
@@ -122,9 +122,9 @@ export default function LabStockPanel({ stock, lang, userName, onThresholdSaved 
 
       <div className="flex gap-2 items-center">
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder={vi ? 'Tìm sản phẩm…' : 'Search a product…'}
-          className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-[12.5px]" style={{ border: '1px solid #E0D49A', background: '#FFFCF3' }} />
+          className="flex-1 min-w-0 rounded-lg px-3 py-1.5 text-[12.5px]" style={{ border: '1px solid #E6DCCF', background: '#FFFCF3' }} />
         <button onClick={() => setAlertsOnly(v => !v)} className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-bold"
-          style={alertsOnly ? { background: RED, color: '#FFFFFF' } : { background: '#FFFFFF', color: MUTED, border: '1px solid #E0D49A' }}>
+          style={alertsOnly ? { background: RED, color: '#FFFFFF' } : { background: '#FFFFFF', color: MUTED, border: '1px solid #E6DCCF' }}>
           {vi ? 'Chỉ cảnh báo' : 'Alerts only'}
         </button>
       </div>

@@ -19,7 +19,7 @@ import { LEFT_OUT_REASONS, FREE_UNITS, lineTotal, unitAlert, type RoomCountState
 import { getRoomCountAction, openRoomCountAction, saveRoomEntryAction, deleteRoomEntryAction, setLeftOutReasonAction, confirmRoomCountAction, saveFreeItemAction, deleteFreeItemAction, searchCountCatalogAction, type EntryInput } from './room-count-actions';
 import { uploadRawPhotoAction } from './raw-actions';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647', OKBG = '#EAF6EC';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647', OKBG = '#EAF6EC';
 type Unit = { label: string; factor: number };   // factor = catalogue units in one typed unit
 type Draft = { tmplId: number; txt: string; unit: number; mode: 'add' | 'correct' };
 type Queued = EntryInput & { name: string };
@@ -237,7 +237,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           {warn && <div className="rounded-xl px-3 py-2 text-[12px] font-semibold flex gap-1.5" style={{ backgroundColor: '#FBEAE8', color: LATE }}><AlertTriangle size={14} className="flex-none mt-0.5" />
             {L(`Cao hơn nhiều so với lượng team lấy 14 ngày qua (${fmtQty(dLine.takenRecent ?? 0)} ${dLine.uom}). Kiểm tra lại đơn vị?`,
               `Much higher than what the team took in the last 14 days (${fmtQty(dLine.takenRecent ?? 0)} ${dLine.uom}). Check the unit?`)}</div>}
-          {dup && <div className="rounded-xl p-2.5 space-y-2 text-[12.5px]" style={{ backgroundColor: '#FFF4CC', border: `1.5px solid ${GOLD}` }}>
+          {dup && <div className="rounded-xl p-2.5 space-y-2 text-[12.5px]" style={{ backgroundColor: '#F6F1EA', border: `1.5px solid ${GOLD}` }}>
             <b style={{ color: GOLD_TEXT }}>{L('Bạn vừa lưu đúng số lượng này. Trùng?', 'You just saved this same quantity. Duplicate?')}</b>
             <div className="grid grid-cols-2 gap-2">
               <button onClick={() => { setDup(null); setDraft(null); }} className="rounded-lg py-2 font-bold" style={{ border: `1px solid ${BORDER}` }}>{L('Trùng, bỏ qua', 'Duplicate, skip')}</button>
@@ -279,7 +279,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           {recentNames.length ? `${L('Đang đếm', 'Counting')}: ${recentNames.join(', ')}` : L('Cập nhật trực tiếp', 'Live updates')}</div>
       </div>
 
-      {offline && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: '#FFF4CC', color: GOLD_TEXT }}>
+      {offline && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: '#F6F1EA', color: GOLD_TEXT }}>
         <AlertCircle size={14} /> {L(`Mất kết nối — ${queue.length} lượt đang chờ gửi, đã lưu trên máy.`, `Connection lost — ${queue.length} entries waiting, kept on this phone.`)}</div>}
       {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>
         <span className="flex-1">{err}</span><button onClick={() => setErr(null)}><X size={14} /></button></div>}

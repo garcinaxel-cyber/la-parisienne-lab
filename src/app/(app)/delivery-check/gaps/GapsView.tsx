@@ -101,7 +101,7 @@ function InBox({ data, vi, busy, onValidate, canSend }: { data: { result: InVali
           <div className="font-semibold" style={{ color: '#6B7280' }}>{vi ? 'Chỉ Lab manager / admin xác nhận trên Odoo.' : 'Only the Lab manager / an admin validates in Odoo.'}</div>
         ) : data.complete ? (
           <button onClick={onValidate} disabled={busy}
-            className="mt-1 text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+            className="mt-1 text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
             {vi ? 'Xác nhận nhập kho trên Odoo' : 'Validate the receipt in Odoo'}
           </button>
         ) : (
@@ -151,7 +151,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
         {st.lines.map(l => (
           <div key={l.key} className="flex justify-between gap-2">
             <span className="truncate">{l.product} · {l.kind === 'extra' ? '+' : '−'}{l.qty}{l.kind === 'damaged' ? (vi ? ' hỏng' : ' damaged') : ''}{l.photoUrls.length ? ' 📷' : ''}</span>
-            <span className="shrink-0 font-semibold" style={{ color: l.sent ? '#15803D' : l.status === 'closed' ? '#1A4731' : '#B45309' }}>
+            <span className="shrink-0 font-semibold" style={{ color: l.sent ? '#15803D' : l.status === 'closed' ? '#2A1810' : '#B45309' }}>
               {l.sent ? (vi ? '✓ đã gửi' : '✓ sent') : l.status !== 'closed' ? (vi ? 'chưa xử lý xong' : 'not settled yet') : l.action ? (vi ? ACTION_LABEL[l.action].vi : ACTION_LABEL[l.action].fr) : (vi ? 'không cần Odoo' : 'nothing in Odoo')}
             </span>
           </div>
@@ -159,7 +159,7 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
       </div>
       {msg && <div className="font-semibold" style={{ color: msg.ok ? '#15803D' : '#B42318' }}>{msg.text}</div>}
       {st.odooRefs.length > 0 && (
-        <div className="rounded-lg px-2.5 py-2 space-y-0.5" style={{ backgroundColor: '#EAF2ED', color: '#1A4731' }}>
+        <div className="rounded-lg px-2.5 py-2 space-y-0.5" style={{ backgroundColor: '#EAF2ED', color: '#2A1810' }}>
           <div className="font-bold">{vi ? 'Phiếu trên Odoo' : 'Odoo documents'}</div>
           {st.odooRefs.map(r => (
             <div key={r.at}>
@@ -172,19 +172,19 @@ function SendBox({ deliveryOrderId, vi, onDone, canSend }: { deliveryOrderId: st
       {st.sent ? (
         <div className="font-semibold" style={{ color: '#15803D' }}>{vi ? '✓ Đã gửi Odoo.' : '✓ Sent to Odoo.'}</div>
       ) : !canSend ? (
-        <div className="font-semibold" style={{ color: st.ready ? '#1A4731' : '#6B7280' }}>
+        <div className="font-semibold" style={{ color: st.ready ? '#2A1810' : '#6B7280' }}>
           {st.ready ? (vi ? '✓ Đã xử lý xong — chờ Lab manager / admin gửi Odoo.' : '✓ All settled — waiting for the Lab manager / an admin to send to Odoo.')
                     : (vi ? 'Lab manager / admin gửi Odoo khi mọi dòng đã xử lý.' : 'The Lab manager / an admin sends to Odoo once every line is settled.')}
         </div>
       ) : confirming ? (
         <div className="flex gap-2 items-center">
           <span className="font-semibold">{vi ? 'Gửi tất cả các dòng lên Odoo?' : 'Send all lines to Odoo?'}</span>
-          <button onClick={send} disabled={busy} className="font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#1A4731' }}>{busy ? '…' : (vi ? 'Gửi' : 'Send')}</button>
+          <button onClick={send} disabled={busy} className="font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#2A1810' }}>{busy ? '…' : (vi ? 'Gửi' : 'Send')}</button>
           <button onClick={() => setConfirming(false)} className="font-semibold underline">{vi ? 'Huỷ' : 'Cancel'}</button>
         </div>
       ) : (
         <button onClick={() => setConfirming(true)} disabled={!st.ready || busy}
-          className="text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+          className="text-sm font-bold rounded-lg px-4 py-2 text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
           {vi ? 'Gửi Odoo xác nhận cuối' : 'Send to Odoo (final validation)'}
         </button>
       )}
@@ -366,8 +366,8 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
             </legend>
             {CAUSES[g.kind].map(c => (
               <label key={c.key} className="flex items-center gap-3 rounded-lg px-3.5 py-2.5 cursor-pointer"
-                style={{ border: cause === c.key ? '1.5px solid #1A4731' : '1px solid #E5E7EB', backgroundColor: cause === c.key ? '#EAF2ED' : 'white' }}>
-                <input type="radio" name="cause" checked={cause === c.key} onChange={() => setCause(c.key)} style={{ accentColor: '#1A4731' }} />
+                style={{ border: cause === c.key ? '1.5px solid #2A1810' : '1px solid #E5E7EB', backgroundColor: cause === c.key ? '#EAF2ED' : 'white' }}>
+                <input type="radio" name="cause" checked={cause === c.key} onChange={() => setCause(c.key)} style={{ accentColor: '#2A1810' }} />
                 <span className="flex-1 text-sm font-semibold">{vi ? c.vi : c.fr}</span>
                 <span className="text-xs text-gray-500">{g.sourceType === 'sales_order' && SO_EFFECT[c.key] ? (vi ? SO_EFFECT[c.key]!.vi : SO_EFFECT[c.key]!.fr) : (vi ? c.effVi : c.effFr)}</span>
               </label>
@@ -408,7 +408,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
         )}
         {(g.status === 'open' || editing) && (
           <button onClick={submit} disabled={!cause || busy}
-            className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#1A4731' }}>
+            className="text-sm font-bold rounded-lg px-6 py-3 text-white disabled:opacity-40 flex items-center gap-2" style={{ backgroundColor: '#2A1810' }}>
             {busy && <Loader2 size={14} className="animate-spin" />}{vi ? 'Xác nhận nguyên nhân' : 'Confirm the cause'}
           </button>
         )}
@@ -418,7 +418,7 @@ export default function GapsView({ initialGaps, schemaReady, odooMode, canSendOd
 
   const pill = (v: View, label: string) => (
     <button type="button" onClick={() => { setView(v); pick(null); }} className="px-4 py-2 rounded-full text-sm font-semibold"
-      style={view === v ? { backgroundColor: '#1A4731', color: '#FFFFFF' } : { color: '#374151' }}>{label}</button>
+      style={view === v ? { backgroundColor: '#2A1810', color: '#FFFFFF' } : { color: '#374151' }}>{label}</button>
   );
   const sel = 'h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm';
 

@@ -33,14 +33,14 @@ import ReportTab from './ReportTab';
 
 // Exported — OrderTab.tsx (the manager's own dedicated Order screen, 2026-09-10) shares this
 // exact palette so it visually matches Today/Team instead of redefining its own colors.
-export const NAVY = '#1A4731';
+export const NAVY = '#2A1810';
 export const GOLD = '#C9A84C';
-export const CREAM = '#FFF4CC';
-const CREAM_DARK = '#F5E89A';
-export const INK = '#1A2C24';
+export const CREAM = '#F6F1EA';
+const CREAM_DARK = '#EADFD0';
+export const INK = '#2E1B12';
 export const INK_LIGHT = '#6B7280';
-export const BORDER = '#E0D49A';
-const TABBAR = '#163D29';
+export const BORDER = '#E6DCCF';
+const TABBAR = '#1F120C';
 export const GREEN = '#15803D';
 export const AMBER = '#B45309';
 export const RED = '#B42318';
@@ -202,13 +202,13 @@ export default function ShopManagerView({ managerName, color, shops }: { manager
           <div className="flex-1 min-w-0">
             {stage === 'shop' ? (
               <button onClick={() => setShopPicker(v => !v)} className="flex items-center gap-1 min-w-0">
-                <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FFFAEE' }}>{activeShop || '—'}</h1>
+                <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FBF7F0' }}>{activeShop || '—'}</h1>
                 <ChevronDown size={14} style={{ color: GOLD }} className="shrink-0" />
               </button>
             ) : (
-              <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FFFAEE' }}>{tr('navShops')}</h1>
+              <h1 className="font-serif text-base font-bold truncate" style={{ color: '#FBF7F0' }}>{tr('navShops')}</h1>
             )}
-            <div className="text-[11px]" style={{ color: '#F0D98A' }}>
+            <div className="text-[11px]" style={{ color: '#E9D3A4' }}>
               {managerName} · {fmtShopsCount(shops.length, lang)}
             </div>
           </div>

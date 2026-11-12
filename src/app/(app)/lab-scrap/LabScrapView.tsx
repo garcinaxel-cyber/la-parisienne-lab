@@ -261,7 +261,7 @@ export default function LabScrapView({ reporterName }: { reporterName: string })
                   <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={l.source === 'delivery_check' ? { backgroundColor: '#FFF4D6', color: '#8A5A00' } : { backgroundColor: '#F3F4F6', color: '#4B5563' }}>
                     {l.source === 'delivery_check' ? `${vi ? 'Kiểm giao hàng' : 'Delivery check'}${l.orderRef ? ` · ${l.orderRef}` : ''}` : (vi ? 'Báo tại tab này' : 'This tab')}
                   </span>
-                  {l.photoUrl && <button onClick={() => setZoomImage(l.photoUrl!)} className="text-[10px] font-bold underline" style={{ color: '#1A4731' }}>📷 {vi ? 'Ảnh' : 'Photo'}</button>}
+                  {l.photoUrl && <button onClick={() => setZoomImage(l.photoUrl!)} className="text-[10px] font-bold underline" style={{ color: '#2A1810' }}>📷 {vi ? 'Ảnh' : 'Photo'}</button>}
                 </div>
                 <div className="text-[11px] mt-1" style={{ color: '#9CA3AF' }}>{l.reportedByName} · {new Date(l.reportedAt).toLocaleString(vi ? 'vi-VN' : 'en-GB')}</div>
               </div>

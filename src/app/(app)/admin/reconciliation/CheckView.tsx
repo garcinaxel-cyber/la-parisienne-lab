@@ -231,7 +231,7 @@ export default function CheckView({ runs, heartbeat }: { runs: Run[]; heartbeat:
                     {t.label}
                     <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
                       style={t.n === 0 ? { backgroundColor: '#ECFDF5', color: '#047857' }
-                        : tab === t.id ? { backgroundColor: '#C9A84C', color: '#1A4731' }
+                        : tab === t.id ? { backgroundColor: '#C9A84C', color: '#2A1810' }
                         : { backgroundColor: '#FDF2F2', color: '#B42318' }}>
                       {t.n === 0 ? '✓' : t.n}
                     </span>

@@ -5,7 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { TEAM_SHORT, fmtQty, vnDayTime } from '@/lib/raw-materials';
 import { getRawReportAction, getOffRecipeLinesAction, type RawReport, type ReportRow, type OffRecipeLine } from './actions';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF';
 const OVER = '#C08A12', UNDER = '#1E7D55';
 const TEAMS = ['hung', 'entremet', 'baby_mama', 'baker'];
 

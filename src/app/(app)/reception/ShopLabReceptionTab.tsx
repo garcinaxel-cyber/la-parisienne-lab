@@ -151,7 +151,7 @@ function TransfersReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (
                     {items.map(t => {
                       const diff = hasDiff(t);
                       return (
-                        <div key={t.id} className="rounded-xl p-3 space-y-2" style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A' }}>
+                        <div key={t.id} className="rounded-xl p-3 space-y-2" style={{ backgroundColor: '#FBF7F0', border: '1px solid #E6DCCF' }}>
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <div className="text-sm font-bold text-navy">{t.ref}</div>
                             <div className="text-xs text-gray-500">
@@ -172,10 +172,10 @@ function TransfersReception({ vi, setZoomImage }: { vi: boolean; setZoomImage: (
                                   ) : <div className="shrink-0 w-8 h-8 rounded" style={{ backgroundColor: '#F3E8C8' }} />}
                                   <span className="text-sm flex-1 min-w-0 truncate">{l.name} <span className="text-xs text-gray-400">· {vi ? 'gửi' : 'envoyé'} {l.qtySent}</span></span>
                                   <div className="flex items-center gap-1 shrink-0">
-                                    <button onClick={() => setQty(t, l.sku, String(Math.max(0, (Math.floor(Number(v) || 0)) - 1)))} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #E0D49A' }}><Minus size={11} /></button>
+                                    <button onClick={() => setQty(t, l.sku, String(Math.max(0, (Math.floor(Number(v) || 0)) - 1)))} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #E6DCCF' }}><Minus size={11} /></button>
                                     <input type="number" value={v} min={0} onChange={e => setQty(t, l.sku, e.target.value)}
-                                      className="w-12 text-center rounded-lg py-1 text-sm font-bold" style={{ border: '1px solid', borderColor: lineDiff ? '#F87171' : '#E0D49A' }} />
-                                    <button onClick={() => setQty(t, l.sku, String((Math.floor(Number(v) || 0)) + 1))} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #E0D49A' }}><Plus size={11} /></button>
+                                      className="w-12 text-center rounded-lg py-1 text-sm font-bold" style={{ border: '1px solid', borderColor: lineDiff ? '#F87171' : '#E6DCCF' }} />
+                                    <button onClick={() => setQty(t, l.sku, String((Math.floor(Number(v) || 0)) + 1))} className="w-6 h-6 rounded-md flex items-center justify-center" style={{ border: '1px solid #E6DCCF' }}><Plus size={11} /></button>
                                   </div>
                                 </div>
                               );

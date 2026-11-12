@@ -199,12 +199,12 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                         ? 'Gửi liên kết này cho họ qua Zalo để đặt mật khẩu:'
                         : 'Send them this link via Zalo to set their password:'}
                     </p>
-                    <div className="rounded-xl border px-3 py-2 text-[11px] font-mono break-all bg-cream/50" style={{ borderColor: '#E0D49A' }}>
+                    <div className="rounded-xl border px-3 py-2 text-[11px] font-mono break-all bg-cream/50" style={{ borderColor: '#E6DCCF' }}>
                       {inviteLink}
                     </div>
                     <button onClick={copyInviteLink}
                       className="w-full py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2"
-                      style={{ backgroundColor: inviteLinkCopied ? '#16A34A' : '#1A4731' }}>
+                      style={{ backgroundColor: inviteLinkCopied ? '#16A34A' : '#2A1810' }}>
                       <KeyRound size={15} />
                       {inviteLinkCopied
                         ? (lang === 'vi' ? '✓ Đã sao chép' : '✓ Copied')
@@ -382,7 +382,7 @@ export default function UsersView({ users }: { users: UserRow[] }) {
                       className="p-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors"
                       style={linkCopied === user.id
                         ? { borderColor: '#16A34A', color: '#16A34A', backgroundColor: '#F0FDF4' }
-                        : { borderColor: '#E0D49A', color: '#92600A' }}
+                        : { borderColor: '#E6DCCF', color: '#92600A' }}
                     >
                       <KeyRound size={12} />
                       {linkFor === user.id ? '…' : linkCopied === user.id ? '✓' : null}

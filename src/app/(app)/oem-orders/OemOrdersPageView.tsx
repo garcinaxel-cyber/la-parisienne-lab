@@ -10,7 +10,7 @@ export default function OemOrdersPageView(props: { role: string; userId: string 
     <div className="space-y-5">
       <div>
         <h1 className="font-serif text-2xl sm:text-3xl font-bold text-navy flex items-center gap-2">
-          <Factory size={26} style={{ color: '#1A4731' }} /> {vi ? 'Đơn hàng OEM' : 'OEM Orders'}
+          <Factory size={26} style={{ color: '#2A1810' }} /> {vi ? 'Đơn hàng OEM' : 'OEM Orders'}
         </h1>
         <p className="text-ink-light text-sm mt-0.5">
           {vi ? 'Theo dõi đơn Maison Mooncake và Tianhe Food — tách biệt hoàn toàn với sản xuất cửa hàng.'

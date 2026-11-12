@@ -16,7 +16,7 @@ type Session = {
 type Count = NonNullable<Awaited<ReturnType<typeof listCountsAction>>['counts']>[number];
 type Hist = { key: string; kind: 'finished' | 'raw' | 'packaging'; date: string; who: string; status: 'draft' | 'ok' | 'error'; href: string; at: string };
 
-const NAVY = '#1A4731', GOLD_TEXT = '#8A6D14', BORDER = '#E0D49A';
+const NAVY = '#2A1810', GOLD_TEXT = '#8A6D14', BORDER = '#E6DCCF';
 function todayISO() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }); }
 
 // Each role sees its own part (Axel, 2026-11-11): storage the raw materials; assistants the
@@ -100,7 +100,7 @@ export default function InventoryIndexView({ sessions, kinds, finished }: { sess
       {missing != null && missing.raw + missing.packaging > 0 && (
         <button onClick={() => router.push('/inventory/photos')} className="w-full rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 text-left" style={{ backgroundColor: '#FBF3DD', border: '1px solid #E8C979' }}>
           <Camera size={17} color={GOLD_TEXT} className="flex-none" />
-          <span className="flex-1 text-[13px]" style={{ color: '#1A2C24' }}>{L('Chưa có ảnh', 'Sans photo')} : {[kinds.includes('raw') ? <span key="r"><b>{missing.raw}</b> {L('nguyên liệu', 'matières')}</span> : null, kinds.includes('packaging') ? <span key="p"><b>{missing.packaging}</b> {L('bao bì', 'packaging')}</span> : null].filter(Boolean).reduce((acc: any[], el, k) => (k ? [...acc, ' · ', el] : [el]), [])} <span className="text-ink-light">— {L('chụp trước kiểm kê', 'à prendre avant l\'inventaire')}</span></span>
+          <span className="flex-1 text-[13px]" style={{ color: '#2E1B12' }}>{L('Chưa có ảnh', 'Sans photo')} : {[kinds.includes('raw') ? <span key="r"><b>{missing.raw}</b> {L('nguyên liệu', 'matières')}</span> : null, kinds.includes('packaging') ? <span key="p"><b>{missing.packaging}</b> {L('bao bì', 'packaging')}</span> : null].filter(Boolean).reduce((acc: any[], el, k) => (k ? [...acc, ' · ', el] : [el]), [])} <span className="text-ink-light">— {L('chụp trước kiểm kê', 'à prendre avant l\'inventaire')}</span></span>
           <ChevronRight size={16} color={GOLD_TEXT} />
         </button>
       )}

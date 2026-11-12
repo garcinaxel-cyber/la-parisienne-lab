@@ -319,12 +319,12 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
           {categories.length > 1 && (
             <div className="flex gap-1.5 overflow-x-auto pb-0.5">
               <button onClick={() => setCategoryFilter(null)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
-                backgroundColor: categoryFilter === null ? NAVY : '#fff', color: categoryFilter === null ? '#FFFAEE' : INK,
+                backgroundColor: categoryFilter === null ? NAVY : '#fff', color: categoryFilter === null ? '#FBF7F0' : INK,
                 border: categoryFilter === null ? 'none' : `1px solid ${BORDER}`,
               }}>{L('Tất cả', 'All')}</button>
               {categories.map(c => (
                 <button key={c} onClick={() => setCategoryFilter(c === categoryFilter ? null : c)} className="flex-shrink-0 text-[11px] font-bold rounded-full px-3 py-1.5" style={{
-                  backgroundColor: categoryFilter === c ? NAVY : '#fff', color: categoryFilter === c ? '#FFFAEE' : INK,
+                  backgroundColor: categoryFilter === c ? NAVY : '#fff', color: categoryFilter === c ? '#FBF7F0' : INK,
                   border: categoryFilter === c ? 'none' : `1px solid ${BORDER}`,
                 }}>{c}</button>
               ))}
@@ -441,22 +441,22 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
       )}
 
       {cartCount > 0 && paymentStep === 'idle' && (
-        <div className="fixed left-0 right-0 bottom-0 !mt-0 px-4 pt-3 flex items-center justify-between gap-3" style={{ backgroundColor: '#1A4731', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+        <div className="fixed left-0 right-0 bottom-0 !mt-0 px-4 pt-3 flex items-center justify-between gap-3" style={{ backgroundColor: '#2A1810', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <div className="max-w-xl mx-auto w-full flex items-center justify-between gap-3">
             <div>
-              <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#F0D98A' }}>
+              <div className="text-[9.5px] uppercase tracking-wide font-bold" style={{ color: '#E9D3A4' }}>
                 {L('Tổng đơn', 'Sale total')}{freeCount > 0 ? ` · ${freeCount} ${L('miễn phí', 'free')}` : ''}{discountSaved > 0 ? ` · ${L('giảm', 'off')} ${fmt(discountSaved)}` : ''}
               </div>
               {promoHints.length > 0 && (
-                <div className="text-[10.5px] font-bold" style={{ color: '#F0D98A' }}>
+                <div className="text-[10.5px] font-bold" style={{ color: '#E9D3A4' }}>
                   🎁 {L('Được tặng thêm 1', '1 more free')}: {promoHints.map(g => L(g.shortVi, g.shortEn)).join(', ')}
                 </div>
               )}
-              <div className="text-base font-extrabold tabular-nums" style={{ color: '#FFFAEE' }}>{fmt(total)}</div>
+              <div className="text-base font-extrabold tabular-nums" style={{ color: '#FBF7F0' }}>{fmt(total)}</div>
             </div>
             <button onClick={() => setPaymentStep('choosing')}
               className="inline-flex items-center gap-1.5 text-sm font-extrabold rounded-xl px-4 py-2.5 whitespace-nowrap flex-shrink-0"
-              style={{ backgroundColor: '#C9A84C', color: '#1A4731' }}>
+              style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}>
               <CheckCircle2 size={14} />
               {L('Xác nhận bán', 'Confirm the sale')}
             </button>
@@ -468,7 +468,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
           transfert afficher le QR code". Full-screen sheet over the cart, same fixed-bottom-bar
           pattern as above. */}
       {paymentStep === 'choosing' && (
-        <div className="fixed inset-0 !mt-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(26,71,49,0.55)' }} onClick={() => setPaymentStep('idle')}>
+        <div className="fixed inset-0 !mt-0 z-10 flex flex-col justify-end" style={{ backgroundColor: 'rgba(42,24,16,0.55)' }} onClick={() => setPaymentStep('idle')}>
           <div className="bg-white rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-center">
               <div className="text-[10.5px] uppercase tracking-wide font-bold" style={{ color: '#9CA3AF' }}>{L('Tổng thanh toán', 'Total to pay')}</div>
@@ -476,7 +476,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
             </div>
             <button onClick={() => confirmSale('cash')} disabled={submitting}
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3 disabled:opacity-60"
-              style={{ backgroundColor: '#1A4731', color: '#FFFAEE' }}>
+              style={{ backgroundColor: '#2A1810', color: '#FBF7F0' }}>
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Banknote size={16} />}
               {L('Tiền mặt', 'Cash')}
             </button>
@@ -520,7 +520,7 @@ export default function EventCaisseTab({ staffNames = null, onManageStaff }: { s
           <div className="px-4 py-3 flex-shrink-0" style={{ borderTop: `1px solid ${BORDER}` }}>
             <button onClick={() => confirmSale('transfer')} disabled={submitting}
               className="w-full flex items-center justify-center gap-2 text-sm font-extrabold rounded-xl py-3 disabled:opacity-60"
-              style={{ backgroundColor: '#1A4731', color: '#FFFAEE' }}>
+              style={{ backgroundColor: '#2A1810', color: '#FBF7F0' }}>
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
               {L('Đã chuyển khoản — Xác nhận', 'Transfer received — Confirm')}
             </button>

@@ -26,13 +26,13 @@ export const STOCK_NAME_STORAGE_KEY = 'lab_shop_stock_name';
 // same values as the already-rebranded surfaces (src/app/shop-manager/ShopManagerView.tsx,
 // src/app/online-orders/shared.ts). Exported so ShopTransfersTab.tsx/EventCaisseTab.tsx (which
 // already import NamePicker from here) share the exact same palette instead of redefining it.
-export const NAVY = '#1A4731';
+export const NAVY = '#2A1810';
 export const GOLD = '#C9A84C';
-export const GOLD_LIGHT = '#F0D98A';
-export const GOLD_PALE = '#FFFAEE';
-export const CREAM = '#FFF4CC';
-export const INK = '#1A2C24';
-export const BORDER = '#E0D49A';
+export const GOLD_LIGHT = '#E9D3A4';
+export const GOLD_PALE = '#FBF7F0';
+export const CREAM = '#F6F1EA';
+export const INK = '#2E1B12';
+export const BORDER = '#E6DCCF';
 export const GREEN = '#15803D';
 export const RED = '#B42318';
 
@@ -2284,7 +2284,7 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                       <button key={m} onClick={() => { if (m !== reportMonth) loadReport(m); }} disabled={reportLoading}
                         className="flex-1 rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-60"
                         style={m === reportMonth
-                          ? { backgroundColor: NAVY, color: '#FFFAEE' }
+                          ? { backgroundColor: NAVY, color: '#FBF7F0' }
                           : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
                         {fmtReportMonth(m, lang)}
                       </button>
@@ -2790,9 +2790,9 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
                                   placeholder={l.noWish ? '—' : L('vd. Happy Birthday Minh Anh', 'e.g. Happy Birthday Minh Anh')}
                                   className="bg-transparent text-sm font-semibold outline-none" />
                               </label>
-                              <label className="flex items-center gap-2 text-xs" style={{ color: l.noWish ? '#1A4731' : '#6B7280', fontWeight: l.noWish ? 600 : 400 }}>
+                              <label className="flex items-center gap-2 text-xs" style={{ color: l.noWish ? '#2A1810' : '#6B7280', fontWeight: l.noWish ? 600 : 400 }}>
                                 <input type="checkbox" checked={!!l.noWish} onChange={e => updateOrderWish(l.sku, { noWish: e.target.checked })}
-                                  className="w-4 h-4" style={{ accentColor: '#1A4731' }} />
+                                  className="w-4 h-4" style={{ accentColor: '#2A1810' }} />
                                 {L('Không có lời chúc (bánh bày tủ)', 'No message (display cake)')}
                               </label>
                             </div>
@@ -3242,11 +3242,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
 
       {showPinModal && (
         <div className="fixed inset-0 flex items-center justify-center px-5 z-30" style={{ backgroundColor: 'rgba(20,17,10,0.5)' }}>
-          <div className="relative w-full max-w-[280px] rounded-2xl p-5 text-center" style={{ backgroundColor: '#FFF4CC' }}>
+          <div className="relative w-full max-w-[280px] rounded-2xl p-5 text-center" style={{ backgroundColor: '#F6F1EA' }}>
             <button onClick={() => setShowPinModal(false)} className="absolute top-2.5 right-3" aria-label={L('Đóng', 'Close')}>
               <X size={16} style={{ color: '#6B7280' }} />
             </button>
-            <div className="text-sm font-bold" style={{ color: '#1A4731' }}>{L('Vào event', 'Enter the event')}</div>
+            <div className="text-sm font-bold" style={{ color: '#2A1810' }}>{L('Vào event', 'Enter the event')}</div>
             <p className="text-xs mt-1" style={{ color: '#6B7280' }}>{L('Nhập mã PIN của event', 'Enter the event PIN')}</p>
             <input
               value={pinInput}
@@ -3254,11 +3254,11 @@ export default function ShopView({ shopName, readOnly = false, initialTab = 'del
               onKeyDown={e => { if (e.key === 'Enter' && pinInput) submitPin(); }}
               type="tel" inputMode="numeric" autoFocus placeholder="••••"
               className="w-full text-center text-2xl font-bold tracking-[0.3em] rounded-xl px-3 py-2.5 mt-3"
-              style={{ border: '1px solid #E0D49A', backgroundColor: '#FFFAEE', color: '#1A2C24' }} />
+              style={{ border: '1px solid #E6DCCF', backgroundColor: '#FBF7F0', color: '#2E1B12' }} />
             {pinError && <div className="text-xs font-semibold mt-2" style={{ color: RED }}>{pinError}</div>}
             <button onClick={submitPin} disabled={pinSubmitting || !pinInput}
               className="w-full text-sm font-bold rounded-xl px-3 py-2.5 mt-3 text-white disabled:opacity-50"
-              style={{ backgroundColor: '#1A4731' }}>
+              style={{ backgroundColor: '#2A1810' }}>
               {pinSubmitting ? <Loader2 size={14} className="animate-spin inline" /> : L('Xác nhận', 'Confirm')}
             </button>
           </div>

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, Loader2, Package, Plus, RotateCcw, X } from 'lucide-react';
 import type { StockProduct } from './actions';
 
-const GREEN = '#1A4731', GOLD = '#92600A', BORDER = '#E0D49A', RED = '#DC2626', AMBER = '#D97706';
+const GREEN = '#2A1810', GOLD = '#92600A', BORDER = '#E6DCCF', RED = '#DC2626', AMBER = '#D97706';
 
 export type TodayExtra = { id: string; name: string; qty: number; transferred: boolean };
 
@@ -90,12 +90,12 @@ export default function StockProductionPanel({
           {lowOpen && low.map(p => {
             const pct = Math.max(4, Math.min(100, (p.stock! / p.threshold!) * 100));
             return (
-              <div key={p.sku} className="px-3 py-2" style={{ borderTop: '1px solid #F0EAD0' }}>
+              <div key={p.sku} className="px-3 py-2" style={{ borderTop: '1px solid #EFE6D8' }}>
                 <div className="flex justify-between text-[13px] font-bold" style={{ color: GREEN }}>
                   <span className="truncate pr-2">{name(p)}</span>
                   <span className="shrink-0 text-[12px]" style={{ color: '#6B6455' }}>{Math.round(p.stock!)} / {L('an toàn', 'safety')} {Math.round(p.threshold!)}</span>
                 </div>
-                <div className="h-1.5 rounded-full mt-1.5" style={{ backgroundColor: '#F0EAD0' }}>
+                <div className="h-1.5 rounded-full mt-1.5" style={{ backgroundColor: '#EFE6D8' }}>
                   <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, backgroundColor: pct < 50 ? RED : AMBER }} />
                 </div>
               </div>
@@ -127,8 +127,8 @@ export default function StockProductionPanel({
             return (
               <div key={p.sku} className="rounded-2xl bg-white p-2 flex flex-col gap-1" style={{ border: `1px solid ${BORDER}` }}>
                 {p.imageUrl
-                  ? <img src={p.imageUrl} alt="" loading="lazy" className="w-full h-20 rounded-xl object-cover" style={{ backgroundColor: '#FFF4CC' }} />
-                  : <div className="w-full h-20 rounded-xl flex items-center justify-center text-2xl" style={{ backgroundColor: '#FFF4CC' }}>🍪</div>}
+                  ? <img src={p.imageUrl} alt="" loading="lazy" className="w-full h-20 rounded-xl object-cover" style={{ backgroundColor: '#F6F1EA' }} />
+                  : <div className="w-full h-20 rounded-xl flex items-center justify-center text-2xl" style={{ backgroundColor: '#F6F1EA' }}>🍪</div>}
                 <div className="text-[12.5px] font-bold leading-tight" style={{ color: GREEN }}>{name(p)}</div>
                 <div className="text-[11px] font-semibold" style={{ color: isLow ? RED : '#6B6455' }}>
                   {L('Tồn', 'Stock')} {p.stock == null ? '—' : Math.round(p.stock)}{isLow ? ` · ${L('thấp', 'low')}` : ''}
@@ -181,7 +181,7 @@ export default function StockProductionPanel({
             <div className="text-center text-4xl font-black py-1" style={{ color: GREEN }}>{val || '0'}</div>
             <div className="grid grid-cols-3 gap-2">
               {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0'].map(k => (
-                <button key={k} onClick={() => key(k)} className="rounded-xl py-3 text-lg font-bold flex items-center justify-center active:scale-95" style={{ backgroundColor: '#FFF4CC', color: GREEN }}>
+                <button key={k} onClick={() => key(k)} className="rounded-xl py-3 text-lg font-bold flex items-center justify-center active:scale-95" style={{ backgroundColor: '#F6F1EA', color: GREEN }}>
                   {k}
                 </button>
               ))}

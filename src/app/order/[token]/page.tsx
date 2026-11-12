@@ -22,10 +22,10 @@ export default async function ShopOrderPage({ params }: { params: { token: strin
 
   if (!valid) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: '#FFF4CC' }}>
-        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center" style={{ border: '1px solid #E0D49A' }}>
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: '#F6F1EA' }}>
+        <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center" style={{ border: '1px solid #E6DCCF' }}>
           <div className="text-3xl mb-2">🔒</div>
-          <h1 className="font-bold text-lg" style={{ color: '#1A4731' }}>Liên kết không hợp lệ</h1>
+          <h1 className="font-bold text-lg" style={{ color: '#2A1810' }}>Liên kết không hợp lệ</h1>
           <p className="text-sm mt-1" style={{ color: '#6B7280' }}>
             Link đặt hàng đã thay đổi hoặc không đúng. Vui lòng liên hệ Lab để nhận link mới.
           </p>

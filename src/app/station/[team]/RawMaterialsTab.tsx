@@ -20,7 +20,7 @@ import {
 } from './raw-actions';
 import { getItemPhotosAction } from '@/app/item-photo-actions';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF', LATE = '#B42318';
 const NAME_KEY = 'lab_raw_name';
 // u (Axel, 2026-10-21): the unit the chef orders in — -1 = the Odoo unit, else an index in m.packs.
 // qty is always kept in the Odoo unit; the stepper works in the chosen unit.
@@ -320,7 +320,7 @@ export default function RawMaterialsTab({ team, lang, userName, packaging = fals
       </div>
 
       {meta.canApprove && toApprove.length > 0 && !(mode === 'request' && view === 'history') && (
-        <button onClick={() => { setMode('request'); setView('history'); }} className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left" style={{ backgroundColor: '#FFF4CC', border: `1.5px solid ${GOLD}` }}>
+        <button onClick={() => { setMode('request'); setView('history'); }} className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left" style={{ backgroundColor: '#F6F1EA', border: `1.5px solid ${GOLD}` }}>
           <ShieldCheck size={18} style={{ color: GOLD_TEXT }} />
           <span className="flex-1 text-[13px] font-extrabold" style={{ color: GOLD_TEXT }}>{L(`${approveGroups.length} yêu cầu chờ bạn duyệt`, `${approveGroups.length} requests wait for your approval`)}</span>
           <span className="text-[12.5px] font-extrabold" style={{ color: NAVY }}>{L('Xem', 'Open')} ›</span>
@@ -417,7 +417,7 @@ export default function RawMaterialsTab({ team, lang, userName, packaging = fals
                   <div className="text-[10.5px] mt-0.5" style={{ color: '#9CA3AF' }}>{subLabel(m.type, m.sub, lang)} · {m.sku ?? '—'}{mode === 'request' ? ` · ${m.uom}` : ''}</div>
                   )}
                   {packaging && openReq.has(m.tmplId) && (() => { const r = openReq.get(m.tmplId)!; return (
-                    <div className="inline-block mt-1 text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#FFF4CC', color: '#8A5A00', border: '1px solid #F0D98A' }}>
+                    <div className="inline-block mt-1 text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5" style={{ backgroundColor: '#F6F1EA', color: '#8A5A00', border: '1px solid #E9D3A4' }}>
                       {r.status === 'ordered' ? L('Đã đặt hàng', 'Ordered') : L('Đang chờ mua', 'Already requested')} · {fmtQty(r.qty)} {r.uom === 'Unit' ? L('cái', 'pcs') : r.uom} · {r.requestedBy ?? '—'} {vnDayTime(r.createdAt).day}</div>); })()}
                   {takeLike && m.packs.length > 0 && (
                     <div className="flex gap-1 mt-1 flex-wrap">
@@ -520,7 +520,7 @@ export default function RawMaterialsTab({ team, lang, userName, packaging = fals
                     {w.kind === 'transfer'
                       ? <span className="text-[11px] font-extrabold rounded-md px-1.5 py-0.5 flex-none tabular-nums" style={{ backgroundColor: '#8A6D14', color: '#fff' }}>⇄ #{w.no}</span>
                       : <b className="text-[14px] tabular-nums">#{w.no}</b>}
-                    <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{w.kind === 'transfer' && w.fromTeam && w.toTeam ? <b style={{ color: '#1A2C24' }}>{TEAM_SHORT[w.fromTeam]?.[lang] ?? w.fromTeam} → {TEAM_SHORT[w.toTeam]?.[lang] ?? w.toTeam} · </b> : null}{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
+                    <span className="text-[12px] flex-1 min-w-0 truncate" style={{ color: '#6B7280' }}>{w.kind === 'transfer' && w.fromTeam && w.toTeam ? <b style={{ color: '#2E1B12' }}>{TEAM_SHORT[w.fromTeam]?.[lang] ?? w.fromTeam} → {TEAM_SHORT[w.toTeam]?.[lang] ?? w.toTeam} · </b> : null}{vnDayTime(w.createdAt).time} · {w.takenBy ?? '—'} · {w.lines.length} {L('nguyên liệu', w.lines.length > 1 ? 'items' : 'item')}</span>
                     {w.refused ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FBEAE8', color: LATE }}>✕ {tt ? L(`${w.refusedBy ?? vName} từ chối`, `Refused by ${w.refusedBy ?? vName}`) : L('Kho từ chối', 'Refused')}</span>
                       : w.status === 'to_confirm' ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#FFF6E0', color: '#8A5A00' }}>⏳ {tt ? (validator === team ? L('Chờ bạn xác nhận', 'Waiting for you') : L(`Chờ ${vName} xác nhận`, `Waiting for ${vName}`)) : L('Chờ kho xác nhận', 'Waiting for storage')}</span>
                       : corrected ? <span className="text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 flex-none" style={{ backgroundColor: '#F2F4F7', color: '#344054' }}>{L('Kho đã sửa', 'Corrected')}</span>
@@ -662,15 +662,15 @@ export default function RawMaterialsTab({ team, lang, userName, packaging = fals
       {/* Bottom bar */}
       {mode === 'take' && picked.length > 0 && !sheet && (
         <button onClick={() => setSheet('take')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
-          <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Ghi phiếu lấy', 'Record withdrawal')} ›</span></button>
+          <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Ghi phiếu lấy', 'Record withdrawal')} ›</span></button>
       )}
       {mode === 'transfer' && picked.length > 0 && !sheet && (
         <button onClick={() => { if (!other) { setMsg({ ok: false, text: L('Chọn team kia trước.', 'Choose the other team first.') }); return; } setSheet('transfer'); }} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
-          <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}{other ? ` · ${direction === 'give' ? L('cho', 'to') : L('từ', 'from')} ${TEAM_SHORT[other][lang]}` : ''}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Ghi phiếu chuyển', 'Record transfer')} ›</span></button>
+          <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}{other ? ` · ${direction === 'give' ? L('cho', 'to') : L('từ', 'from')} ${TEAM_SHORT[other][lang]}` : ''}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Ghi phiếu chuyển', 'Record transfer')} ›</span></button>
       )}
       {mode === 'request' && (cart.length + newItems.length) > 0 && !sheet && (
         <button onClick={() => setSheet('cart')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
-          <b className="flex-1 text-left text-[13.5px]">{cart.length + newItems.length} {L('dòng', 'lines')}</b><span className="text-[13px] font-extrabold" style={{ color: '#F0D98A' }}>{L('Gửi yêu cầu', 'Send request')} ›</span></button>
+          <b className="flex-1 text-left text-[13.5px]">{cart.length + newItems.length} {L('dòng', 'lines')}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Gửi yêu cầu', 'Send request')} ›</span></button>
       )}
 
       {sheet && (

@@ -283,7 +283,7 @@ export default function DashboardView({ stats, imports, assignments, orderLines 
                 <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
                 {list.length > 0 && (
                   <span className="text-[11px] font-black rounded-full px-1.5 py-0.5"
-                    style={active ? { backgroundColor: '#C9A84C', color: '#1A4731' } : { backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>
+                    style={active ? { backgroundColor: '#C9A84C', color: '#2A1810' } : { backgroundColor: '#F7F1E8', color: '#572C1A' }}>
                     {done}/{list.length}
                   </span>
                 )}

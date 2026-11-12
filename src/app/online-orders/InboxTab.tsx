@@ -108,7 +108,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
 
   const chipStyle = (on: boolean): React.CSSProperties => ({
     height: 30, padding: '0 11px', borderRadius: 999, fontSize: 12, fontWeight: on ? 700 : 500, whiteSpace: 'nowrap',
-    backgroundColor: on ? NAVY : '#fff', color: on ? '#FFFAEE' : INK, border: `1px solid ${on ? NAVY : BORDER}`,
+    backgroundColor: on ? NAVY : '#fff', color: on ? '#FBF7F0' : INK, border: `1px solid ${on ? NAVY : BORDER}`,
   });
 
   const list = (
@@ -165,7 +165,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
                 </span>
               </span>
               {c.unread > 0 && (
-                <span className="self-center flex items-center justify-center" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '0 5px' }}>{c.unread}</span>
+                <span className="self-center flex items-center justify-center" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: NAVY, color: '#FBF7F0', fontSize: 10.5, fontWeight: 700, padding: '0 5px' }}>{c.unread}</span>
               )}
             </button>
           );
@@ -327,7 +327,7 @@ function Thread({ conv, readOnly, onBack, onCreateOrder, tags, onTagsChanged, on
                   {m.text && (
                     <div style={{
                       maxWidth: '78%', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13.5, lineHeight: 1.45, padding: '8px 12px',
-                      backgroundColor: out ? NAVY : '#fff', color: out ? '#FFFAEE' : INK, border: out ? 'none' : `1px solid ${HAIR}`,
+                      backgroundColor: out ? NAVY : '#fff', color: out ? '#FBF7F0' : INK, border: out ? 'none' : `1px solid ${HAIR}`,
                       borderRadius: out ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
                     }}>{m.text}</div>
                   )}
@@ -576,7 +576,7 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
             className="w-full outline-none block" style={{ minHeight: 38, maxHeight: 140, resize: 'none', borderRadius: 10, border: `1px solid ${BORDER}`, padding: '8px 10px', fontSize: 13.5, lineHeight: 1.4, color: INK, backgroundColor: closed ? PALE : '#fff' }} />
         </label>
         <button onClick={send} disabled={!canSend} title={tr('sendBtn')} aria-label={tr('sendBtn')} className="flex items-center justify-center"
-          style={{ width: 42, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE', flexShrink: 0, opacity: canSend ? 1 : 0.4 }}>
+          style={{ width: 42, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FBF7F0', flexShrink: 0, opacity: canSend ? 1 : 0.4 }}>
           {sending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} aria-hidden />}
         </button>
       </div>
@@ -647,7 +647,7 @@ function TagBar({ conv, tags, readOnly, onChange, onTagListChanged }: { conv: In
             <label className="flex-1"><span className="sr-only">{tr('inboxTagNew')}</span>
               <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') create(); }} maxLength={30} placeholder={tr('inboxTagNew')}
                 className="w-full outline-none" style={{ height: 32, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '0 8px', fontSize: 12.5 }} /></label>
-            <button onClick={create} disabled={busy || !newName.trim()} className="px-2.5" style={{ height: 32, borderRadius: 8, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12, fontWeight: 600, opacity: newName.trim() ? 1 : 0.5 }}>{tr('inboxTagCreate')}</button>
+            <button onClick={create} disabled={busy || !newName.trim()} className="px-2.5" style={{ height: 32, borderRadius: 8, backgroundColor: NAVY, color: '#FBF7F0', fontSize: 12, fontWeight: 600, opacity: newName.trim() ? 1 : 0.5 }}>{tr('inboxTagCreate')}</button>
           </div>
         </div>
       )}

@@ -13,7 +13,7 @@ import { MM_CLIENT, CLIENT_INFO_KEY, markOtherCustomers, type Item } from '@/com
 // inventories and tracking stay on the office page (/oem-orders, admin + assistants).
 type Row = { key: string; name: string; group: string; target: number; remake: number; pending: number; baked: number; bySeq: Record<number, number>; sort: number; skus: string[]; weights: number[]; kgUnit: boolean };
 type Entry = { id: string; group_key: string; weight_kg: number; prod_date: string; created_at: string; created_by_name: string | null; status: string; received_kg: number | null; plan_seq: number | null };
-const GREEN = '#1A4731';
+const GREEN = '#2A1810';
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 const fmt1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
 // Real product name without the pack size ("Bánh quy socola nho khô 80g" → "Bánh quy socola nho khô"),

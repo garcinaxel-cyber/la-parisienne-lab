@@ -182,7 +182,7 @@ export function TargetDetail({ st }: { st: TargetState }) {
 }
 
 // ── Effects: "+115k" float on new sales, small confetti at 50 % / 80 %, celebration at 100 %. ──
-const CONF_COLORS = ['#E5C77A', '#1E7D55', '#FFFAEE', '#C08A12', '#B7DFC0'];
+const CONF_COLORS = ['#E5C77A', '#1E7D55', '#FBF7F0', '#C08A12', '#B7DFC0'];
 function seen(key: string): boolean { try { return localStorage.getItem(key) === '1'; } catch { return false; } }
 function mark(key: string) { try { localStorage.setItem(key, '1'); } catch { /* private mode: may show again */ } }
 
@@ -239,7 +239,7 @@ export function TargetFx({ st, day }: { st: TargetState; day: string }) {
       )}
       {party && (
         <div className="fixed inset-0 flex flex-col items-center justify-center text-center pointer-events-none"
-          style={{ zIndex: 60, backgroundColor: 'rgba(26,71,49,0.88)', color: '#FFFAEE', animation: 'evtParty 3.2s ease forwards' }} aria-live="polite">
+          style={{ zIndex: 60, backgroundColor: 'rgba(42,24,16,0.88)', color: '#FBF7F0', animation: 'evtParty 3.2s ease forwards' }} aria-live="polite">
           {!reduce && pieces(40, 160).map((p, i) => (
             <i key={i} style={{ position: 'absolute', top: 0, left: `${p.left}%`, width: 9, height: 14, borderRadius: 2, backgroundColor: p.c,
               ['--dx' as any]: `${p.dx}px`, animation: `evtFall 3s ${p.delay}s linear forwards` }} />

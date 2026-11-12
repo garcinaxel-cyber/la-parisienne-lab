@@ -122,7 +122,7 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
                 <button key={m} onClick={() => { if (m !== month) load(m); }} disabled={!reports}
                   className="flex-1 rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-60"
                   style={m === month
-                    ? { backgroundColor: NAVY, color: '#FFFAEE' }
+                    ? { backgroundColor: NAVY, color: '#FBF7F0' }
                     : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
                   {fmtMonth(m)}
                 </button>
@@ -243,7 +243,7 @@ export default function ReportTab({ activeShop }: { activeShop: string }) {
       {selected?.stockCounted && (
         <button onClick={exportPdf} disabled={exporting}
           className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg px-3 py-2 disabled:opacity-40"
-          style={{ backgroundColor: NAVY, color: '#FFFAEE' }}>
+          style={{ backgroundColor: NAVY, color: '#FBF7F0' }}>
           {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           {tr('exportPdf')}
         </button>

@@ -7,7 +7,7 @@ import { fmtQty, vnDayTime, RAW_TYPES, type RawType } from '@/lib/raw-materials'
 import { getRoomCountHistoryAction, getRoomCountHistoryDetailAction, type RoomCountHistoryItem, type RoomCountHistoryLine } from './room-count-actions';
 import type { RoomFreeItem } from '@/lib/room-count';
 
-const NAVY = '#1A4731', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF';
+const NAVY = '#2A1810', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF';
 
 export default function RoomCountHistory({ team, lang }: { team: string; lang: 'vi' | 'en' }) {
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);

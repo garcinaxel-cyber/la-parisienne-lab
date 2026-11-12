@@ -47,10 +47,10 @@ export default function EmployeeHrView({ token, embedded = false, stationLang }:
 
   if (err === 'INVALID') {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center px-6" style={{ background: embedded ? undefined : '#FFF4CC' }}>
+      <div className="min-h-[60vh] flex items-center justify-center px-6" style={{ background: embedded ? undefined : '#F6F1EA' }}>
         <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center" style={{ border: BORDER }}>
           <div className="text-3xl mb-2">🔒</div>
-          <h1 className="font-bold text-lg" style={{ color: '#1A4731' }}>Liên kết không hợp lệ</h1>
+          <h1 className="font-bold text-lg" style={{ color: '#2A1810' }}>Liên kết không hợp lệ</h1>
           <p className="text-sm mt-1" style={{ color: '#6B7280' }}>Vui lòng liên hệ trưởng nhóm.</p>
           <p className="text-xs mt-3" style={{ color: '#9CA3AF' }}>Invalid link — ask your team leader.</p>
         </div>
@@ -69,11 +69,11 @@ export default function EmployeeHrView({ token, embedded = false, stationLang }:
   const e = data?.employee;
 
   return (
-    <div className={embedded ? '' : 'min-h-screen'} style={embedded ? undefined : { background: '#FFF4CC' }}>
-      <header className={embedded ? 'rounded-2xl overflow-hidden' : 'sticky top-0 z-20'} style={{ background: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+    <div className={embedded ? '' : 'min-h-screen'} style={embedded ? undefined : { background: '#F6F1EA' }}>
+      <header className={embedded ? 'rounded-2xl overflow-hidden' : 'sticky top-0 z-20'} style={{ background: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-xl mx-auto px-3 py-2.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="w-[34px] h-[34px] rounded-xl flex items-center justify-center text-xs font-black text-white shrink-0" style={{ background: 'rgba(255,244,204,0.2)' }}>
+            <span className="w-[34px] h-[34px] rounded-xl flex items-center justify-center text-xs font-black text-white shrink-0" style={{ background: 'rgba(246,241,234,0.2)' }}>
               {e ? e.full_name.split(' ').slice(-2).map((w) => w[0]).join('') : '…'}
             </span>
             <div className="min-w-0">
@@ -84,11 +84,11 @@ export default function EmployeeHrView({ token, embedded = false, stationLang }:
           {!embedded && <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'rgba(255,255,255,0.15)' }}>
             {(['vi', 'en'] as const).map((l) => (
               <button key={l} onClick={() => setLang(l)} className="px-2 min-h-[28px] rounded text-[11px] font-bold"
-                style={lang === l ? { background: '#FFF4CC', color: '#1A4731' } : { color: 'rgba(255,255,255,0.7)' }}>{l.toUpperCase()}</button>
+                style={lang === l ? { background: '#F6F1EA', color: '#2A1810' } : { color: 'rgba(255,255,255,0.7)' }}>{l.toUpperCase()}</button>
             ))}
           </div>}
         </div>
-        <div className="max-w-xl mx-auto flex" style={{ background: '#163D29' }}>
+        <div className="max-w-xl mx-auto flex" style={{ background: '#1F120C' }}>
           {tabBtn('schedule', tr('Team week', 'Lịch nhóm'))}
           {tabBtn('off', tr('Days off', 'Xin nghỉ'))}
           {tabBtn('requests', tr('Requests', 'Yêu cầu'), missingProof > 0)}
@@ -133,7 +133,7 @@ function OtAsk({ o, token, lang, tr, reload }: { o: MeData['ots'][number]; token
       <div className="text-xs" style={{ color: '#6B7280' }}>{tr('Asked by ', 'Đề nghị bởi ')}{o.created_by_name ?? ''}{o.reason ? ` · ${o.reason}` : ''}</div>
       <div className="grid grid-cols-[1fr_1.6fr] gap-2">
         <button disabled={busy} onClick={() => answer('no')} className="min-h-[44px] rounded-xl text-[13px] font-bold bg-white disabled:opacity-50" style={{ border: BORDER }}>{tr('I can’t', 'Không thể')}</button>
-        <button disabled={busy} onClick={() => answer('yes')} className="min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-50" style={{ background: '#1A4731' }}>{tr('Confirm', 'Xác nhận')}</button>
+        <button disabled={busy} onClick={() => answer('yes')} className="min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-50" style={{ background: '#2A1810' }}>{tr('Confirm', 'Xác nhận')}</button>
       </div>
     </div>
   );
@@ -170,7 +170,7 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
       <MonthGrid data={week} lang={lang} meId={me.id} hideUnpublished
         onCell={(e, d) => { if (e.id === me.id) { setSel(d); setMsg(null); } }} />
       <Legend lang={lang} />
-      <div className="rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed" style={{ background: '#FFFAEE', border: BORDER, color: '#1A4731' }}>
+      <div className="rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed" style={{ background: '#FBF7F0', border: BORDER, color: '#2A1810' }}>
         {tr('Your row is highlighted. Read only — tap one of YOUR days to take it off (accepted at once if the day has room) or to cancel. Draft weeks (not published yet) may still change.',
           'Dòng của em được tô vàng. Chỉ xem — chạm vào ngày của EM để xin nghỉ (được nhận ngay nếu còn chỗ) hoặc để hủy. Tuần bản nháp (chưa công bố) có thể còn thay đổi.')}
       </div>
@@ -191,14 +191,14 @@ function ScheduleTab({ data, token, lang, tr, month, setMonth, reload, busy }: {
           {msg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{msg}</div>}
           {!isWish && (code === '7' || code === '8') && sel > today && (
             <div className="space-y-1.5">
-              <button disabled={working || !open} onClick={() => doOff()} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40" style={{ background: '#1A4731' }}>
+              <button disabled={working || !open} onClick={() => doOff()} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40" style={{ background: '#2A1810' }}>
                 {tr('Full day off', 'Nghỉ cả ngày')}
               </button>
               <div className="grid grid-cols-2 gap-1.5">
-                <button disabled={working || !open} onClick={() => doOff('C')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FFFAEE' }}>
+                <button disabled={working || !open} onClick={() => doOff('C')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FBF7F0' }}>
                   {tr('Morning off', 'Nghỉ buổi sáng')}<br /><span className="font-normal text-[10px]">{tr('work ', 'làm ')}{halfHours('C', me.base_shift)}</span>
                 </button>
-                <button disabled={working || !open} onClick={() => doOff('S')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FFFAEE' }}>
+                <button disabled={working || !open} onClick={() => doOff('S')} className="min-h-[44px] rounded-xl text-[12px] font-bold disabled:opacity-40 leading-tight" style={{ border: '1.5px solid #C9A84C', color: '#8B5E34', background: '#FBF7F0' }}>
                   {tr('Afternoon off', 'Nghỉ buổi chiều')}<br /><span className="font-normal text-[10px]">{tr('work ', 'làm ')}{halfHours('S', me.base_shift)}</span>
                 </button>
               </div>
@@ -250,21 +250,21 @@ function OffTab({ data, token, lang, tr, reload }: { data: MeData; token: string
         <div className="grid grid-cols-3 gap-1.5">
           {([['', tr('Full day', 'Cả ngày')], ['C', tr('Morning off', 'Nghỉ sáng')], ['S', tr('Afternoon off', 'Nghỉ chiều')]] as const).map(([v, l]) => (
             <button key={v} onClick={() => setPart(v)} className="min-h-[40px] rounded-xl text-[12px] font-bold"
-              style={part === v ? { background: '#1A4731', color: '#FFF4CC', border: '1px solid #1A4731' } : { background: '#fff', color: '#1A4731', border: BORDER }}>{l}</button>
+              style={part === v ? { background: '#2A1810', color: '#F6F1EA', border: '1px solid #2A1810' } : { background: '#fff', color: '#2A1810', border: BORDER }}>{l}</button>
           ))}
         </div>
-        <button disabled={busy || !day} onClick={ask} className="w-full min-h-[48px] rounded-2xl font-bold text-sm text-white disabled:opacity-50" style={{ background: '#1A4731' }}>{tr('Take this day off', 'Xin nghỉ ngày này')}</button>
+        <button disabled={busy || !day} onClick={ask} className="w-full min-h-[48px] rounded-2xl font-bold text-sm text-white disabled:opacity-50" style={{ background: '#2A1810' }}>{tr('Take this day off', 'Xin nghỉ ngày này')}</button>
         {msg && <div className="text-xs font-semibold" style={{ color: msg.ok ? '#047857' : '#DC2626' }}>{msg.text}</div>}
         <div className="text-[11px] leading-relaxed" style={{ color: '#6B7280' }}>
           {tr('Accepted at once if the day has room (first come, first served). For next week: before the end of Saturday. You can book weeks or months ahead. Days off per month = number of Sundays. A half day off = 0.5, always accepted.',
             'Được nhận ngay nếu ngày đó còn chỗ (ai đăng ký trước được trước). Cho tuần sau: trước hết Thứ 7. Có thể đăng ký trước nhiều tuần, nhiều tháng. Số ngày nghỉ mỗi tháng = số Chủ nhật. Nghỉ nửa ngày = 0,5, luôn được nhận.')}
         </div>
       </div>
-      <div className="text-xs font-bold px-1" style={{ color: '#1A4731' }}>{tr('My coming days off', 'Ngày nghỉ sắp tới của em')}</div>
+      <div className="text-xs font-bold px-1" style={{ color: '#2A1810' }}>{tr('My coming days off', 'Ngày nghỉ sắp tới của em')}</div>
       {data.myOffDays.length === 0 && <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ border: BORDER, color: '#6B7280' }}>{tr('None yet', 'Chưa có')}</div>}
       {Object.keys(byMonth).sort().map((m) => (
         <div key={m} className="bg-white rounded-2xl overflow-hidden" style={{ border: BORDER }}>
-          <div className="px-3.5 py-2 text-xs font-bold flex justify-between" style={{ background: '#FFFAEE', color: '#1A4731' }}>
+          <div className="px-3.5 py-2 text-xs font-bold flex justify-between" style={{ background: '#FBF7F0', color: '#2A1810' }}>
             <span>{monthLabel(m, lang)}</span><span style={{ color: '#8B5E34' }}>{fmtDays(byMonth[m].reduce((a, d) => a + weightOf(d), 0))}/{offAllowance(m)}</span>
           </div>
           {byMonth[m].map((d) => {
@@ -313,7 +313,7 @@ function ProofButton({ token, id, tr, reload }: { token: string; id: string; tr:
   };
   return (
     <div>
-      <label className="w-full min-h-[44px] rounded-xl text-[13px] font-bold flex items-center justify-center gap-1.5 cursor-pointer" style={{ border: '1px dashed #8B5E34', color: '#8B5E34', background: '#FFFAEE' }}>
+      <label className="w-full min-h-[44px] rounded-xl text-[13px] font-bold flex items-center justify-center gap-1.5 cursor-pointer" style={{ border: '1px dashed #8B5E34', color: '#8B5E34', background: '#FBF7F0' }}>
         📎 {busy ? tr('Sending…', 'Đang gửi…') : tr('Add the proof paper (photo)', 'Gửi giấy tờ (chụp ảnh)')}
         <input type="file" accept="image/*" className="hidden" disabled={busy} onChange={(e) => onFile(e.target.files?.[0])} />
       </label>
@@ -355,7 +355,7 @@ function RequestsTab({ data, token, lang, tr, reload }: { data: MeData; token: s
   return (
     <div className="space-y-2.5">
       {!open ? (
-        <button onClick={() => setOpen(true)} className="w-full min-h-[50px] rounded-2xl font-bold text-sm bg-white" style={{ border: '1px dashed #1A4731', color: '#1A4731' }}>+ {tr('New request (sick, leave, late…)', 'Tạo yêu cầu (ốm, phép, đi muộn…)')}</button>
+        <button onClick={() => setOpen(true)} className="w-full min-h-[50px] rounded-2xl font-bold text-sm bg-white" style={{ border: '1px dashed #2A1810', color: '#2A1810' }}>+ {tr('New request (sick, leave, late…)', 'Tạo yêu cầu (ốm, phép, đi muộn…)')}</button>
       ) : (
         <div className="bg-white rounded-2xl p-3.5 space-y-2.5" style={{ border: BORDER }}>
           <div className="flex justify-between items-center">
@@ -365,7 +365,7 @@ function RequestsTab({ data, token, lang, tr, reload }: { data: MeData; token: s
           <div className="flex flex-wrap gap-1.5">
             {HR_REQUEST_TYPES.map((t) => (
               <button key={t.id} onClick={() => setType(t.id)} className="min-h-[34px] px-2.5 rounded-full text-xs font-semibold"
-                style={type === t.id ? { background: '#1A4731', color: '#fff', border: '1px solid #1A4731' } : { background: '#fff', border: BORDER }}>{lang === 'vi' ? t.vi : t.en}</button>
+                style={type === t.id ? { background: '#2A1810', color: '#fff', border: '1px solid #2A1810' } : { background: '#fff', border: BORDER }}>{lang === 'vi' ? t.vi : t.en}</button>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -397,11 +397,11 @@ function RequestsTab({ data, token, lang, tr, reload }: { data: MeData; token: s
             {HR_PROOF_TYPES.includes(type) ? tr(' · add the proof paper after (doctor…), otherwise it counts as a day off', ' · gửi giấy tờ sau (bác sĩ…), nếu không sẽ tính là ngày nghỉ') : ''}
           </div>
           {msg && <div className="text-xs font-semibold" style={{ color: '#DC2626' }}>{msg}</div>}
-          <button disabled={busy} onClick={send} className="w-full min-h-[48px] rounded-2xl font-bold text-sm text-white disabled:opacity-50" style={{ background: '#1A4731' }}>{tr('Send to my leader', 'Gửi trưởng nhóm')}</button>
+          <button disabled={busy} onClick={send} className="w-full min-h-[48px] rounded-2xl font-bold text-sm text-white disabled:opacity-50" style={{ background: '#2A1810' }}>{tr('Send to my leader', 'Gửi trưởng nhóm')}</button>
         </div>
       )}
 
-      <div className="text-xs font-bold px-1" style={{ color: '#1A4731' }}>{tr('My requests', 'Yêu cầu của tôi')}</div>
+      <div className="text-xs font-bold px-1" style={{ color: '#2A1810' }}>{tr('My requests', 'Yêu cầu của tôi')}</div>
       {data.requests.length === 0 && <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ border: BORDER, color: '#6B7280' }}>{tr('No request yet', 'Chưa có yêu cầu')}</div>}
       {data.requests.map((r) => {
         const needsG = hrNeedsGiang(r.type);
@@ -440,19 +440,19 @@ function MonthTab({ data, lang, tr }: { data: MeData; lang: string; tr: TR }) {
   const box = (label: string, value: string) => (
     <div className="bg-white rounded-2xl p-3" style={{ border: BORDER }}>
       <div className="text-[10px]" style={{ color: '#6B7280' }}>{label}</div>
-      <div className="text-xl font-black" style={{ color: '#1A4731' }}>{value}</div>
+      <div className="text-xl font-black" style={{ color: '#2A1810' }}>{value}</div>
     </div>
   );
   return (
     <div className="space-y-2.5">
-      <div className="font-bold text-[16px] px-1" style={{ color: '#1A4731' }}>{monthLabel(w.month, lang)}</div>
+      <div className="font-bold text-[16px] px-1" style={{ color: '#2A1810' }}>{monthLabel(w.month, lang)}</div>
       <div className="grid grid-cols-2 gap-1.5">
         {box(tr('Days off used', 'Ngày nghỉ đã dùng'), `${fmtDays(used)} / ${w.allowance}`)}
         {box(tr('Days off left', 'Ngày nghỉ còn lại'), fmtDays(Math.max(0, w.allowance - used)))}
         {box(tr('Overtime this month', 'Tăng ca tháng này'), `${data.otMonthHours} ${tr('h', 'giờ')}`)}
         {box(tr('Requests in progress', 'Yêu cầu đang chờ'), String(pendingReq))}
       </div>
-      <div className="rounded-2xl px-3.5 py-3 text-xs leading-relaxed" style={{ background: '#FFFAEE', border: BORDER, color: '#1A4731' }}>
+      <div className="rounded-2xl px-3.5 py-3 text-xs leading-relaxed" style={{ background: '#FBF7F0', border: BORDER, color: '#2A1810' }}>
         {tr(`Days off per month = number of Sundays (${w.allowance} in ${monthLabel(w.month, 'en')}).`, `Số ngày nghỉ mỗi tháng = số Chủ nhật (${w.allowance} trong ${monthLabel(w.month, 'vi')}).`)}
         <br />
         {tr('Time clock hours and payslip will appear here when HR imports the time clock data.', 'Giờ chấm công và phiếu lương sẽ hiện ở đây khi Nhân sự nhập dữ liệu chấm công.')}

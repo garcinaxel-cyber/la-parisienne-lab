@@ -9,7 +9,7 @@ import { TEAM_SHORT, TRANSFER_TEAMS, fmtQty, vnDayTime } from '@/lib/raw-materia
 import { LEFT_OUT_REASONS } from '@/lib/room-count';
 import { getRoomCountsAdminAction, type AdminRoomSession, type AdminRoomLine } from '../room-actions';
 
-const NAVY = '#1A4731', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', LATE = '#B42318', OK = '#067647', OKBG = '#EAF6EC', HAIR = '#EFE9CF';
+const NAVY = '#2A1810', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', LATE = '#B42318', OK = '#067647', OKBG = '#EAF6EC', HAIR = '#EFE9CF';
 
 export default function RoomCountsAdminView() {
   const { lang } = useI18n();

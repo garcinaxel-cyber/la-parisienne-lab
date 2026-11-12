@@ -10,7 +10,7 @@ import { fmtQty, vnDayTime, TEAM_SHORT, isStorageTeam, type RawPack } from '@/li
 import { getOpenReceiptsAction, getReceiptAction, validateReceiptAction, getPendingHandoversAction, handoverToTeamAction, type OpenReceiptRow, type ReceiptView, type Handover, type PendingHandover } from '@/app/(app)/purchasing/receive-actions';
 import type { ShortReason, ValidateResult } from '@/lib/odoo-po-receive';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF';
 const OK = '#1F7A45', OKBG = '#E6F4EA', WARN = '#B45309', WARNBG = '#FFF1DC', BAD = '#B42318', BADBG = '#FDECEA';
 const REASONS: [ShortReason, string, string, string][] = [
   ['later', '🚚', 'Phần còn lại giao sau', 'The rest comes later'],

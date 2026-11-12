@@ -2,6 +2,8 @@
 // Credentials come from env vars — never hardcode them here.
 // ODOO_URL, ODOO_DB, ODOO_LOGIN, ODOO_API_KEY
 
+import { isPreviewReadOnly, ODOO_READ_METHODS } from '@/lib/preview-guard';
+
 const ODOO_URL = () => process.env.ODOO_URL ?? '';
 const ODOO_DB = () => process.env.ODOO_DB ?? '';
 const ODOO_LOGIN = () => process.env.ODOO_LOGIN ?? '';
@@ -17,6 +19,10 @@ export const LAB_TZ = 'Asia/Ho_Chi_Minh';
 let cachedUid: number | null = null;
 
 async function rpc(service: string, method: string, args: unknown[]): Promise<any> {
+  // Preview deployments share the production Odoo: reads only (see src/lib/preview-guard.ts).
+  if (isPreviewReadOnly() && service === 'object' && method === 'execute_kw' && !ODOO_READ_METHODS.has(String(args[4]))) {
+    throw new Error(`Preview (read-only): Odoo ${String(args[3])}.${String(args[4])} was not executed.`);
+  }
   const res = await fetch(`${ODOO_URL()}/jsonrpc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

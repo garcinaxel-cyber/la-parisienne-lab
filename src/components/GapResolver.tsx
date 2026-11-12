@@ -112,8 +112,8 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
     return (
       <button key={o.code} type="button" onClick={() => { if (o.code === 'recount') { onRecount(); return; } setPick(o.code); }}
         className="w-full text-left flex gap-2.5 items-start rounded-xl px-3 py-2 mb-1.5 bg-white"
-        style={{ border: sel ? '2px solid #1A4731' : '1px solid #D1D5DB' }}>
-        <span className="mt-0.5 shrink-0 rounded-full" style={{ width: 16, height: 16, border: sel ? '5px solid #1A4731' : '2px solid #9CA3AF' }} />
+        style={{ border: sel ? '2px solid #2A1810' : '1px solid #D1D5DB' }}>
+        <span className="mt-0.5 shrink-0 rounded-full" style={{ width: 16, height: 16, border: sel ? '5px solid #2A1810' : '2px solid #9CA3AF' }} />
         <span>
           <span className="block text-sm font-semibold text-navy">{vi ? o.vi : o.en}</span>
           {(o.sub || o.subEn) && <span className="block text-xs text-gray-500">{vi ? o.sub : o.subEn}</span>}
@@ -126,7 +126,7 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
     <div className="flex flex-wrap gap-1.5">
       {codes.map(c => (
         <button key={c} type="button" onClick={() => setPick(c)} className="rounded-full px-3 py-1.5 text-[13px] font-semibold"
-          style={pick === c ? { backgroundColor: '#1A4731', color: 'white' } : { border: '1px solid #D1D5DB', backgroundColor: 'white', color: '#374151' }}>
+          style={pick === c ? { backgroundColor: '#2A1810', color: 'white' } : { border: '1px solid #D1D5DB', backgroundColor: 'white', color: '#374151' }}>
           {L(REASON_LABELS[c])}
         </button>
       ))}
@@ -165,7 +165,7 @@ export default function GapResolver({ lineId, expected, qty, vi, onSaved, onReco
       {err && <span className="text-xs mr-auto" style={{ color: '#B42318' }}>{err}</span>}
       <button type="button" onClick={onRecount} className="rounded-lg px-3 py-1.5 text-sm font-semibold bg-white" style={{ border: '1px solid #D1D5DB', color: '#374151' }}>{vi ? 'Huỷ / sửa số' : 'Cancel / fix qty'}</button>
       <button type="button" onClick={confirm} disabled={!pick || needPhoto || needNote || saving || uploading}
-        className="rounded-lg px-4 py-1.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+        className="rounded-lg px-4 py-1.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
         {saving ? '…' : (vi ? okVi : okEn)}
       </button>
     </div>

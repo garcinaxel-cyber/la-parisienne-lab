@@ -151,7 +151,7 @@ export function QuickReplyManager({ readOnly, onClose }: { readOnly: boolean; on
                 <input value={q} onChange={e => setQ(e.target.value)} placeholder={tr('qrSearchPh')} className="flex-1 bg-transparent outline-none" style={{ fontSize: 13, color: INK }} />
               </label>
               {!readOnly && (
-                <button onClick={() => startEdit(null)} className="flex items-center gap-1.5 px-3" style={{ height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FFFAEE', fontSize: 13, fontWeight: 600 }}>
+                <button onClick={() => startEdit(null)} className="flex items-center gap-1.5 px-3" style={{ height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FBF7F0', fontSize: 13, fontWeight: 600 }}>
                   <Plus size={15} aria-hidden /> {tr('qrAdd')}
                 </button>
               )}

@@ -97,7 +97,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
   const chip = (k: Filter, label: string) => (
     <button key={k} onClick={() => setFilter(k)}
       className="text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors"
-      style={filter === k ? { borderColor: '#B08A2E', backgroundColor: '#F7EBCB', color: '#3B2A1A' } : { borderColor: '#E0D49A', color: '#5F5E5A' }}>
+      style={filter === k ? { borderColor: '#B08A2E', backgroundColor: '#F7EBCB', color: '#3B2A1A' } : { borderColor: '#E6DCCF', color: '#5F5E5A' }}>
       {label} · {counts[k]}
     </button>
   );
@@ -118,7 +118,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
         <div className="flex flex-col sm:flex-row gap-2">
           <input value={oq} onChange={e => setOq(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') runSearch(); }}
             placeholder={vi ? 'Tên hoặc mã, hoặc dán nhiều mã (VTTH0103, VTTH026…)' : 'Name or code, or paste several codes (VTTH0103, VTTH026…)'}
-            className="flex-1 border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#E0D49A' }} />
+            className="flex-1 border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#E6DCCF' }} />
           <button onClick={runSearch} disabled={pending || oq.trim().length < 2}
             className="text-sm font-semibold px-4 py-2 rounded-lg border flex items-center justify-center gap-1.5"
             style={{ borderColor: '#B08A2E', color: '#3B2A1A', backgroundColor: '#F7EBCB' }}>
@@ -130,7 +130,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
           {vi ? 'Cửa hàng thấy được sản phẩm thêm vào' : 'Added items are visible to shops'}
         </label>
         {searchErr && <div className="text-xs" style={{ color: '#A8573B' }}>{searchErr}</div>}
-        {msg && <div className="text-xs" style={{ color: '#2D6A4F' }}>{msg}</div>}
+        {msg && <div className="text-xs" style={{ color: '#572C1A' }}>{msg}</div>}
         {results && (
           results.length === 0 ? (
             <div className="text-xs text-ink-light">{vi ? 'Không tìm thấy sản phẩm trên Odoo' : 'No product found in Odoo'}</div>
@@ -140,7 +140,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
                 <div className="flex justify-end px-3 py-2">
                   <button onClick={() => add(addable)} disabled={pending}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg border flex items-center gap-1.5"
-                    style={{ borderColor: '#2D6A4F', color: '#2D6A4F' }}>
+                    style={{ borderColor: '#572C1A', color: '#572C1A' }}>
                     <Plus size={12} />{vi ? `Thêm tất cả (${addable.length})` : `Add all (${addable.length})`}
                   </button>
                 </div>
@@ -159,13 +159,13 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
                       )}
                     </div>
                     {done ? (
-                      <span className="text-xs flex items-center gap-1 shrink-0" style={{ color: '#2D6A4F' }}><Check size={12} />{vi ? 'Đã có' : 'In list'}</span>
+                      <span className="text-xs flex items-center gap-1 shrink-0" style={{ color: '#572C1A' }}><Check size={12} />{vi ? 'Đã có' : 'In list'}</span>
                     ) : p.isProduction && confirmProd !== p.sku ? (
                       <button onClick={() => setConfirmProd(p.sku)} className="text-xs font-semibold px-3 py-1.5 rounded-lg border shrink-0"
                         style={{ borderColor: '#A8573B', color: '#A8573B' }}>{vi ? 'Thêm…' : 'Add…'}</button>
                     ) : (
                       <button onClick={() => add([p])} disabled={pending} className="text-xs font-semibold px-3 py-1.5 rounded-lg border flex items-center gap-1 shrink-0"
-                        style={p.isProduction ? { borderColor: '#A8573B', color: '#fff', backgroundColor: '#A8573B' } : { borderColor: '#2D6A4F', color: '#2D6A4F' }}>
+                        style={p.isProduction ? { borderColor: '#A8573B', color: '#fff', backgroundColor: '#A8573B' } : { borderColor: '#572C1A', color: '#572C1A' }}>
                         <Plus size={12} />{p.isProduction ? (vi ? 'Xác nhận' : 'Confirm') : (vi ? 'Thêm' : 'Add')}
                       </button>
                     )}
@@ -182,7 +182,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
         <div className="relative flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-light" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder={vi ? 'Lọc theo mã hoặc tên' : 'Filter by code or name'}
-            className="w-full border rounded-lg pl-8 pr-3 py-2 text-sm" style={{ borderColor: '#E0D49A' }} />
+            className="w-full border rounded-lg pl-8 pr-3 py-2 text-sm" style={{ borderColor: '#E6DCCF' }} />
         </div>
         <div className="flex gap-1.5 flex-wrap">
           {chip('all', vi ? 'Tất cả' : 'All')}
@@ -212,7 +212,7 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleImageFile(r.sku, f); e.target.value = ''; }} />
                   <button onClick={() => fileInputs.current[r.sku]?.click()} disabled={uploading === r.sku}
                     className="relative w-9 h-9 rounded-lg overflow-hidden border flex items-center justify-center shrink-0"
-                    style={{ borderColor: '#E0D49A', backgroundColor: '#F1EFE8' }}
+                    style={{ borderColor: '#E6DCCF', backgroundColor: '#F1EFE8' }}
                     title={vi ? 'Thêm ảnh' : 'Add a photo'}>
                     {r.image_url ? (
                       <img src={thumb(r.image_url, 80)} alt="" className="absolute inset-0 w-full h-full object-cover" style={r.shop_visible ? undefined : { opacity: 0.5 }} />
@@ -229,14 +229,14 @@ export default function ExcludedView({ rows }: { rows: Row[] }) {
                   <button onClick={() => toggleVisible(r)} disabled={toggling === r.sku}
                     title={r.shop_visible ? (vi ? 'Ẩn với cửa hàng' : 'Hide from shops') : (vi ? 'Hiện cho cửa hàng' : 'Show to shops')}
                     className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors"
-                    style={r.shop_visible ? { borderColor: '#E0D49A', color: '#3B2A1A' } : { borderColor: '#D8CDB8', color: '#8A8570', backgroundColor: '#F1EFE8' }}>
+                    style={r.shop_visible ? { borderColor: '#E6DCCF', color: '#3B2A1A' } : { borderColor: '#D8CDB8', color: '#8A8570', backgroundColor: '#F1EFE8' }}>
                     {r.shop_visible ? <Eye size={12} /> : <EyeOff size={12} />}
                     {toggling === r.sku ? '…' : r.shop_visible ? (vi ? 'Hiện' : 'Visible') : (vi ? 'Ẩn' : 'Hidden')}
                   </button>
                   <button onClick={() => restore(r.sku)} disabled={restoring === r.sku}
                     title={vi ? 'Trả về sản xuất' : 'Back to production'}
                     className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors"
-                    style={{ borderColor: '#E0D49A', color: '#2D6A4F' }}>
+                    style={{ borderColor: '#E6DCCF', color: '#572C1A' }}>
                     <RotateCcw size={12} />
                     {restoring === r.sku ? '…' : (vi ? 'Khôi phục' : 'Restore')}
                   </button>
