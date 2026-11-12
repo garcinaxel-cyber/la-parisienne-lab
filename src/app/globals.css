@@ -69,3 +69,8 @@
   .lp-station-header { background-color: #F6F1EA !important; box-shadow: none !important; }
   .lp-station-header .lp-sync { background-color: #fff !important; color: #572C1A !important; border: 1px solid #E6DCCF; }
 }
+
+/* Station on phones: a form field under 16px makes iPhone zoom the whole page when it gets the focus. */
+@media (max-width: 639px) {
+  .lp-station input, .lp-station textarea, .lp-station select { font-size: 16px !important; }
+}

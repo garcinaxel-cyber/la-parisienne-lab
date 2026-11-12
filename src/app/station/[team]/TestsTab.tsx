@@ -160,7 +160,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
     <span className="inline-flex items-center gap-1">
       <input inputMode="decimal" value={qtyDraft[key] ?? comma(toInput(q, uom))}
         onChange={e => { setQtyDraft(d => ({ ...d, [key]: e.target.value })); const v = num(e.target.value); if (v >= 0) onSet(fromInput(v, uom)); }}
-        className="w-[68px] text-right rounded-lg px-1.5 py-1 text-[13px] font-extrabold outline-none" style={{ border: `1px solid ${BORDER}`, color: NAVY }} />
+        className="w-[88px] h-10 text-right rounded-xl px-2 text-[15px] font-extrabold outline-none" style={{ border: `1px solid ${BORDER}`, color: NAVY }} />
       <span className="text-[11px] w-6" style={{ color: '#6B5A4C' }}>{inUnit(uom)}</span>
     </span>);
 
@@ -391,12 +391,12 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         <div className="flex items-center gap-1.5">
           <div className="flex gap-1.5 overflow-x-auto flex-1 pb-0.5">
             {detail.versions.map(v => { const on = v.n === ver.n; return (
-              <button key={v.n} onClick={() => { setVerN(v.n); setEdit(null); setMult(null); }} className="flex-shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-extrabold inline-flex items-center gap-1"
+              <button key={v.n} onClick={() => { setVerN(v.n); setEdit(null); setMult(null); }} className="flex-shrink-0 rounded-full px-3.5 h-9 text-[13px] font-extrabold inline-flex items-center gap-1"
                 style={on ? { backgroundColor: GOLD, color: NAVY, border: `1px solid ${GOLD}` } : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
                 V{v.n}{v.isFinal && <CheckCircle2 size={11} />}{v.n === lastV.n && <span className="text-[9px] opacity-70">{L('MỚI', 'LATEST')}</span>}</button>); })}
-            <button onClick={() => { setNewVerNote(''); setSheet({ k: 'newVersion' }); }} className="flex-shrink-0 rounded-full px-2.5 py-1.5 text-[12px] font-bold" style={{ border: `1px dashed ${GOLD}`, color: GOLD_TEXT }}>+ {L('Phiên bản', 'Version')}</button>
+            <button onClick={() => { setNewVerNote(''); setSheet({ k: 'newVersion' }); }} className="flex-shrink-0 rounded-full px-3 h-9 text-[12.5px] font-bold" style={{ border: `1px dashed ${GOLD}`, color: GOLD_TEXT }}>+ {L('Phiên bản', 'Version')}</button>
           </div>
-          {detail.versions.length > 1 && <button onClick={() => setCompare([detail.versions[detail.versions.length - 2].n, lastV.n])} className="flex-shrink-0 inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[12px] font-bold text-white" style={{ backgroundColor: NAVY }}><GitCompare size={13} />{L('So sánh', 'Compare')}</button>}
+          {detail.versions.length > 1 && <button onClick={() => setCompare([detail.versions[detail.versions.length - 2].n, lastV.n])} className="flex-shrink-0 inline-flex items-center gap-1 rounded-full px-3.5 h-9 text-[12.5px] font-bold text-white" style={{ backgroundColor: NAVY }}><GitCompare size={13} />{L('So sánh', 'Compare')}</button>}
         </div>
         <div className="text-[11.5px] -mt-1.5" style={{ color: '#6B5A4C' }}>V{ver.n} · {vnDate(ver.createdAt.slice(0, 10))}{ver.note ? ` · ${ver.note}` : ''}{ver.trialCount ? ` · ${L('đã làm thử — khoá', 'made — locked')}` : ''}</div>
 
@@ -438,7 +438,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
                   <div className="text-[10.5px] font-semibold" style={{ color: '#6B5A4C' }}>{s.src === 'new' ? L('Bán thành phẩm mới (viết ở đây)', 'New intermediate (written here)') : L('Bán thành phẩm Odoo', 'Odoo intermediate')}</div>
                 </div>
                 {edit ? <>{qtyInput(`sub-${s.key}`, s.qty, s.uom, v => setRecipe(r => { r.subs[si].qty = v; }))}
-                  <button aria-label="Remove" onClick={() => setRecipe(r => { r.subs.splice(si, 1); })} className="p-1.5"><Trash2 size={14} style={{ color: LATE }} /></button></>
+                  <button aria-label="Remove" onClick={() => setRecipe(r => { r.subs.splice(si, 1); })} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"><Trash2 size={15} style={{ color: LATE }} /></button></>
                   : <div className="text-right"><div className="text-[14px] font-black" style={{ color: '#256A45' }}>{show(s.qty * f, s.uom, L)}</div>
                     <span className="text-[9.5px] font-black rounded px-1.5 py-px" style={s.src === 'new' ? { backgroundColor: GOLD, color: NAVY } : { backgroundColor: '#F7F1E8', color: '#572C1A' }}>{s.src === 'new' ? L('MỚI', 'NEW') : 'ODOO'}</span></div>}
               </div>
@@ -449,29 +449,29 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
                       : <>{f === 1 ? `${L('1 MẺ', '1 BATCH')} = ${show(s.batchQty ?? 1, s.batchUom ?? 'kg', L).toUpperCase()} · ${L('NGUYÊN LIỆU', 'INGREDIENTS')}` : `${L('CHO', 'FOR')} ${comma(r3(m))} ${L('CÁI', 'PCS')} · ${comma(r3((s.qty * f) / (s.batchQty || 1)))} ${L('MẺ', 'BATCH')}`}</>}
                   </div>
                   {(s.rows ?? []).map((r, ri) => (
-                    <div key={ri} className="flex items-center gap-2 py-1">
-                      <ItemPhoto tmplId={r.tmplId} sku={r.sku} size={30} />
-                      <span className="flex-1 min-w-0 text-[12.5px] leading-snug">{r.name}</span>
-                      {edit ? <>{qtyInput(`row-${s.key}-${ri}`, r.qty, r.uom, v => setRecipe(x => { x.subs[si].rows![ri].qty = v; }))}<button aria-label="Remove" onClick={() => setRecipe(x => { x.subs[si].rows!.splice(ri, 1); })} className="p-1"><Trash2 size={13} style={{ color: LATE }} /></button></>
-                        : <span className="text-[12.5px] font-extrabold" style={{ color: NAVY }}>{show(f === 1 ? r.qty : r.qty * (s.qty * f) / (s.batchQty || 1), r.uom, L)}</span>}
+                    <div key={ri} className="flex items-center gap-2.5 py-1.5">
+                      <ItemPhoto tmplId={r.tmplId} sku={r.sku} size={36} />
+                      <span className="flex-1 min-w-0 text-[13.5px] leading-snug">{r.name}</span>
+                      {edit ? <>{qtyInput(`row-${s.key}-${ri}`, r.qty, r.uom, v => setRecipe(x => { x.subs[si].rows![ri].qty = v; }))}<button aria-label="Remove" onClick={() => setRecipe(x => { x.subs[si].rows!.splice(ri, 1); })} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"><Trash2 size={15} style={{ color: LATE }} /></button></>
+                        : <span className="text-[14px] font-extrabold tabular-nums" style={{ color: NAVY }}>{show(f === 1 ? r.qty : r.qty * (s.qty * f) / (s.batchQty || 1), r.uom, L)}</span>}
                     </div>))}
-                  {edit && <button onClick={() => { needRaw(); setPickQ(''); setSheet({ k: 'pickRaw', target: s.key }); }} className="text-[12px] font-bold py-1" style={{ color: '#572C1A' }}>+ {L('Nguyên liệu', 'Ingredient')}</button>}
+                  {edit && <button onClick={() => { needRaw(); setPickQ(''); setSheet({ k: 'pickRaw', target: s.key }); }} className="inline-flex items-center h-10 px-3.5 mt-1 rounded-full text-[13px] font-bold" style={{ color: '#572C1A', border: '1px dashed #C9A84C', backgroundColor: '#FBF7F0' }}>+ {L('Nguyên liệu', 'Ingredient')}</button>}
                 </div>)}
             </div>))}
 
           <div className="bg-white rounded-2xl px-3 py-2" style={{ border: `1px solid ${BORDER}` }}>
             <div className="text-[10px] font-extrabold tracking-wider py-1" style={{ color: '#8A7A66' }}>{L('THÊM TRỰC TIẾP VÀO THÀNH PHẨM', 'ADDED STRAIGHT TO THE FINAL PRODUCT')}</div>
             {recipe.direct.map((r, ri) => (
-              <div key={ri} className="flex items-center gap-2 py-1">
-                <ItemPhoto tmplId={r.tmplId} sku={r.sku} size={30} />
-                <span className="flex-1 min-w-0 text-[12.5px] leading-snug">{r.name}</span>
-                {edit ? <>{qtyInput(`d-${ri}`, r.qty, r.uom, v => setRecipe(x => { x.direct[ri].qty = v; }))}<button aria-label="Remove" onClick={() => setRecipe(x => { x.direct.splice(ri, 1); })} className="p-1"><Trash2 size={13} style={{ color: LATE }} /></button></>
-                  : <span className="text-[12.5px] font-extrabold" style={{ color: NAVY }}>{show(r.qty * f, r.uom, L)}</span>}
+              <div key={ri} className="flex items-center gap-2.5 py-1.5">
+                <ItemPhoto tmplId={r.tmplId} sku={r.sku} size={36} />
+                <span className="flex-1 min-w-0 text-[13.5px] leading-snug">{r.name}</span>
+                {edit ? <>{qtyInput(`d-${ri}`, r.qty, r.uom, v => setRecipe(x => { x.direct[ri].qty = v; }))}<button aria-label="Remove" onClick={() => setRecipe(x => { x.direct.splice(ri, 1); })} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"><Trash2 size={15} style={{ color: LATE }} /></button></>
+                  : <span className="text-[14px] font-extrabold tabular-nums" style={{ color: NAVY }}>{show(r.qty * f, r.uom, L)}</span>}
               </div>))}
             {!recipe.direct.length && !recipe.subs.length && <div className="py-3 text-center text-[12.5px]" style={{ color: '#A39484' }}>{L('Chưa có nguyên liệu.', 'No ingredient yet.')}</div>}
-            {edit && <div className="flex gap-4 pt-1">
-              <button onClick={() => { needRaw(); setPickQ(''); setSheet({ k: 'pickRaw', target: 'direct' }); }} className="text-[12px] font-bold py-1" style={{ color: '#572C1A' }}>+ {L('Nguyên liệu', 'Ingredient')}</button>
-              <button onClick={() => { needSm(); setPickQ(''); setSheet({ k: 'pickSm' }); }} className="text-[12px] font-bold py-1" style={{ color: '#572C1A' }}>+ {L('Bán thành phẩm', 'Intermediate recipe')}</button>
+            {edit && <div className="flex flex-wrap gap-2 pt-1">
+              <button onClick={() => { needRaw(); setPickQ(''); setSheet({ k: 'pickRaw', target: 'direct' }); }} className="inline-flex items-center h-10 px-3.5 mt-1 rounded-full text-[13px] font-bold" style={{ color: '#572C1A', border: '1px dashed #C9A84C', backgroundColor: '#FBF7F0' }}>+ {L('Nguyên liệu', 'Ingredient')}</button>
+              <button onClick={() => { needSm(); setPickQ(''); setSheet({ k: 'pickSm' }); }} className="inline-flex items-center h-10 px-3.5 mt-1 rounded-full text-[13px] font-bold" style={{ color: '#572C1A', border: '1px dashed #C9A84C', backgroundColor: '#FBF7F0' }}>+ {L('Bán thành phẩm', 'Intermediate recipe')}</button>
             </div>}
           </div>
           <div className="text-[11px] leading-snug px-0.5" style={{ color: '#8A7A66' }}>{L('Bán thành phẩm Odoo hiển thị cả khi không có tồn kho. Bán thành phẩm MỚI chỉ được tạo trên Odoo khi sản phẩm được duyệt. Không hiển thị giá vốn.', 'Odoo intermediates are listed even without stock. A NEW intermediate is created in Odoo only when the product is approved. No cost is shown.')}</div>
@@ -482,27 +482,27 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
           <div className="bg-white rounded-2xl px-3 py-1" style={{ border: `1px solid ${edit ? GOLD : BORDER}` }}>
             {(edit ? edit.steps : ver.steps).map((s, i) => (
               <div key={i} className="flex gap-2.5 py-2.5" style={{ borderTop: i ? `1px solid ${HAIR}` : 'none' }}>
-                <span className="w-6 h-6 rounded-full flex items-center justify-center text-[12px] font-extrabold shrink-0" style={{ backgroundColor: NAVY, color: '#F6F1EA' }}>{i + 1}</span>
+                <span className="w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-extrabold shrink-0" style={{ backgroundColor: NAVY, color: '#F6F1EA' }}>{i + 1}</span>
                 {edit ? (
                   <div className="flex-1 space-y-1.5">
-                    <input value={s.title} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], title: e.target.value }; return { ...x, steps: st }; })} placeholder={L('Tên bước', 'Step name')} className="w-full rounded-lg px-2 py-1.5 text-[13px] font-bold outline-none" style={{ border: `1px solid ${BORDER}` }} />
-                    <textarea value={s.text} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], text: e.target.value }; return { ...x, steps: st }; })} rows={2} placeholder={L('Làm thế nào…', 'How…')} className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
+                    <input value={s.title} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], title: e.target.value }; return { ...x, steps: st }; })} placeholder={L('Tên bước', 'Step name')} className="w-full h-10 rounded-xl px-3 text-[14px] font-bold outline-none" style={{ border: `1px solid ${BORDER}` }} />
+                    <textarea value={s.text} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], text: e.target.value }; return { ...x, steps: st }; })} rows={3} placeholder={L('Làm thế nào…', 'How…')} className="w-full rounded-xl px-3 py-2 text-[14px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
                     <div className="flex gap-1.5">
-                      <input value={s.temp ?? ''} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], temp: e.target.value }; return { ...x, steps: st }; })} placeholder="°C" className="w-20 rounded-lg px-2 py-1 text-[12px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
-                      <input value={s.time ?? ''} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], time: e.target.value }; return { ...x, steps: st }; })} placeholder={L('thời gian', 'time')} className="flex-1 rounded-lg px-2 py-1 text-[12px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
-                      <button aria-label="Remove" onClick={() => setEdit(x => x ? { ...x, steps: x.steps.filter((_, j) => j !== i) } : x)} className="p-1"><Trash2 size={13} style={{ color: LATE }} /></button>
+                      <input value={s.temp ?? ''} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], temp: e.target.value }; return { ...x, steps: st }; })} placeholder="°C" className="w-24 h-10 rounded-xl px-3 text-[14px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
+                      <input value={s.time ?? ''} onChange={e => setEdit(x => { if (!x) return x; const st = [...x.steps]; st[i] = { ...st[i], time: e.target.value }; return { ...x, steps: st }; })} placeholder={L('thời gian', 'time')} className="flex-1 min-w-0 h-10 rounded-xl px-3 text-[14px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
+                      <button aria-label="Remove" onClick={() => setEdit(x => x ? { ...x, steps: x.steps.filter((_, j) => j !== i) } : x)} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"><Trash2 size={15} style={{ color: LATE }} /></button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-extrabold" style={{ color: NAVY }}>{s.title}</div>
-                    <div className="text-[12px] leading-relaxed whitespace-pre-line" style={{ color: '#2A1810' }}>{s.text}</div>
+                    <div className="text-[14.5px] font-extrabold" style={{ color: NAVY }}>{s.title}</div>
+                    <div className="text-[13.5px] leading-relaxed whitespace-pre-line" style={{ color: '#2A1810' }}>{s.text}</div>
                     {(s.temp || s.time) && <div className="flex gap-1 mt-1">{s.temp && <span className="text-[10.5px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: '#F6F1EA', color: '#92600A' }}>{s.temp}</span>}{s.time && <span className="text-[10.5px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: '#F6F1EA', color: '#92600A' }}>{s.time}</span>}</div>}
                   </div>
                 )}
               </div>))}
             {!(edit ? edit.steps : ver.steps).length && !edit && <div className="py-4 text-center text-[12.5px]" style={{ color: '#A39484' }}>{L('Chưa có cách làm.', 'No method yet.')}</div>}
-            {edit && <button onClick={() => setEdit(x => x ? { ...x, steps: [...x.steps, { title: '', text: '', temp: '', time: '' }] } : x)} className="text-[12px] font-bold py-2.5" style={{ color: '#572C1A' }}>+ {L('Bước', 'Step')}</button>}
+            {edit && <button onClick={() => setEdit(x => x ? { ...x, steps: [...x.steps, { title: '', text: '', temp: '', time: '' }] } : x)} className="inline-flex items-center h-10 px-3.5 my-2 rounded-full text-[13px] font-bold" style={{ color: '#572C1A', border: '1px dashed #C9A84C', backgroundColor: '#FBF7F0' }}>+ {L('Bước', 'Step')}</button>}
           </div>
         )}
 
@@ -532,7 +532,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         <div className="fixed left-0 right-0 bottom-[58px] sm:bottom-0 z-20 px-4 pt-3 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)' }}>
           <div className="max-w-3xl mx-auto flex gap-2">
             {edit ? (<>
-              <button onClick={() => { setEdit(null); setQtyDraft({}); }} className="flex-1 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>{L('Huỷ', 'Cancel')}</button>
+              <button onClick={() => { const changed = !!edit && !!ver && (JSON.stringify(edit.recipe) !== JSON.stringify(ver.recipe) || JSON.stringify(edit.steps) !== JSON.stringify(ver.steps) || edit.note !== (ver.note ?? '') || num(edit.yieldPcs) !== ver.yieldPcs); if (changed && !window.confirm(L('Bỏ các thay đổi chưa lưu?', 'Discard the changes you have not saved?'))) return; setEdit(null); setQtyDraft({}); }} className="flex-1 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>{L('Huỷ', 'Cancel')}</button>
               <button disabled={busy} onClick={saveEdit} className="flex-[1.6] rounded-2xl py-3 text-[13.5px] font-extrabold text-white" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : `${L('Lưu', 'Save')} V${ver.n}`}</button>
             </>) : (<>
               {editable && (dtab === 'recipe' || dtab === 'method') ? <button onClick={startEdit} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}><Pencil size={14} />{L('Sửa', 'Edit')} V{ver.n}</button>
@@ -546,27 +546,27 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         {/* sheets */}
         {sheet && (
           <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(31,18,12,.55)' }} onClick={() => !busy && setSheet(null)}>
-            <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="bg-white w-full max-w-xl rounded-t-[28px] p-4 pb-[max(16px,env(safe-area-inset-bottom))] max-h-[92vh] overflow-y-auto space-y-3 lp-sheet" onClick={e => e.stopPropagation()}>
               <div className="flex items-center">
                 <div className="flex-1 text-[16px] font-extrabold" style={{ color: NAVY }}>{{ trial: `${L('Đã làm thử', 'I made a trial')} · ${test.name}`, info: L('Thông tin', 'Details'), menu: test.name, newVersion: L('Phiên bản mới', 'New version'), pickRaw: L('Thêm nguyên liệu', 'Add an ingredient'), pickSm: L('Thêm bán thành phẩm', 'Add an intermediate recipe'), newSub: L('Bán thành phẩm mới', 'New intermediate recipe'), new: '' }[sheet.k]}</div>
-                <button onClick={() => setSheet(null)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3EDE3' }}><X size={15} /></button>
+                <button onClick={() => setSheet(null)} aria-label="Close" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3EDE3' }}><X size={17} /></button>
               </div>
 
               {sheet.k === 'trial' && (<>
                 <div className="flex items-center gap-2"><span className="flex-1 text-[10.5px] font-extrabold tracking-wider" style={{ color: '#8A7A66' }}>{L('PHIÊN BẢN', 'VERSION MADE')}</span>
-                  {detail.versions.map(v => <button key={v.n} onClick={() => setTrial(t => ({ ...t, verN: v.n }))} className="rounded-full px-2.5 py-1 text-[12px] font-bold" style={chipSm(trial.verN === v.n)}>V{v.n}</button>)}</div>
+                  {detail.versions.map(v => <button key={v.n} onClick={() => setTrial(t => ({ ...t, verN: v.n }))} className="rounded-full h-9 px-3.5 text-[13px] font-bold" style={chipSm(trial.verN === v.n)}>V{v.n}</button>)}</div>
                 <div className="flex items-center gap-2"><span className="flex-1 text-[10.5px] font-extrabold tracking-wider" style={{ color: '#8A7A66' }}>{L('SỐ CÁI ĐÃ LÀM', 'PIECES MADE')}</span>
-                  <button onClick={() => setTrial(t => ({ ...t, pcs: String(Math.max(1, (num(t.pcs) || 1) - 1)) }))} className="w-10 h-10 rounded-xl text-xl font-extrabold" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>−</button>
+                  <button onClick={() => setTrial(t => ({ ...t, pcs: String(Math.max(1, (num(t.pcs) || 1) - 1)) }))} className="w-12 h-12 rounded-xl text-xl font-extrabold" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>−</button>
                   <input inputMode="decimal" value={trial.pcs} onChange={e => setTrial(t => ({ ...t, pcs: e.target.value }))} className="w-16 text-center text-[20px] font-black outline-none" style={{ color: NAVY }} />
-                  <button onClick={() => setTrial(t => ({ ...t, pcs: String((num(t.pcs) || 0) + 1) }))} className="w-10 h-10 rounded-xl text-xl font-extrabold" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>+</button></div>
+                  <button onClick={() => setTrial(t => ({ ...t, pcs: String((num(t.pcs) || 0) + 1) }))} className="w-12 h-12 rounded-xl text-xl font-extrabold" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>+</button></div>
                 <button onClick={() => takePhoto('trial')} className="w-full min-h-[52px] rounded-xl inline-flex items-center justify-center gap-2 text-[13px] font-bold"
                   style={trial.photo ? { border: '1px solid #BFDCCB', backgroundColor: '#F7F1E8', color: '#572C1A' } : { border: `1px dashed ${GOLD}`, backgroundColor: PALE, color: GOLD_TEXT }}>
                   {trial.photo ? <><img src={trial.photo} alt="" className="w-11 h-11 rounded-lg object-cover" />{L('Có ảnh · bấm để chụp lại', 'Photo added · tap to retake')}</> : <><Camera size={15} />{L('Ảnh thành phẩm', 'Photo of the result')}</>}</button>
                 <div className="space-y-1.5">
                   <div className="text-[10.5px] font-extrabold tracking-wider" style={{ color: '#8A7A66' }}>{L('NẾM THỬ', 'TASTING')}</div>
-                  <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-label={`${n}`} onClick={() => setTrial(t => ({ ...t, stars: n }))} className="flex-1 h-10 rounded-xl flex items-center justify-center" style={{ border: '1px solid #EFE6D8' }}><Star size={20} fill={n <= trial.stars ? GOLD : 'none'} style={{ color: n <= trial.stars ? GOLD : '#E5E0CC' }} /></button>)}</div>
+                  <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map(n => <button key={n} aria-label={`${n}`} onClick={() => setTrial(t => ({ ...t, stars: n }))} className="flex-1 h-12 rounded-xl flex items-center justify-center" style={{ border: '1px solid #EFE6D8' }}><Star size={24} fill={n <= trial.stars ? GOLD : 'none'} style={{ color: n <= trial.stars ? GOLD : '#E5E0CC' }} /></button>)}</div>
                   <div className="grid grid-cols-3 gap-1.5">{([['ok', L('Tốt', 'Good'), '#256A45'], ['adjust', L('Cần chỉnh', 'To adjust'), '#B45309'], ['failed', L('Hỏng', 'Failed'), '#9B1C12']] as const).map(([k, l, c]) => (
-                    <button key={k} onClick={() => setTrial(t => ({ ...t, verdict: k }))} className="rounded-xl py-2 text-[12.5px] font-extrabold" style={trial.verdict === k ? { backgroundColor: c, color: '#fff', border: `1px solid ${c}` } : { color: c, border: `1px solid ${BORDER}` }}>{l}</button>))}</div>
+                    <button key={k} onClick={() => setTrial(t => ({ ...t, verdict: k }))} className="rounded-xl h-12 text-[13.5px] font-extrabold" style={trial.verdict === k ? { backgroundColor: c, color: '#fff', border: `1px solid ${c}` } : { color: c, border: `1px solid ${BORDER}` }}>{l}</button>))}</div>
                   <input value={trial.note} onChange={e => setTrial(t => ({ ...t, note: e.target.value }))} placeholder={L('Nhận xét: kết cấu, vị, độ đông…', 'What did you notice? texture, taste, setting…')} className="w-full rounded-xl px-3 py-2.5 text-[13px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
                 </div>
                 {(() => { const v = detail.versions.find(x => x.n === trial.verN); const cons = v ? trialConsumption({ yieldPcs: v.yieldPcs, recipe: v.recipe }, Math.max(0, num(trial.pcs) || 0)) : consumption; const skip = v ? v.recipe.subs.filter(s => s.src === 'odoo') : skippedSm; return (
@@ -575,7 +575,8 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
                     {cons.length ? cons.map(r => <div key={String(r.productId)} className="flex justify-between gap-2"><span className="truncate">{r.name}</span><b className="whitespace-nowrap">{show(r.qty, r.uom, L)}</b></div>) : <div>{L('Không có nguyên liệu.', 'No raw material.')}</div>}
                     {skip.length > 0 && <div className="mt-1" style={{ color: '#8A7A66' }}>{L('Bán thành phẩm Odoo chưa được trừ (sắp có):', 'Odoo intermediates not taken yet (coming soon):')} {skip.map(s => s.name).join(', ')}</div>}
                   </div>); })()}
-                <button disabled={busy || !trial.stars || !trial.verdict || !(num(trial.pcs) > 0)} onClick={saveTrial} className="w-full rounded-2xl py-3.5 text-[14px] font-extrabold"
+                {!(trial.stars && trial.verdict && num(trial.pcs) > 0) && <div className="text-[11.5px] text-center font-semibold" style={{ color: '#B45309' }}>{!(num(trial.pcs) > 0) ? L('Nhập số cái đã làm', 'Enter the pieces made') : !trial.stars ? L('Chấm sao nếm thử', 'Give the tasting a star rating') : L('Chọn kết luận: Tốt / Cần chỉnh / Hỏng', 'Choose a verdict: Good / To adjust / Failed')}</div>}
+                <button disabled={busy || !trial.stars || !trial.verdict || !(num(trial.pcs) > 0)} onClick={saveTrial} className="w-full rounded-2xl h-14 text-[15px] font-extrabold sticky bottom-0 shadow-[0_0_0_14px_#fff]"
                   style={trial.stars && trial.verdict && num(trial.pcs) > 0 ? { backgroundColor: NAVY, color: '#fff' } : { backgroundColor: '#E6DCCF', color: '#A39484' }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : L('Lưu lần thử', 'Save trial')}</button>
               </>)}
 
@@ -681,7 +682,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
       </label>
       <div className="flex gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
         {(['all', ...TEST_STAGES.map(s => s.k)] as ('all' | TestStage)[]).map(s => (
-          <button key={s} onClick={() => setStage(s)} className="flex-shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold" style={chip(stage === s)}>
+          <button key={s} onClick={() => setStage(s)} className="flex-shrink-0 rounded-full px-3.5 h-9 text-[12.5px] font-bold" style={chip(stage === s)}>
             {s === 'all' ? L('Đang làm', 'All active') : stageLabel(s)} <span className="opacity-60 text-[10.5px]">{stageCount(s)}</span></button>))}
       </div>
       {(families.length > 0 || collections.length > 0) && (showFilters || fam !== 'all' || coll !== 'all') && (
@@ -693,11 +694,11 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         </div>)}
       <div className="flex items-center gap-2">
         <span className="flex-1 text-[12px] font-semibold" style={{ color: '#6B5A4C' }}>{list.length} {L('kết quả', list.length === 1 ? 'test' : 'tests')}</span>
-        {(families.length > 0 || collections.length > 0) && <button onClick={() => setShowFilters(v => !v)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold" style={showFilters || fam !== 'all' || coll !== 'all' ? { backgroundColor: '#F3E7C8', border: `1px solid ${GOLD}`, color: GOLD_TEXT } : { backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: NAVY }}>{L('Lọc', 'Filters')}{fam !== 'all' || coll !== 'all' ? ' ·' : ''}</button>}
-        <button onClick={() => setSort(SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length])} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><ArrowUpDown size={12} />{sortLabel}</button>
+        {(families.length > 0 || collections.length > 0) && <button onClick={() => setShowFilters(v => !v)} className="inline-flex items-center gap-1 rounded-lg px-3 h-9 text-[12.5px] font-bold" style={showFilters || fam !== 'all' || coll !== 'all' ? { backgroundColor: '#F3E7C8', border: `1px solid ${GOLD}`, color: GOLD_TEXT } : { backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: NAVY }}>{L('Lọc', 'Filters')}{fam !== 'all' || coll !== 'all' ? ' ·' : ''}</button>}
+        <button onClick={() => setSort(SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length])} className="inline-flex items-center gap-1 rounded-lg px-3 h-9 text-[12.5px] font-bold bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><ArrowUpDown size={12} />{sortLabel}</button>
         <div className="flex rounded-lg overflow-hidden bg-white" style={{ border: `1px solid ${BORDER}` }}>
-          <button aria-label="Grid" onClick={() => setGrid(true)} className="w-8 h-8 flex items-center justify-center" style={grid ? { backgroundColor: NAVY, color: '#fff' } : { color: '#6B5A4C' }}><LayoutGrid size={14} /></button>
-          <button aria-label="List" onClick={() => setGrid(false)} className="w-8 h-8 flex items-center justify-center" style={!grid ? { backgroundColor: NAVY, color: '#fff' } : { color: '#6B5A4C' }}><List size={14} /></button>
+          <button aria-label="Grid" onClick={() => setGrid(true)} className="w-10 h-9 flex items-center justify-center" style={grid ? { backgroundColor: NAVY, color: '#fff' } : { color: '#6B5A4C' }}><LayoutGrid size={14} /></button>
+          <button aria-label="List" onClick={() => setGrid(false)} className="w-10 h-9 flex items-center justify-center" style={!grid ? { backgroundColor: NAVY, color: '#fff' } : { color: '#6B5A4C' }}><List size={14} /></button>
         </div>
       </div>
       {!tests.length && <div className="bg-white rounded-2xl p-6 text-center space-y-1" style={{ border: `1px dashed ${BORDER}` }}><div className="text-[14px] font-extrabold" style={{ color: NAVY }}>{L('Chưa có công thức thử', 'No test yet')}</div><div className="text-[12px]" style={{ color: '#6B5A4C' }}>{L('Bấm « Thử mới » để bắt đầu.', 'Tap « New test » to start.')}</div></div>}
@@ -711,9 +712,9 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
 
       {sheet?.k === 'new' && (
         <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(31,18,12,.55)' }} onClick={() => !busy && setSheet(null)}>
-          <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto space-y-3" onClick={e => e.stopPropagation()}>
+          <div className="bg-white w-full max-w-xl rounded-t-[28px] p-4 pb-[max(16px,env(safe-area-inset-bottom))] max-h-[92vh] overflow-y-auto space-y-3 lp-sheet" onClick={e => e.stopPropagation()}>
             <div className="flex items-center"><div className="flex-1 text-[16px] font-extrabold" style={{ color: NAVY }}>{L('Công thức thử mới', 'New test')}</div>
-              <button onClick={() => setSheet(null)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3EDE3' }}><X size={15} /></button></div>
+              <button onClick={() => setSheet(null)} aria-label="Close" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3EDE3' }}><X size={17} /></button></div>
             <label className="block"><span className="text-[10.5px] font-extrabold tracking-wider" style={{ color: '#8A7A66' }}>{L('TÊN', 'NAME')}</span>
               <input autoFocus value={nf.name} onChange={e => setNf(x => ({ ...x, name: e.target.value }))} placeholder={L('vd: Macaron yuzu mè', 'e.g. Yuzu sesame macaron')} className="w-full mt-1 rounded-xl px-3 py-2.5 text-[14px] outline-none" style={{ border: `1px solid ${BORDER}` }} /></label>
             <div className="space-y-1.5"><span className="text-[10.5px] font-extrabold tracking-wider" style={{ color: '#8A7A66' }}>{L('BẮT ĐẦU TỪ', 'START FROM')}</span>

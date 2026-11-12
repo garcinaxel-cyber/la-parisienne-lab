@@ -1379,7 +1379,7 @@ export default function StationView({
   };
 
   return (
-    <div className="min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
+    <div className="lp-station min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
       {/* Top bar */}
       <header className="sticky top-0 z-20 lp-station-header" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-3xl mx-auto px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">

@@ -325,7 +325,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   };
 
   return (
-    <div className="min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
+    <div className="lp-station min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
       {/* Phone: same ivory header and bottom bar as the station (UI v2) */}
       <div className="sm:hidden sticky top-0 z-20 flex items-center gap-2 px-4 py-2" style={{ backgroundColor: '#F6F1EA' }}>
         <img src="/logo-laparis-brown.png" alt="la Paris" className="h-8 w-auto shrink-0" />
