@@ -4,7 +4,7 @@
 // day → pushed anyway by the nightly cron. Chefs never see values in VND.
 import { waitUntil } from '@vercel/functions';
 import { rawService, rawActor, canActForTeam, canApproveForTeam, teamLeads } from '@/lib/raw-materials-db';
-import { mapLoss, pushChefLoss } from '@/lib/chef-losses';
+import { mapLoss, pushChefLoss, chefRdOdooOn } from '@/lib/chef-losses';
 import { CHEF_RD_TEAMS, REASONS_FINISHED, REASONS_STOCK, type ChefLoss, type LossKind } from '@/lib/chef-rd';
 import { vnTodayStr } from '@/lib/odoo';
 
@@ -17,7 +17,7 @@ export type LossMonth = {
   top: { name: string; sku: string | null; n: number; produced: number; mainReason: string | null }[];
 };
 export type LossData = {
-  today: string; me: string; canValidate: boolean; leads: string[];
+  today: string; me: string; canValidate: boolean; leads: string[]; odooOn: boolean;
   items: LossItem[]; losses: ChefLoss[]; month: LossMonth;
 };
 
@@ -119,7 +119,7 @@ export async function getLossDataAction(team: string): Promise<{ data?: LossData
   };
 
   return { data: {
-    today, me: a.name, canValidate: canApproveForTeam(a, team), leads: leads.map(l => l.name).filter(Boolean),
+    today, me: a.name, odooOn: chefRdOdooOn(), canValidate: canApproveForTeam(a, team), leads: leads.map(l => l.name).filter(Boolean),
     items, losses: (lossesQ.data ?? []).map(mapLoss), month: monthData,
   } };
 }

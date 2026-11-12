@@ -14,6 +14,11 @@ import type { ChefLoss } from '@/lib/chef-rd';
 type Db = any;
 const STALE_MS = 10 * 60 * 1000;
 
+// Test phase (Axel, 2026-11-12: "désactiver temporairement toute action sur Odoo pour ces 2
+// fonctionnalités"): nothing goes to Odoo unless CHEF_RD_ODOO_PUSH=on. Validated rows simply wait
+// (odoo_state null) — when it is switched on we decide what to do with the rows of the test phase.
+export function chefRdOdooOn(): boolean { return (process.env.CHEF_RD_ODOO_PUSH ?? '').trim().toLowerCase() === 'on'; }
+
 export function mapLoss(r: any): ChefLoss {
   return {
     id: r.id, team: r.team, kind: r.kind, sku: r.sku ?? null, tmplId: r.tmpl_id ?? null, productId: r.product_id ?? null,
@@ -50,6 +55,7 @@ async function productOf(row: any): Promise<{ id: number; uomId: number } | null
 
 /** Pushes one validated / auto loss to Odoo. Safe to call twice (claim). */
 export async function pushChefLoss(db: Db, id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!chefRdOdooOn()) return { ok: true };   // test phase: Odoo off
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
   const row = await claim(db, id);
   if (!row) return { ok: true };  // already done, not validated, or another run holds it
@@ -100,6 +106,7 @@ export async function pushDueChefLosses(db: Db, budgetMs = 100_000): Promise<{ a
   const { data: auto } = await db.from('lab_chef_losses')
     .update({ status: 'auto', validated_at: new Date().toISOString(), validated_by_name: 'auto (not validated)', updated_at: new Date().toISOString() })
     .eq('status', 'pending').lt('lab_day', today).select('id');
+  if (!chefRdOdooOn()) return { autoValidated: auto?.length ?? 0, pushed: 0, errors: [] };
   const { data: due } = await db.from('lab_chef_losses').select('id, odoo_tries')
     .in('status', ['validated', 'auto']).or('odoo_state.is.null,odoo_state.eq.error,odoo_state.eq.pending')
     .lt('odoo_tries', 5).order('declared_at').limit(200);

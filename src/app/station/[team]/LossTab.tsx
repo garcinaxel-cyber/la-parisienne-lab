@@ -138,7 +138,7 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
             {mode === 'sent' && (
               <div className="text-[11px] mt-1 flex items-center gap-1 font-bold" style={{ color: l.odooState === 'done' ? '#047857' : l.odooState === 'error' ? LATE : AMBER }}>
                 {l.odooState === 'done' ? <CheckCircle2 size={12} /> : l.odooState === 'error' ? <AlertTriangle size={12} /> : <Clock size={12} />}
-                {l.odooState === 'done' ? `Odoo ✓${l.odooMoName ? ` · ${l.odooMoName}` : ''}` : l.odooState === 'error' ? `Odoo: ${l.odooError ?? 'error'}` : L('Đang gửi Odoo…', 'Sending to Odoo…')}
+                {l.odooState === 'done' ? `Odoo ✓${l.odooMoName ? ` · ${l.odooMoName}` : ''}` : l.odooState === 'error' ? `Odoo: ${l.odooError ?? 'error'}` : !data.odooOn ? L('Odoo tạm tắt (giai đoạn thử)', 'Odoo off (test phase)') : L('Đang gửi Odoo…', 'Sending to Odoo…')}
                 <span className="font-semibold" style={{ color: '#9CA3AF' }}> · {l.status === 'auto' ? L('tự động (chưa duyệt)', 'auto (not validated)') : `${L('duyệt bởi', 'validated by')} ${l.validatedBy ?? ''}`}</span>
                 {l.odooState === 'error' && data.canValidate && (
                   <button disabled={busy} onClick={() => act(() => retryLossAction(team, l.id), L('Đã gửi lại.', 'Sent again.'))} className="ml-1 inline-flex items-center gap-0.5 underline"><RotateCcw size={11} />{L('Thử lại', 'Retry')}</button>)}
@@ -168,6 +168,7 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
   return (
     <div className="space-y-3">
       {msg && <div className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: msg.ok ? '#EAF6EC' : '#FBEAE8', color: msg.ok ? '#067647' : LATE }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</div>}
+      {!data.odooOn && <div className="rounded-xl px-3 py-2 text-[11.5px] font-semibold" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>{L('Giai đoạn thử: khai báo và duyệt được ghi trong app, chưa gửi lên Odoo.', 'Test phase: declarations and validations are kept in the app, nothing is sent to Odoo yet.')}</div>}
 
       <div className="grid grid-cols-3 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
         {([['declare', L('Khai báo', 'Declare')], ['today', `${L('Hôm nay', 'Today')}${pending.length ? ` · ${pending.length}` : ''}`], ['month', L('Tháng này', 'This month')]] as const).map(([k, label]) => (
@@ -337,7 +338,7 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
               style={canConfirm ? { backgroundColor: AMBER, color: '#fff' } : { backgroundColor: '#E5E7EB', color: '#9CA3AF' }}>
               {busy ? <Loader2 size={15} className="animate-spin inline" /> : draft.editId ? L('Lưu thay đổi', 'Save change') : `${L('Khai báo hỏng', 'Declare loss')} · ${fmtQty(draft.qty)} ${unitLabel(draft.item.uom)}`}
             </button>
-            <div className="text-[11px] text-center leading-snug" style={{ color: '#9C8F6A' }}>{L(`Gửi lên Odoo sau khi ${leads} duyệt.`, `Goes to Odoo once ${leads} validates.`)}</div>
+            <div className="text-[11px] text-center leading-snug" style={{ color: '#9C8F6A' }}>{data.odooOn ? L(`Gửi lên Odoo sau khi ${leads} duyệt.`, `Goes to Odoo once ${leads} validates.`) : L(`${leads} duyệt · Odoo tạm tắt (giai đoạn thử).`, `${leads} validates · Odoo off (test phase).`)}</div>
           </div>
         </div>
       )}
