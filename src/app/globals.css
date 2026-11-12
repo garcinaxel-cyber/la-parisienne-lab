@@ -63,3 +63,9 @@
   .lp-rise, .lp-pop, .lp-sheet, .lp-overlay { animation: none; }
   .lp-press { transition: none; }
 }
+
+/* Station header: ivory on phones (UI v2 mockup), cacao from the sm breakpoint up */
+@media (max-width: 639px) {
+  .lp-station-header { background-color: rgba(246,241,234,.96) !important; box-shadow: none !important; backdrop-filter: blur(8px); }
+  .lp-station-header .lp-sync { background-color: #fff !important; color: #572C1A !important; border: 1px solid #E6DCCF; }
+}

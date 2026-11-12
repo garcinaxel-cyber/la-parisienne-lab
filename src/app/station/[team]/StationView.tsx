@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -1328,7 +1328,8 @@ export default function StationView({
     }] : []),
   ];
 
-  const MAIN_TAB_IDS: Tab[] = ['production', 'commande', 'termine', 'upcoming'];
+  const stockTeamNav = STOCK_PROD_TEAMS.includes(team);
+  const MAIN_TAB_IDS: Tab[] = stockTeamNav ? ['production', 'commande', 'raw'] : ['production', 'commande', 'termine', 'upcoming'];
   const mainTabs = tabs.filter(t => MAIN_TAB_IDS.includes(t.id));
   const moreTabs = tabs.filter(t => !MAIN_TAB_IDS.includes(t.id));
   const moreActive = moreTabs.find(t => t.id === activeTab);
@@ -1356,11 +1357,12 @@ export default function StationView({
   return (
     <div className="min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
       {/* Top bar */}
-      <header className="sticky top-0 z-20" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+      <header className="sticky top-0 z-20 lp-station-header" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-3xl mx-auto px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-2.5 sm:gap-2 min-w-0 flex-1">
-            <img src="/logo-laparis-cream.png" alt="la Paris" className="h-7 sm:h-8 w-auto shrink-0" />
-            <div className="min-w-0 text-left">
+            <img src="/logo-laparis-brown.png" alt="la Paris" className="sm:hidden h-8 w-auto shrink-0" />
+            <img src="/logo-laparis-cream.png" alt="" className="hidden sm:block h-8 w-auto shrink-0" />
+            <div className="min-w-0 text-left hidden sm:block">
               <div className="text-white font-bold text-[13px] sm:text-sm leading-tight truncate">
                 {lang === 'vi' ? meta.vi : meta.en}
               </div>
@@ -1370,7 +1372,11 @@ export default function StationView({
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-1.5 shrink-0">
+            <span className="sm:hidden rounded-full pl-2.5 pr-3 h-8 flex items-center gap-1.5 text-[10.5px] font-bold tracking-[0.1em] uppercase bg-white" style={{ color: '#2A1810', border: '1px solid #E6DCCF' }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: syncState === 'error' ? '#B42318' : '#3E9B62' }} />
+              {(lang === 'vi' ? meta.vi : meta.en).replace(/^Team\s+/i, '')} · {isHistoryView ? formatDate(today) : 'Live'}
+            </span>
             {totalQty > 0 && (
               <div className="rounded-full px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}>
                 {doneQty}/{totalQty}
@@ -1388,7 +1394,7 @@ export default function StationView({
             </div>
             <button onClick={handleSyncOdoo} disabled={syncState === 'syncing' || syncCooldown}
               title={lang === 'vi' ? 'Đồng bộ Odoo ngay' : 'Sync Odoo now'}
-              className="w-9 h-9 sm:w-8 sm:h-8 rounded-full sm:rounded-lg flex items-center justify-center transition-colors active:scale-95 disabled:opacity-40"
+              className="lp-sync w-9 h-9 sm:w-8 sm:h-8 rounded-full sm:rounded-lg flex items-center justify-center transition-colors active:scale-95 disabled:opacity-40"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: syncState === 'ok' ? '#7CD98C' : syncState === 'error' ? '#F0A0A0' : 'rgba(255,255,255,0.8)' }}>
               {syncState === 'ok'
                 ? <CheckCircle2 size={14} />
@@ -1419,14 +1425,22 @@ export default function StationView({
           </div>
         </div>
         {/* Progress bar */}
-        <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+        <div className="h-1 hidden sm:block" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
           <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
         {/* Tab navigation — Axel, 2026-11-06: the bar had 8-9 tabs squeezed into tiny labels.
             Now the 4 daily tabs stay in the bar, everything else sits behind "Thêm" (More). */}
         <div className="flex border-t fixed bottom-0 inset-x-0 z-30 pb-[env(safe-area-inset-bottom)] sm:static sm:z-auto sm:pb-0" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
           {mainTabs.map(tab => (
-            <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
+            <Fragment key={tab.id}>
+            {stockTeamNav && tab.id === 'raw' && team === 'hung' && (
+              <Link href={`/station/oem?team=${teamSlug}`}
+                className="sm:hidden [&>svg]:w-5 [&>svg]:h-5 flex-1 min-w-0 flex flex-col items-center justify-center gap-1 min-h-[58px] py-2 text-[10px] font-bold tracking-[0.08em] uppercase active:scale-95"
+                style={{ color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>
+                <Factory size={14} /><span>OEM</span>
+              </Link>
+            )}
+            <button onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
               className="relative [&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
@@ -1434,7 +1448,7 @@ export default function StationView({
               }>
               {tab.icon}
               <span className="flex items-center gap-1 truncate max-w-full">
-                <span className="truncate">{lang === 'vi' ? tab.labelVi : tab.labelEn}</span>
+                <span className={`truncate ${stockTeamNav ? 'tracking-[0.08em] uppercase text-[10px] sm:text-xs sm:normal-case sm:tracking-normal' : ''}`}>{stockTeamNav && tab.id === 'raw' ? (lang === 'vi' ? 'Kho phòng' : 'Room') : stockTeamNav && tab.id === 'production' ? (lang === 'vi' ? 'Sản xuất' : 'Produce') : (lang === 'vi' ? tab.labelVi : tab.labelEn)}</span>
                 {tab.count > 0 && (
                   <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0 absolute top-1.5 left-1/2 ml-1.5 sm:static sm:ml-0"
                     style={activeTab === tab.id
@@ -1446,6 +1460,7 @@ export default function StationView({
                 )}
               </span>
             </button>
+            </Fragment>
           ))}
           <button onClick={() => setMoreOpen(o => !o)}
             className="[&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 relative"
@@ -1507,6 +1522,8 @@ export default function StationView({
           const L2 = (vi: string, en: string) => (lang === 'vi' ? vi : en);
           const families: { title: string; items: Item[] }[] = [
             { title: L2('Sản xuất', 'Production'), items: [
+              ...tabItem('termine', L2('Các mẻ đã xong hôm nay', 'Finished cards of the day')),
+              ...tabItem('upcoming', L2('Đơn các ngày tới', 'Orders of the coming days')),
               ...tabItem('history', L2('Các ngày trước', 'Past days')),
               { key: 'fiches', label: L2('Phiếu kỹ thuật', 'Recipe cards'), hint: L2('Công thức, quy trình', 'Recipes and methods'), icon: <BookOpen size={18} />, href: `/station/fiches?team=${team}` },
               ...(team === 'hung' ? [{ key: 'oem', label: L2('Đơn OEM', 'OEM orders'), hint: L2('Kế hoạch theo kg', 'Baking plan in kg'), icon: <Factory size={18} />, href: `/station/oem?team=${teamSlug}` }] : []),
@@ -1643,7 +1660,9 @@ export default function StationView({
 
       {/* Shared Today / Tomorrow day selector — applies to Production, Orders AND Done tabs
           so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
-      {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine') && (
+      {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine')
+        && !(stockTeamNav && activeTab === 'production' && prodDay === 'today'
+          && ![...todayAssignments, ...tomorrowAsg].some(a => !a.is_extra && !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status))) && (
         <div className="max-w-3xl mx-auto px-4 pt-3 space-y-2.5">
           <div className="flex gap-1 p-1 rounded-2xl" style={{ backgroundColor: '#EADFD0' }}>
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
@@ -1736,9 +1755,16 @@ export default function StationView({
             <StockProductionPanel team={team} lang={lang} readOnly={isEmployee}
               extras={assignments.filter(a => a.is_extra && !a.cancelled && a.status === 'done')
                 .sort((x, y) => String(x.produced_at ?? '').localeCompare(String(y.produced_at ?? '')))
-                .map(a => ({ id: a.id, name: lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi), qty: a.qty_produced, transferred: !!a.transferred || (a.qty_sent_total ?? 0) > 0 }))}
+                .map(a => ({ id: a.id, name: lang === 'vi' ? a.product_name_vi : (a.product_name_en || a.product_name_vi), qty: a.qty_produced, transferred: !!a.transferred || (a.qty_sent_total ?? 0) > 0, by: a.produced_by_name, at: a.produced_at, imageUrl: thumb(a.image_url, 96) }))}
               onRecord={recordStockExtra} onUndo={undoStockExtra} onSendStock={openStockModal}
               sendableCount={assignments.filter(a => a.status === 'done' && !a.cancelled && !a.transferred).length} />
+          )}
+          {STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && !isHistoryView && !isEmployee && (
+            // Same "+ extra production" pop-up as before, for a product that is not in the list above.
+            <button onClick={() => setExtraModal(true)} className="sm:hidden w-full h-11 rounded-2xl text-[13px] font-bold lp-press"
+              style={{ color: '#572C1A', border: '1px dashed #C9B89F', backgroundColor: 'transparent' }}>
+              {lang === 'vi' ? 'Sản phẩm không có trong danh sách? Ghi sản xuất khác' : 'Product not in the list? Record another production'}
+            </button>
           )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
           {orderGroups.length > 1 && (
@@ -2810,7 +2836,7 @@ export default function StationView({
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
-        <div className="fixed z-10 pointer-events-none bottom-[84px] right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center"
+        <div className={`fixed z-10 pointer-events-none bottom-[84px] right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center ${stockTeamNav ? 'hidden' : ''}`}
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* Round FAB bottom-right on phones (never covers the last card's buttons), labelled pill on bigger screens */}
           <button

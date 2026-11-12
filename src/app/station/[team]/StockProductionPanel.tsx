@@ -4,14 +4,14 @@
 // way, same Odoo MO) — only the screen changes: low-stock list, one category at a time, product
 // cards with photo + live Lab stock, and a number pad for the batch size (big batches).
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowUpDown, Loader2, Package, Plus, RotateCcw, Search, X } from 'lucide-react';
+import { ArrowUpDown, Loader2, Package, Plus, RotateCcw, Search, X } from 'lucide-react';
 import type { StockProduct } from './actions';
 
 const CACAO = '#2A1810', BROWN = '#572C1A', GOLD = '#C9A84C', GOLD_INK = '#8A6418', BORDER = '#E6DCCF', IVORY = '#F6F1EA', MUTED = '#6B5A4C', RED = '#B42318', AMBER = '#B7791F';
 const GREEN = CACAO;
 type Sort = 'default' | 'low' | 'az';
 
-export type TodayExtra = { id: string; name: string; qty: number; transferred: boolean };
+export type TodayExtra = { id: string; name: string; qty: number; transferred: boolean; by?: string | null; at?: string | null; imageUrl?: string | null };
 
 export default function StockProductionPanel({
   team, lang, readOnly, extras, onRecord, onUndo, onSendStock, sendableCount,
@@ -37,6 +37,8 @@ export default function StockProductionPanel({
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('default'); // default = the order chefs already know
   const [lowOnly, setLowOnly] = useState(false);
+  const [allBatches, setAllBatches] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   async function load() {
     try {
@@ -89,186 +91,164 @@ export default function StockProductionPanel({
       </div>;
   const sortLabel = sort === 'default' ? L('Mặc định', 'Default') : sort === 'low' ? L('Thấp trước', 'Low first') : 'A–Z';
 
+  const hhmm = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' }) : ''; } catch { return ''; } };
+  const batches = [...extras].reverse();
+  const onRack = extras.filter(x => !x.transferred).length;
+  const shownBatches = allBatches ? batches : batches.slice(0, 3);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: '#FBEAE8', color: RED }}>{err}</div>}
 
-      {/* Hero — the three numbers a stock team looks at, then search */}
-      <section className="rounded-3xl px-4 pt-4 pb-4 relative overflow-hidden lp-rise"
-        style={{ background: `radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), ${CACAO}`, color: '#fff' }}>
-        <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: GOLD }}>{L('Sản xuất nhập kho', 'Stock production')}</div>
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          {[
-            [products ? String(products.length) : '—', L('sản phẩm', 'products'), '#fff'],
-            [products ? String(low.length) : '—', L('tồn thấp', 'low stock'), low.length ? '#F3B8A8' : '#fff'],
-            [String(todayTotal), L('làm hôm nay', 'made today'), '#E9D3A4'],
-          ].map(([n, label, color]) => (
-            <div key={label}>
-              <div className="lp-display text-[30px] leading-none font-bold" style={{ color }}>{n}</div>
-              <div className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,.72)' }}>{label}</div>
-            </div>
-          ))}
+      {/* Made today — the day's batches live here (what the Done tab used to hold for a stock team) */}
+      <section className="rounded-[26px] px-4 pt-4 pb-2 lp-rise" style={{ backgroundColor: CACAO, color: '#fff' }}>
+        <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: '#D9B36A' }}>{L('Làm hôm nay', 'Made today')}</div>
+        <div className="mt-1 flex items-end justify-between gap-3">
+          <div className="lp-display text-[46px] leading-none font-bold">{todayTotal}</div>
+          <div className="text-[12.5px] pb-1.5 text-right" style={{ color: 'rgba(255,255,255,.72)' }}>
+            {extras.length} {L('mẻ', extras.length === 1 ? 'batch' : 'batches')} · {onRack} {L('chờ nhập kho', 'on the rack')}
+          </div>
         </div>
-        <label className="mt-3.5 flex items-center gap-2 rounded-2xl px-3 h-11" style={{ backgroundColor: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.16)' }}>
-          <Search size={16} style={{ color: 'rgba(255,255,255,.7)' }} />
-          <input value={query} onChange={e => setQuery(e.target.value)} inputMode="search" enterKeyHint="search"
-            placeholder={L('Tìm sản phẩm hoặc mã…', 'Search a product or code…')}
-            className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-white placeholder:text-white/50" />
-          {query && <button onClick={() => setQuery('')} aria-label="clear" className="w-7 h-7 flex items-center justify-center rounded-full" style={{ backgroundColor: 'rgba(255,255,255,.16)' }}><X size={14} /></button>}
-        </label>
-      </section>
-
-      {/* Today — what was made, undo, send to stock */}
-      {(extras.length > 0 || (!readOnly && sendableCount > 0)) && (
-        <section className="rounded-2xl bg-white p-3 lp-rise" style={{ border: `1px solid ${BORDER}` }}>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold tracking-[0.14em] uppercase" style={{ color: GOLD_INK }}>{L('Hôm nay', 'Today')} · {todayTotal}</span>
-            {!readOnly && extras.length > 0 && !extras[extras.length - 1].transferred && (
-              <button disabled={busy} onClick={async () => { setBusy(true); await onUndo(extras[extras.length - 1].id); setBusy(false); }}
-                className="flex items-center gap-1 text-[12px] font-bold px-2 py-1 rounded-lg lp-press" style={{ color: RED }}>
-                <RotateCcw size={12} /> {L('Hoàn tác', 'Undo last')}
+        {batches.length === 0 ? (
+          <div className="mt-3 pb-3 text-[12.5px]" style={{ color: 'rgba(255,255,255,.6)', borderTop: '1px solid rgba(255,255,255,.12)', paddingTop: 12 }}>
+            {L('Chưa có mẻ nào hôm nay. Chạm + bên dưới để ghi.', 'No batch yet today. Tap + on a product below.')}
+          </div>
+        ) : (
+          <div className="mt-3">
+            {shownBatches.map((x, i) => (
+              <div key={x.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: '1px solid rgba(255,255,255,.12)' }}>
+                {x.imageUrl
+                  ? <img src={x.imageUrl} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" style={{ backgroundColor: '#3A251A' }} />
+                  : <div className="w-10 h-10 rounded-full shrink-0" style={{ backgroundColor: '#3A251A' }} />}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-bold truncate">{x.name}</div>
+                  <div className="text-[10px] font-bold tracking-[0.06em] uppercase truncate" style={{ color: x.transferred ? '#8FD3A4' : '#E9C46A' }}>
+                    {x.transferred ? L('Đã nhập kho Lab', 'In Lab stock') : L('Trên kệ', 'On the rack')}{x.by ? ` · ${x.by}` : ''}{x.at ? ` · ${hhmm(x.at)}` : ''}
+                  </div>
+                </div>
+                <div className="lp-display text-[19px] font-bold shrink-0">×{x.qty}</div>
+                {!readOnly && i === 0 && !allBatches && !x.transferred && (
+                  <button disabled={busy} onClick={async () => { setBusy(true); await onUndo(x.id); setBusy(false); }}
+                    title={L('Hoàn tác', 'Undo last')} aria-label={L('Hoàn tác', 'Undo last')}
+                    className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 lp-press" style={{ backgroundColor: 'rgba(255,255,255,.1)', color: '#F3B8A8' }}>
+                    <RotateCcw size={15} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {batches.length > 3 && (
+              <button onClick={() => setAllBatches(v => !v)} className="w-full py-2.5 text-[12px] font-bold" style={{ color: '#D9B36A', borderTop: '1px solid rgba(255,255,255,.12)' }}>
+                {allBatches ? L('Thu gọn', 'Show less') : L(`Xem cả ${batches.length} mẻ`, `See all ${batches.length} batches`)}
               </button>
             )}
           </div>
-          {extras.length > 0 && (
-            <div className="mt-2 flex gap-1.5 overflow-x-auto no-scrollbar">
-              {[...extras].reverse().map(x => (
-                <span key={x.id} className="shrink-0 rounded-full pl-2.5 pr-2 py-1 text-[12px] font-semibold flex items-center gap-1.5"
-                  style={{ backgroundColor: IVORY, color: CACAO, border: `1px solid ${BORDER}` }}>
-                  <span className="max-w-[150px] truncate">{x.name}</span>
-                  <b className="rounded-full px-1.5 text-[11px]" style={{ backgroundColor: x.transferred ? '#E3EFE6' : '#F3E7C8', color: x.transferred ? '#256A45' : GOLD_INK }}>×{x.qty}</b>
-                </span>
-              ))}
-            </div>
-          )}
-          {!readOnly && sendableCount > 0 && (
-            <button onClick={onSendStock} className="mt-3 w-full rounded-xl h-12 font-bold text-sm flex items-center justify-center gap-2 lp-press"
-              style={{ backgroundColor: GOLD, color: CACAO, boxShadow: '0 6px 16px rgba(201,168,76,.35)' }}>
-              <Package size={16} /> {L('Nhập kho', 'Send to stock')} · {sendableCount}
-            </button>
-          )}
-        </section>
+        )}
+        {!readOnly && sendableCount > 0 && (
+          <button onClick={onSendStock} className="mb-2 mt-1 w-full rounded-2xl h-12 font-bold text-sm flex items-center justify-center gap-2 lp-press"
+            style={{ backgroundColor: GOLD, color: CACAO }}>
+            <Package size={16} /> {L('Nhập kho', 'Send to stock')} · {sendableCount}
+          </button>
+        )}
+      </section>
+
+      {/* One line for low stock — tap to see only those, every family together */}
+      {low.length > 0 && (
+        <button onClick={() => { setLowOnly(v => !v); setQuery(''); }} className="w-full rounded-2xl px-4 h-[58px] flex items-center gap-3 text-left lp-press lp-rise"
+          style={lowOnly ? { backgroundColor: CACAO, color: '#fff' } : { backgroundColor: '#F4E3DC', border: '1px solid #EBCFC5', color: CACAO }}>
+          <span className="lp-display text-[24px] font-bold leading-none" style={{ color: lowOnly ? '#F3B8A8' : RED }}>{low.length}</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[13.5px] font-bold leading-tight">{L('sản phẩm dưới mức tối thiểu', 'products under their minimum')}</span>
+            <span className="block text-[11.5px] mt-0.5" style={{ opacity: .7 }}>{lowOnly ? L('Chạm để xem lại tất cả', 'Tap to go back to all products') : L('Chạm để chỉ xem các sản phẩm này', 'Tap to see only these, all families together')}</span>
+          </span>
+          {lowOnly && <X size={16} />}
+        </button>
       )}
 
-      {/* To restock — products under their safety level, tap = produce */}
-      {low.length > 0 && !q && (
-        <section className="lp-rise">
-          <div className="flex items-center justify-between px-0.5 pb-2">
-            <span className="flex items-center gap-1.5 text-[13px] font-bold" style={{ color: CACAO }}>
-              <AlertTriangle size={15} style={{ color: RED }} /> {L('Cần làm thêm', 'To restock')}
-              <span className="rounded-full px-2 py-0.5 text-[11px] font-black text-white" style={{ backgroundColor: RED }}>{low.length}</span>
-            </span>
-            <button onClick={() => setLowOnly(v => !v)} className="text-[12px] font-bold px-2.5 py-1 rounded-full lp-press"
-              style={lowOnly ? { backgroundColor: CACAO, color: '#fff' } : { color: BROWN, border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-              {lowOnly ? L('Xem tất cả sản phẩm', 'Back to all') : L('Chỉ xem tồn thấp', 'Show only these')}
-            </button>
-          </div>
-          {!lowOnly && (
-            <div className="flex gap-2.5 overflow-x-auto no-scrollbar -mx-4 px-4 pb-1 snap-x">
-              {low.map(p => {
-                const pct = Math.max(4, Math.min(100, (p.stock! / p.threshold!) * 100));
+      {/* Families + search — sticks under the header while the list scrolls */}
+      <div className="sticky top-[52px] sm:top-[100px] z-10 -mx-4 px-4 py-2" style={{ backgroundColor: 'rgba(246,241,234,.95)', backdropFilter: 'blur(8px)' }}>
+        {searchOpen ? (
+          <label className="flex items-center gap-2 rounded-full px-3.5 h-10 bg-white" style={{ border: `1px solid ${BORDER}` }}>
+            <Search size={16} style={{ color: MUTED }} />
+            <input autoFocus value={query} onChange={e => setQuery(e.target.value)} inputMode="search" enterKeyHint="search"
+              placeholder={L('Tìm sản phẩm hoặc mã…', 'Search a product or code…')}
+              className="flex-1 min-w-0 bg-transparent outline-none text-[14px]" style={{ color: CACAO }} />
+            <button onClick={() => { setQuery(''); setSearchOpen(false); }} aria-label="close" className="w-7 h-7 flex items-center justify-center rounded-full" style={{ backgroundColor: IVORY, color: CACAO }}><X size={14} /></button>
+          </label>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0 flex gap-2 overflow-x-auto no-scrollbar">
+              {lowOnly ? (
+                <span className="text-[13px] font-bold h-10 flex items-center" style={{ color: CACAO }}>{L('Dưới mức tối thiểu', 'Under minimum')} · {shown.length}</span>
+              ) : cats.map(c => {
+                const n = (products ?? []).filter(p => p.category === c).length;
                 return (
-                  <button key={p.sku} disabled={readOnly} onClick={() => { setPad(p); setVal(''); }}
-                    className="snap-start shrink-0 w-[168px] rounded-2xl bg-white p-2.5 text-left lp-press" style={{ border: `1px solid ${BORDER}` }}>
-                    <div className="flex items-center gap-2.5">
-                      <Photo p={p} className="w-12 h-12 rounded-xl shrink-0" />
-                      <div className="min-w-0">
-                        <div className="lp-display text-[20px] leading-none font-bold" style={{ color: pct < 50 ? RED : AMBER }}>
-                          {Math.round(p.stock!)}<span className="text-[12px] font-semibold" style={{ color: MUTED, fontFamily: 'inherit' }}> / {Math.round(p.threshold!)}</span>
-                        </div>
-                        <div className="h-1.5 rounded-full mt-1.5 w-[84px]" style={{ backgroundColor: '#EFE6D8' }}>
-                          <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, backgroundColor: pct < 50 ? RED : AMBER }} />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-2 text-[12.5px] font-bold leading-tight lp-clamp2 min-h-[32px]" style={{ color: CACAO }}>{name(p)}</div>
+                  <button key={c} onClick={() => setCat(c)}
+                    className="shrink-0 px-4 h-10 rounded-full text-[13px] font-bold whitespace-nowrap lp-press"
+                    style={c === cat ? { backgroundColor: CACAO, color: '#fff' } : { backgroundColor: '#fff', color: CACAO, border: `1px solid ${BORDER}` }}>
+                    {c} · {n}
                   </button>
                 );
               })}
             </div>
-          )}
-        </section>
-      )}
-
-      {/* Categories + sort — sticks under the header while the list scrolls */}
-      <div className="sticky top-[52px] sm:top-[104px] z-10 -mx-4 px-4 py-2" style={{ backgroundColor: 'rgba(246,241,234,.94)', backdropFilter: 'blur(8px)' }}>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 min-w-0 flex gap-2 overflow-x-auto no-scrollbar">
-            {q ? (
-              <span className="text-[13px] font-bold py-1.5" style={{ color: CACAO }}>{shown.length} {L('kết quả', shown.length === 1 ? 'result' : 'results')}</span>
-            ) : lowOnly ? (
-              <span className="text-[13px] font-bold py-1.5" style={{ color: CACAO }}>{L('Tồn thấp', 'Low stock')} · {shown.length}</span>
-            ) : cats.map(c => {
-              const n = (products ?? []).filter(p => p.category === c).length;
-              return (
-                <button key={c} onClick={() => setCat(c)}
-                  className="shrink-0 px-3.5 h-9 rounded-full text-[12.5px] font-bold whitespace-nowrap lp-press"
-                  style={c === cat ? { backgroundColor: CACAO, color: '#fff' } : { backgroundColor: '#fff', color: CACAO, border: `1px solid ${BORDER}` }}>
-                  {c} <span style={{ opacity: .6 }}>{n}</span>
-                </button>
-              );
-            })}
+            <button onClick={() => setSort(s => (s === 'default' ? 'low' : s === 'low' ? 'az' : 'default'))} title={L('Sắp xếp', 'Sort') + ' · ' + sortLabel} aria-label={L('Sắp xếp', 'Sort')}
+              className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center lp-press"
+              style={sort === 'default' ? { backgroundColor: '#fff', color: BROWN, border: `1px solid ${BORDER}` } : { backgroundColor: '#F3E7C8', color: GOLD_INK, border: `1px solid ${GOLD}` }}>
+              <ArrowUpDown size={16} />
+            </button>
+            <button onClick={() => setSearchOpen(true)} aria-label={L('Tìm', 'Search')} className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-white lp-press" style={{ color: BROWN, border: `1px solid ${BORDER}` }}>
+              <Search size={16} />
+            </button>
           </div>
-          <button onClick={() => setSort(s => (s === 'default' ? 'low' : s === 'low' ? 'az' : 'default'))}
-            title={L('Sắp xếp', 'Sort')}
-            className="shrink-0 h-9 px-3 rounded-full text-[12px] font-bold flex items-center gap-1.5 lp-press"
-            style={sort === 'default' ? { backgroundColor: '#fff', color: BROWN, border: `1px solid ${BORDER}` } : { backgroundColor: '#F3E7C8', color: GOLD_INK, border: `1px solid ${GOLD}` }}>
-            <ArrowUpDown size={14} /> {sortLabel}
-          </button>
-        </div>
+        )}
+        {sort !== 'default' && !searchOpen && <div className="text-[11px] font-semibold mt-1.5" style={{ color: GOLD_INK }}>{L('Sắp xếp', 'Sorted')}: {sortLabel}</div>}
       </div>
 
+      {/* Product rows — stock number, gauge with the minimum marked, last batch, one + button */}
       {products === null ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="rounded-3xl h-[228px] animate-pulse" style={{ backgroundColor: '#EFE6D8' }} />)}
+        <div className="rounded-[26px] bg-white overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-[72px] animate-pulse" style={{ borderTop: i ? `1px solid #F0E8DB` : undefined, backgroundColor: i % 2 ? '#FBF7F0' : '#fff' }} />)}
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="text-center py-10">
+          <div className="text-sm font-bold" style={{ color: CACAO }}>{L('Không tìm thấy sản phẩm', 'No product found')}</div>
+          {q && <button onClick={() => setQuery('')} className="mt-2 text-[13px] font-bold underline" style={{ color: BROWN }}>{L('Xoá tìm kiếm', 'Clear search')}</button>}
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="rounded-[26px] bg-white overflow-hidden lp-rise" style={{ border: `1px solid ${BORDER}`, boxShadow: '0 8px 24px rgba(42,24,16,.05)' }}>
           {shown.map((p, i) => {
             const isLow = isLowP(p);
-            const pct = p.stock != null && p.threshold ? Math.max(4, Math.min(100, (p.stock / (p.threshold * 2)) * 100)) : null;
+            const hasMin = p.stock != null && p.threshold != null && p.threshold > 0;
+            const scale = hasMin ? Math.max(p.stock!, p.threshold!) * 1.3 : 1;
+            const fill = hasMin ? Math.max(0, Math.min(100, (p.stock! / scale) * 100)) : 0;
+            const mark = hasMin ? Math.min(100, (p.threshold! / scale) * 100) : 0;
             return (
-              <article key={p.sku} className="rounded-3xl bg-white overflow-hidden flex flex-col lp-rise"
-                style={{ border: `1px solid ${isLow ? '#E8B4A8' : BORDER}`, boxShadow: '0 1px 2px rgba(42,24,16,.04), 0 8px 20px rgba(42,24,16,.05)', animationDelay: `${Math.min(i, 8) * 30}ms` }}>
-                <div className="relative">
-                  <Photo p={p} className="w-full aspect-[4/3]" />
-                  <span className="absolute left-2 top-2 rounded-full pl-2 pr-2.5 h-7 flex items-center gap-1.5 text-[12px] font-bold"
-                    style={{ backgroundColor: isLow ? RED : 'rgba(42,24,16,.82)', color: '#fff', backdropFilter: 'blur(4px)' }}>
-                    {isLow && <AlertTriangle size={12} />}
-                    <span className="opacity-75 font-semibold">{L('Tồn', 'Stock')}</span>
-                    {p.stock == null ? '—' : Math.round(p.stock)}
-                  </span>
-                </div>
-                <div className="px-3 pt-2.5 pb-3 flex flex-col gap-2 flex-1">
-                  <div className="text-[13.5px] font-bold leading-snug lp-clamp2 min-h-[37px]" style={{ color: CACAO }}>{name(p)}</div>
-                  {pct != null && (
-                    <div className="flex items-center gap-2">
-                      <div className="h-1 rounded-full flex-1" style={{ backgroundColor: '#EFE6D8' }}>
-                        <div className="h-1 rounded-full" style={{ width: `${pct}%`, backgroundColor: isLow ? RED : '#8FB39A' }} />
-                      </div>
-                      <span className="text-[10.5px] font-semibold shrink-0" style={{ color: MUTED }}>{L('an toàn', 'min')} {Math.round(p.threshold!)}</span>
+              <div key={p.sku} className="flex items-center gap-3 pl-3 pr-3 py-3" style={{ borderTop: i ? '1px solid #F0E8DB' : undefined }}>
+                <Photo p={p} className="w-[52px] h-[52px] rounded-2xl shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[14.5px] font-bold leading-tight truncate" style={{ color: CACAO }}>{name(p)}</span>
+                    <span className="lp-display text-[19px] leading-none font-bold shrink-0" style={{ color: isLow ? RED : GOLD_INK }}>{p.stock == null ? '—' : Math.round(p.stock)}</span>
+                  </div>
+                  {hasMin && (
+                    <div className="relative h-[5px] rounded-full mt-2" style={{ backgroundColor: '#EDE4D6' }}>
+                      <div className="h-[5px] rounded-full" style={{ width: `${fill}%`, backgroundColor: isLow ? '#B4572A' : '#8A6418' }} />
+                      <span className="absolute -top-[3px] w-[2px] h-[11px] rounded-full" style={{ left: `${mark}%`, backgroundColor: CACAO }} />
                     </div>
                   )}
-                  {!readOnly && (
-                    <button onClick={() => { setPad(p); setVal(''); }}
-                      className="mt-auto h-11 rounded-2xl flex items-center justify-center gap-1.5 text-[13.5px] font-bold text-white lp-press"
-                      style={{ backgroundColor: CACAO }}>
-                      <Plus size={16} style={{ color: GOLD }} /> {L('Sản xuất', 'Produce')}
-                    </button>
-                  )}
-                  <div className="text-[11px] text-center -mt-0.5" style={{ color: MUTED }}>
-                    {p.lastBatch != null ? <>{L('Mẻ trước', 'Last batch')} <b style={{ color: GOLD_INK }}>{p.lastBatch}</b></> : <span style={{ opacity: .5 }}>—</span>}
+                  <div className="text-[11.5px] mt-1.5 truncate" style={{ color: MUTED }}>
+                    {p.threshold != null ? (isLow ? L(`dưới mức tối thiểu ${Math.round(p.threshold)}`, `under minimum ${Math.round(p.threshold)}`) : L(`tối thiểu ${Math.round(p.threshold)}`, `minimum ${Math.round(p.threshold)}`)) : L('chưa đặt mức tối thiểu', 'no minimum set')}
+                    {p.lastBatch != null ? ` · ${L('mẻ trước', 'last batch')} ${p.lastBatch}` : ''}
                   </div>
                 </div>
-              </article>
+                {!readOnly && (
+                  <button onClick={() => { setPad(p); setVal(''); }} aria-label={L('Sản xuất', 'Produce')}
+                    className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 lp-press" style={{ backgroundColor: BROWN, color: '#fff', boxShadow: '0 4px 10px rgba(87,44,26,.25)' }}>
+                    <Plus size={20} />
+                  </button>
+                )}
+              </div>
             );
           })}
-          {!shown.length && (
-            <div className="col-span-full text-center py-10">
-              <div className="text-sm font-bold" style={{ color: CACAO }}>{L('Không tìm thấy sản phẩm', 'No product found')}</div>
-              {q && <button onClick={() => setQuery('')} className="mt-2 text-[13px] font-bold underline" style={{ color: BROWN }}>{L('Xoá tìm kiếm', 'Clear search')}</button>}
-            </div>
-          )}
         </div>
       )}
 
