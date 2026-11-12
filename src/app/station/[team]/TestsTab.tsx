@@ -69,6 +69,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
   const [coll, setColl] = useState('all');
   const [sort, setSort] = useState<typeof SORTS[number]>('activity');
   const [grid, setGrid] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
   // detail
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ test: TestSummary; versions: TestVersion[]; trials: TestTrial[]; canValidate: boolean } | null>(null);
@@ -309,7 +310,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
       <div className="space-y-3">
         {Msg}
         <button onClick={() => setCompare(null)} className="inline-flex items-center gap-1 text-[14px] font-bold" style={{ color: NAVY }}><ChevronLeft size={16} />{test?.name}</button>
-        <div className="text-[20px] font-bold" style={{ color: NAVY, fontFamily: 'Georgia, serif' }}>{L('So sánh phiên bản', 'Compare versions')}</div>
+        <div className="text-[20px] font-bold" style={{ color: NAVY, fontFamily: "'Playfair Display', Georgia, serif" }}>{L('So sánh phiên bản', 'Compare versions')}</div>
         <div className="flex items-center gap-2 text-[12.5px] font-bold">
           {[0, 1].map(i => (
             <select key={i} value={compare[i]} onChange={e => setCompare(c => { const x = [...c!] as [number, number]; x[i] = Number(e.target.value); return x; })} className="rounded-xl px-2.5 py-2 bg-white outline-none" style={{ border: `1px solid ${BORDER}`, color: NAVY }}>
@@ -351,7 +352,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
     const lastV = detail.versions[detail.versions.length - 1];
     const canSend = detail.canValidate && test.stage === 'testing' && ver.trialCount > 0;
     return (
-      <div className="space-y-3 pb-20">
+      <div className="space-y-3 pb-28">
         <input ref={photoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => onPhoto(e.target.files?.[0])} />
         {Msg}
         <div className="flex items-center gap-2">
@@ -370,7 +371,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
           </button>
           <div className="p-3 space-y-1.5">
             <div className="flex items-start gap-2">
-              <div className="flex-1 text-[20px] font-bold leading-tight" style={{ color: NAVY, fontFamily: 'Georgia, serif' }}>{test.name}</div>
+              <div className="flex-1 text-[20px] font-bold leading-tight" style={{ color: NAVY, fontFamily: "'Playfair Display', Georgia, serif" }}>{test.name}</div>
               <span className="text-[10.5px] font-extrabold rounded-full px-2 py-0.5 whitespace-nowrap" style={pill(test.stage)}>{stageLabel(test.stage)}</span>
             </div>
             <div className="flex flex-wrap gap-1">
@@ -528,7 +529,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         </>)}
 
         {/* bottom bar */}
-        <div className="fixed left-0 right-0 bottom-0 z-20 px-3 pt-2 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)', paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
+        <div className="fixed left-0 right-0 bottom-[58px] sm:bottom-0 z-20 px-4 pt-3 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)' }}>
           <div className="max-w-3xl mx-auto flex gap-2">
             {edit ? (<>
               <button onClick={() => { setEdit(null); setQtyDraft({}); }} className="flex-1 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>{L('Huỷ', 'Cancel')}</button>
@@ -544,7 +545,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
 
         {/* sheets */}
         {sheet && (
-          <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => !busy && setSheet(null)}>
+          <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(31,18,12,.55)' }} onClick={() => !busy && setSheet(null)}>
             <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto space-y-3" onClick={e => e.stopPropagation()}>
               <div className="flex items-center">
                 <div className="flex-1 text-[16px] font-extrabold" style={{ color: NAVY }}>{{ trial: `${L('Đã làm thử', 'I made a trial')} · ${test.name}`, info: L('Thông tin', 'Details'), menu: test.name, newVersion: L('Phiên bản mới', 'New version'), pickRaw: L('Thêm nguyên liệu', 'Add an ingredient'), pickSm: L('Thêm bán thành phẩm', 'Add an intermediate recipe'), newSub: L('Bán thành phẩm mới', 'New intermediate recipe'), new: '' }[sheet.k]}</div>
@@ -648,12 +649,31 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
   return (
     <div className="space-y-2.5">
       {Msg}
-      <div className="flex items-center justify-between">
-        <div><div className="text-[21px] font-bold leading-tight" style={{ color: NAVY, fontFamily: 'Georgia, serif' }}>{L('Công thức thử', 'Test recipes')}</div>
-          <div className="text-[11.5px]" style={{ color: '#6B5A4C' }}>{tests.length} {L('công thức', 'tests')}</div></div>
-        <button onClick={() => { setNf({ name: '', start: 'new', sku: '', skuName: '', copyId: '', family: TEST_FAMILIES[0], collection: '', target: '' }); setSheet({ k: 'new' }); }}
-          className="inline-flex items-center gap-1.5 rounded-xl px-3.5 min-h-[44px] text-[13px] font-extrabold" style={{ backgroundColor: GOLD, color: NAVY }}><Plus size={15} />{L('Thử mới', 'New test')}</button>
-      </div>
+      {(() => {
+        // What needs the chef today: tests in progress, those close to their target date, those waiting at the office.
+        const active = tests.filter(t => t.stage === 'idea' || t.stage === 'testing');
+        const due = active.filter(t => t.targetDate && daysTo(t.targetDate) <= 10).length;
+        const figures: [number, string, () => void, string][] = [
+          [tests.filter(t => t.stage === 'testing').length, L('đang thử', 'in testing'), () => { setStage('testing'); setSort('activity'); }, '#fff'],
+          [due, L('sắp đến hạn', 'due within 10 days'), () => { setStage('all'); setSort('target'); }, due ? '#F3B8A8' : '#fff'],
+          [tests.filter(t => t.stage === 'sent').length, L('ở văn phòng', 'at the office'), () => { setStage('sent'); setSort('activity'); }, '#E9D3A4'],
+        ];
+        return (
+          <section className="rounded-[26px] px-4 pt-4 pb-4 lp-rise" style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', color: '#fff' }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: '#D9B36A' }}>{L('Công thức thử', 'Test recipes')} · {tests.length}</span>
+              <button onClick={() => { setNf({ name: '', start: 'new', sku: '', skuName: '', copyId: '', family: TEST_FAMILIES[0], collection: '', target: '' }); setSheet({ k: 'new' }); }}
+                className="inline-flex items-center gap-1.5 rounded-full pl-3 pr-3.5 h-10 text-[13px] font-bold lp-press" style={{ backgroundColor: GOLD, color: NAVY }}><Plus size={15} />{L('Thử mới', 'New test')}</button>
+            </div>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {figures.map(([n, label, go, color]) => (
+                <button key={label} onClick={go} className="text-left lp-press">
+                  <div className="lp-display text-[30px] leading-none font-bold" style={{ color }}>{n}</div>
+                  <div className="text-[11px] mt-1 leading-tight" style={{ color: 'rgba(255,255,255,.72)' }}>{label}</div>
+                </button>))}
+            </div>
+          </section>);
+      })()}
       <label className="flex items-center gap-2 bg-white rounded-xl px-3" style={{ border: `1px solid ${BORDER}` }}>
         <Search size={14} style={{ color: '#A39484' }} />
         <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tên, nguyên liệu, bộ sưu tập, nhãn…', 'Name, ingredient, collection, tag…')} className="flex-1 py-2.5 text-[13.5px] outline-none bg-transparent" />
@@ -664,7 +684,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
           <button key={s} onClick={() => setStage(s)} className="flex-shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold" style={chip(stage === s)}>
             {s === 'all' ? L('Đang làm', 'All active') : stageLabel(s)} <span className="opacity-60 text-[10.5px]">{stageCount(s)}</span></button>))}
       </div>
-      {(families.length > 0 || collections.length > 0) && (
+      {(families.length > 0 || collections.length > 0) && (showFilters || fam !== 'all' || coll !== 'all') && (
         <div className="bg-white rounded-xl px-2.5 py-2 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
           {families.length > 0 && <div className="flex items-center gap-1.5"><span className="text-[10px] font-extrabold tracking-wider w-[70px] shrink-0" style={{ color: '#8A7A66' }}>{L('DÒNG', 'FAMILY')}</span>
             <div className="flex gap-1 overflow-x-auto">{['all', ...families].map(x => <button key={x} onClick={() => setFam(x)} className="flex-shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-bold" style={chipSm(fam === x)}>{x === 'all' ? L('Tất cả', 'All') : x}</button>)}</div></div>}
@@ -673,6 +693,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         </div>)}
       <div className="flex items-center gap-2">
         <span className="flex-1 text-[12px] font-semibold" style={{ color: '#6B5A4C' }}>{list.length} {L('kết quả', list.length === 1 ? 'test' : 'tests')}</span>
+        {(families.length > 0 || collections.length > 0) && <button onClick={() => setShowFilters(v => !v)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold" style={showFilters || fam !== 'all' || coll !== 'all' ? { backgroundColor: '#F3E7C8', border: `1px solid ${GOLD}`, color: GOLD_TEXT } : { backgroundColor: '#fff', border: `1px solid ${BORDER}`, color: NAVY }}>{L('Lọc', 'Filters')}{fam !== 'all' || coll !== 'all' ? ' ·' : ''}</button>}
         <button onClick={() => setSort(SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length])} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold bg-white" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><ArrowUpDown size={12} />{sortLabel}</button>
         <div className="flex rounded-lg overflow-hidden bg-white" style={{ border: `1px solid ${BORDER}` }}>
           <button aria-label="Grid" onClick={() => setGrid(true)} className="w-8 h-8 flex items-center justify-center" style={grid ? { backgroundColor: NAVY, color: '#fff' } : { color: '#6B5A4C' }}><LayoutGrid size={14} /></button>
@@ -689,7 +710,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         </div>))}
 
       {sheet?.k === 'new' && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => !busy && setSheet(null)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(31,18,12,.55)' }} onClick={() => !busy && setSheet(null)}>
           <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto space-y-3" onClick={e => e.stopPropagation()}>
             <div className="flex items-center"><div className="flex-1 text-[16px] font-extrabold" style={{ color: NAVY }}>{L('Công thức thử mới', 'New test')}</div>
               <button onClick={() => setSheet(null)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3EDE3' }}><X size={15} /></button></div>

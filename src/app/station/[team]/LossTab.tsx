@@ -34,12 +34,19 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const landed = useRef(false);
 
   const load = useCallback(async () => {
     const r = await getLossDataAction(team);
-    if (r.error) setErr(r.error); else { setErr(null); setData(r.data!); }
+    if (r.error) setErr(r.error); else {
+      setErr(null); setData(r.data!);
+      // First load: the team lead lands on what is waiting for him, everyone else on Declare.
+      if (!landed.current) { landed.current = true; if (r.data!.canValidate && r.data!.losses.some(l => l.status === 'pending')) setView('today'); }
+    }
   }, [team]);
   useEffect(() => { load(); }, [load]);
+  // A success message leaves by itself; an error stays until tapped.
+  useEffect(() => { if (!msg?.ok) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
 
   const pending = useMemo(() => (data?.losses ?? []).filter(l => l.status === 'pending'), [data]);
   const sent = useMemo(() => (data?.losses ?? []).filter(l => l.status !== 'pending' && l.labDay === data?.today), [data]);
@@ -150,11 +157,11 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
           <div className="flex gap-1.5">
             <button disabled={busy} onClick={() => openEdit(l)} className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl py-2 text-[12px] font-bold" style={{ border: `1px solid ${BORDER}`, color: NAVY }}><Pencil size={12} />{L('Sửa', 'Edit')}</button>
             <button disabled={busy} onClick={() => act(() => deleteLossAction(team, l.id), L('Đã xoá — không gửi gì lên Odoo.', 'Deleted — nothing sent to Odoo.'))} className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl py-2 text-[12px] font-bold" style={{ border: '1px solid #FCA5A5', color: LATE, backgroundColor: '#FBEAE8' }}><Trash2 size={12} />{L('Xoá', 'Delete')}</button>
-            {data.canValidate && <button disabled={busy} onClick={() => act(() => validateLossesAction(team, [l.id]), L('Đã duyệt — gửi lên Odoo.', 'Validated — sent to Odoo.'))} className="flex-[1.4] rounded-xl py-2 text-[12px] font-extrabold text-white" style={{ backgroundColor: '#256A45' }}>{L('Duyệt ✓', 'Validate ✓')}</button>}
+            {data.canValidate && <button disabled={busy} onClick={() => act(() => validateLossesAction(team, [l.id]), L('Đã duyệt — gửi lên Odoo.', 'Validated — sent to Odoo.'))} className="flex-[1.4] rounded-xl py-2 text-[12px] font-extrabold text-white" style={{ backgroundColor: NAVY }}>{L('Duyệt ✓', 'Validate ✓')}</button>}
           </div>
         )}
         {mode === 'pending' && l.kind === 'test' && data.canValidate && (
-          <button disabled={busy} onClick={() => act(() => validateLossesAction(team, [l.id]), L('Đã duyệt — gửi lên Odoo.', 'Validated — sent to Odoo.'))} className="w-full rounded-xl py-2 text-[12px] font-extrabold text-white" style={{ backgroundColor: '#256A45' }}>{L('Duyệt ✓', 'Validate ✓')}</button>
+          <button disabled={busy} onClick={() => act(() => validateLossesAction(team, [l.id]), L('Đã duyệt — gửi lên Odoo.', 'Validated — sent to Odoo.'))} className="w-full rounded-xl py-2 text-[12px] font-extrabold text-white" style={{ backgroundColor: NAVY }}>{L('Duyệt ✓', 'Validate ✓')}</button>
         )}
       </div>
     );
@@ -167,12 +174,35 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
 
   return (
     <div className="space-y-3">
-      {msg && <div className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: msg.ok ? '#E8F2EB' : '#FBEAE8', color: msg.ok ? '#067647' : LATE }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</div>}
+      {msg && !draft && <button onClick={() => setMsg(null)} className="fixed inset-x-4 bottom-[78px] sm:bottom-6 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 rounded-2xl px-4 py-3 text-[13.5px] font-bold flex items-center justify-center gap-2 lp-pop" style={{ backgroundColor: msg.ok ? NAVY : LATE, color: '#fff', boxShadow: '0 12px 28px rgba(42,24,16,.35)', borderBottom: `3px solid ${GOLD}` }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</button>}
       {!data.odooOn && <div className="rounded-xl px-3 py-2 text-[11.5px] font-semibold" style={{ backgroundColor: '#FBF4E1', color: '#8A6418' }}>{L('Giai đoạn thử: khai báo và duyệt được ghi trong app, chưa gửi lên Odoo.', 'Test phase: declarations and validations are kept in the app, nothing is sent to Odoo yet.')}</div>}
 
-      <div className="grid grid-cols-3 gap-1 bg-white rounded-xl p-1" style={{ border: `1px solid ${BORDER}` }}>
+      <section className="rounded-[26px] px-4 pt-4 pb-4 lp-rise" style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', color: '#fff' }}>
+        <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: '#D9B36A' }}>{L('Hao hụt tháng này', 'Losses this month')} · 1–{m.day}/{m.month.slice(5)}</div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <button onClick={() => setView('month')} className="text-left">
+            <div className="lp-display text-[30px] leading-none font-bold">{pct !== null ? pct.toFixed(1).replace('.', ',') : '—'}<span className="text-[16px]"> %</span></div>
+            <div className="text-[11px] mt-1 leading-tight" style={{ color: 'rgba(255,255,255,.72)' }}>{L('thành phẩm hỏng', 'of finished pieces')}</div>
+          </button>
+          <button onClick={() => setView('month')} className="text-left">
+            <div className="lp-display text-[30px] leading-none font-bold" style={{ color: delta !== null && delta > 0 ? '#F3B8A8' : '#fff' }}>{fmtQty(m.finPcs)}</div>
+            <div className="text-[11px] mt-1 leading-tight" style={{ color: 'rgba(255,255,255,.72)' }}>{L('cái', 'pieces')}{delta !== null ? ` · ${delta <= 0 ? '▼' : '▲'} ${Math.abs(delta)} %` : ''}</div>
+          </button>
+          <button onClick={() => setView('today')} className="text-left">
+            <div className="lp-display text-[30px] leading-none font-bold" style={{ color: pending.length ? '#E9C46A' : '#fff' }}>{pending.length}</div>
+            <div className="text-[11px] mt-1 leading-tight" style={{ color: 'rgba(255,255,255,.72)' }}>{L('chờ duyệt', 'to validate')}</div>
+          </button>
+        </div>
+        {data.canValidate && pending.length > 0 && (
+          <button disabled={busy} onClick={() => act(() => validateLossesAction(team, pending.map(p => p.id)), L('Đã duyệt tất cả.', 'All validated.'))}
+            className="mt-3.5 w-full rounded-2xl h-12 text-[13.5px] font-bold lp-press" style={{ backgroundColor: GOLD, color: NAVY }}>
+            {busy ? <Loader2 size={15} className="animate-spin inline" /> : `${L('Duyệt tất cả', 'Validate all')} · ${pending.length}`}
+          </button>)}
+      </section>
+
+      <div className="grid grid-cols-3 gap-1 rounded-2xl p-1" style={{ backgroundColor: '#EADFD0' }}>
         {([['declare', L('Khai báo', 'Declare')], ['today', `${L('Hôm nay', 'Today')}${pending.length ? ` · ${pending.length}` : ''}`], ['month', L('Tháng này', 'This month')]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setView(k)} className="rounded-lg py-2 text-[12.5px] font-bold relative" style={{ backgroundColor: view === k ? NAVY : 'transparent', color: view === k ? '#fff' : '#6B5A4C' }}>
+          <button key={k} onClick={() => setView(k)} className="rounded-xl h-10 text-[13px] font-bold relative" style={{ backgroundColor: view === k ? NAVY : 'transparent', color: view === k ? '#fff' : '#572C1A' }}>
             {label}{k === 'today' && pending.length > 0 && view !== k && <span className="absolute top-1 right-2 w-2 h-2 rounded-full" style={{ backgroundColor: LATE }} />}
           </button>))}
       </div>
@@ -199,14 +229,15 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
             {q && <button onClick={() => setQ('')} aria-label="Clear" className="p-1"><X size={14} style={{ color: '#A39484' }} /></button>}
           </label>
           <div className="text-[10.5px] font-extrabold tracking-wider" style={{ color: GOLD_TEXT }}>{q ? L('KẾT QUẢ', 'RESULTS') : L('HAY BỊ HỎNG / HAY DÙNG NHẤT TRƯỚC', 'MOST LOST / MOST USED FIRST')}</div>
-          <div className="grid grid-cols-2 gap-2">
-            {items.map(i => (
-              <button key={i.key} onClick={() => open(i)} className="text-left bg-white rounded-2xl p-2 flex items-center gap-2 min-h-[60px]" style={{ border: `1px solid ${BORDER}` }}>
-                <Thumb i={i} size={42} />
+          <div className="bg-white rounded-[22px] overflow-hidden sm:grid sm:grid-cols-2" style={{ border: `1px solid ${BORDER}` }}>
+            {items.map((i, n) => (
+              <button key={i.key} onClick={() => open(i)} className="w-full text-left px-3 py-2.5 flex items-center gap-3 min-h-[68px] active:bg-[#FBF7F0]" style={{ borderTop: n ? `1px solid ${HAIR}` : undefined }}>
+                <Thumb i={i} size={50} />
                 <span className="flex-1 min-w-0">
-                  <span className="block text-[12px] font-bold leading-tight" style={{ color: NAVY }}>{itemName(i)}</span>
-                  <span className="block text-[10.5px] mt-0.5" style={{ color: '#A39484' }}>{i.sku ?? ''} · {unitLabel(i.uom)}</span>
+                  <span className="block text-[14px] font-bold leading-tight truncate" style={{ color: NAVY }}>{itemName(i)}</span>
+                  <span className="block text-[11.5px] mt-0.5" style={{ color: '#8A7A66' }}>{i.sku ?? ''} · {unitLabel(i.uom)}</span>
                 </span>
+                <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-[20px] font-bold" style={{ backgroundColor: '#F4E3DC', color: LATE }}>−</span>
               </button>))}
           </div>
           {!items.length && <div className="bg-white rounded-2xl p-5 text-center text-[12.5px]" style={{ border: `1px dashed ${BORDER}`, color: '#6B5A4C' }}>{L('Không tìm thấy.', 'Nothing found.')}</div>}
@@ -217,9 +248,6 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
       {view === 'today' && (<>
         <div className="flex items-center justify-between gap-2">
           <span className="text-[15px] font-extrabold" style={{ color: NAVY }}>{L('Chờ duyệt', 'To validate')} · {pending.length}</span>
-          {data.canValidate && pending.length > 0 && (
-            <button disabled={busy} onClick={() => act(() => validateLossesAction(team, pending.map(p => p.id)), L('Đã duyệt tất cả — gửi lên Odoo.', 'All validated — sent to Odoo.'))}
-              className="rounded-xl px-3 py-2 text-[12.5px] font-extrabold text-white" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={14} className="animate-spin inline" /> : L('Duyệt tất cả → Odoo', 'Validate all → Odoo')}</button>)}
         </div>
         <div className="text-[11px] -mt-1" style={{ color: '#8A7A66' }}>{data.canValidate ? L('Kiểm tra, sửa nếu cần, rồi duyệt.', 'Check, correct if needed, then validate.') : L(`Chờ ${leads} duyệt. Bạn vẫn sửa / xoá được khai báo của mình.`, `Waiting for ${leads}. You can still edit or delete your own declarations.`)}</div>
         {pending.map(l => <LossRow key={l.id} l={l} mode="pending" />)}
@@ -271,8 +299,8 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
       </>)}
 
       {draft && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => !busy && setDraft(null)}>
-          <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto space-y-3" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(31,18,12,.55)' }} onClick={() => !busy && setDraft(null)}>
+          <div className="bg-white w-full max-w-xl rounded-t-[28px] px-4 pt-4 max-h-[92vh] overflow-y-auto space-y-3 lp-sheet" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2.5">
               <Thumb i={draft.item} size={48} />
               <div className="flex-1 min-w-0">
@@ -333,12 +361,15 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
                 className="flex-[1.3] min-w-0 rounded-xl px-3 text-[13px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
             </div>
 
+            <div className="sticky bottom-0 -mx-4 px-4 pt-2 pb-[max(14px,env(safe-area-inset-bottom))] bg-white space-y-2" style={{ boxShadow: '0 -8px 16px rgba(255,255,255,.9)' }}>
             {msg && !msg.ok && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: '#FBEAE8', color: LATE }}>{msg.text}</div>}
-            <button disabled={!canConfirm} onClick={confirm} className="w-full rounded-2xl py-3.5 text-[14.5px] font-extrabold disabled:opacity-100"
-              style={canConfirm ? { backgroundColor: AMBER, color: '#fff' } : { backgroundColor: '#E6DCCF', color: '#A39484' }}>
+            {!canConfirm && !busy && <div className="text-[11.5px] text-center font-semibold" style={{ color: AMBER }}>{draft.item.kind === 'fin' && draft.beforeStock === null ? L('Chọn hỏng lúc nào', 'Choose when it was lost') : !draft.reasonId ? L('Chọn lý do', 'Choose a reason') : L('Nhập số lượng', 'Enter a quantity')}</div>}
+            <button disabled={!canConfirm} onClick={confirm} className="w-full rounded-2xl h-14 text-[15px] font-bold disabled:opacity-100 lp-press"
+              style={canConfirm ? { backgroundColor: NAVY, color: '#fff' } : { backgroundColor: '#E6DCCF', color: '#A39484' }}>
               {busy ? <Loader2 size={15} className="animate-spin inline" /> : draft.editId ? L('Lưu thay đổi', 'Save change') : `${L('Khai báo hỏng', 'Declare loss')} · ${fmtQty(draft.qty)} ${unitLabel(draft.item.uom)}`}
             </button>
             <div className="text-[11px] text-center leading-snug" style={{ color: '#8A7A66' }}>{data.odooOn ? L(`Gửi lên Odoo sau khi ${leads} duyệt.`, `Goes to Odoo once ${leads} validates.`) : L(`${leads} duyệt · Odoo tạm tắt (giai đoạn thử).`, `${leads} validates · Odoo off (test phase).`)}</div>
+            </div>
           </div>
         </div>
       )}
