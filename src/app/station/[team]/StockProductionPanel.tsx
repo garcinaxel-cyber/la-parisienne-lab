@@ -236,8 +236,8 @@ export default function StockProductionPanel({
                     </div>
                   )}
                   <div className="text-[11.5px] mt-1.5 truncate" style={{ color: MUTED }}>
-                    {p.threshold != null ? (isLow ? L(`dưới mức tối thiểu ${Math.round(p.threshold)}`, `under minimum ${Math.round(p.threshold)}`) : L(`tối thiểu ${Math.round(p.threshold)}`, `minimum ${Math.round(p.threshold)}`)) : L('chưa đặt mức tối thiểu', 'no minimum set')}
-                    {p.lastBatch != null ? ` · ${L('mẻ trước', 'last batch')} ${p.lastBatch}` : ''}
+                    {[p.threshold != null && p.threshold > 0 ? (isLow ? L(`dưới mức tối thiểu ${Math.round(p.threshold)}`, `under minimum ${Math.round(p.threshold)}`) : L(`tối thiểu ${Math.round(p.threshold)}`, `minimum ${Math.round(p.threshold)}`)) : (p.stock != null && p.stock < 0 ? L('tồn âm — cần kiểm tra', 'negative stock — to check') : null),
+                      p.lastBatch != null ? `${L('mẻ trước', 'last batch')} ${p.lastBatch}` : null].filter(Boolean).join(' · ') || '\u00a0'}
                   </div>
                 </div>
                 {!readOnly && (
