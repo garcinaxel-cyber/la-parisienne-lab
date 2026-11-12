@@ -47,3 +47,19 @@
   from { transform: translateY(100%); }
   to   { transform: translateY(0); }
 }
+
+/* UI v2 (Ivoire & cacao) — small motion set. Short, functional, off when the phone asks for less motion. */
+@keyframes lp-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes lp-pop { 0% { transform: scale(.96); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.lp-rise { animation: lp-rise .28s cubic-bezier(.2,.7,.2,1) both; }
+.lp-pop { animation: lp-pop .18s ease-out both; }
+.lp-sheet { animation: sheet-in .24s cubic-bezier(.2,.8,.2,1) both; }
+.lp-overlay { animation: overlay-in .18s ease-out both; }
+.lp-press { transition: transform .12s ease, box-shadow .12s ease; }
+.lp-press:active { transform: scale(.97); }
+.lp-display { font-family: 'Playfair Display', Georgia, serif; font-variant-numeric: tabular-nums; }
+.lp-clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .lp-rise, .lp-pop, .lp-sheet, .lp-overlay { animation: none; }
+  .lp-press { transition: none; }
+}
