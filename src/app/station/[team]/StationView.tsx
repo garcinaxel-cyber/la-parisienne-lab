@@ -1457,7 +1457,7 @@ export default function StationView({
               <span className="flex items-center gap-1 truncate max-w-full">
                 <span className={`truncate ${stockTeamNav ? 'tracking-[0.08em] uppercase text-[10px] sm:text-xs sm:normal-case sm:tracking-normal' : ''}`}>{stockTeamNav && tab.id === 'raw' ? (lang === 'vi' ? 'Kho phòng' : 'Room') : stockTeamNav && tab.id === 'production' ? (lang === 'vi' ? 'Sản xuất' : 'Produce') : (lang === 'vi' ? tab.labelVi : tab.labelEn)}</span>
                 {tab.count > 0 && (
-                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0 absolute top-1.5 left-1/2 ml-1.5 sm:static sm:ml-0"
+                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0 absolute top-1 left-1/2 ml-2.5 sm:static sm:ml-0"
                     style={activeTab === tab.id
                       ? { backgroundColor: '#C9A84C', color: '#2A1810' }
                       : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
@@ -2826,8 +2826,12 @@ export default function StationView({
                           {rest.map(row)}
                         </details>
                       )}
-                      {c.products.length === 0 && (
-                        <div className="text-center text-[13px] py-6" style={{ color: '#6B5A4C' }}>{lang === 'vi' ? 'Chưa có giao hàng nào được kiểm hôm nay' : 'No delivery checked yet today'}</div>
+                      {short.length === 0 && (
+                        <div className="rounded-[22px] px-4 py-4 text-center text-[13px] font-semibold" style={c.expected > 0 ? { backgroundColor: '#E8F2EB', color: '#256A45' } : { color: '#6B5A4C' }}>
+                          {c.expected > 0
+                            ? (lang === 'vi' ? 'Tất cả đã giao đủ hôm nay' : 'Everything was delivered in full today')
+                            : (lang === 'vi' ? 'Chưa có giao hàng nào được kiểm hôm nay' : 'No delivery checked yet today')}
+                        </div>
                       )}
                     </>
                   );
