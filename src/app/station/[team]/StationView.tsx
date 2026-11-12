@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   CheckCircle2, Play, AlertCircle, Clock, FlaskConical, Minus, Plus,
   BookOpen, X, Timer, Thermometer, LogOut, Store, Package, ClipboardList,
-  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users, User as UserIcon, LayoutGrid,
+  ChevronRight, PenLine, RefreshCw, Truck, TrendingUp, Bell, Factory, Users, User as UserIcon, LayoutGrid, Trash2, Beaker,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { isOemSku } from '@/lib/oem';
@@ -17,6 +17,9 @@ import StockProductionPanel from './StockProductionPanel';
 import HrTeamTab from './HrTeamTab';
 import MonthAnalytics from './MonthAnalytics';
 import LabStockPanel from './LabStockPanel';
+import LossTab from './LossTab';
+import TestsTab from './TestsTab';
+import { CHEF_RD_TEAMS } from '@/lib/chef-rd';
 import EmployeeHrView from '@/app/hr/[token]/EmployeeHrView';
 import { HR_PILOT_TEAMS } from '@/lib/hr';
 import type { StockProduct } from './actions';
@@ -149,7 +152,7 @@ type FicheStep = {
   temperature_celsius: number | null;
 };
 
-type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw' | 'team' | 'me';
+type Tab = 'production' | 'commande' | 'termine' | 'upcoming' | 'history' | 'analytics' | 'raw' | 'tests' | 'loss' | 'team' | 'me';
 // Raw materials tab (withdrawals + purchase requests, Axel 2026-10-08) — test phase on team Hưng only.
 const RAW_TEAMS = ['hung', 'baby_mama', 'entremet', 'baker'];
 
@@ -1310,6 +1313,20 @@ export default function StationView({
       labelEn: 'Raw mat.',
       count: 0,
       icon: <Package size={14} />,
+    }] : []),
+    // Test recipes + chef losses (Axel, 2026-11-12): pilot on Team Hung first (CHEF_RD_TEAMS).
+    ...(CHEF_RD_TEAMS.includes(team) ? [{
+      id: 'loss' as Tab,
+      labelVi: 'Hỏng',
+      labelEn: 'Loss',
+      count: 0,
+      icon: <Trash2 size={14} />,
+    }, {
+      id: 'tests' as Tab,
+      labelVi: 'Thử công thức',
+      labelEn: 'Tests',
+      count: 0,
+      icon: <Beaker size={14} />,
     }] : []),
     // HR pilot (Axel, 2026-11-06): ONE HR tab — the leader/admin get "Nhân sự" (team schedule,
     // requests, overtime + his own space inside), every other linked employee gets "Của tôi".
@@ -2710,6 +2727,18 @@ export default function StationView({
       {activeTab === 'me' && hrMyToken && (
         <div className="max-w-xl mx-auto px-3 pb-6">
           <EmployeeHrView token={hrMyToken} embedded stationLang={lang === 'vi' ? 'vi' : 'en'} />
+        </div>
+      )}
+
+      {activeTab === 'loss' && CHEF_RD_TEAMS.includes(team) && (
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <LossTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
+        </div>
+      )}
+
+      {activeTab === 'tests' && CHEF_RD_TEAMS.includes(team) && (
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <TestsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
