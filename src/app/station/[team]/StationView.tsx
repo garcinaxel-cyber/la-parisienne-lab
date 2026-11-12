@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
+import { isUiV2Team } from '@/lib/ui-v2';
 import HrTeamTab from './HrTeamTab';
 import MonthAnalytics from './MonthAnalytics';
 import LabStockPanel from './LabStockPanel';
@@ -1353,6 +1354,8 @@ export default function StationView({
   ];
 
   const stockTeamNav = STOCK_PROD_TEAMS.includes(team);
+  // UI v2 structure switch — other teams keep main's layout with the new colours only.
+  const v2 = isUiV2Team(team);
   const MAIN_TAB_IDS: Tab[] = stockTeamNav ? ['production', 'commande', 'raw'] : ['production', 'commande', 'termine', 'upcoming'];
   const mainTabs = tabs.filter(t => MAIN_TAB_IDS.includes(t.id));
   const moreTabs = tabs.filter(t => !MAIN_TAB_IDS.includes(t.id));
@@ -1374,13 +1377,15 @@ export default function StationView({
     onBlocked: (a: Assignment) => { setBlockedReason(''); setBlockedCustom(''); setBlockedModal(a); },
     onOpenDesignPhoto: (url: string) => setDesignPhotoModal(url),
     meta,
+    v2,
     // Real station URL — '/station/me' breaks for admins without a lab team (bounced to dashboard)
     backTo: `/station/${teamSlug}`,
   };
 
   return (
-    <div className="lp-station min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
+    <div className={v2 ? "lp-station min-h-screen pb-[calc(76px+env(safe-area-inset-bottom))] sm:pb-0" : "min-h-screen"} style={{ backgroundColor: '#F6F1EA' }}>
       {/* Top bar */}
+      {v2 ? (
       <header className="sticky top-0 z-20 lp-station-header" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
         <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-2.5 sm:gap-2 min-w-0 flex-1">
@@ -1579,7 +1584,7 @@ export default function StationView({
           };
           let n = 0;
           return (
-            <div className="fixed inset-x-0 top-0 bottom-[58px] z-20 overflow-y-auto px-4 pt-4 pb-8 lp-overlay sm:static sm:overflow-visible sm:pt-1 sm:pb-5 sm:border-t sm:border-white/10"
+            <div className="fixed inset-x-0 top-0 bottom-[calc(58px+env(safe-area-inset-bottom))] z-20 overflow-y-auto px-4 pt-4 pb-8 lp-overlay sm:static sm:overflow-visible sm:pt-1 sm:pb-5 sm:border-t sm:border-white/10"
               style={{ background: 'radial-gradient(120% 60% at 100% 0%, rgba(201,168,76,.16), transparent 60%), #1F120C' }}>
               <div className="flex items-center justify-between sm:hidden">
                 <img src="/logo-laparis-cream.png" alt="la Paris" className="h-8 w-auto" />
@@ -1621,12 +1626,146 @@ export default function StationView({
           );
         })()}
       </header>
+      ) : (
+      // Legacy header (main) — teams not yet on UI v2 keep their structure; colours only.
+      <header className="sticky top-0 z-20" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+        <div className="max-w-3xl mx-auto px-2.5 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+            <div className="hidden min-[380px]:flex w-8 h-8 sm:w-9 sm:h-9 rounded-xl items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(255,244,204,0.2)' }}>
+              <FlaskConical size={17} className="text-white" />
+            </div>
+            <div className="min-w-0 text-left">
+              <div className="text-white font-bold text-[13px] sm:text-sm leading-tight truncate">
+                {lang === 'vi' ? meta.vi : meta.en}
+              </div>
+              <div className="text-[10px] sm:text-[11px] truncate">
+                <span className="font-bold text-yellow-300">{lang === 'vi' ? 'HÔM NAY' : 'TODAY'}</span>
+                <span className="text-white/70 hidden min-[400px]:inline"> · {formatDate(today)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <div className="rounded-full px-2 sm:px-3 py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#D9B36A', color: '#2A1810' }}>
+              {doneQty}/{totalQty}
+            </div>
+            <div className="flex gap-0.5 rounded-lg p-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              {(['vi', 'en'] as const).map(l => (
+                <button key={l} onClick={() => setLang(l)}
+                  className="px-1.5 sm:px-2 py-1 rounded text-[11px] sm:text-xs font-bold transition-all active:scale-95"
+                  style={lang === l
+                    ? { backgroundColor: '#F6F1EA', color: '#2A1810' }
+                    : { color: 'rgba(255,255,255,0.7)' }
+                  }>{l.toUpperCase()}</button>
+              ))}
+            </div>
+            <button onClick={handleSyncOdoo} disabled={syncState === 'syncing' || syncCooldown}
+              title={lang === 'vi' ? 'Đồng bộ Odoo ngay' : 'Sync Odoo now'}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95 disabled:opacity-40"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: syncState === 'ok' ? '#7CD98C' : syncState === 'error' ? '#F0A0A0' : 'rgba(255,255,255,0.8)' }}>
+              {syncState === 'ok'
+                ? <CheckCircle2 size={14} />
+                : syncState === 'error'
+                  ? <AlertCircle size={14} />
+                  : <RefreshCw size={14} className={syncState === 'syncing' ? 'animate-spin' : ''} />}
+            </button>
+            {(pushState === 'on' || pushState === 'off') && (
+              <button onClick={handleTogglePush}
+                title={pushState === 'on'
+                  ? (lang === 'vi' ? 'Tắt thông báo đẩy' : 'Turn off push notifications')
+                  : (lang === 'vi' ? 'Bật thông báo đẩy (kể cả khi khóa màn hình)' : 'Enable push notifications (even screen locked)')}
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
+                style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: pushState === 'on' ? '#7CD98C' : 'rgba(255,255,255,0.5)' }}>
+                <Bell size={14} />
+              </button>
+            )}
+            <Link href={`/station/fiches?team=${team}`} title={lang === 'vi' ? 'Phiếu kỹ thuật' : 'Recipe cards'}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
+              <BookOpen size={14} />
+            </Link>
+            <button onClick={logout} title={lang === 'vi' ? 'Đăng xuất' : 'Log out'}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors active:scale-95"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.8)' }}>
+              <LogOut size={14} />
+            </button>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="h-1" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+          <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#D9B36A' }} />
+        </div>
+        {/* Tab navigation — Axel, 2026-11-06: the bar had 8-9 tabs squeezed into tiny labels.
+            Now the 4 daily tabs stay in the bar, everything else sits behind "Thêm" (More). */}
+        <div className="flex border-t" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
+          {mainTabs.map(tab => (
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
+              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95"
+              style={activeTab === tab.id
+                ? { color: '#D9B36A', borderBottom: '2px solid #D9B36A' }
+                : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }
+              }>
+              {tab.icon}
+              <span className="flex items-center gap-1 truncate max-w-full">
+                <span className="truncate">{lang === 'vi' ? tab.labelVi : tab.labelEn}</span>
+                {tab.count > 0 && (
+                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0"
+                    style={activeTab === tab.id
+                      ? { backgroundColor: '#D9B36A', color: '#2A1810' }
+                      : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
+                    }>
+                    {tab.count}
+                  </span>
+                )}
+              </span>
+            </button>
+          ))}
+          <button onClick={() => setMoreOpen(o => !o)}
+            className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95 relative"
+            style={moreActive || moreOpen
+              ? { color: '#D9B36A', borderBottom: '2px solid #D9B36A' }
+              : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>
+            {moreActive ? moreActive.icon : <LayoutGrid size={14} />}
+            <span className="truncate max-w-full">{moreActive ? (lang === 'vi' ? moreActive.labelVi : moreActive.labelEn) : (lang === 'vi' ? 'Thêm' : 'More')}</span>
+            {lowStockAlert && !moreActive && (
+              <span className="absolute top-1 right-[22%] w-2 h-2 rounded-full" style={{ backgroundColor: '#C8372B' }} />
+            )}
+          </button>
+        </div>
+        {moreOpen && (
+          <div className="border-t px-2.5 py-2.5 grid grid-cols-3 gap-1.5" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
+            {moreTabs.map(tab => (
+              <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
+                className="min-h-[52px] rounded-xl flex flex-col items-center justify-center gap-1 text-[11px] font-bold active:scale-95 relative"
+                style={activeTab === tab.id
+                  ? { backgroundColor: '#D9B36A', color: '#2A1810' }
+                  : { backgroundColor: 'rgba(255,255,255,0.08)', color: '#F6F1EA' }}>
+                {tab.icon}
+                <span className="truncate max-w-full px-1">{lang === 'vi' ? tab.labelVi : tab.labelEn}{tab.count > 0 ? ` · ${tab.count}` : ''}</span>
+                {tab.id === 'analytics' && lowStockAlert && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ backgroundColor: '#C8372B' }}
+                    title={lang === 'vi' ? 'Có sản phẩm dưới ngưỡng an toàn' : 'Stock below safety threshold'} />
+                )}
+              </button>
+            ))}
+            {team === 'hung' && (
+              // OEM Orders tracker (Maison Mooncake / Tianhe Food) — Team Hung station only; opens its own page.
+              <Link href={`/station/oem?team=${teamSlug}`}
+                className="min-h-[52px] rounded-xl flex flex-col items-center justify-center gap-1 text-[11px] font-bold active:scale-95"
+                style={{ backgroundColor: 'rgba(255,255,255,0.08)', color: '#F6F1EA' }}>
+                <Factory size={14} />
+                <span className="truncate max-w-full px-1">{lang === 'vi' ? 'Đơn OEM' : 'OEM Orders'}</span>
+              </Link>
+            )}
+          </div>
+        )}
+      </header>
+      )}
 
       {/* New-order alert banner (2026-09-04) — dismissed by tapping it (jumps to Commande) or
           the close icon; not auto-cleared on tab focus, so it stays until the chef actually
           acknowledges it rather than disappearing just because the browser tab blinked active. */}
       {newOrderAlert > 0 && (
-        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 pt-3`}>
           <button
             onClick={() => { setNewOrderAlert(0); setActiveTab('commande'); setOrderFilter(null); }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors animate-pulse"
@@ -1660,7 +1799,7 @@ export default function StationView({
         const totalCards = unsentToday.length + unsentTomorrow.length;
         if (totalQty <= 0) return null;
         return (
-          <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3">
+          <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 pt-3`}>
             <button
               onClick={() => { setActiveTab('termine'); setOrderFilter(null); setProdDay(qtyToday > 0 ? 'today' : 'tomorrow'); }}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors"
@@ -1670,12 +1809,14 @@ export default function StationView({
                 <span className="font-bold">{totalQty}</span>{' '}
                 {lang === 'vi'
                   ? `sản phẩm (${totalCards} thẻ) đã làm xong, cần chuyển vào kho`
-                  : `item${totalQty > 1 ? 's' : ''} (${totalCards} card${totalCards > 1 ? 's' : ''}) ready to send to stock`}
+                  : v2 ? `item${totalQty > 1 ? 's' : ''} (${totalCards} card${totalCards > 1 ? 's' : ''}) ready to send to stock`
+                    : `produit${totalQty > 1 ? 's' : ''} (${totalCards} carte${totalCards > 1 ? 's' : ''}) prêt${totalQty > 1 ? 's' : ''} à envoyer au stock`}
                 {qtyTomorrow > 0 && (
                   <span className="block text-xs mt-0.5 opacity-90">
                     {lang === 'vi'
                       ? `Trong đó ${qtyTomorrow} làm trước cho ngày mai — vẫn cần chuyển kho hôm nay`
-                      : `Of which ${qtyTomorrow} made ahead for tomorrow — still to send to stock today`}
+                      : v2 ? `Of which ${qtyTomorrow} made ahead for tomorrow — still to send to stock today`
+                        : `Dont ${qtyTomorrow} fait en avance pour demain — à envoyer au stock dès aujourd'hui`}
                   </span>
                 )}
               </span>
@@ -1688,10 +1829,10 @@ export default function StationView({
       {/* Shared Today / Tomorrow day selector — applies to Production, Orders AND Done tabs
           so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
       {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine')
-        && !(stockTeamNav && activeTab === 'production' && prodDay === 'today'
+        && !(v2 && stockTeamNav && activeTab === 'production' && prodDay === 'today'
           && ![...todayAssignments, ...tomorrowAsg].some(a => !a.is_extra && !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status))) && (
-        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3 space-y-2.5">
-          <div className="flex gap-1 p-1 rounded-2xl" style={{ backgroundColor: '#EADFD0' }}>
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 ${v2 ? 'pt-3' : 'pt-4'} space-y-2.5`}>
+          <div className={v2 ? 'flex gap-1 p-1 rounded-2xl' : 'flex gap-2'} style={v2 ? { backgroundColor: '#EADFD0' } : undefined}>
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
               const list = (d === 'tomorrow' ? tomorrowAsg : todayAssignments).filter(a => !a.is_extra);
               const handled = list.filter(a => a.status === 'done' || a.status === 'skip').length;
@@ -1700,10 +1841,13 @@ export default function StationView({
                 .toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
               return (
                 <button key={d} onClick={() => { setProdDay(d); setOrderFilter(null); }}
-                  className="flex-1 h-10 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                  style={active
+                  className={`flex-1 ${v2 ? 'h-10' : 'py-2.5'} rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2`}
+                  style={v2 ? (active
                     ? { backgroundColor: '#2A1810', color: 'white', boxShadow: '0 2px 8px rgba(42,24,16,.25)' }
-                    : { backgroundColor: 'transparent', color: '#572C1A' }}>
+                    : { backgroundColor: 'transparent', color: '#572C1A' })
+                    : (active
+                    ? { backgroundColor: '#2A1810', color: 'white' }
+                    : { backgroundColor: 'white', color: '#2A1810', border: '1px solid #E6DCCF' })}>
                   <span>{label}</span>
                   <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
                   {/* Progress badge only where progress matters — not on the Done tab (a record, not a to-do) */}
@@ -1728,7 +1872,13 @@ export default function StationView({
         </div>
       )}
 
-      {/* Celebratory banner only on the work tabs, not on Done (which is just a production record) */}
+      {/* Celebratory banner only on the work tabs, not on Done (which is just a production record) — legacy layout only */}
+      {!v2 && pct === 100 && assignments.length > 0 && activeTab !== 'termine' && (
+        <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}>
+          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done!'}
+        </div>
+      )}
+
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (() => {
         // Order filter (point 2): narrow this tab's lists to one order's cards. The
@@ -1757,7 +1907,7 @@ export default function StationView({
         const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
         const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
         return (
-        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 py-5 space-y-3 pb-28">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 py-5 space-y-3 pb-28`}>
           {/* Delivered before declared (Axel, 2026-10-23) — one line, tap = only those cards */}
           {lateCards.length > 0 && (
             <button onClick={() => setLateOnly(v => !v)}
@@ -1871,11 +2021,11 @@ export default function StationView({
             const totalUnits = items.reduce((s, r) => s + r.qty, 0);
             const cats = Array.from(new Set(items.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
             return (
-              <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
-                <button onClick={() => setShowRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
-                  <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng cần làm' : 'Total to make'}</span>
+              <div className={v2 ? 'rounded-2xl overflow-hidden bg-white' : 'rounded-2xl overflow-hidden'} style={{ border: '1px solid #E6DCCF' }}>
+                <button onClick={() => setShowRecap(v => !v)} className={v2 ? 'w-full flex items-center justify-between px-4 h-12 bg-white' : 'w-full flex items-center justify-between px-3 py-2.5 text-white'} style={v2 ? { color: '#2A1810' } : { backgroundColor: '#2A1810' }}>
+                  <span className="text-sm font-bold">{v2 ? (lang === 'vi' ? 'Tổng cần làm' : 'Total to make') : `📋 ${lang === 'vi' ? 'Tổng cần làm' : 'Total à produire'}`}</span>
                   <span className="flex items-center gap-2">
-                    <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{items.length} · {totalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                    <span className="text-xs font-bold" style={{ color: v2 ? '#8A6418' : '#E9D3A4' }}>{items.length} · {totalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                     <ChevronRight size={16} className={`transition-transform ${showRecap ? 'rotate-90' : ''}`} />
                   </span>
                 </button>
@@ -2036,7 +2186,7 @@ export default function StationView({
       {activeTab === 'commande' && (() => {
         const orderList = assignments.filter(a => !a.is_extra);
         return (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 pb-10">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-5 pb-10`}>
           {orderList.length === 0 ? (
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
@@ -2049,13 +2199,16 @@ export default function StationView({
           ) : (
             <div className="space-y-3">
               {/* Point 2 (chef Entremet): switch between per-order and per-product views */}
-              <div className="flex gap-1 p-1 rounded-2xl bg-white" style={{ border: '1px solid #E6DCCF' }}>
-                {([['don', lang === 'vi' ? 'Theo đơn' : 'By order'], ['sp', lang === 'vi' ? 'Theo sản phẩm' : 'By product']] as const).map(([v, label]) => (
+              <div className={v2 ? 'flex gap-1 p-1 rounded-2xl bg-white' : 'flex rounded-xl overflow-hidden'} style={v2 ? { border: '1px solid #E6DCCF' } : { border: '1px solid #E6DCCF', backgroundColor: 'white' }}>
+                {([['don', lang === 'vi' ? `${v2 ? '' : '📦 '}Theo đơn` : `${v2 ? '' : '📦 '}By order`], ['sp', lang === 'vi' ? `${v2 ? '' : '🧺 '}Theo sản phẩm` : `${v2 ? '' : '🧺 '}By product`]] as const).map(([v, label]) => (
                   <button key={v} onClick={() => setOrderView(v)}
-                    className="flex-1 h-10 rounded-xl text-[13.5px] font-bold transition-all"
-                    style={orderView === v
+                    className={v2 ? 'flex-1 h-10 rounded-xl text-[13.5px] font-bold transition-all' : 'flex-1 py-2.5 text-sm font-bold transition-all'}
+                    style={v2 ? (orderView === v
                       ? { backgroundColor: '#F3E7C8', color: '#2A1810', boxShadow: 'inset 0 0 0 1px #E9D3A4' }
-                      : { backgroundColor: 'transparent', color: '#6B5A4C' }}>
+                      : { backgroundColor: 'transparent', color: '#6B5A4C' })
+                      : (orderView === v
+                      ? { backgroundColor: '#2A1810', color: 'white' }
+                      : { backgroundColor: 'white', color: '#2A1810' })}>
                     {label}
                   </button>
                 ))}
@@ -2149,6 +2302,25 @@ export default function StationView({
                 </div>
               ) : (<>
               {/* Summary header — day-aware label + completion (in-stock counts as handled) */}
+              {!v2 ? (
+              <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
+                style={{ backgroundColor: '#2A1810', color: 'white' }}>
+                <div>
+                  <div className="font-bold text-base">
+                    {prodDay === 'tomorrow'
+                      ? (lang === 'vi' ? 'Tổng đơn hàng ngày mai' : "Tomorrow's order summary")
+                      : (lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary")}
+                  </div>
+                  <div className="text-white/70 text-sm mt-0.5">
+                    {orderList.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
+                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                </div>
+              </div>
+              ) : (
               <div className="rounded-3xl px-5 pt-4 pb-4 lp-rise"
                 style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', color: 'white' }}>
                 <div className="flex items-end justify-between gap-3">
@@ -2172,6 +2344,7 @@ export default function StationView({
                   <div className="h-1.5 rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
                 </div>
               </div>
+              )}
 
               {/* Consolidated recap: total ORDERED per SKU (qty_to_produce, same field the row
                   below shows per-card) — same shape as the Production/Terminé tabs' recaps
@@ -2192,11 +2365,11 @@ export default function StationView({
                 const orderTotalUnits = orderItems.reduce((s, r) => s + r.qty, 0);
                 const orderCats = Array.from(new Set(orderItems.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
                 return (
-                  <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
-                    <button onClick={() => setShowOrderRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
-                      <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng đặt hàng' : 'Total ordered'}</span>
+                  <div className={v2 ? 'rounded-2xl overflow-hidden bg-white' : 'rounded-2xl overflow-hidden'} style={{ border: '1px solid #E6DCCF' }}>
+                    <button onClick={() => setShowOrderRecap(v => !v)} className={v2 ? 'w-full flex items-center justify-between px-4 h-12 bg-white' : 'w-full flex items-center justify-between px-3 py-2.5 text-white'} style={v2 ? { color: '#2A1810' } : { backgroundColor: '#2A1810' }}>
+                      <span className="text-sm font-bold">{v2 ? (lang === 'vi' ? 'Tổng đặt hàng' : 'Total ordered') : `🧾 ${lang === 'vi' ? 'Tổng đặt hàng' : 'Total commandé'}`}</span>
                       <span className="flex items-center gap-2">
-                        <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{orderItems.length} · {orderTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <span className="text-xs font-bold" style={{ color: v2 ? '#8A6418' : '#E9D3A4' }}>{orderItems.length} · {orderTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                         <ChevronRight size={16} className={`transition-transform ${showOrderRecap ? 'rotate-90' : ''}`} />
                       </span>
                     </button>
@@ -2242,10 +2415,13 @@ export default function StationView({
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
-                          <img src={thumb(a.image_url, 112)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
+                          <img src={thumb(a.image_url, 112)} alt="" className={v2 ? 'w-14 h-14 rounded-2xl object-cover shrink-0' : 'w-12 h-12 rounded-xl object-cover shrink-0'}
                             style={{ border: '1px solid #E6DCCF' }} />
-                        ) : (
+                        ) : v2 ? (
                           <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
+                        ) : (
+                          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
+                            style={{ backgroundColor: '#F6F1EA' }}>🥐</div>
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm"
@@ -2280,8 +2456,8 @@ export default function StationView({
                             )}
                           </div>
                         </div>
-                        <div className="lp-display text-[26px] font-bold shrink-0"
-                          style={{ color: a.cancelled ? '#A39484' : '#2A1810', textDecoration: a.cancelled ? 'line-through' : undefined }}>
+                        <div className={v2 ? 'lp-display text-[26px] font-bold shrink-0' : 'text-2xl font-black shrink-0'}
+                          style={{ color: a.cancelled ? '#A39484' : v2 ? '#2A1810' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>
                           x{a.qty_to_produce}
                         </div>
                       </div>
@@ -2290,7 +2466,7 @@ export default function StationView({
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
                             <div key={bi} className="px-5 py-1.5 text-sm"
-                              style={{ backgroundColor: '#FBF7F0', borderTop: bi > 0 ? '1px solid #F0E8DB' : undefined }}>
+                              style={v2 ? { backgroundColor: '#FBF7F0', borderTop: bi > 0 ? '1px solid #F0E8DB' : undefined } : { backgroundColor: bi % 2 === 0 ? '#FFFDF0' : '#FBF7F0' }}>
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-ink-light">
                                   <Store size={11} className="shrink-0" />
@@ -2352,12 +2528,12 @@ export default function StationView({
 
       {/* ─── TERMINÉ TAB — split: from orders vs extra production ─── */}
       {activeTab === 'termine' && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-10">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-5 space-y-3 pb-10`}>
           {/* Send finished products to stock (chef only, not history view) */}
           {!isEmployee && !isHistoryView && termine.some(a => !a.transferred) && (
             <button onClick={openStockModal}
-              className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl font-bold text-sm lp-press"
-              style={{ backgroundColor: '#C9A84C', color: '#2A1810', boxShadow: '0 6px 16px rgba(201,168,76,.35)' }}>
+              className={v2 ? 'w-full flex items-center justify-center gap-2 h-12 rounded-2xl font-bold text-sm lp-press' : 'w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-sm active:scale-[0.99] transition-all'}
+              style={v2 ? { backgroundColor: '#C9A84C', color: '#2A1810', boxShadow: '0 6px 16px rgba(201,168,76,.35)' } : { backgroundColor: '#FBF4E1', color: '#8A6418', border: '1px solid #E9D3A4' }}>
               <Package size={16} />
               {lang === 'vi' ? 'Chuyển vào kho' : 'Send to stock'}
             </button>
@@ -2399,11 +2575,11 @@ export default function StationView({
             return (
               <>
                 {doneItems.length > 0 && (
-                  <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
-                    <button onClick={() => setShowDoneRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
-                      <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng đã làm' : 'Total made'}</span>
+                  <div className={v2 ? 'rounded-2xl overflow-hidden bg-white' : 'rounded-2xl overflow-hidden'} style={{ border: '1px solid #E6DCCF' }}>
+                    <button onClick={() => setShowDoneRecap(v => !v)} className={v2 ? 'w-full flex items-center justify-between px-4 h-12 bg-white' : 'w-full flex items-center justify-between px-3 py-2.5 text-white'} style={v2 ? { color: '#2A1810' } : { backgroundColor: '#572C1A' }}>
+                      <span className="text-sm font-bold">{v2 ? (lang === 'vi' ? 'Tổng đã làm' : 'Total made') : `✅ ${lang === 'vi' ? 'Tổng đã làm' : 'Total produit'}`}</span>
                       <span className="flex items-center gap-2">
-                        <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{doneItems.length} · {doneTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <span className="text-xs font-bold" style={{ color: v2 ? '#8A6418' : '#E9D3A4' }}>{doneItems.length} · {doneTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                         <ChevronRight size={16} className={`transition-transform ${showDoneRecap ? 'rotate-90' : ''}`} />
                       </span>
                     </button>
@@ -2447,7 +2623,7 @@ export default function StationView({
                   <div className="flex-1 border-t" style={{ borderColor: '#E6DCCF' }} />
                 </div>
                 {items.map(a => (
-                  <TermineCard key={a.id} a={a} lang={lang} meta={meta} onAdvance={advanceStatus} updating={updating}
+                  <TermineCard key={a.id} a={a} lang={lang} meta={meta} v2={v2} onAdvance={advanceStatus} updating={updating}
                     readOnly={isEmployee || isHistoryView}
                     onEdit={x => { setQtyInput(x.qty_produced); setQtyModal(x); }}
                     onDelete={x => setDeleteModal(x)} />
@@ -2470,7 +2646,7 @@ export default function StationView({
 
       {/* ─── UPCOMING TAB ─── */}
       {activeTab === 'upcoming' && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-16">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-5 space-y-3 pb-16`}>
           {loadingDates && (
             <div className="space-y-3">
               <SkeletonRow /><SkeletonRow /><SkeletonRow />
@@ -2478,7 +2654,9 @@ export default function StationView({
           )}
           {!loadingDates && upcomingData.length === 0 && (
             <div className="text-center py-20">
-              <div className="mx-auto mb-4 w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EFE6D8' }}><ClipboardList size={26} style={{ color: '#572C1A' }} /></div>
+              {v2
+                ? <div className="mx-auto mb-4 w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EFE6D8' }}><ClipboardList size={26} style={{ color: '#572C1A' }} /></div>
+                : <ClipboardList size={40} className="mx-auto mb-3" style={{ color: '#572C1A' }} />}
               <p className="font-semibold" style={{ color: '#2A1810' }}>
                 {lang === 'vi' ? 'Chưa có đơn hàng sắp tới' : 'No upcoming orders'}
               </p>
@@ -2615,7 +2793,7 @@ export default function StationView({
 
       {/* ─── HISTORY TAB ─── */}
       {activeTab === 'history' && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-16">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-5 space-y-3 pb-16`}>
           {loadingDates && (
             <div className="space-y-3">
               <SkeletonRow /><SkeletonRow /><SkeletonRow />
@@ -2771,7 +2949,7 @@ export default function StationView({
       {activeTab === 'analytics' && (() => {
         const stats = analyticsData;
         return (
-          <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-4 pb-16">
+          <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-5 space-y-4 pb-16`}>
             {(() => {
               // Analytics sub-tabs (Axel, 2026-11-11): Delivery (today) · Stock (teams with a Lab stock)
               // · Production (month). One tab, sub-tabs instead of everything stacked.
@@ -2781,10 +2959,10 @@ export default function StationView({
                 { id: 'month', vi: 'Sản xuất', en: 'Production' },
               ];
               return (
-                <div className="grid gap-1 rounded-2xl p-1" style={{ backgroundColor: '#EADFD0', gridTemplateColumns: `repeat(${subs.length}, 1fr)` }}>
+                <div className={v2 ? 'grid gap-1 rounded-2xl p-1' : 'grid gap-1 bg-white rounded-xl p-1'} style={v2 ? { backgroundColor: '#EADFD0', gridTemplateColumns: `repeat(${subs.length}, 1fr)` } : { border: '1px solid #E6DCCF', gridTemplateColumns: `repeat(${subs.length}, 1fr)` }}>
                   {subs.map(v => (
-                    <button key={v.id} onClick={() => setAnalyticsView(v.id)} className="h-10 rounded-xl text-[13px] font-bold relative"
-                      style={analyticsView === v.id ? { background: '#2A1810', color: '#FFFFFF', boxShadow: '0 2px 8px rgba(42,24,16,.25)' } : { background: 'transparent', color: '#572C1A' }}>
+                    <button key={v.id} onClick={() => setAnalyticsView(v.id)} className={v2 ? 'h-10 rounded-xl text-[13px] font-bold relative' : 'py-2 rounded-lg text-[13px] font-extrabold relative'}
+                      style={analyticsView === v.id ? { background: '#2A1810', color: '#FFFFFF', ...(v2 ? { boxShadow: '0 2px 8px rgba(42,24,16,.25)' } : {}) } : { background: 'transparent', color: v2 ? '#572C1A' : '#6B5A4C' }}>
                       {lang === 'vi' ? v.vi : v.en}
                       {v.alert && <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full" style={{ background: '#B42318' }} />}
                     </button>
@@ -2802,7 +2980,34 @@ export default function StationView({
 
             {!loadingAnalytics && stats && (
               <>
-                {analyticsView === 'today' && (() => {
+                {!v2 && analyticsView === 'today' && <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #E6DCCF' }}>
+                  <div className="font-bold text-xs mb-3" style={{ color: '#2A1810' }}>
+                    {lang === 'vi' ? 'Hoàn thành hôm nay (delivery-check)' : "Completion by team (delivery) — today"}
+                  </div>
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="text-3xl font-bold" style={{ color: '#572C1A' }}>{stats.completion.rate}%</div>
+                    <div className="text-xs text-right" style={{ color: '#6B5A4C' }}>
+                      {stats.completion.checked} / {stats.completion.expected} {lang === 'vi' ? 'đã check' : 'checked'}
+                    </div>
+                  </div>
+                  {stats.completion.products.length > 0 && (
+                    <div className="mt-3 pt-3 space-y-1.5 border-t overflow-y-auto" style={{ borderColor: '#F0E8DB', maxHeight: 260 }}>
+                      {stats.completion.products.map(p => (
+                        <div key={p.sku} className="flex justify-between items-center text-[12px]">
+                          <span className="overflow-x-auto whitespace-nowrap no-scrollbar pr-3" style={{ WebkitOverflowScrolling: 'touch', color: '#2A1810' }}>{p.name}</span>
+                          <span className="shrink-0" style={{ color: '#6B5A4C' }}>
+                            {p.checked}/{p.expected} ·{' '}
+                            <span className="font-bold" style={{ color: p.gap > 0 ? '#B45309' : '#572C1A' }}>
+                              {p.gap > 0 ? '-' : '+'}{Math.abs(p.gap)}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>}
+
+                {v2 && analyticsView === 'today' && (() => {
                   const c = stats.completion;
                   const short = c.products.filter(p => p.gap > 0);
                   const rest = c.products.filter(p => p.gap <= 0);
@@ -2872,7 +3077,7 @@ export default function StationView({
       })()}
 
       {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && hrManager && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-3 py-3">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-3 py-3`}>
           <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} myToken={hrMyToken} />
         </div>
       )}
@@ -2884,26 +3089,26 @@ export default function StationView({
       )}
 
       {activeTab === 'loss' && CHEF_RD_TEAMS.includes(team) && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-4`}>
           <LossTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
       {activeTab === 'tests' && CHEF_RD_TEAMS.includes(team) && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-4`}>
           <TestsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
       {activeTab === 'raw' && RAW_TEAMS.includes(team) && (
-        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
+        <div className={`max-w-3xl ${v2 ? 'lg:max-w-4xl' : ''} mx-auto px-4 py-4`}>
           <RawMaterialsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} userName={userName} />
         </div>
       )}
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
-        <div className={`fixed z-10 pointer-events-none bottom-[84px] right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center ${stockTeamNav ? '!hidden' : ''}`}
+        <div className={`fixed z-10 pointer-events-none ${v2 ? 'bottom-[84px]' : 'bottom-4'} right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center ${v2 && stockTeamNav ? '!hidden' : ''}`}
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* Round FAB bottom-right on phones (never covers the last card's buttons), labelled pill on bigger screens */}
           <button
@@ -3475,7 +3680,7 @@ function CorrectionLock({ a, lang }: { a: Assignment; lang: 'vi' | 'en' }) {
 }
 
 function ProductionCard({
-  a, lang, updating, readOnly, onAdvance, onDoneAndSend, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo,
+  a, lang, updating, readOnly, onAdvance, onDoneAndSend, onMarkInStock, onPartial, onViewFiche, onNoteUpdate, onBlocked, onOpenDesignPhoto, meta, backTo, v2 = false,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -3491,6 +3696,7 @@ function ProductionCard({
   onOpenDesignPhoto: (url: string) => void;
   meta: typeof TEAM_LABELS[Team];
   backTo: string;
+  v2?: boolean;
 }) {
   const st = STATUS_META[a.status];
   const isUpdating = updating === a.id;
@@ -3595,7 +3801,7 @@ function ProductionCard({
 
           {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-xl sm:text-2xl font-black" style={{ color: a.cancelled ? '#A39484' : '#2A1810', textDecoration: a.cancelled ? 'line-through' : undefined }}>x{a.qty_to_produce}</span>
+            <span className="text-xl sm:text-2xl font-black" style={{ color: a.cancelled ? '#A39484' : v2 ? '#2A1810' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>x{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
@@ -3834,7 +4040,7 @@ function producedDayLabel(iso: string, lang: 'vi' | 'en'): string {
 }
 
 function TermineCard({
-  a, lang, meta, onAdvance, updating, readOnly, onEdit, onDelete,
+  a, lang, meta, onAdvance, updating, readOnly, onEdit, onDelete, v2 = false,
 }: {
   a: Assignment;
   lang: 'vi' | 'en';
@@ -3844,6 +4050,7 @@ function TermineCard({
   readOnly?: boolean;
   onEdit?: (a: Assignment) => void;
   onDelete?: (a: Assignment) => void;
+  v2?: boolean;
 }) {
   const isSkip = a.status === 'skip';
   // Editable until sent to stock — after that the card is frozen (bon already issued)
@@ -3856,15 +4063,18 @@ function TermineCard({
       style={{
         backgroundColor: isSkip ? '#F3EDE3' : ahead ? '#FBF4E1' : 'white',
         border: isSkip ? '1.5px solid #D9C4A6' : ahead ? '1.5px solid #E9D3A4' : '1px solid #E6DCCF',
-        opacity: 1,
+        opacity: v2 ? 1 : isSkip ? 1 : ahead ? 1 : 0.75,
       }}>
       <CorrectionLock a={a} lang={lang} />
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
-          <img src={thumb(a.image_url, 112)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
+          <img src={thumb(a.image_url, 112)} alt="" className={v2 ? 'w-14 h-14 rounded-2xl object-cover shrink-0' : 'w-12 h-12 rounded-xl object-cover shrink-0'}
             style={{ border: '1px solid #E6DCCF' }} />
-        ) : (
+        ) : v2 ? (
           <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
+        ) : (
+          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
+            style={{ backgroundColor: '#F6F1EA' }}>🥐</div>
         )}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm" style={{ color: '#2A1810' }}>
@@ -3898,13 +4108,13 @@ function TermineCard({
                 <Package size={10} />{lang === 'vi' ? 'Đã chuyển kho' : 'Sent to stock'}
               </span>
             )}
-            <span className="lp-display text-[22px] font-bold ml-auto" style={{ color: isSkip ? '#6B4A2B' : '#2A1810' }}>
-              ×{a.qty_to_produce}
+            <span className={v2 ? 'lp-display text-[22px] font-bold ml-auto' : 'text-xl font-black'} style={{ color: isSkip ? '#6B4A2B' : v2 ? '#2A1810' : meta.color }}>
+              {v2 ? '×' : 'x'}{a.qty_to_produce}
             </span>
           </div>
           {!isSkip && a.produced_by_name && (
             <div className="text-[10px] text-ink-light mt-1">
-              {lang === 'vi' ? 'Bởi' : 'Made by'}{' '}
+              {lang === 'vi' ? 'Bởi' : v2 ? 'Made by' : 'Fait par'}{' '}
               <span className="font-semibold" style={{ color: '#2A1810' }}>{a.produced_by_name}</span>
               {a.produced_at && (
                 <>
@@ -3912,7 +4122,7 @@ function TermineCard({
                       could mean yesterday (Today tab) or today (Tomorrow tab); regular cards are
                       always "today" so the date would just be noise. */}
                   {ahead && <> {producedDayLabel(a.produced_at, lang)}</>}
-                  {' '}{lang === 'vi' ? 'lúc' : 'at'}{' '}
+                  {' '}{lang === 'vi' ? 'lúc' : v2 ? 'at' : 'à'}{' '}
                   <span className="font-semibold" style={{ color: '#2A1810' }}>
                     {new Date(a.produced_at).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}
                   </span>

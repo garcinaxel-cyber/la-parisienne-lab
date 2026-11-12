@@ -1,4 +1,5 @@
 'use client';
+import { isUiV2Team } from '@/lib/ui-v2';
 import { useEffect, useMemo, useState } from 'react';
 import type { TeamMonthAnalytics, MonthRow } from './month-analytics-types';
 
@@ -93,7 +94,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
         <button onClick={() => setMonth('cur')} className="flex-1 py-1.5 rounded-full text-xs font-extrabold" style={pill(isCur)}>{names[curIdx]}</button>
       </div>
 
-      <div className="rounded-[20px] p-4 text-white" style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', boxShadow: '0 6px 18px rgba(42,24,16,0.22)' }}>
+      <div className="rounded-[20px] p-4 text-white" style={{ background: isUiV2Team(team) ? 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810' : 'linear-gradient(135deg, #2A1810 0%, #572C1A 100%)', boxShadow: '0 6px 18px rgba(42,24,16,0.22)' }}>
         <div className="flex items-center justify-between">
           <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 20 }}>{names[isCur ? curIdx : prevIdx]}</span>
           <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold rounded-full px-2.5 py-0.5" style={{ background: 'rgba(255,255,255,0.1)', color: isCur ? '#BFE3CC' : 'rgba(255,255,255,0.7)' }}>

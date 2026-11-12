@@ -174,7 +174,7 @@ export default function LossTab({ team, lang }: { team: string; lang: 'vi' | 'en
 
   return (
     <div className="space-y-3">
-      {msg && !draft && <button onClick={() => setMsg(null)} className="fixed inset-x-4 bottom-[78px] sm:bottom-6 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 rounded-2xl px-4 py-3 text-[13.5px] font-bold flex items-center justify-center gap-2 lp-pop" style={{ backgroundColor: msg.ok ? NAVY : LATE, color: '#fff', boxShadow: '0 12px 28px rgba(42,24,16,.35)', borderBottom: `3px solid ${GOLD}` }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</button>}
+      {msg && !draft && <button onClick={() => setMsg(null)} className="fixed inset-x-4 bottom-[calc(78px+env(safe-area-inset-bottom))] sm:bottom-6 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 rounded-2xl px-4 py-3 text-[13.5px] font-bold flex items-center justify-center gap-2 lp-pop" style={{ backgroundColor: msg.ok ? NAVY : LATE, color: '#fff', boxShadow: '0 12px 28px rgba(42,24,16,.35)', borderBottom: `3px solid ${GOLD}` }}>{msg.ok && <CheckCircle2 size={15} />}{msg.text}</button>}
       {!data.odooOn && <div className="rounded-xl px-3 py-2 text-[11.5px] font-semibold" style={{ backgroundColor: '#FBF4E1', color: '#8A6418' }}>{L('Giai đoạn thử: khai báo và duyệt được ghi trong app, chưa gửi lên Odoo.', 'Test phase: declarations and validations are kept in the app, nothing is sent to Odoo yet.')}</div>}
 
       <section className="rounded-[26px] px-4 pt-4 pb-4 lp-rise" style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', color: '#fff' }}>

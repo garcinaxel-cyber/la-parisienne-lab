@@ -247,11 +247,11 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             {fixable && !open && (
               <span className="flex justify-end gap-1.5 mt-1.5">
                 <button onClick={() => { setFix({ id: t.id, mode: 'edit' }); setFixKg(String(t.weight_kg)); setFixWhy(''); setErr(null); }}
-                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#F6F1EA', color: '#5E4E42', border: '1px solid #EDE4D6' }}>
+                  className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12.5px] font-bold active:scale-95 transition" style={{ backgroundColor: '#F6F1EA', color: '#5E4E42', border: '1px solid #EDE4D6' }}>
                   <Pencil size={12} />{vi ? 'Sửa' : 'Edit'}
                 </button>
                 <button onClick={() => { setFix({ id: t.id, mode: 'cancel' }); setFixKg(''); setFixWhy(''); setErr(null); }}
-                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#FBEAE8', color: '#9B1C12', border: '1px solid #FBD5D5' }}>
+                  className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[12.5px] font-bold active:scale-95 transition" style={{ backgroundColor: '#FBEAE8', color: '#9B1C12', border: '1px solid #FBD5D5' }}>
                   <Trash2 size={12} />{vi ? 'Huỷ' : 'Cancel'}
                 </button>
               </span>
@@ -268,13 +268,13 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 className="w-full rounded-lg px-3 py-2 text-base font-bold bg-white" style={{ border: '1px solid #D9CBB8' }} />
             )}
             <input value={fixWhy} onChange={e => setFixWhy(e.target.value)} maxLength={300} placeholder={vi ? 'Lý do (không bắt buộc)' : 'Reason (optional)'}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-white" style={{ border: '1px solid #D9CBB8' }} />
+              className="w-full rounded-lg px-3 py-2.5 text-sm bg-white" style={{ border: '1px solid #D9CBB8' }} />
             <div className="flex gap-2">
               <button disabled={fixing || (fix.mode === 'edit' && !(fixNum > 0))} onClick={doFix}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: fix.mode === 'cancel' ? '#B42318' : GREEN }}>
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl py-3 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: fix.mode === 'cancel' ? '#B42318' : GREEN }}>
                 {fixing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}{fix.mode === 'cancel' ? (vi ? 'Xác nhận huỷ' : 'Confirm cancel') : (vi ? 'Lưu' : 'Save')}
               </button>
-              <button disabled={fixing} onClick={() => setFix(null)} className="rounded-lg px-3 py-2 text-sm font-semibold bg-white" style={{ color: '#6B5A4C', border: '1px solid #E6DCCF' }}>{vi ? 'Đóng' : 'Close'}</button>
+              <button disabled={fixing} onClick={() => setFix(null)} className="rounded-xl px-4 py-3 text-sm font-semibold bg-white" style={{ color: '#6B5A4C', border: '1px solid #E6DCCF' }}>{vi ? 'Đóng' : 'Close'}</button>
             </div>
           </div>
         )}
@@ -325,7 +325,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   };
 
   return (
-    <div className="lp-station min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
+    <div className="lp-station min-h-screen pb-[calc(76px+env(safe-area-inset-bottom))] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
       {/* Phone: same ivory header and bottom bar as the station (UI v2) */}
       <div className="sm:hidden sticky top-0 z-20 flex items-center gap-2 px-4 py-2" style={{ backgroundColor: '#F6F1EA' }}>
         <img src="/logo-laparis-brown.png" alt="la Paris" className="h-8 w-auto shrink-0" />
@@ -333,8 +333,8 @@ export default function StationOemView({ role, userId, userName, canFix = false 
         <span className="rounded-full pl-2.5 pr-3 h-8 flex items-center gap-1.5 text-[10.5px] font-bold tracking-[0.1em] uppercase bg-white" style={{ color: '#2A1810', border: '1px solid #E6DCCF' }}>
           <Factory size={13} style={{ color: '#8A6418' }} /> OEM · kg
         </span>
-        <button onClick={() => setLang(vi ? 'en' : 'vi')} className="w-9 h-9 rounded-full text-[11px] font-bold bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }}>{vi ? 'EN' : 'VI'}</button>
-        <button onClick={load} className="w-9 h-9 rounded-full flex items-center justify-center bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }} aria-label="refresh">
+        <button onClick={() => setLang(vi ? 'en' : 'vi')} className="w-10 h-10 rounded-full text-[11px] font-bold bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }}>{vi ? 'EN' : 'VI'}</button>
+        <button onClick={load} className="w-10 h-10 rounded-full flex items-center justify-center bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }} aria-label="refresh">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
@@ -404,7 +404,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             {!p.perOrder && (
               <div className="mx-4 mb-3 grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: '#F1EEE6' }}>
                 {(['d', 't'] as const).map(v => { const on = (view[p.client] ?? 'd') === v; return (
-                  <button key={v} onClick={() => setView(s => ({ ...s, [p.client]: v }))} className="rounded-lg py-2 text-sm font-bold transition"
+                  <button key={v} onClick={() => setView(s => ({ ...s, [p.client]: v }))} className="rounded-lg py-2.5 text-sm font-bold transition"
                     style={on ? { backgroundColor: GREEN, color: '#fff' } : { color: '#6B5A4C' }}>
                     {v === 'd' ? (vi ? 'Theo đợt giao' : 'Per delivery') : (vi ? 'Toàn bộ đơn hàng' : 'Whole order')}
                   </button>); })}
@@ -445,7 +445,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                               <span className="whitespace-nowrap">{n.cum > 0 && n.baked >= n.cum - 0.05 && <b style={{ color: '#256A45' }}>✓ </b>}<b>{fmt1(n.baked)}</b><span className="text-xs" style={{ color: '#A39484' }}> / {fmt1(n.cum)} kg</span></span>
                             </div>
                             <span className="block h-1.5 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#E7DFCF' }}>
-                              <span className="block h-full rounded-full" style={{ width: `${n.cum ? Math.min(100, (n.baked / n.cum) * 100) : 0}%`, backgroundColor: n.baked >= n.cum - 0.05 ? '#2F7D55' : '#8FB3A0' }} />
+                              <span className="block h-full rounded-full" style={{ width: `${n.cum ? Math.min(100, (n.baked / n.cum) * 100) : 0}%`, backgroundColor: n.baked >= n.cum - 0.05 ? '#2F7D55' : '#D9B36A' }} />
                             </span>
                           </div>
                         ))}
@@ -544,7 +544,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                           const on = e.plan_seq === x.b.row.seq;
                           return (
                             <button key={x.b.row.id} disabled={!canLog || on || tagging === e.id} onClick={() => tag(e.id, x.b.row.seq)}
-                              className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition"
+                              className="rounded-lg px-3 py-2.5 text-[12px] font-bold active:scale-95 transition"
                               style={on ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F6F1EA', color: '#6B5A4C', border: '1px solid #EDE4D6', opacity: canLog ? 1 : 0.5 }}>
                               {tagging === e.id && !on ? '…' : `${W(true)} ${x.b.row.seq}`}
                             </button>
@@ -580,7 +580,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                 </div>
                 <div className="flex items-center gap-2.5">
                   <span className="flex-1 h-3 rounded-full overflow-hidden" style={{ backgroundColor: '#EDE4D6' }}>
-                    <span className="block h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: done ? '#2F7D55' : '#8FB3A0' }} />
+                    <span className="block h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: done ? '#2F7D55' : '#D9B36A' }} />
                   </span>
                   <span className="w-11 text-right text-sm font-semibold" style={{ color: done ? '#2F7D55' : '#6B5A4C' }}>{Math.round(pct)}%</span>
                 </div>
@@ -599,11 +599,12 @@ export default function StationOemView({ role, userId, userName, canFix = false 
 
       {sheet && (
         // Bottom sheet — phone-first, big targets.
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }} onClick={() => !saving && setSheet(false)}>
-          <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-4 pb-6 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center lp-overlay" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }} onClick={() => !saving && setSheet(false)}>
+          {/* Scrolls inside: with every OEM product listed and the keyboard open, the Save button stays reachable. */}
+          <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-4 max-h-[92vh] overflow-y-auto lp-sheet" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="text-base font-bold">{vi ? 'Sản xuất thêm — OEM' : 'Extra production — OEM'}</div>
-              <button onClick={() => setSheet(false)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3EDE3' }}><X size={18} /></button>
+              <button onClick={() => setSheet(false)} aria-label="close" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#F3EDE3' }}><X size={18} /></button>
             </div>
             <div className="space-y-1.5">
               <div className="text-xs font-bold" style={{ color: '#6B5A4C' }}>{vi ? 'Sản phẩm' : 'Product'}</div>

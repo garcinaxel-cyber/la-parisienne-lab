@@ -529,7 +529,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         </>)}
 
         {/* bottom bar */}
-        <div className="fixed left-0 right-0 bottom-[58px] sm:bottom-0 z-20 px-4 pt-3 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)' }}>
+        <div className="fixed left-0 right-0 bottom-[calc(58px+env(safe-area-inset-bottom))] sm:bottom-0 z-20 px-4 pt-3 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)' }}>
           <div className="max-w-3xl mx-auto flex gap-2 sm:max-w-xl">
             {edit ? (<>
               <button onClick={() => { const changed = !!edit && !!ver && (JSON.stringify(edit.recipe) !== JSON.stringify(ver.recipe) || JSON.stringify(edit.steps) !== JSON.stringify(ver.steps) || edit.note !== (ver.note ?? '') || num(edit.yieldPcs) !== ver.yieldPcs); if (changed && !window.confirm(L('Bỏ các thay đổi chưa lưu?', 'Discard the changes you have not saved?'))) return; setEdit(null); setQtyDraft({}); }} className="flex-1 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>{L('Huỷ', 'Cancel')}</button>

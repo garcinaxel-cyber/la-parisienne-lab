@@ -257,7 +257,7 @@ export default function StockProductionPanel({
 
       {/* Confirmation — floats above the tab bar so it is seen wherever the list is scrolled */}
       {msg && (
-        <div className="fixed inset-x-4 bottom-[78px] sm:bottom-6 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 rounded-2xl px-4 py-3 text-[13.5px] font-bold text-center lp-pop"
+        <div className="fixed inset-x-4 bottom-[calc(78px+env(safe-area-inset-bottom))] sm:bottom-6 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 rounded-2xl px-4 py-3 text-[13.5px] font-bold text-center lp-pop"
           style={{ backgroundColor: CACAO, color: '#fff', boxShadow: '0 12px 28px rgba(42,24,16,.35)', borderBottom: `3px solid ${GOLD}` }}>{msg}</div>
       )}
 

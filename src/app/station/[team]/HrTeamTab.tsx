@@ -67,7 +67,7 @@ export default function HrTeamTab({ team, lang, myToken }: { team: string; lang:
       <div className="flex gap-1 overflow-x-auto no-scrollbar -mx-1 px-1">
         {tabs.map(([id, label, count]) => (
           <button key={id} onClick={() => setSub(id)}
-            className="min-h-[40px] px-3 rounded-xl text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap flex-1 active:scale-95"
+            className="min-h-[44px] px-3 rounded-xl text-[12.5px] font-bold flex items-center justify-center gap-1 whitespace-nowrap flex-1 active:scale-95"
             style={sub === id ? { background: '#2A1810', color: '#F6F1EA', border: '1px solid #2A1810' } : { background: '#fff', color: '#2A1810', border: BORDER }}>
             {label}
             {count > 0 && <span className="min-w-[16px] h-4 rounded-full text-[9px] font-black inline-flex items-center justify-center px-1"
@@ -193,8 +193,8 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
 
 export function Sheet({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.35)' }} onClick={onClose}>
-      <div className="w-full max-w-xl rounded-t-3xl p-4 pb-8" style={{ background: '#F6F1EA' }} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ background: 'rgba(0,0,0,0.35)' }} onClick={onClose}>
+      <div className="w-full max-w-xl rounded-t-3xl p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] max-h-[90vh] overflow-y-auto lp-sheet" style={{ background: '#F6F1EA' }} onClick={(e) => e.stopPropagation()}>
         <div className="w-10 h-1 rounded-full mx-auto mb-3" style={{ background: '#E6DCCF' }} />
         {children}
       </div>
@@ -234,7 +234,7 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
     <div className="space-y-2.5">
       <div className="flex gap-1.5">
         {([['pending', `${tr('To review', 'Cần xử lý')} (${n.pending})`], ['proof', `${tr('Proof missing', 'Chờ giấy')} (${n.proof})`], ['done', tr('Done', 'Đã xử lý')]] as const).map(([f, label]) => (
-          <button key={f} onClick={() => setFilter(f)} className="flex-1 min-h-[38px] rounded-xl text-[11px] font-bold"
+          <button key={f} onClick={() => setFilter(f)} className="flex-1 min-h-[44px] px-1 rounded-xl text-[12px] font-bold leading-tight"
             style={filter === f ? { background: '#2A1810', color: '#fff', border: '1px solid #2A1810' } : { background: '#fff', color: '#2E1B12', border: BORDER }}>{label}</button>
         ))}
       </div>
@@ -290,9 +290,9 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
               <div className="flex justify-between items-center gap-2">
                 <span className="text-xs font-bold" style={{ color: sc }}>{sl}</span>
                 <div className="flex gap-3">
-                  {needsProof(r) && <button disabled={working === r.id} onClick={() => noProof(r.id)} className="text-xs font-bold underline min-h-[32px]" style={{ color: '#8B5E34' }}>{tr('No proof → day off', 'Không giấy → ngày nghỉ')}</button>}
+                  {needsProof(r) && <button disabled={working === r.id} onClick={() => noProof(r.id)} className="text-xs font-bold underline min-h-[44px] px-2" style={{ color: '#8B5E34' }}>{tr('No proof → day off', 'Không giấy → ngày nghỉ')}</button>}
                   {(r.status === 'pending_giang' || r.status === 'rejected' || (r.status === 'approved' && r.type === 'swap')) && (
-                    <button onClick={() => act(r.id, 'undo')} className="text-xs underline min-h-[32px]" style={{ color: '#6B5A4C' }}>{tr('Undo', 'Hoàn tác')}</button>
+                    <button onClick={() => act(r.id, 'undo')} className="text-xs underline min-h-[44px] px-2" style={{ color: '#6B5A4C' }}>{tr('Undo', 'Hoàn tác')}</button>
                   )}
                 </div>
               </div>
@@ -334,15 +334,16 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
     <div className="space-y-2.5">
       <div className="bg-white rounded-2xl p-3.5 space-y-2.5" style={{ border: BORDER }}>
         <div className="text-sm font-bold">{tr('New overtime request', 'Đề nghị tăng ca mới')}</div>
-        <div className="grid grid-cols-3 gap-2">
-          <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('Day', 'Ngày')}</span><input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={input} style={{ border: BORDER }} /></label>
+        {/* Phone: the date takes a full row (a date field in a third of 390 px gets cut off); 3 columns from sm up. */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <label className="space-y-1 col-span-2 sm:col-span-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('Day', 'Ngày')}</span><input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={input} style={{ border: BORDER }} /></label>
           <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('From', 'Từ')}</span><input type="time" value={from} onChange={(e) => setFrom(e.target.value)} className={input} style={{ border: BORDER }} /></label>
           <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('To', 'Đến')}</span><input type="time" value={to} onChange={(e) => setTo(e.target.value)} className={input} style={{ border: BORDER }} /></label>
         </div>
         <label className="block space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('Reason', 'Lý do')}</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={tr('e.g. Maison Mooncake order', 'VD: Đơn Maison Mooncake')} className={input} style={{ border: BORDER }} /></label>
         <div className={label} style={{ color: '#6B5A4C' }}>{tr('Who', 'Ai')}</div>
-        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #F0E6B8' }}>
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #EFE6D8' }}>
           {data.week.employees.filter((e) => !e.is_casual).map((e) => {
             const on = !!sel[e.id];
             const base = data.otHours[e.id] ?? 0;
@@ -350,7 +351,7 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
             const over = after > HR_OT_CAP;
             return (
               <button key={e.id} onClick={() => setSel({ ...sel, [e.id]: !on })} className="w-full flex items-center gap-2.5 px-2.5 py-2 min-h-[50px] text-left"
-                style={{ background: on ? '#FBF7F0' : '#fff', borderBottom: '1px solid #F0E6B8' }}>
+                style={{ background: on ? '#FBF7F0' : '#fff', borderBottom: '1px solid #EFE6D8' }}>
                 <span className="w-[22px] h-[22px] rounded-md flex items-center justify-center text-[13px] font-black shrink-0"
                   style={on ? { background: '#2A1810', color: '#fff' } : { border: '1px solid #C9A84C' }}>{on ? '✓' : ''}</span>
                 <span className="flex-1 min-w-0">
@@ -386,7 +387,7 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
             <div className="text-xs" style={{ color: '#6B5A4C' }}>{o.lines.map((l) => nameOf(data, l.employee_id)).join(', ')}</div>
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold" style={{ color: st[1] }}>{st[0]} · {yes}/{o.lines.length} {tr('confirmed', 'đã xác nhận')}{no ? ` · ${no} ${tr('declined', 'từ chối')}` : ''}</span>
-              {o.status === 'pending_giang' && <button onClick={() => cancel(o.id)} className="text-xs underline min-h-[32px]" style={{ color: '#6B5A4C' }}>{tr('Cancel', 'Hủy')}</button>}
+              {o.status === 'pending_giang' && <button onClick={() => cancel(o.id)} className="text-xs underline min-h-[44px] px-2" style={{ color: '#6B5A4C' }}>{tr('Cancel', 'Hủy')}</button>}
             </div>
           </div>
         );
@@ -434,7 +435,7 @@ function TeamView({ data, team, lang, tr, reload }: { data: TeamHrData; team: st
             </div>
           </div>
           {!e.is_leader && !e.profile_id && (
-            <button onClick={() => remove(e)} className="text-xs underline min-h-[32px] shrink-0" style={{ color: '#6B5A4C' }}>{tr('Remove', 'Xóa')}</button>
+            <button onClick={() => remove(e)} className="text-xs underline min-h-[44px] px-2 shrink-0" style={{ color: '#6B5A4C' }}>{tr('Remove', 'Xóa')}</button>
           )}
         </div>
       ))}
@@ -452,8 +453,8 @@ function TeamView({ data, team, lang, tr, reload }: { data: TeamHrData; team: st
               <option value="8">{tr('Shift 8 (08–17h)', 'Ca 8 (08–17h)')}</option>
             </select>
           </div>
-          <label className="flex items-center gap-2 text-xs min-h-[36px]">
-            <input type="checkbox" checked={casual} onChange={(e) => setCasual(e.target.checked)} />
+          <label className="flex items-center gap-2.5 text-xs min-h-[44px]">
+            <input type="checkbox" checked={casual} onChange={(e) => setCasual(e.target.checked)} className="w-5 h-5 shrink-0" style={{ accentColor: '#2A1810' }} />
             {tr('Seasonal / paid by the hour (outside the day-off rules)', 'Thời vụ / tính theo giờ (ngoài quy định ngày nghỉ)')}
           </label>
           <div className="grid grid-cols-2 gap-2">

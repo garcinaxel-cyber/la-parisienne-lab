@@ -11,6 +11,7 @@
 //   * a listed product nobody counts is left out of the count with a reason; "= 0" is said explicitly;
 //     the team lead confirms.
 import ItemPhoto from '@/components/raw/ItemPhoto';
+import { isUiV2Team } from '@/lib/ui-v2';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Check, Loader2, ClipboardCheck, AlertTriangle, Trash2, AlertCircle, Plus, ChevronDown, ChevronRight, Camera } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
@@ -32,6 +33,9 @@ const parseQty = (t: string) => { const v = parseFloat(t.replace(/\s+/g, '').rep
 
 export default function RoomCountPanel({ team, lang, items }: { team: string; lang: 'vi' | 'en'; items: RawMaterial[] | null }) {
   const L = useCallback((vi: string, en: string) => (lang === 'vi' ? vi : en), [lang]);
+  // UI v2 (Team Hưng only): larger tap targets on phones. Other teams keep main's sizes.
+  const v2 = isUiV2Team(team);
+  const tap = (big: string, small: string) => (v2 ? big : small);
   const [st, setSt] = useState<RoomCountState | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -202,7 +206,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           <div className="flex items-start gap-2">
             <div className="flex-1 min-w-0"><div className="font-extrabold leading-snug">{lineName(dLine)}</div>
               <div className="text-[11px]" style={{ color: '#A39484' }}>{dLine.sku ?? '—'} · {L('Đơn vị lưu', 'Stored in')}: {dLine.uom}</div></div>
-            <button onClick={() => setDraft(null)} className="p-1" style={{ color: '#6B5A4C' }}><X size={18} /></button>
+            <button onClick={() => setDraft(null)} aria-label="close" className={tap('w-10 h-10 -mt-1.5 -mr-1.5 flex items-center justify-center flex-none', 'p-1')} style={{ color: '#6B5A4C' }}><X size={18} /></button>
           </div>
           {es.length > 0 && (
             <div className="rounded-xl p-2.5 space-y-1.5" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}` }}>
@@ -212,19 +216,19 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
                     <span style={{ color: '#A39484' }}> · {e.createdAt ? vnDayTime(e.createdAt).time : L('chờ gửi', 'waiting')}</span></span>
                   <b className="tabular-nums whitespace-nowrap">{e.isZero ? '= 0' : e.packLabel ? `${fmtQty(e.packCount ?? 0)} × ${e.packLabel}` : `${fmtQty(e.qty)} ${dLine.uom}`}</b>
                   {e.createdAt && (e.countedBy === st.meId || st.canConfirm) && (
-                    <button disabled={busy} onClick={() => act(deleteRoomEntryAction(team, s.id, e.id))} className="p-0.5" style={{ color: LATE }} aria-label="delete"><Trash2 size={14} /></button>)}
+                    <button disabled={busy} onClick={() => act(deleteRoomEntryAction(team, s.id, e.id))} className={tap('w-9 h-9 -my-2 flex items-center justify-center flex-none', 'p-0.5')} style={{ color: LATE }} aria-label="delete"><Trash2 size={v2 ? 16 : 14} /></button>)}
                 </div>))}
               <div className="flex justify-between text-[12.5px] pt-1.5" style={{ borderTop: `1px solid ${BORDER}` }}><b>{L('Tổng hiện tại', 'Total so far')}</b><b className="tabular-nums">{fmtQty(cur)} {dLine.uom}</b></div>
             </div>)}
           {mine.length > 0 && (
             <div className="grid grid-cols-2 rounded-xl overflow-hidden text-[12.5px] font-bold" style={{ border: `1px solid ${HAIR}` }}>
               {(['add', 'correct'] as const).map(m => (
-                <button key={m} onClick={() => setDraft({ ...draft, mode: m })} className="py-2" style={{ backgroundColor: draft.mode === m ? PALE : '#fff', color: draft.mode === m ? GOLD_TEXT : '#6B5A4C' }}>
+                <button key={m} onClick={() => setDraft({ ...draft, mode: m })} className={tap('py-3', 'py-2')} style={{ backgroundColor: draft.mode === m ? PALE : '#fff', color: draft.mode === m ? GOLD_TEXT : '#6B5A4C' }}>
                   {m === 'add' ? L('Đếm thêm phần khác', 'Add another part') : L('Sửa lượt của tôi', 'Correct my entry')}</button>))}
             </div>)}
           <div className="flex gap-1.5 flex-wrap">
             {units.map((x, i) => (
-              <button key={i} onClick={() => setDraft({ ...draft, unit: i })} className="text-[12px] font-bold rounded-lg px-2.5 py-1"
+              <button key={i} onClick={() => setDraft({ ...draft, unit: i })} className={tap('text-[13px] font-bold rounded-lg px-3.5 py-2', 'text-[12px] font-bold rounded-lg px-2.5 py-1')}
                 style={{ border: `1px solid ${draft.unit === i ? GOLD : HAIR}`, backgroundColor: draft.unit === i ? PALE : '#fff', color: draft.unit === i ? GOLD_TEXT : '#6B5A4C' }}>{x.label}</button>))}
           </div>
           <div className="flex items-baseline gap-2 rounded-xl px-3 py-2" style={{ border: `1.5px solid ${GOLD}` }}>
@@ -240,13 +244,13 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           {dup && <div className="rounded-xl p-2.5 space-y-2 text-[12.5px]" style={{ backgroundColor: '#F6F1EA', border: `1.5px solid ${GOLD}` }}>
             <b style={{ color: GOLD_TEXT }}>{L('Bạn vừa lưu đúng số lượng này. Trùng?', 'You just saved this same quantity. Duplicate?')}</b>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => { setDup(null); setDraft(null); }} className="rounded-lg py-2 font-bold" style={{ border: `1px solid ${BORDER}` }}>{L('Trùng, bỏ qua', 'Duplicate, skip')}</button>
-              <button onClick={() => save({ ...dup, force: true })} className="rounded-lg py-2 font-bold text-white" style={{ backgroundColor: NAVY }}>{L('Không, lưu thêm', 'No, save it')}</button>
+              <button onClick={() => { setDup(null); setDraft(null); }} className={tap('rounded-lg py-3 font-bold', 'rounded-lg py-2 font-bold')} style={{ border: `1px solid ${BORDER}` }}>{L('Trùng, bỏ qua', 'Duplicate, skip')}</button>
+              <button onClick={() => save({ ...dup, force: true })} className={tap('rounded-lg py-3 font-bold text-white', 'rounded-lg py-2 font-bold text-white')} style={{ backgroundColor: NAVY }}>{L('Không, lưu thêm', 'No, save it')}</button>
             </div></div>}
           {!dup && <>
             <button disabled={busy || !(base > 0)} onClick={() => save(mk(false))} className="w-full rounded-xl py-3 font-extrabold text-white disabled:opacity-40" style={{ backgroundColor: NAVY }}>
               {busy ? <Loader2 size={16} className="inline animate-spin" /> : draft.mode === 'correct' ? L('Lưu sửa', 'Save correction') : L('Lưu lượt đếm', 'Save count')}</button>
-            <button disabled={busy} onClick={() => save(mk(true))} className="w-full rounded-xl py-2.5 font-bold" style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
+            <button disabled={busy} onClick={() => save(mk(true))} className={tap('w-full rounded-xl py-3 font-bold', 'w-full rounded-xl py-2.5 font-bold')} style={{ backgroundColor: PALE, border: `1px solid ${BORDER}`, color: GOLD_TEXT }}>
               {L('Không có trong room (= 0)', 'Not in the room (= 0)')}</button>
           </>}
         </div>
@@ -270,7 +274,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           <div><div className="font-extrabold">{L('Kiểm kê room', 'Room count')} · {s.countDate.split('-').reverse().slice(0, 2).join('/')}</div>
             <div className="text-[11.5px] opacity-80">{L('Chốt lúc', 'Cut-off')} {cut.time} · {L('mở bởi', 'opened by')} {s.openedByName ?? '—'}</div></div>
           <div className="grid grid-cols-2 gap-1 text-[11.5px] font-bold">
-            {(['list', 'summary'] as const).map(v => <button key={v} onClick={() => setView(v)} className="rounded-lg px-2 py-1" style={{ backgroundColor: view === v ? '#fff' : 'transparent', color: view === v ? NAVY : '#fff', border: '1px solid rgba(255,255,255,.5)' }}>
+            {(['list', 'summary'] as const).map(v => <button key={v} onClick={() => setView(v)} className={tap('rounded-lg px-3 py-2', 'rounded-lg px-2 py-1')} style={{ backgroundColor: view === v ? '#fff' : 'transparent', color: view === v ? NAVY : '#fff', border: '1px solid rgba(255,255,255,.5)' }}>
               {v === 'list' ? L('Đếm', 'Count') : L('Tổng kết', 'Summary')}</button>)}
           </div>
         </div>
@@ -282,12 +286,12 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
       {offline && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: '#F6F1EA', color: GOLD_TEXT }}>
         <AlertCircle size={14} /> {L(`Mất kết nối — ${queue.length} lượt đang chờ gửi, đã lưu trên máy.`, `Connection lost — ${queue.length} entries waiting, kept on this phone.`)}</div>}
       {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold flex items-center gap-2" style={{ backgroundColor: '#FBEAE8', color: LATE }}>
-        <span className="flex-1">{err}</span><button onClick={() => setErr(null)}><X size={14} /></button></div>}
+        <span className="flex-1">{err}</span><button onClick={() => setErr(null)} aria-label="close" className={tap('w-9 h-9 -my-2 -mr-2 flex items-center justify-center', '')}><X size={14} /></button></div>}
 
       {view === 'list' ? <>
         <div className="flex gap-1.5">
           {([['all', L('Tất cả', 'All'), lines.length], ['todo', L('Chưa đếm', 'Not counted'), nTodo], ['done', L('Đã đếm', 'Counted'), nDone + nZero]] as const).map(([k, label, n]) => (
-            <button key={k} onClick={() => setFilter(k)} className="flex-1 rounded-xl py-2 text-[12px] font-extrabold"
+            <button key={k} onClick={() => setFilter(k)} className={tap('flex-1 rounded-xl py-2.5 text-[12px] font-extrabold', 'flex-1 rounded-xl py-2 text-[12px] font-extrabold')}
               style={{ backgroundColor: filter === k ? PALE : '#fff', color: filter === k ? GOLD_TEXT : '#6B5A4C', border: `1.5px solid ${filter === k ? GOLD : BORDER}` }}>{label} · {n}</button>))}
         </div>
         <label className="flex items-center gap-2 bg-white rounded-xl px-3" style={{ border: `1px solid ${BORDER}` }}>
@@ -310,7 +314,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           </div>))}
         {!adding ? <button onClick={() => setAdding(true)} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
           <Plus size={15} /> {L('Sản phẩm khác', 'Other product')}</button>
-          : <OtherProduct team={team} items={items} listed={new Set(lines.map(l => l.tmplId))} lang={lang} L={L} onClose={() => setAdding(false)}
+          : <OtherProduct v2={v2} team={team} items={items} listed={new Set(lines.map(l => l.tmplId))} lang={lang} L={L} onClose={() => setAdding(false)}
               onFree={async (f) => { setBusy(true); try { const r = await saveFreeItemAction(team, s.id, f); if (r.error) setErr(r.error); else { if (r.state) setSt(r.state); setAdding(false); ping(); } } catch { setErr(L('Mất kết nối — bấm lưu lại, không bị trùng.', 'Connection lost — tap save again, no duplicate.')); } setBusy(false); }}
               busy={busy}
               onPick={(m) => { setAdding(false); setSt(x => x && !x.lines.some(l => l.tmplId === m.tmplId) ? { ...x, lines: [...x.lines, { tmplId: m.tmplId, sku: m.sku, name: m.name, nameVi: m.nameVi, uom: m.uom, type: m.type, sub: m.sub, source: 'added', takenRecent: null, leftOutReason: null, leftOutNote: null }] } : x); startDraft(m.tmplId); }} />}
@@ -323,7 +327,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
                 <div className="flex-1 min-w-0"><div className="text-[13px] font-bold leading-snug">{f.name}</div>
                   <div className="text-[10.5px]" style={{ color: '#A39484' }}>{f.countedByName ?? '—'}{f.note ? ` · ${f.note}` : ''}</div></div>
                 <span className="text-[11.5px] font-bold rounded-full px-2 py-0.5 whitespace-nowrap tabular-nums" style={{ backgroundColor: OKBG, color: OK }}>{fmtQty(f.qty)} {f.uom}</span>
-                {(f.countedBy === st.meId || st.canConfirm) && <button disabled={busy} onClick={() => act(deleteFreeItemAction(team, s.id, f.id))} className="p-0.5" style={{ color: LATE }} aria-label="delete"><Trash2 size={14} /></button>}
+                {(f.countedBy === st.meId || st.canConfirm) && <button disabled={busy} onClick={() => act(deleteFreeItemAction(team, s.id, f.id))} className={tap('w-9 h-9 flex items-center justify-center flex-none', 'p-0.5')} style={{ color: LATE }} aria-label="delete"><Trash2 size={14} /></button>}
               </div>))}
           </div>)}
         <div className="text-center text-[12px] pb-2" style={{ color: '#A39484' }}>{L('Có thể thoát bất cứ lúc nào — tiến độ đã được lưu.', 'You can leave at any time — progress is saved.')}</div>
@@ -336,7 +340,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
           </div>
           {alerts.length > 0 && <div className="bg-white rounded-2xl p-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
             <b className="text-[13px]" style={{ color: LATE }}>{L(`Kiểm tra đơn vị · ${alerts.length}`, `Check the unit · ${alerts.length}`)}</b>
-            {alerts.map(l => <button key={l.tmplId} onClick={() => startDraft(l.tmplId)} className="w-full flex justify-between text-[12.5px] text-left"><span className="min-w-0 truncate">{lineName(l)}</span>
+            {alerts.map(l => <button key={l.tmplId} onClick={() => startDraft(l.tmplId)} className={tap('w-full flex justify-between text-[12.5px] text-left py-2', 'w-full flex justify-between text-[12.5px] text-left')}><span className="min-w-0 truncate">{lineName(l)}</span>
               <span className="tabular-nums whitespace-nowrap">{fmtQty(totals.get(l.tmplId)!.total)} vs {fmtQty(l.takenRecent ?? 0)} {l.uom}</span></button>)}
           </div>}
           <div className="bg-white rounded-2xl p-3 space-y-1.5" style={{ border: `1px solid ${BORDER}` }}>
@@ -344,13 +348,13 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
             {multi.length === 0 && <div className="text-[12px]" style={{ color: '#A39484' }}>{L('Không có.', 'None.')}</div>}
             {multi.map(([l, es]) => (
               <div key={l.tmplId}>
-                <button onClick={() => setOpenDup(openDup === l.tmplId ? null : l.tmplId)} className="w-full flex items-center gap-1 text-[12.5px] text-left py-0.5">
+                <button onClick={() => setOpenDup(openDup === l.tmplId ? null : l.tmplId)} className={tap('w-full flex items-center gap-1 text-[12.5px] text-left py-2', 'w-full flex items-center gap-1 text-[12.5px] text-left py-0.5')}>
                   {openDup === l.tmplId ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<span className="flex-1 min-w-0 truncate">{lineName(l)}</span>
                   <span className="tabular-nums whitespace-nowrap">{es.length} {L('lượt', 'entries')} · {fmtQty(totals.get(l.tmplId)!.total)} {l.uom}</span></button>
                 {openDup === l.tmplId && <div className="pl-5 space-y-1 pb-1">{es.map(e => (
                   <div key={e.id} className="flex items-center gap-2 text-[12px]"><span className="flex-1 min-w-0 truncate" style={{ color: '#6B5A4C' }}>{e.countedByName ?? '—'} · {e.createdAt ? vnDayTime(e.createdAt).time : ''}</span>
                     <b className="tabular-nums">{e.isZero ? '= 0' : e.packLabel ? `${fmtQty(e.packCount ?? 0)} × ${e.packLabel}` : `${fmtQty(e.qty)} ${l.uom}`}</b>
-                    {e.createdAt && (e.countedBy === st.meId || st.canConfirm) && <button disabled={busy} onClick={() => act(deleteRoomEntryAction(team, s.id, e.id))} style={{ color: LATE }} aria-label="delete"><Trash2 size={13} /></button>}
+                    {e.createdAt && (e.countedBy === st.meId || st.canConfirm) && <button disabled={busy} onClick={() => act(deleteRoomEntryAction(team, s.id, e.id))} className={tap('w-9 h-9 -my-2 flex items-center justify-center flex-none', '')} style={{ color: LATE }} aria-label="delete"><Trash2 size={v2 ? 15 : 13} /></button>}
                   </div>))}</div>}
               </div>))}
           </div>
@@ -360,15 +364,15 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
             {left.map(l => (
               <div key={l.tmplId} className="space-y-1">
                 <div className="flex items-center gap-2"><span className="flex-1 min-w-0 text-[12.5px] font-bold truncate">{lineName(l)}</span>
-                  <button onClick={() => { setView('list'); startDraft(l.tmplId); }} className="text-[11.5px] font-extrabold" style={{ color: GOLD_TEXT }}>{L('Đếm', 'Count')} ›</button></div>
+                  <button onClick={() => { setView('list'); startDraft(l.tmplId); }} className={tap('text-[12.5px] font-extrabold px-3 py-2 -my-1.5 -mr-2', 'text-[11.5px] font-extrabold')} style={{ color: GOLD_TEXT }}>{L('Đếm', 'Count')} ›</button></div>
                 <div className="flex gap-1 flex-wrap">{(Object.keys(LEFT_OUT_REASONS) as LeftOutReason[]).map(r => (
                   <button key={r} disabled={busy} onClick={() => act(setLeftOutReasonAction(team, s.id, l.tmplId, l.leftOutReason === r ? null : r, r === 'other' ? notes[l.tmplId] ?? l.leftOutNote : null))}
-                    className="text-[11.5px] font-bold rounded-full px-2 py-0.5"
+                    className={tap('text-[12px] font-bold rounded-full px-3 py-1.5', 'text-[11.5px] font-bold rounded-full px-2 py-0.5')}
                     style={{ border: `1px solid ${l.leftOutReason === r ? GOLD : HAIR}`, backgroundColor: l.leftOutReason === r ? PALE : '#fff', color: l.leftOutReason === r ? GOLD_TEXT : '#6B5A4C' }}>
                     {lang === 'vi' ? LEFT_OUT_REASONS[r].vi : LEFT_OUT_REASONS[r].en}</button>))}</div>
                 {l.leftOutReason === 'other' && <input value={notes[l.tmplId] ?? l.leftOutNote ?? ''} onChange={e => setNotes(n => ({ ...n, [l.tmplId]: e.target.value }))}
                   onBlur={() => act(setLeftOutReasonAction(team, s.id, l.tmplId, 'other', notes[l.tmplId] ?? ''))}
-                  placeholder={L('Ghi chú', 'Note')} className="w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none" style={{ border: `1px solid ${HAIR}` }} />}
+                  placeholder={L('Ghi chú', 'Note')} className={tap('w-full rounded-lg px-2.5 py-2.5 text-[12.5px] outline-none', 'w-full rounded-lg px-2 py-1.5 text-[12.5px] outline-none')} style={{ border: `1px solid ${HAIR}` }} />}
               </div>))}
           </div>
           {st.canConfirm ? (
@@ -387,7 +391,7 @@ export default function RoomCountPanel({ team, lang, items }: { team: string; la
 type FreeInput = { id: string; name: string; qty: number; uom: string; photoUrl: string | null; note: string | null };
 // "Sản phẩm khác": search the whole raw catalogue (hidden products included, from the server); not found →
 // a new product typed freely with its photo (Axel, 2026-10-30), linked to an Odoo product later.
-function OtherProduct({ team, items, listed, lang, L, onPick, onClose, onFree, busy }: { team: string; items: RawMaterial[] | null; listed: Set<number>; lang: 'vi' | 'en'; L: (vi: string, en: string) => string; onPick: (m: RawMaterial) => void; onClose: () => void; onFree: (f: FreeInput) => void; busy: boolean }) {
+function OtherProduct({ v2 = false, team, items, listed, lang, L, onPick, onClose, onFree, busy }: { v2?: boolean; team: string; items: RawMaterial[] | null; listed: Set<number>; lang: 'vi' | 'en'; L: (vi: string, en: string) => string; onPick: (m: RawMaterial) => void; onClose: () => void; onFree: (f: FreeInput) => void; busy: boolean }) {
   const [q, setQ] = useState('');
   const [remote, setRemote] = useState<RawMaterial[]>([]);
   const [searching, setSearching] = useState(false);
@@ -425,14 +429,14 @@ function OtherProduct({ team, items, listed, lang, L, onPick, onClose, onFree, b
     return (
       <div className="bg-white rounded-2xl p-3 space-y-2.5" style={{ border: `1.5px solid ${GOLD}` }}>
         <div className="flex items-center gap-2"><b className="flex-1 text-[13.5px]" style={{ color: NAVY }}>🆕 {L('Sản phẩm mới (chưa có trong danh mục)', 'New product (not in the catalogue)')}</b>
-          <button onClick={onClose} style={{ color: '#6B5A4C' }}><X size={16} /></button></div>
+          <button onClick={onClose} aria-label="close" className={v2 ? 'w-10 h-10 -my-2 -mr-2 flex items-center justify-center' : undefined} style={{ color: '#6B5A4C' }}><X size={16} /></button></div>
         <input autoFocus value={free.name} onChange={e => setFree({ ...free, name: e.target.value })} placeholder={L('Tên sản phẩm', 'Product name')}
           className="w-full rounded-xl px-3 py-2.5 text-[14px] font-bold outline-none" style={{ border: `1px solid ${BORDER}` }} />
         <div className="flex items-center gap-2">
           <input inputMode="decimal" value={qtyTxt} placeholder="0" onChange={e => setQtyTxt(e.target.value.replace(/[^0-9.,]/g, ''))}
             className="w-28 rounded-xl px-3 py-2 text-[22px] font-extrabold outline-none tabular-nums" style={{ border: `1.5px solid ${GOLD}` }} />
           <div className="flex gap-1 flex-wrap flex-1">{FREE_UNITS.map(u => (
-            <button key={u} onClick={() => setFree({ ...free, uom: u })} className="text-[12px] font-bold rounded-lg px-2 py-1"
+            <button key={u} onClick={() => setFree({ ...free, uom: u })} className={v2 ? 'text-[13px] font-bold rounded-lg px-3 py-2' : 'text-[12px] font-bold rounded-lg px-2 py-1'}
               style={{ border: `1px solid ${free.uom === u ? GOLD : HAIR}`, backgroundColor: free.uom === u ? PALE : '#fff', color: free.uom === u ? GOLD_TEXT : '#6B5A4C' }}>{u === 'Unit' ? L('cái', 'pcs') : u}</button>))}</div>
         </div>
         <label className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold cursor-pointer" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT }}>
@@ -453,8 +457,8 @@ function OtherProduct({ team, items, listed, lang, L, onPick, onClose, onFree, b
       <div className="flex items-center gap-2"><Search size={14} style={{ color: '#A39484' }} />
         <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm trong danh mục…', 'Search the catalogue…')} className="flex-1 py-1.5 text-[13.5px] outline-none" />
         {searching && <Loader2 size={14} className="animate-spin" style={{ color: '#A39484' }} />}
-        <button onClick={onClose} style={{ color: '#6B5A4C' }}><X size={16} /></button></div>
-      {res.map(m => <button key={m.tmplId} onClick={() => onPick(m)} className="w-full text-left py-2 text-[13px] font-bold" style={{ borderTop: `1px solid ${HAIR}` }}>
+        <button onClick={onClose} aria-label="close" className={v2 ? 'w-10 h-10 -my-2 -mr-2 flex items-center justify-center' : undefined} style={{ color: '#6B5A4C' }}><X size={16} /></button></div>
+      {res.map(m => <button key={m.tmplId} onClick={() => onPick(m)} className={v2 ? 'w-full text-left py-3 text-[13px] font-bold' : 'w-full text-left py-2 text-[13px] font-bold'} style={{ borderTop: `1px solid ${HAIR}` }}>
         {lang === 'vi' && m.nameVi ? m.nameVi : m.name} <span className="text-[10.5px] font-normal" style={{ color: '#A39484' }}>{m.sku ?? ''} · {m.uom}</span></button>)}
       <button onClick={() => { setFree({ id: uuid(), name: q.trim(), qty: 0, uom: 'kg', photoUrl: null, note: null }); setQtyTxt(''); }}
         className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold" style={{ border: `1.5px dashed ${BORDER}`, color: GOLD_TEXT, backgroundColor: PALE }}>
