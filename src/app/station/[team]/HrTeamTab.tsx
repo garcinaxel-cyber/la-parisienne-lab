@@ -71,15 +71,15 @@ export default function HrTeamTab({ team, lang, myToken }: { team: string; lang:
             style={sub === id ? { background: '#2A1810', color: '#F6F1EA', border: '1px solid #2A1810' } : { background: '#fff', color: '#2A1810', border: BORDER }}>
             {label}
             {count > 0 && <span className="min-w-[16px] h-4 rounded-full text-[9px] font-black inline-flex items-center justify-center px-1"
-              style={sub === id ? { background: '#C9A84C', color: '#2A1810' } : { background: '#DC2626', color: '#fff' }}>{count}</span>}
+              style={sub === id ? { background: '#C9A84C', color: '#2A1810' } : { background: '#B42318', color: '#fff' }}>{count}</span>}
           </button>
         ))}
       </div>
-      {err && <div className="rounded-xl px-3 py-2 text-xs" style={{ background: '#FEF2F2', color: '#991B1B', border: '1px solid #FCA5A5' }}>{err}</div>}
+      {err && <div className="rounded-xl px-3 py-2 text-xs" style={{ background: '#FBEAE8', color: '#8A1A11', border: '1px solid #FCA5A5' }}>{err}</div>}
       {sub === 'me' && myToken ? (
         <EmployeeHrView token={myToken} embedded stationLang={lang} />
       ) : !data ? (
-        <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: BORDER, color: '#6B7280' }}>{tr('Loading…', 'Đang tải…')}</div>
+        <div className="bg-white rounded-2xl p-6 text-center text-sm" style={{ border: BORDER, color: '#6B5A4C' }}>{tr('Loading…', 'Đang tải…')}</div>
       ) : (
         <>
           {sub === 'schedule' && <ScheduleView data={data} team={team} lang={lang} tr={tr} month={month} setMonth={setMonth} focus={focus} reload={load} busy={busy} setData={setData} />}
@@ -154,11 +154,11 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
       <div className="text-[10px] text-center" style={{ color: '#8B5E34' }}>⟵ {tr('scroll sideways through the month', 'kéo ngang để xem cả tháng')} ⟶</div>
       <MonthGrid data={week} lang={lang} focusDay={focus} onCell={(e, day) => setPick({ e, day })} onDay={holiday} onWeek={publish} />
       <Legend lang={lang} />
-      <div className="text-[10px] px-1 leading-relaxed" style={{ color: '#6B7280' }}>
+      <div className="text-[10px] px-1 leading-relaxed" style={{ color: '#6B5A4C' }}>
         {tr('Publish each week with the button above it — if you forget, next week is published automatically after Saturday · tap a cell to change it · tap a day to set a team holiday.', 'Công bố từng tuần bằng nút phía trên tuần đó — nếu quên, tuần sau sẽ tự động công bố sau Thứ 7 · chạm ô để đổi · chạm ngày để đặt ngày lễ cho cả nhóm.')}
       </div>
       {alerts.length > 0 && (
-        <div className="rounded-2xl px-3.5 py-2.5 space-y-0.5" style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+        <div className="rounded-2xl px-3.5 py-2.5 space-y-0.5" style={{ background: '#FBEAE8', border: '1px solid #FCA5A5', color: '#8A1A11' }}>
           {alerts.map((a, i) => <div key={i} className="text-xs leading-snug">⚠ {a}</div>)}
         </div>
       )}
@@ -166,7 +166,7 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
       {pick && (
         <Sheet onClose={() => setPick(null)}>
           <div className="text-sm font-bold" style={{ color: '#2A1810' }}>{pick.e.full_name}</div>
-          <div className="text-xs mb-2" style={{ color: '#6B7280' }}>
+          <div className="text-xs mb-2" style={{ color: '#6B5A4C' }}>
             {shortDay(pick.day, lang)}
             {wishes.has(pick.e.id + '|' + pick.day) ? tr(' · requested this day off', ' · đã xin nghỉ ngày này') : ''}
           </div>
@@ -177,12 +177,12 @@ function ScheduleView({ data, team, lang, tr, month, setMonth, focus, reload, bu
                 <button key={c} onClick={() => setCode(c)} className="min-h-[54px] rounded-xl flex flex-col items-center justify-center gap-0.5 active:scale-95"
                   style={{ border: cur ? '2px solid #2A1810' : BORDER, background: '#fff' }}>
                   <span className="min-w-[30px] px-1 h-[22px] rounded-md text-[11px] flex items-center justify-center whitespace-nowrap" style={codeStyle(c)}>{codeText(c, lang)}</span>
-                  <span className="text-[10px] leading-tight px-1 text-center" style={{ color: '#374151' }}>{c === 'S' || c === 'C' ? `${lang === 'vi' ? (c === 'S' ? 'Làm sáng' : 'Làm chiều') : (c === 'S' ? 'Morning' : 'Afternoon')} ${halfHours(c, pick.e.base_shift)}` : (lang === 'vi' ? HR_CODE_LABEL[c].vi : HR_CODE_LABEL[c].en)}</span>
+                  <span className="text-[10px] leading-tight px-1 text-center" style={{ color: '#4A3A2C' }}>{c === 'S' || c === 'C' ? `${lang === 'vi' ? (c === 'S' ? 'Làm sáng' : 'Làm chiều') : (c === 'S' ? 'Morning' : 'Afternoon')} ${halfHours(c, pick.e.base_shift)}` : (lang === 'vi' ? HR_CODE_LABEL[c].vi : HR_CODE_LABEL[c].en)}</span>
                 </button>
               );
             })}
           </div>
-          <button onClick={() => setCode('')} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold mt-2" style={{ border: BORDER, color: '#6B7280', background: '#FBF7F0' }}>
+          <button onClick={() => setCode('')} className="w-full min-h-[44px] rounded-xl text-[13px] font-bold mt-2" style={{ border: BORDER, color: '#6B5A4C', background: '#FBF7F0' }}>
             {tr('Back to default', 'Về mặc định')} ({wishes.has(pick.e.id + '|' + pick.day) ? (week.wishParts[pick.e.id + '|' + pick.day] ?? 'O') : pick.e.base_shift})
           </button>
         </Sheet>
@@ -226,9 +226,9 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
   };
   const statusLabel = (s: string) => ({
     pending_giang: [tr('✓ OK · waiting Mr Giang', '✓ Đồng ý · chờ anh Giang'), '#b45309'],
-    approved: [tr('✓ Approved', '✓ Đã duyệt'), '#047857'],
-    rejected: [tr('✕ Rejected', '✕ Từ chối'), '#DC2626'],
-  } as Record<string, string[]>)[s] ?? [s, '#6B7280'];
+    approved: [tr('✓ Approved', '✓ Đã duyệt'), '#256A45'],
+    rejected: [tr('✕ Rejected', '✕ Từ chối'), '#B42318'],
+  } as Record<string, string[]>)[s] ?? [s, '#6B5A4C'];
   const n = { pending: data.requests.filter((r) => r.status === 'pending_leader').length, proof: data.requests.filter(needsProof).length };
   return (
     <div className="space-y-2.5">
@@ -239,7 +239,7 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
         ))}
       </div>
       {list.length === 0 && (
-        <div className="bg-white rounded-2xl p-6 text-center text-sm font-semibold" style={{ border: BORDER, color: '#047857' }}>
+        <div className="bg-white rounded-2xl p-6 text-center text-sm font-semibold" style={{ border: BORDER, color: '#256A45' }}>
           {filter === 'done' ? tr('Nothing yet', 'Chưa có') : tr('All clear ✓', 'Không còn gì ✓')}
         </div>
       )}
@@ -253,18 +253,18 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
             <div className="flex justify-between items-start gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-bold">{nameOf(data, r.employee_id)}</div>
-                <div className="text-xs" style={{ color: '#6B7280' }}>{when}{time}</div>
+                <div className="text-xs" style={{ color: '#6B5A4C' }}>{when}{time}</div>
               </div>
               <span className="text-[11px] font-bold rounded-full px-2 py-1 whitespace-nowrap" style={{ color: '#8B5E34', background: '#FBF7F0', border: BORDER }}>{hrTypeLabel(r.type, lang)}</span>
             </div>
             {r.type === 'swap' && r.swap_with && (
               <div className="text-xs rounded-lg px-2.5 py-2" style={{ background: '#FBF7F0' }}>{tr('Swap with ', 'Đổi với ')}<b>{nameOf(data, r.swap_with)}</b>{tr(' · adjust the schedule after approval', ' · sửa lịch sau khi duyệt')}</div>
             )}
-            {r.reason && <div className="text-xs" style={{ color: '#6B7280' }}>“{r.reason}”</div>}
+            {r.reason && <div className="text-xs" style={{ color: '#6B5A4C' }}>“{r.reason}”</div>}
             {HR_PROOF_TYPES.includes(r.type) && (
               <div className="text-xs flex items-center gap-2">
                 {r.proof_url ? (
-                  <a href={r.proof_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-semibold" style={{ color: '#047857' }}>
+                  <a href={r.proof_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-semibold" style={{ color: '#256A45' }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={r.proof_url} alt="" className="w-12 h-12 rounded-lg object-cover" style={{ border: BORDER }} />
                     {tr('Proof ✓ — open', 'Giấy tờ ✓ — xem')}
@@ -278,7 +278,7 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
             )}
             {r.status === 'pending_leader' ? (
               <>
-                {code && <div className="text-[11px]" style={{ color: '#6B7280' }}>{tr(`On OK the schedule shows ${code} on these days.`, `Khi đồng ý, lịch sẽ ghi ${code} cho những ngày này.`)}</div>}
+                {code && <div className="text-[11px]" style={{ color: '#6B5A4C' }}>{tr(`On OK the schedule shows ${code} on these days.`, `Khi đồng ý, lịch sẽ ghi ${code} cho những ngày này.`)}</div>}
                 <div className="grid grid-cols-[1fr_1.5fr] gap-2">
                   <button disabled={working === r.id} onClick={() => act(r.id, 'reject')} className="min-h-[44px] rounded-xl text-[13px] font-bold bg-white disabled:opacity-50" style={{ border: BORDER }}>{tr('Reject', 'Từ chối')}</button>
                   <button disabled={working === r.id} onClick={() => act(r.id, 'ok')} className="min-h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-50" style={{ background: '#2A1810' }}>
@@ -292,7 +292,7 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
                 <div className="flex gap-3">
                   {needsProof(r) && <button disabled={working === r.id} onClick={() => noProof(r.id)} className="text-xs font-bold underline min-h-[32px]" style={{ color: '#8B5E34' }}>{tr('No proof → day off', 'Không giấy → ngày nghỉ')}</button>}
                   {(r.status === 'pending_giang' || r.status === 'rejected' || (r.status === 'approved' && r.type === 'swap')) && (
-                    <button onClick={() => act(r.id, 'undo')} className="text-xs underline min-h-[32px]" style={{ color: '#6B7280' }}>{tr('Undo', 'Hoàn tác')}</button>
+                    <button onClick={() => act(r.id, 'undo')} className="text-xs underline min-h-[32px]" style={{ color: '#6B5A4C' }}>{tr('Undo', 'Hoàn tác')}</button>
                   )}
                 </div>
               </div>
@@ -300,7 +300,7 @@ function RequestsView({ data, team, lang, tr, reload }: { data: TeamHrData; team
           </div>
         );
       })}
-      <p className="text-[11px] px-1 leading-relaxed" style={{ color: '#6B7280' }}>
+      <p className="text-[11px] px-1 leading-relaxed" style={{ color: '#6B5A4C' }}>
         {tr('Days off are accepted automatically while the day has room — they appear directly in the schedule. Leave, missed punch and late requests go on to Mr Giang after your OK.',
           'Ngày nghỉ được nhận tự động khi còn chỗ — hiện thẳng trên lịch. Nghỉ phép, ốm, quên chấm công, đi muộn: sau khi bạn đồng ý sẽ chuyển anh Giang duyệt.')}
       </p>
@@ -335,13 +335,13 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
       <div className="bg-white rounded-2xl p-3.5 space-y-2.5" style={{ border: BORDER }}>
         <div className="text-sm font-bold">{tr('New overtime request', 'Đề nghị tăng ca mới')}</div>
         <div className="grid grid-cols-3 gap-2">
-          <label className="space-y-1"><span className={label} style={{ color: '#6B7280' }}>{tr('Day', 'Ngày')}</span><input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={input} style={{ border: BORDER }} /></label>
-          <label className="space-y-1"><span className={label} style={{ color: '#6B7280' }}>{tr('From', 'Từ')}</span><input type="time" value={from} onChange={(e) => setFrom(e.target.value)} className={input} style={{ border: BORDER }} /></label>
-          <label className="space-y-1"><span className={label} style={{ color: '#6B7280' }}>{tr('To', 'Đến')}</span><input type="time" value={to} onChange={(e) => setTo(e.target.value)} className={input} style={{ border: BORDER }} /></label>
+          <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('Day', 'Ngày')}</span><input type="date" value={day} onChange={(e) => setDay(e.target.value)} className={input} style={{ border: BORDER }} /></label>
+          <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('From', 'Từ')}</span><input type="time" value={from} onChange={(e) => setFrom(e.target.value)} className={input} style={{ border: BORDER }} /></label>
+          <label className="space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('To', 'Đến')}</span><input type="time" value={to} onChange={(e) => setTo(e.target.value)} className={input} style={{ border: BORDER }} /></label>
         </div>
-        <label className="block space-y-1"><span className={label} style={{ color: '#6B7280' }}>{tr('Reason', 'Lý do')}</span>
+        <label className="block space-y-1"><span className={label} style={{ color: '#6B5A4C' }}>{tr('Reason', 'Lý do')}</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={tr('e.g. Maison Mooncake order', 'VD: Đơn Maison Mooncake')} className={input} style={{ border: BORDER }} /></label>
-        <div className={label} style={{ color: '#6B7280' }}>{tr('Who', 'Ai')}</div>
+        <div className={label} style={{ color: '#6B5A4C' }}>{tr('Who', 'Ai')}</div>
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #F0E6B8' }}>
           {data.week.employees.filter((e) => !e.is_casual).map((e) => {
             const on = !!sel[e.id];
@@ -355,7 +355,7 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
                   style={on ? { background: '#2A1810', color: '#fff' } : { border: '1px solid #C9A84C' }}>{on ? '✓' : ''}</span>
                 <span className="flex-1 min-w-0">
                   <span className="block text-[13px] font-semibold">{e.full_name}</span>
-                  <span className="block text-[11px]" style={{ color: over ? '#DC2626' : '#6B7280', fontWeight: over ? 700 : 400 }}>
+                  <span className="block text-[11px]" style={{ color: over ? '#B42318' : '#6B5A4C', fontWeight: over ? 700 : 400 }}>
                     {tr('OT this month ', 'Tăng ca tháng này ')}{base} h{on ? ` → ${after} h` : ''}{over ? tr(` · over ${HR_OT_CAP} h`, ` · vượt ${HR_OT_CAP} giờ`) : ''}
                   </span>
                 </span>
@@ -373,20 +373,20 @@ function OvertimeView({ data, team, lang, tr, reload }: { data: TeamHrData; team
       </div>
 
       <div className="text-xs font-bold px-1" style={{ color: '#2A1810' }}>{monthLabel(data.week.month, lang)}</div>
-      {data.ots.length === 0 && <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ border: BORDER, color: '#6B7280' }}>{tr('No overtime request yet', 'Chưa có đề nghị tăng ca')}</div>}
+      {data.ots.length === 0 && <div className="bg-white rounded-2xl p-4 text-center text-xs" style={{ border: BORDER, color: '#6B5A4C' }}>{tr('No overtime request yet', 'Chưa có đề nghị tăng ca')}</div>}
       {data.ots.map((o) => {
         const yes = o.lines.filter((l) => l.confirm === 'yes').length;
         const no = o.lines.filter((l) => l.confirm === 'no').length;
-        const st = o.status === 'approved' ? [tr('✓ Mr Giang approved', '✓ Anh Giang đã duyệt'), '#047857']
-          : o.status === 'rejected' ? [tr('✕ Rejected by Mr Giang', '✕ Anh Giang từ chối'), '#DC2626']
-          : o.status === 'cancelled' ? [tr('Cancelled', 'Đã hủy'), '#6B7280'] : [tr('⏳ Waiting Mr Giang', '⏳ Chờ anh Giang'), '#b45309'];
+        const st = o.status === 'approved' ? [tr('✓ Mr Giang approved', '✓ Anh Giang đã duyệt'), '#256A45']
+          : o.status === 'rejected' ? [tr('✕ Rejected by Mr Giang', '✕ Anh Giang từ chối'), '#B42318']
+          : o.status === 'cancelled' ? [tr('Cancelled', 'Đã hủy'), '#6B5A4C'] : [tr('⏳ Waiting Mr Giang', '⏳ Chờ anh Giang'), '#b45309'];
         return (
           <div key={o.id} className="bg-white rounded-2xl px-3.5 py-3 space-y-1" style={{ border: BORDER }}>
             <div className="text-[13px] font-bold">{shortDay(o.day, lang)} · {o.time_from}–{o.time_to} ({o.hours} h){o.reason ? ` · ${o.reason}` : ''}</div>
-            <div className="text-xs" style={{ color: '#6B7280' }}>{o.lines.map((l) => nameOf(data, l.employee_id)).join(', ')}</div>
+            <div className="text-xs" style={{ color: '#6B5A4C' }}>{o.lines.map((l) => nameOf(data, l.employee_id)).join(', ')}</div>
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold" style={{ color: st[1] }}>{st[0]} · {yes}/{o.lines.length} {tr('confirmed', 'đã xác nhận')}{no ? ` · ${no} ${tr('declined', 'từ chối')}` : ''}</span>
-              {o.status === 'pending_giang' && <button onClick={() => cancel(o.id)} className="text-xs underline min-h-[32px]" style={{ color: '#6B7280' }}>{tr('Cancel', 'Hủy')}</button>}
+              {o.status === 'pending_giang' && <button onClick={() => cancel(o.id)} className="text-xs underline min-h-[32px]" style={{ color: '#6B5A4C' }}>{tr('Cancel', 'Hủy')}</button>}
             </div>
           </div>
         );
@@ -426,15 +426,15 @@ function TeamView({ data, team, lang, tr, reload }: { data: TeamHrData; team: st
           </span>
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-bold truncate">{e.full_name}</div>
-            <div className="text-[11px]" style={{ color: '#6B7280' }}>
+            <div className="text-[11px]" style={{ color: '#6B5A4C' }}>
               {e.position ?? ''} · {tr('shift', 'ca')} {e.base_shift} · {monthLabel(data.week.month, lang)}: {tr('off', 'nghỉ')} {fmtDays(data.week.monthOff[e.id] ?? 0)}/{data.week.allowance} · OT {data.otHours[e.id] ?? 0} h
             </div>
-            <div className="text-[11px] font-semibold" style={{ color: e.profile_id ? '#047857' : '#8B5E34' }}>
+            <div className="text-[11px] font-semibold" style={{ color: e.profile_id ? '#256A45' : '#8B5E34' }}>
               {e.profile_id ? tr('✓ Uses the app', '✓ Có app') : tr('No app — you fill the schedule', 'Không app — trưởng nhóm nhập lịch')}
             </div>
           </div>
           {!e.is_leader && !e.profile_id && (
-            <button onClick={() => remove(e)} className="text-xs underline min-h-[32px] shrink-0" style={{ color: '#6B7280' }}>{tr('Remove', 'Xóa')}</button>
+            <button onClick={() => remove(e)} className="text-xs underline min-h-[32px] shrink-0" style={{ color: '#6B5A4C' }}>{tr('Remove', 'Xóa')}</button>
           )}
         </div>
       ))}

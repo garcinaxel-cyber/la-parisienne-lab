@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Factory, Loader2, RefreshCw, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Factory, FlaskConical, LayoutGrid, Loader2, Package, RefreshCw, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase-browser';
 import { allocateBaked, buildBatches, dOr, MORE_KEY, NOTE_KEY, noteText, PLAN_COLS, planKg, splitPlan, type PlanRow } from '@/components/oem/plan';
@@ -233,25 +233,25 @@ export default function StationOemView({ role, userId, userName, canFix = false 
     const open = fix?.id === t.id;
     const fixable = canFix && t.status !== 'received';
     return (
-      <div key={t.id} style={{ borderTop: '1px solid #F3F4F6' }}>
+      <div key={t.id} style={{ borderTop: '1px solid #F3EDE3' }}>
         <div className="flex items-center justify-between px-4 py-2.5 text-sm">
           <span className="min-w-0">
             <span className="block font-semibold">{rows.find(r => r.key === t.group_key)?.name ?? t.group_key}</span>
-            {canFix && t.created_by_name && <span className="block text-[11px]" style={{ color: '#9CA3AF' }}>{t.created_by_name}</span>}
+            {canFix && t.created_by_name && <span className="block text-[11px]" style={{ color: '#A39484' }}>{t.created_by_name}</span>}
           </span>
           <span className="text-right">
-            <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#9CA3AF' }}>· {withDate ? `${t.prod_date.slice(8, 10)}/${t.prod_date.slice(5, 7)} ` : ''}{new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.plan_seq != null && plans.some(p => p.perOrder && p.items.some(i => i.group_key === t.group_key)) ? ` · ${W(true)} ${t.plan_seq}` : ''}</span>
-            <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#047857' : '#B45309' }}>
+            <b>{t.weight_kg} kg</b> <span className="text-xs" style={{ color: '#A39484' }}>· {withDate ? `${t.prod_date.slice(8, 10)}/${t.prod_date.slice(5, 7)} ` : ''}{new Date(t.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}{t.plan_seq != null && plans.some(p => p.perOrder && p.items.some(i => i.group_key === t.group_key)) ? ` · ${W(true)} ${t.plan_seq}` : ''}</span>
+            <span className="block text-[11px] font-semibold" style={{ color: t.status === 'received' ? '#256A45' : '#B45309' }}>
               {t.status === 'received' ? `${vi ? 'Đã nhận' : 'Received'} ${t.received_kg} kg` : (vi ? 'Chờ trợ lý nhận' : 'Waiting for reception')}
             </span>
             {fixable && !open && (
               <span className="flex justify-end gap-1.5 mt-1.5">
                 <button onClick={() => { setFix({ id: t.id, mode: 'edit' }); setFixKg(String(t.weight_kg)); setFixWhy(''); setErr(null); }}
-                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#F7F5F0', color: '#4B5563', border: '1px solid #EFE9DC' }}>
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#F6F1EA', color: '#5E4E42', border: '1px solid #EDE4D6' }}>
                   <Pencil size={12} />{vi ? 'Sửa' : 'Edit'}
                 </button>
                 <button onClick={() => { setFix({ id: t.id, mode: 'cancel' }); setFixKg(''); setFixWhy(''); setErr(null); }}
-                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C', border: '1px solid #FBD5D5' }}>
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition" style={{ backgroundColor: '#FBEAE8', color: '#9B1C12', border: '1px solid #FBD5D5' }}>
                   <Trash2 size={12} />{vi ? 'Huỷ' : 'Cancel'}
                 </button>
               </span>
@@ -259,22 +259,22 @@ export default function StationOemView({ role, userId, userName, canFix = false 
           </span>
         </div>
         {open && fix && (
-          <div className="mx-4 mb-3 rounded-xl px-3 py-2.5 space-y-2" style={fix.mode === 'cancel' ? { backgroundColor: '#FEF2F2', border: '1px solid #FBD5D5' } : { backgroundColor: '#F7F5F0', border: '1px solid #EFE9DC' }}>
-            <div className="text-xs font-bold" style={{ color: fix.mode === 'cancel' ? '#B91C1C' : '#374151' }}>
+          <div className="mx-4 mb-3 rounded-xl px-3 py-2.5 space-y-2" style={fix.mode === 'cancel' ? { backgroundColor: '#FBEAE8', border: '1px solid #FBD5D5' } : { backgroundColor: '#F6F1EA', border: '1px solid #EDE4D6' }}>
+            <div className="text-xs font-bold" style={{ color: fix.mode === 'cancel' ? '#9B1C12' : '#4A3A2C' }}>
               {fix.mode === 'cancel' ? (vi ? `Huỷ mẻ ${t.weight_kg} kg này?` : `Cancel this ${t.weight_kg} kg batch?`) : (vi ? 'Số kg đúng' : 'Correct weight (kg)')}
             </div>
             {fix.mode === 'edit' && (
               <input inputMode="decimal" autoFocus value={fixKg} onChange={e => setFixKg(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-base font-bold bg-white" style={{ border: '1px solid #D1D5DB' }} />
+                className="w-full rounded-lg px-3 py-2 text-base font-bold bg-white" style={{ border: '1px solid #D9CBB8' }} />
             )}
             <input value={fixWhy} onChange={e => setFixWhy(e.target.value)} maxLength={300} placeholder={vi ? 'Lý do (không bắt buộc)' : 'Reason (optional)'}
-              className="w-full rounded-lg px-3 py-2 text-sm bg-white" style={{ border: '1px solid #D1D5DB' }} />
+              className="w-full rounded-lg px-3 py-2 text-sm bg-white" style={{ border: '1px solid #D9CBB8' }} />
             <div className="flex gap-2">
               <button disabled={fixing || (fix.mode === 'edit' && !(fixNum > 0))} onClick={doFix}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: fix.mode === 'cancel' ? '#DC2626' : GREEN }}>
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: fix.mode === 'cancel' ? '#B42318' : GREEN }}>
                 {fixing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}{fix.mode === 'cancel' ? (vi ? 'Xác nhận huỷ' : 'Confirm cancel') : (vi ? 'Lưu' : 'Save')}
               </button>
-              <button disabled={fixing} onClick={() => setFix(null)} className="rounded-lg px-3 py-2 text-sm font-semibold bg-white" style={{ color: '#6B7280', border: '1px solid #E5E7EB' }}>{vi ? 'Đóng' : 'Close'}</button>
+              <button disabled={fixing} onClick={() => setFix(null)} className="rounded-lg px-3 py-2 text-sm font-semibold bg-white" style={{ color: '#6B5A4C', border: '1px solid #E6DCCF' }}>{vi ? 'Đóng' : 'Close'}</button>
             </div>
           </div>
         )}
@@ -313,11 +313,11 @@ export default function StationOemView({ role, userId, userName, canFix = false 
               <span className="block h-2 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#F1E4D0' }}><span className="block h-full rounded-full" style={{ width: `${q}%`, backgroundColor: '#9C5F2A' }} /></span>
             </div>); })}
         </div>
-        <div className="text-xs leading-relaxed pt-2" style={{ color: '#4A3A2C', borderTop: '1px solid #EFE9DC' }}>
+        <div className="text-xs leading-relaxed pt-2" style={{ color: '#4A3A2C', borderTop: '1px solid #EDE4D6' }}>
           <b>{vi ? 'Tốc độ' : 'Pace'}:</b>{' '}
           {need != null ? (vi ? `cần khoảng ${fmt1(need)} kg/ngày đến ${dOr(p.lastBy, Lx)}${p.lastIdx < p.sched.length - 1 ? ` (đến hết Đợt ${p.sched[p.lastIdx].no})` : ''}` : `about ${fmt1(need)} kg/day needed until ${dOr(p.lastBy, Lx)}${p.lastIdx < p.sched.length - 1 ? ` (through delivery ${p.sched[p.lastIdx].no})` : ''}`) : (vi ? 'chưa có ngày giao cuối' : 'no final date yet')}
           {days7 > 0 && <>{' · '}{vi ? `thực tế ~${fmt1(actual)} kg/ngày (${days7} ngày gần đây)` : `actual ~${fmt1(actual)} kg/day (last ${days7} days)`}</>}
-          {need != null && days7 > 0 && <b style={{ color: ok ? '#047857' : '#B91C1C' }}> {ok ? (vi ? '✓ kịp tiến độ' : '✓ on track') : (vi ? '⚠ chậm hơn cần thiết' : '⚠ behind pace')}</b>}
+          {need != null && days7 > 0 && <b style={{ color: ok ? '#256A45' : '#9B1C12' }}> {ok ? (vi ? '✓ kịp tiến độ' : '✓ on track') : (vi ? '⚠ chậm hơn cần thiết' : '⚠ behind pace')}</b>}
           <br /><b>{vi ? 'Chưa bắt đầu' : 'Not started'}:</b> {notStarted} / {p.whole.length} {vi ? 'sản phẩm' : 'products'}
         </div>
       </div>
@@ -325,8 +325,33 @@ export default function StationOemView({ role, userId, userName, canFix = false 
   };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#F7F5F0' }}>
-      <div className="sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
+    <div className="min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
+      {/* Phone: same ivory header and bottom bar as the station (UI v2) */}
+      <div className="sm:hidden sticky top-0 z-20 flex items-center gap-2 px-4 py-2" style={{ backgroundColor: '#F6F1EA' }}>
+        <img src="/logo-laparis-brown.png" alt="la Paris" className="h-8 w-auto shrink-0" />
+        <span className="flex-1" />
+        <span className="rounded-full pl-2.5 pr-3 h-8 flex items-center gap-1.5 text-[10.5px] font-bold tracking-[0.1em] uppercase bg-white" style={{ color: '#2A1810', border: '1px solid #E6DCCF' }}>
+          <Factory size={13} style={{ color: '#8A6418' }} /> OEM · kg
+        </span>
+        <button onClick={() => setLang(vi ? 'en' : 'vi')} className="w-9 h-9 rounded-full text-[11px] font-bold bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }}>{vi ? 'EN' : 'VI'}</button>
+        <button onClick={load} className="w-9 h-9 rounded-full flex items-center justify-center bg-white" style={{ color: '#572C1A', border: '1px solid #E6DCCF' }} aria-label="refresh">
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 flex pb-[env(safe-area-inset-bottom)]" style={{ backgroundColor: '#1F120C', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+        {([
+          [`${back}`, vi ? 'Sản xuất' : 'Produce', <FlaskConical key="i" size={20} />, false],
+          [`${back}?tab=commande`, vi ? 'Đơn hàng' : 'Orders', <ClipboardList key="i" size={20} />, false],
+          ['', 'OEM', <Factory key="i" size={20} />, true],
+          [`${back}?tab=raw`, vi ? 'Kho phòng' : 'Room', <Package key="i" size={20} />, false],
+          [`${back}?tab=menu`, 'Menu', <LayoutGrid key="i" size={20} />, false],
+        ] as const).map(([href, label, icon, on]) => on ? (
+          <span key={label} className="flex-1 flex flex-col items-center justify-center gap-1 min-h-[58px] py-2 text-[10px] font-bold tracking-[0.08em] uppercase" style={{ color: '#C9A84C', borderBottom: '2px solid #C9A84C' }}>{icon}<span>{label}</span></span>
+        ) : (
+          <Link key={label} href={href} className="flex-1 flex flex-col items-center justify-center gap-1 min-h-[58px] py-2 text-[10px] font-bold tracking-[0.08em] uppercase active:scale-95" style={{ color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>{icon}<span>{label}</span></Link>
+        ))}
+      </nav>
+      <div className="hidden sm:flex sticky top-0 z-20 items-center gap-2 px-3 py-2.5 text-white" style={{ backgroundColor: GREEN }}>
         <Link href={back} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} aria-label="back">
           <ArrowLeft size={16} />
         </Link>
@@ -341,26 +366,26 @@ export default function StationOemView({ role, userId, userName, canFix = false 
       </div>
 
       <div className="p-3 sm:p-5 max-w-3xl mx-auto space-y-3">
-        {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>{err}</div>}
-        {flash && <div className="text-sm font-bold rounded-xl px-3 py-2.5" style={{ backgroundColor: '#ECFDF5', color: '#047857' }}>✓ {flash}</div>}
+        {err && <div className="text-xs font-semibold rounded-lg px-3 py-2" style={{ backgroundColor: '#FBEAE8', color: '#B42318' }}>{err}</div>}
+        {flash && <div className="text-sm font-bold rounded-xl px-3 py-2.5" style={{ backgroundColor: '#E8F2EB', color: '#256A45' }}>✓ {flash}</div>}
 
         {canLog && (
           <button onClick={() => { setSheet(true); setErr(null); }}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl py-4 text-base font-bold text-white active:scale-[0.98] transition"
-            style={{ backgroundColor: GREEN }}>
+            className="w-full flex items-center justify-center gap-2 rounded-2xl h-14 text-[15px] font-bold lp-press"
+            style={{ backgroundColor: '#C9A84C', color: '#2A1810', boxShadow: '0 6px 16px rgba(201,168,76,.35)' }}>
             <Plus size={20} />{vi ? 'Sản xuất thêm (kg)' : 'Extra production (kg)'}
           </button>
         )}
 
         {today.length > 0 && (
-          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-            <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Hôm nay' : 'Today'}</div>
+          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
+            <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#A39484' }}>{vi ? 'Hôm nay' : 'Today'}</div>
             {today.map(t => entryRow(t, false))}
           </div>
         )}
         {olderPending.length > 0 && (
-          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-            <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Chờ nhận — các ngày trước' : 'Waiting for reception — earlier days'}</div>
+          <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
+            <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#A39484' }}>{vi ? 'Chờ nhận — các ngày trước' : 'Waiting for reception — earlier days'}</div>
             {olderPending.map(t => entryRow(t, true))}
           </div>
         )}
@@ -368,8 +393,8 @@ export default function StationOemView({ role, userId, userName, canFix = false 
           const shownIdx = shownOf(p); const next = shownIdx >= 0 ? p.sched[shownIdx] : null;
           const u = p.kgUnits ? 'kg' : (vi ? 'gói' : 'bags');
           return (
-          <div key={p.client} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
-            <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Kế hoạch nướng' : 'Baking plan'} · {p.client.replace('CÔNG TY CỔ PHẦN ', '')}</div>
+          <div key={p.client} className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
+            <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#A39484' }}>{vi ? 'Kế hoạch nướng' : 'Baking plan'} · {p.client.replace('CÔNG TY CỔ PHẦN ', '')}</div>
             {noteText(notes[p.client], vi) && (
               <div className="mx-4 mt-1 mb-2 rounded-xl px-3 py-2.5" style={{ backgroundColor: '#FFF7E6', border: '1px solid #F3E3C0' }}>
                 <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#8A6A2F' }}>{vi ? 'Yêu cầu của hợp đồng' : 'Contract requirements'}</div>
@@ -380,7 +405,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
               <div className="mx-4 mb-3 grid grid-cols-2 gap-1 rounded-xl p-1" style={{ backgroundColor: '#F1EEE6' }}>
                 {(['d', 't'] as const).map(v => { const on = (view[p.client] ?? 'd') === v; return (
                   <button key={v} onClick={() => setView(s => ({ ...s, [p.client]: v }))} className="rounded-lg py-2 text-sm font-bold transition"
-                    style={on ? { backgroundColor: GREEN, color: '#fff' } : { color: '#6B7280' }}>
+                    style={on ? { backgroundColor: GREEN, color: '#fff' } : { color: '#6B5A4C' }}>
                     {v === 'd' ? (vi ? 'Theo đợt giao' : 'Per delivery') : (vi ? 'Toàn bộ đơn hàng' : 'Whole order')}
                   </button>); })}
               </div>
@@ -397,30 +422,30 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                   const pc = tot ? Math.min(100, (bk / tot) * 100) : 0;
                   const dl = x.b.produceBy ? daysTo(x.b.produceBy) : null; const late = dl != null && dl < 0 && !x.done;
                   return (
-                    <div key={x.b.row.id} className="rounded-xl px-3 py-3 space-y-2" style={{ backgroundColor: '#F7F5F0', border: `1px solid ${x.done ? '#A7F3D0' : '#EFE9DC'}` }}>
+                    <div key={x.b.row.id} className="rounded-xl px-3 py-3 space-y-2" style={{ backgroundColor: '#F6F1EA', border: `1px solid ${x.done ? '#BFDCCB' : '#EDE4D6'}` }}>
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="text-[15px] font-bold" style={{ color: GREEN }}>{W(true)} {x.b.row.seq} · {fmt(x.b.kg)} kg</span>
-                        <span className="text-[15px] whitespace-nowrap" style={{ color: '#111827' }}><b>{fmt1(bk)}</b><span style={{ color: '#9CA3AF' }}> / {fmt1(tot)} kg</span></span>
+                        <span className="text-[15px] whitespace-nowrap" style={{ color: '#2A1810' }}><b>{fmt1(bk)}</b><span style={{ color: '#A39484' }}> / {fmt1(tot)} kg</span></span>
                       </div>
                       <div className="flex items-center gap-2.5">
                         <span className="flex-1 h-3 rounded-full overflow-hidden" style={{ backgroundColor: '#E7DFCF' }}>
-                          <span className="block h-full rounded-full" style={{ width: `${pc}%`, backgroundColor: x.done ? '#059669' : GREEN }} />
+                          <span className="block h-full rounded-full" style={{ width: `${pc}%`, backgroundColor: x.done ? '#2F7D55' : GREEN }} />
                         </span>
-                        <span className="w-11 text-right text-sm font-bold" style={{ color: x.done ? '#059669' : GREEN }}>{Math.round(pc)}%</span>
+                        <span className="w-11 text-right text-sm font-bold" style={{ color: x.done ? '#2F7D55' : GREEN }}>{Math.round(pc)}%</span>
                       </div>
-                      <div className="text-xs" style={{ color: late ? '#B91C1C' : '#6B7280' }}>
+                      <div className="text-xs" style={{ color: late ? '#9B1C12' : '#6B5A4C' }}>
                         {x.done ? (vi ? 'Đã nướng đủ ✓' : 'Fully baked ✓') : <><b>{vi ? 'Còn' : 'Left'} {fmt1(x.left)} kg</b>{x.b.produceBy && <>{' · '}{vi ? 'nướng trước' : 'bake by'} {dOr(x.b.produceBy, Lx)}{dl != null && (late ? (vi ? ` (trễ ${-dl} ngày)` : ` (${-dl} days late)`) : (vi ? ` (còn ${dl} ngày)` : ` (${dl} days left)`))}</>}</>}
                         {' · '}{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}
                       </div>
-                      <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid #EFE9DC' }}>
+                      <div className="space-y-1.5 pt-1" style={{ borderTop: '1px solid #EDE4D6' }}>
                         {x.need.map(n => (
                           <div key={n.key} className="pt-1">
                             <div className="flex items-baseline justify-between gap-3 text-sm">
                               <span className="font-semibold min-w-0 truncate">{n.name}</span>
-                              <span className="whitespace-nowrap">{n.cum > 0 && n.baked >= n.cum - 0.05 && <b style={{ color: '#047857' }}>✓ </b>}<b>{fmt1(n.baked)}</b><span className="text-xs" style={{ color: '#9CA3AF' }}> / {fmt1(n.cum)} kg</span></span>
+                              <span className="whitespace-nowrap">{n.cum > 0 && n.baked >= n.cum - 0.05 && <b style={{ color: '#256A45' }}>✓ </b>}<b>{fmt1(n.baked)}</b><span className="text-xs" style={{ color: '#A39484' }}> / {fmt1(n.cum)} kg</span></span>
                             </div>
                             <span className="block h-1.5 mt-1 rounded-full overflow-hidden" style={{ backgroundColor: '#E7DFCF' }}>
-                              <span className="block h-full rounded-full" style={{ width: `${n.cum ? Math.min(100, (n.baked / n.cum) * 100) : 0}%`, backgroundColor: n.baked >= n.cum - 0.05 ? '#059669' : '#8FB3A0' }} />
+                              <span className="block h-full rounded-full" style={{ width: `${n.cum ? Math.min(100, (n.baked / n.cum) * 100) : 0}%`, backgroundColor: n.baked >= n.cum - 0.05 ? '#2F7D55' : '#8FB3A0' }} />
                             </span>
                           </div>
                         ))}
@@ -429,7 +454,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                   );
                 })}
                 {cancelledPlan.filter(r => (r.client_name || MM_CLIENT) === p.client).map(r => (
-                  <div key={r.id} className="flex items-baseline justify-between gap-3 rounded-xl px-3 py-2 text-sm" style={{ backgroundColor: '#F9FAFB', border: '1px dashed #E5E7EB', color: '#9CA3AF' }}>
+                  <div key={r.id} className="flex items-baseline justify-between gap-3 rounded-xl px-3 py-2 text-sm" style={{ backgroundColor: '#FBF7F0', border: '1px dashed #E6DCCF', color: '#A39484' }}>
                     <span className="font-bold line-through">{W(true)} {r.seq}{r.qty ? ` · ${fmt(planKg(r))} kg` : ''}</span>
                     <span className="text-[11px] font-semibold text-right">{vi ? 'Khách đã huỷ — không nướng nữa' : 'Cancelled by the client — do not bake'}</span>
                   </div>
@@ -444,15 +469,15 @@ export default function StationOemView({ role, userId, userName, canFix = false 
               const dl = next.b.produceBy ? daysTo(next.b.produceBy) : null; const late = dl != null && dl < 0 && !next.done;
               return (
                 <div className="px-4 pb-3 space-y-2">
-                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#ECFDF5' : late ? '#FEF2F2' : dl != null && dl <= 7 ? '#FFF7E6' : '#F7F5F0' }}>
-                    <div className="text-[15px] font-bold" style={{ color: next.done ? '#047857' : late ? '#B91C1C' : '#111827' }}>
+                  <div className="rounded-xl px-3 py-2.5" style={{ backgroundColor: next.done ? '#E8F2EB' : late ? '#FBEAE8' : dl != null && dl <= 7 ? '#FFF7E6' : '#F6F1EA' }}>
+                    <div className="text-[15px] font-bold" style={{ color: next.done ? '#256A45' : late ? '#9B1C12' : '#2A1810' }}>
                       {next.done
                         ? `${W(p.perOrder)} ${next.no}: ${vi ? 'đã nướng đủ ✓' : 'fully baked ✓'}`
                         : next.b.produceBy
                           ? `${W(p.perOrder)} ${next.no}: ${vi ? 'nướng xong trước' : 'bake by'} ${dOr(next.b.produceBy, Lx)}`
                           : `${W(p.perOrder)} ${next.no}: ${vi ? 'chưa có ngày giao' : 'date not given yet'}`}
                     </div>
-                    <div className="text-xs mt-0.5" style={{ color: '#6B7280' }}>
+                    <div className="text-xs mt-0.5" style={{ color: '#6B5A4C' }}>
                       {p.perOrder
                         ? `${vi ? 'Giao' : 'Ship'} ${dOr(next.b.row.delivery_date, Lx)} · ${fmt(next.b.kg)} kg`
                         : vi ? `Giao ${dOr(next.b.row.delivery_date, Lx)} · ${fmt1(next.b.cumPct - (shownIdx ? p.sched[shownIdx - 1].b.cumPct : 0))}% đơn hàng · ${fmt1(next.b.kg)} kg` : `Ship ${dOr(next.b.row.delivery_date, Lx)} · ${fmt1(next.b.cumPct - (shownIdx ? p.sched[shownIdx - 1].b.cumPct : 0))}% of the order · ${fmt1(next.b.kg)} kg`}
@@ -460,7 +485,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                     </div>
                   </div>
                   {next.prevLeft > 0.05 && (
-                    <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#FEF2F2', color: '#B91C1C', border: '1px solid #FBD5D5' }}>
+                    <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#FBEAE8', color: '#9B1C12', border: '1px solid #FBD5D5' }}>
                       {vi ? `Các đợt trước còn thiếu ${fmt1(next.prevLeft)} kg — nướng bù trước.` : `Earlier deliveries still miss ${fmt1(next.prevLeft)} kg — bake those first.`}
                     </div>
                   )}
@@ -468,32 +493,32 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                     <div key={x.key} className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="font-semibold min-w-0 truncate">{x.name}</span>
                       <span className="whitespace-nowrap">
-                        {x.left > 0.05 ? <b>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</b> : <b style={{ color: '#047857' }}>✓ {vi ? 'đủ' : 'done'}</b>}
-                        <span className="text-xs" style={{ color: '#9CA3AF' }}> / {fmt1(x.cum)} kg</span>
+                        {x.left > 0.05 ? <b>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</b> : <b style={{ color: '#256A45' }}>✓ {vi ? 'đủ' : 'done'}</b>}
+                        <span className="text-xs" style={{ color: '#A39484' }}> / {fmt1(x.cum)} kg</span>
                       </span>
                     </div>
                   ))}
                 </div>
               );
             })() : (
-              <div className="px-4 pb-3 text-sm font-bold" style={{ color: '#059669' }}>{vi ? 'Đã nướng đủ cho tất cả các đợt ✓' : 'Baked enough for every delivery ✓'}</div>
+              <div className="px-4 pb-3 text-sm font-bold" style={{ color: '#2F7D55' }}>{vi ? 'Đã nướng đủ cho tất cả các đợt ✓' : 'Baked enough for every delivery ✓'}</div>
             )}
             <div className="px-4 pb-2 space-y-1">
-              <div className="flex items-baseline justify-between text-xs" style={{ color: '#6B7280' }}>
-                <span className="font-bold uppercase tracking-wide text-[11px]" style={{ color: '#9CA3AF' }}>{vi ? 'Đã giao cho khách' : 'Delivered to the client'}</span>
-                <span><b style={{ color: '#111827' }}>{fmt(p.done)}</b> / {fmt(p.total)} {u} · {p.total ? Math.round((p.done / p.total) * 100) : 0}%</span>
+              <div className="flex items-baseline justify-between text-xs" style={{ color: '#6B5A4C' }}>
+                <span className="font-bold uppercase tracking-wide text-[11px]" style={{ color: '#A39484' }}>{vi ? 'Đã giao cho khách' : 'Delivered to the client'}</span>
+                <span><b style={{ color: '#2A1810' }}>{fmt(p.done)}</b> / {fmt(p.total)} {u} · {p.total ? Math.round((p.done / p.total) * 100) : 0}%</span>
               </div>
-              <span className="block h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#EFE9DC' }}>
+              <span className="block h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#EDE4D6' }}>
                 <span className="block h-full rounded-full" style={{ width: `${p.total ? Math.min(100, (p.done / p.total) * 100) : 0}%`, backgroundColor: '#B8893B' }} />
               </span>
             </div>
             {!p.perOrder && (view[p.client] ?? 'd') === 'd' && <div className="px-4 pb-3 flex gap-1.5 overflow-x-auto">
               {p.sched.map((x, k) => (
                 <button key={x.b.row.id} onClick={() => setPick(s => ({ ...s, [p.client]: k }))} className="shrink-0 rounded-lg px-2.5 py-1.5 text-center active:scale-95 transition"
-                  style={{ minWidth: 84, backgroundColor: x.done ? '#ECFDF5' : k === p.nextIdx ? '#FFF7E6' : '#F9FAFB', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#A7F3D0' : k === p.nextIdx ? '#F3E3C0' : '#EFE9DC'}` }}>
-                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B7280' }}>{W(p.perOrder)} {x.no} · {fmt(x.b.kg)} kg</div>
-                  <div className="text-[11px] font-bold" style={{ color: x.done ? '#047857' : '#111827' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : x.b.produceBy ? `${vi ? 'Nướng trước' : 'Bake by'} ${dOr(x.b.produceBy, Lx)}` : (vi ? 'Chưa có ngày' : 'Date TBC')}</div>
-                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#047857' : '#9CA3AF' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
+                  style={{ minWidth: 84, backgroundColor: x.done ? '#E8F2EB' : k === p.nextIdx ? '#FFF7E6' : '#FBF7F0', border: k === shownIdx ? `2px solid ${GREEN}` : `1px solid ${x.done ? '#BFDCCB' : k === p.nextIdx ? '#F3E3C0' : '#EDE4D6'}` }}>
+                  <div className="text-[11px] font-bold" style={{ color: k === shownIdx ? GREEN : '#6B5A4C' }}>{W(p.perOrder)} {x.no} · {fmt(x.b.kg)} kg</div>
+                  <div className="text-[11px] font-bold" style={{ color: x.done ? '#256A45' : '#2A1810' }}>{x.done ? (vi ? '✓ đã nướng' : '✓ baked') : x.b.produceBy ? `${vi ? 'Nướng trước' : 'Bake by'} ${dOr(x.b.produceBy, Lx)}` : (vi ? 'Chưa có ngày' : 'Date TBC')}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: x.shipped ? '#256A45' : '#A39484' }}>{x.shipped ? (vi ? '✓ đã giao' : '✓ shipped') : `${vi ? 'Giao' : 'Ship'} ${dOr(x.b.row.delivery_date, Lx)}`}</div>
                   {!x.done && <div className="text-[10px] font-bold" style={{ color: '#B45309' }}>{vi ? 'còn' : 'left'} {fmt1(x.left)} kg</div>}
                 </button>
               ))}
@@ -504,13 +529,13 @@ export default function StationOemView({ role, userId, userName, canFix = false 
               const list = [...mine.filter(e => e.plan_seq == null), ...mine.filter(e => e.plan_seq != null).slice(0, 6)];
               if (!list.length) return null;
               return (
-                <div className="px-4 pb-3 space-y-1.5" style={{ borderTop: '1px solid #F3F4F6' }}>
-                  <div className="pt-2.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#9CA3AF' }}>{vi ? 'Mẻ đã nướng — cho đơn nào?' : 'Baked batches — for which order?'}</div>
+                <div className="px-4 pb-3 space-y-1.5" style={{ borderTop: '1px solid #F3EDE3' }}>
+                  <div className="pt-2.5 text-[11px] font-bold uppercase tracking-wide" style={{ color: '#A39484' }}>{vi ? 'Mẻ đã nướng — cho đơn nào?' : 'Baked batches — for which order?'}</div>
                   {list.map(e => (
                     <div key={e.id} className="flex items-center justify-between gap-2 text-sm">
                       <span className="min-w-0">
                         <span className="block font-semibold truncate">{rows.find(r => r.key === e.group_key)?.name ?? e.group_key}</span>
-                        <span className="block text-[11px]" style={{ color: e.plan_seq == null ? '#B45309' : '#9CA3AF' }}>
+                        <span className="block text-[11px]" style={{ color: e.plan_seq == null ? '#B45309' : '#A39484' }}>
                           {fmt1(e.status === 'received' ? e.received_kg ?? 0 : e.weight_kg)} kg · {dOr(e.prod_date, Lx)}{e.plan_seq == null ? ` · ${vi ? 'chưa chọn đơn' : 'no order chosen'}` : ''}
                         </span>
                       </span>
@@ -520,7 +545,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
                           return (
                             <button key={x.b.row.id} disabled={!canLog || on || tagging === e.id} onClick={() => tag(e.id, x.b.row.seq)}
                               className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition"
-                              style={on ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#6B7280', border: '1px solid #EFE9DC', opacity: canLog ? 1 : 0.5 }}>
+                              style={on ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F6F1EA', color: '#6B5A4C', border: '1px solid #EDE4D6', opacity: canLog ? 1 : 0.5 }}>
                               {tagging === e.id && !on ? '…' : `${W(true)} ${x.b.row.seq}`}
                             </button>
                           );
@@ -534,7 +559,7 @@ export default function StationOemView({ role, userId, userName, canFix = false 
           </div>
           );
         })}
-        <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+        <div className="bg-white rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
           {loading && !rows.length ? (
             <div className="flex justify-center py-10"><Loader2 className="animate-spin" style={{ color: GREEN }} /></div>
           ) : rows.map(r => {
@@ -543,25 +568,25 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             const done = T > 0 && r.baked >= T;
             return (
               // Phone-first (the team works on phones only): name + kg on one line, full-width bar below.
-              <div key={r.key} className="px-4 py-3.5 space-y-2" style={{ borderTop: '1px solid #F3F4F6' }}>
+              <div key={r.key} className="px-4 py-3.5 space-y-2" style={{ borderTop: '1px solid #F3EDE3' }}>
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="min-w-0">
-                    <span className="block text-[15px] font-bold leading-tight" style={{ color: '#111827' }}>{r.name}</span>
-                    <span className="block text-[11px] mt-0.5" style={{ color: '#9CA3AF' }}>{r.skus.join(' · ')}</span>
+                    <span className="block text-[15px] font-bold leading-tight" style={{ color: '#2A1810' }}>{r.name}</span>
+                    <span className="block text-[11px] mt-0.5" style={{ color: '#A39484' }}>{r.skus.join(' · ')}</span>
                   </span>
-                  <span className="text-[15px] whitespace-nowrap" style={{ color: '#111827' }}>
-                    <b>{fmt1(r.baked)}</b><span style={{ color: '#9CA3AF' }}> / {fmt1(T)} kg</span>
+                  <span className="text-[15px] whitespace-nowrap" style={{ color: '#2A1810' }}>
+                    <b>{fmt1(r.baked)}</b><span style={{ color: '#A39484' }}> / {fmt1(T)} kg</span>
                   </span>
                 </div>
                 <div className="flex items-center gap-2.5">
-                  <span className="flex-1 h-3 rounded-full overflow-hidden" style={{ backgroundColor: '#EFE9DC' }}>
-                    <span className="block h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: done ? '#059669' : '#8FB3A0' }} />
+                  <span className="flex-1 h-3 rounded-full overflow-hidden" style={{ backgroundColor: '#EDE4D6' }}>
+                    <span className="block h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: done ? '#2F7D55' : '#8FB3A0' }} />
                   </span>
-                  <span className="w-11 text-right text-sm font-semibold" style={{ color: done ? '#059669' : '#6B7280' }}>{Math.round(pct)}%</span>
+                  <span className="w-11 text-right text-sm font-semibold" style={{ color: done ? '#2F7D55' : '#6B5A4C' }}>{Math.round(pct)}%</span>
                 </div>
-                <div className="text-xs" style={{ color: '#9CA3AF' }}>
+                <div className="text-xs" style={{ color: '#A39484' }}>
                   {done ? (vi ? 'Đã đủ ✓' : 'Done ✓') : `${vi ? 'Còn lại' : 'Left'}: ${fmt1(Math.max(0, T - r.baked))} kg`}
-                  {r.remake > 0.0005 && <span style={{ color: '#B91C1C' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
+                  {r.remake > 0.0005 && <span style={{ color: '#9B1C12' }}> · {vi ? 'Mục tiêu' : 'Target'} {fmt1(r.target)} + {fmt1(r.remake)} kg {vi ? 'làm lại' : 're-make'}</span>}
                   {r.pending > 0.0005 && <span style={{ color: '#B45309' }}> · {vi ? 'trong đó chờ trợ lý nhận' : 'of which waiting for reception'} {fmt1(r.pending)} kg</span>}
                   {ordersByGroup[r.key] && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{ordersByGroup[r.key].map(o => `${W(true)} ${o.seq}: ${fmt1(o.baked)} / ${fmt1(o.cum)} kg`).join(' · ')}</span>}
                   {!ordersByGroup[r.key] && (nextByGroup[r.key]?.left ?? 0) > 0.05 && <span className="block font-semibold" style={{ color: '#8A6A2F' }}>{vi ? `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: cần ${fmt1(nextByGroup[r.key].left)} kg${nextByGroup[r.key].by ? ` trước ${dOr(nextByGroup[r.key].by, Lx)}` : ''}` : `${W(nextByGroup[r.key].po)} ${nextByGroup[r.key].seq}: ${fmt1(nextByGroup[r.key].left)} kg needed${nextByGroup[r.key].by ? ` by ${dOr(nextByGroup[r.key].by, Lx)}` : ''}`}</span>}
@@ -578,15 +603,15 @@ export default function StationOemView({ role, userId, userName, canFix = false 
           <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-4 pb-6 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <div className="text-base font-bold">{vi ? 'Sản xuất thêm — OEM' : 'Extra production — OEM'}</div>
-              <button onClick={() => setSheet(false)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3F4F6' }}><X size={18} /></button>
+              <button onClick={() => setSheet(false)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3EDE3' }}><X size={18} /></button>
             </div>
             <div className="space-y-1.5">
-              <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Sản phẩm' : 'Product'}</div>
+              <div className="text-xs font-bold" style={{ color: '#6B5A4C' }}>{vi ? 'Sản phẩm' : 'Product'}</div>
               <div className="grid grid-cols-2 gap-2">
                 {rows.map(r => (
                   <button key={r.key} onClick={() => { setGk(r.key); setOrd(null); }}
                     className="rounded-xl px-3 py-3 text-sm font-semibold text-left leading-tight"
-                    style={gk === r.key ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#111827', border: '1px solid #EFE9DC' }}>
+                    style={gk === r.key ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F6F1EA', color: '#2A1810', border: '1px solid #EDE4D6' }}>
                     {r.name}
                     <span className="block text-[10px] font-normal mt-1" style={{ opacity: 0.65 }}>{r.skus.join(' · ')}</span>
                   </button>
@@ -598,14 +623,14 @@ export default function StationOemView({ role, userId, userName, canFix = false 
             )}
             {selPlan && sel && selPlan.sched.length > 1 && (
               <div className="space-y-1.5">
-                <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Nướng cho đơn nào?' : 'Baked for which order?'}</div>
+                <div className="text-xs font-bold" style={{ color: '#6B5A4C' }}>{vi ? 'Nướng cho đơn nào?' : 'Baked for which order?'}</div>
                 <div className="grid grid-cols-2 gap-2">
                   {selPlan.sched.map(x => {
                     const n = x.need.find(y => y.key === sel.key);
                     return (
                       <button key={x.b.row.id} onClick={() => setOrd(x.b.row.seq)}
                         className="rounded-xl px-3 py-3 text-sm font-bold text-left leading-tight"
-                        style={ord === x.b.row.seq ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F7F5F0', color: '#111827', border: '1px solid #EFE9DC' }}>
+                        style={ord === x.b.row.seq ? { backgroundColor: GREEN, color: '#fff' } : { backgroundColor: '#F6F1EA', color: '#2A1810', border: '1px solid #EDE4D6' }}>
                         {W(true)} {x.b.row.seq} · {fmt(x.b.kg)} kg
                         <span className="block text-[11px] font-normal mt-1" style={{ opacity: 0.75 }}>
                           {n && n.left > 0.05 ? `${vi ? 'còn' : 'left'} ${fmt1(n.left)} / ${fmt1(n.cum)} kg` : (vi ? 'đã nướng đủ ✓' : 'fully baked ✓')}
@@ -617,14 +642,14 @@ export default function StationOemView({ role, userId, userName, canFix = false 
               </div>
             )}
             <div className="space-y-1.5">
-              <div className="text-xs font-bold" style={{ color: '#6B7280' }}>{vi ? 'Khối lượng đã nướng (kg)' : 'Weight produced (kg)'}</div>
+              <div className="text-xs font-bold" style={{ color: '#6B5A4C' }}>{vi ? 'Khối lượng đã nướng (kg)' : 'Weight produced (kg)'}</div>
               <div className="flex items-center gap-2">
                 <input inputMode="decimal" autoFocus value={kg} onChange={e => setKg(e.target.value.replace(/[^0-9.,]/g, ''))} placeholder="0"
-                  className="flex-1 rounded-xl px-4 py-3 text-2xl font-bold text-right" style={{ border: '2px solid #D1D5DB' }} />
-                <span className="text-lg font-bold" style={{ color: '#6B7280' }}>kg</span>
+                  className="flex-1 rounded-xl px-4 py-3 text-2xl font-bold text-right" style={{ border: '2px solid #D9CBB8' }} />
+                <span className="text-lg font-bold" style={{ color: '#6B5A4C' }}>kg</span>
               </div>
               {sel && kgNum > 0 && sel.weights.length > 0 && (
-                <div className="text-xs" style={{ color: '#6B7280' }}>
+                <div className="text-xs" style={{ color: '#6B5A4C' }}>
                   ≈ {sel.weights.map(w => `${Math.floor((kgNum * 1000) / w).toLocaleString('en-US')} × ${w} g`).join(vi ? ' hoặc ' : ' or ')}
                   {sel.weights.length > 1 ? (vi ? ' (chọn khi đóng gói)' : ' (chosen at packaging)') : ''}
                 </div>

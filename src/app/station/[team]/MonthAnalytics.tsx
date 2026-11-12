@@ -7,7 +7,7 @@ import type { TeamMonthAnalytics, MonthRow } from './month-analytics-types';
 // previous month; the previous month is viewable in full. Data: getTeamMonthAnalyticsAction
 // (pre-summed table, no Odoo call).
 
-const GOLD = '#C9A84C', GREEN = '#572C1A', DARK = '#2A1810', AMBER = '#B45309', MUTED = '#6B6455';
+const GOLD = '#C9A84C', GREEN = '#572C1A', DARK = '#2A1810', AMBER = '#B45309', MUTED = '#6B5A4C';
 const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTHS_VI = MONTHS_EN.map((_, i) => `Tháng ${i + 1}`);
 
@@ -83,8 +83,8 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
   const pill = (on: boolean) => ({
     background: on ? GOLD : '#FFFFFF', color: on ? '#FFFFFF' : '#92600A', border: `1px solid ${on ? GOLD : '#E6DCCF'}`,
   });
-  const darkBadge = (up: boolean) => ({ background: up ? 'rgba(74,222,128,0.18)' : 'rgba(252,165,165,0.18)', color: up ? '#A7F3C5' : '#FECACA' });
-  const lightBadge = (up: boolean) => ({ background: up ? '#EAF5EE' : '#FEF3C7', color: up ? GREEN : AMBER });
+  const darkBadge = (up: boolean) => ({ background: up ? 'rgba(74,222,128,0.18)' : 'rgba(252,165,165,0.18)', color: up ? '#A7F3C5' : '#F2C6C0' });
+  const lightBadge = (up: boolean) => ({ background: up ? '#E8F2EB' : '#FEF3C7', color: up ? GREEN : AMBER });
 
   return (
     <div className="space-y-3">
@@ -93,11 +93,11 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
         <button onClick={() => setMonth('cur')} className="flex-1 py-1.5 rounded-full text-xs font-extrabold" style={pill(isCur)}>{names[curIdx]}</button>
       </div>
 
-      <div className="rounded-[20px] p-4 text-white" style={{ background: 'linear-gradient(135deg, #2A1810 0%, #24573E 100%)', boxShadow: '0 6px 18px rgba(42,24,16,0.22)' }}>
+      <div className="rounded-[20px] p-4 text-white" style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', boxShadow: '0 6px 18px rgba(42,24,16,0.22)' }}>
         <div className="flex items-center justify-between">
           <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 20 }}>{names[isCur ? curIdx : prevIdx]}</span>
-          <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold rounded-full px-2.5 py-0.5" style={{ background: 'rgba(255,255,255,0.1)', color: isCur ? '#A7E3BF' : 'rgba(255,255,255,0.7)' }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isCur ? '#4ADE80' : 'rgba(255,255,255,0.5)' }} />
+          <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold rounded-full px-2.5 py-0.5" style={{ background: 'rgba(255,255,255,0.1)', color: isCur ? '#BFE3CC' : 'rgba(255,255,255,0.7)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isCur ? '#7FCB98' : 'rgba(255,255,255,0.5)' }} />
             {isCur ? (vi ? 'Trực tiếp' : 'Live') : (vi ? 'Đã đóng' : 'Closed')}
           </span>
         </div>
@@ -112,7 +112,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
             {dMade && <div className="inline-block mt-1.5 text-[11px] font-extrabold rounded-full px-2 py-0.5" style={darkBadge(dMade.up)}>{dMade.text}</div>}
           </div>
           <div>
-            <div className="text-[10px] font-extrabold tracking-wider" style={{ color: '#A7E3BF' }}>{vi ? 'LAB ĐÃ GIAO' : 'SENT BY LAB'}</div>
+            <div className="text-[10px] font-extrabold tracking-wider" style={{ color: '#BFE3CC' }}>{vi ? 'LAB ĐÃ GIAO' : 'SENT BY LAB'}</div>
             <div className="text-[30px] font-black leading-tight">{fmt(totSent)}</div>
             <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.6)' }}>{vi ? 'cái đã giao' : 'pcs delivered'}</div>
             {dSent && <div className="inline-block mt-1.5 text-[11px] font-extrabold rounded-full px-2 py-0.5" style={darkBadge(dSent.up)}>{dSent.text}</div>}
@@ -121,8 +121,8 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
         <div className="mt-3 grid items-center gap-x-2 gap-y-1" style={{ gridTemplateColumns: '76px 1fr' }}>
           <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: GOLD }}>{vi ? 'Sản xuất' : 'Produced'}</span>
           <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: GOLD, width: barW(totMade, heroMax) }} /></div>
-          <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: '#A7E3BF' }}>{vi ? 'Đã giao' : 'Sent'}</span>
-          <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: '#4ADE80', width: barW(totSent, heroMax) }} /></div>
+          <span className="text-[10px] font-bold whitespace-nowrap" style={{ color: '#BFE3CC' }}>{vi ? 'Đã giao' : 'Sent'}</span>
+          <div className="h-2 rounded relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}><div className="absolute inset-y-0 left-0 rounded" style={{ background: '#7FCB98', width: barW(totSent, heroMax) }} /></div>
         </div>
         {isCur && <div className="mt-2.5 text-[10.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
           {vi ? `▲▼ so với cùng kỳ tháng trước (1 – ${prevDay}/${data.prevMonth.slice(5, 7)})` : `▲▼ compared with the same days of ${names[prevIdx]} (1 – ${prevDay})`}
@@ -149,7 +149,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
               <span className="flex items-center gap-2 w-full">
                 <span className="flex-1 text-sm font-extrabold" style={{ color: DARK }}>{c.name}</span>
                 {d && <span className="text-[10.5px] font-extrabold rounded-full px-1.5 py-0.5 whitespace-nowrap" style={lightBadge(d.up)}>{d.text}</span>}
-                <span className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{c.items.length}</span>
+                <span className="text-[10.5px]" style={{ color: '#A39484' }}>{c.items.length}</span>
                 <span className="text-lg font-bold inline-block transition-transform" style={{ color: GOLD, transform: `rotate(${isOpen ? 90 : 0}deg)` }}>›</span>
               </span>
               <span className="grid items-center gap-x-2 gap-y-1.5 w-full" style={{ gridTemplateColumns: '76px 1fr 52px' }}>
@@ -157,13 +157,13 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
                 <span className="h-[7px] rounded overflow-hidden" style={{ background: '#F0E8DB' }}><span className="block h-full rounded" style={{ background: GOLD, width: barW(c.made, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: '#92600A' }}>{fmt(c.made)}</span>
                 <span className="text-[10.5px] font-bold whitespace-nowrap" style={{ color: GREEN }}>{vi ? 'Đã giao' : 'Sent'}</span>
-                <span className="h-[7px] rounded overflow-hidden" style={{ background: '#EAF5EE' }}><span className="block h-full rounded" style={{ background: GREEN, width: barW(c.sent, maxCat) }} /></span>
+                <span className="h-[7px] rounded overflow-hidden" style={{ background: '#E8F2EB' }}><span className="block h-full rounded" style={{ background: GREEN, width: barW(c.sent, maxCat) }} /></span>
                 <span className="text-[13px] font-extrabold text-right" style={{ color: GREEN }}>{fmt(c.sent)}</span>
               </span>
             </button>
             {isOpen && (
               <div className="border-t" style={{ borderColor: '#F0E8DB', background: '#FFFCF3' }}>
-                <div className="grid gap-1.5 px-3.5 py-1.5 text-[9.5px] font-extrabold tracking-wide" style={{ gridTemplateColumns: isCur ? 'minmax(0,1fr) 46px 46px 50px' : 'minmax(0,1fr) 52px 52px', color: '#9CA3AF' }}>
+                <div className="grid gap-1.5 px-3.5 py-1.5 text-[9.5px] font-extrabold tracking-wide" style={{ gridTemplateColumns: isCur ? 'minmax(0,1fr) 46px 46px 50px' : 'minmax(0,1fr) 52px 52px', color: '#A39484' }}>
                   <span>{vi ? 'SẢN PHẨM' : 'PRODUCT'}</span>
                   <span className="text-right whitespace-nowrap" style={{ color: '#92600A' }}>{vi ? 'SX' : 'MADE'}</span>
                   <span className="text-right whitespace-nowrap" style={{ color: GREEN }}>{vi ? 'GIAO' : 'SENT'}</span>
@@ -180,7 +180,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
                       </span>
                       <span className="text-[12.5px] font-extrabold text-right" style={{ color: i.made ? '#92600A' : '#D1C9A8' }}>{i.made ? fmt(i.made) : '–'}</span>
                       <span className="text-[12.5px] font-extrabold text-right" style={{ color: gap ? AMBER : GREEN }}>{fmt(i.sent)}</span>
-                      {isCur && <span className="text-[11.5px] font-semibold text-right" style={{ color: i.made < i.same ? AMBER : '#9CA3AF' }}>{i.same ? fmt(i.same) : '–'}</span>}
+                      {isCur && <span className="text-[11.5px] font-semibold text-right" style={{ color: i.made < i.same ? AMBER : '#A39484' }}>{i.same ? fmt(i.same) : '–'}</span>}
                     </div>
                   );
                 })}
@@ -213,7 +213,7 @@ export default function MonthAnalytics({ team, lang, initialData }: { team: stri
                   <span className="h-1 rounded overflow-hidden" style={{ background: '#F0E8DB' }}><span className="block h-full rounded" style={{ background: GOLD, width: barW(o.v, oemMax) }} /></span>
                 </span>
                 <span className="text-[12.5px] font-extrabold text-right" style={{ color: '#92600A' }}>{kg(o.v)}</span>
-                <span className="text-[11px] text-right" style={{ color: '#9CA3AF' }}>{isCur ? (o.sameKg ? `${Math.round(o.sameKg)}` : '–') : ''}</span>
+                <span className="text-[11px] text-right" style={{ color: '#A39484' }}>{isCur ? (o.sameKg ? `${Math.round(o.sameKg)}` : '–') : ''}</span>
               </div>
             ))}
           </div>

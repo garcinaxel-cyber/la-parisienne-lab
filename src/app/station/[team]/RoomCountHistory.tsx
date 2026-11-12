@@ -46,7 +46,7 @@ export default function RoomCountHistory({ team, lang }: { team: string; lang: '
               {open === s.id ? <ChevronDown size={15} style={{ color: NAVY }} /> : <ChevronRight size={15} style={{ color: NAVY }} />}
               <div className="flex-1 min-w-0">
                 <div className="text-[13.5px] font-bold">{s.countDate.split('-').reverse().join('/')} · {L('chốt', 'cut-off')} {t.time}</div>
-                <div className="text-[11px]" style={{ color: '#6B7280' }}>{s.products} {L('sản phẩm', 'products')}{s.freeItems ? ` · ${s.freeItems} ${L('sản phẩm mới', 'new products')}` : ''} · {L('xác nhận', 'confirmed by')} {s.confirmedByName ?? '—'}</div>
+                <div className="text-[11px]" style={{ color: '#6B5A4C' }}>{s.products} {L('sản phẩm', 'products')}{s.freeItems ? ` · ${s.freeItems} ${L('sản phẩm mới', 'new products')}` : ''} · {L('xác nhận', 'confirmed by')} {s.confirmedByName ?? '—'}</div>
               </div>
               {busy === s.id && <Loader2 size={14} className="animate-spin" style={{ color: NAVY }} />}
             </button>
@@ -56,7 +56,7 @@ export default function RoomCountHistory({ team, lang }: { team: string; lang: '
                   className="w-full rounded-lg px-3 py-2 text-[13px] outline-none" style={{ border: `1px solid ${BORDER}` }} />
                 {groups.map(([ty, ls]) => (
                   <div key={ty}>
-                    <div className="text-[10.5px] font-extrabold uppercase tracking-wide pt-1 pb-0.5" style={{ color: '#9CA3AF' }}>{lang === 'vi' ? RAW_TYPES[ty].vi : RAW_TYPES[ty].en}</div>
+                    <div className="text-[10.5px] font-extrabold uppercase tracking-wide pt-1 pb-0.5" style={{ color: '#A39484' }}>{lang === 'vi' ? RAW_TYPES[ty].vi : RAW_TYPES[ty].en}</div>
                     {ls.map(l => (
                       <div key={l.tmplId} className="flex items-center gap-2 py-1.5 text-[12.5px]" style={{ borderTop: `1px solid ${HAIR}` }}>
                         <span className="flex-1 min-w-0 truncate">{name(l)}</span>
