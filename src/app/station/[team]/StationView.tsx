@@ -1788,13 +1788,13 @@ export default function StationView({
           )}
           {STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && !isHistoryView && !isEmployee && (
             // Same "+ extra production" pop-up as before, for a product that is not in the list above.
-            <button onClick={() => setExtraModal(true)} className="sm:hidden w-full h-11 rounded-2xl text-[13px] font-bold lp-press"
+            <button onClick={() => setExtraModal(true)} className="w-full h-11 rounded-2xl text-[13px] font-bold lp-press"
               style={{ color: '#572C1A', border: '1px dashed #C9B89F', backgroundColor: 'transparent' }}>
               {lang === 'vi' ? 'Sản phẩm không có trong danh sách? Ghi sản xuất khác' : 'Product not in the list? Record another production'}
             </button>
           )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
-          {orderGroups.length > 1 && (
+          {orderGroups.length > 1 && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
               <button onClick={() => setOrderFilter(null)}
                 className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap active:scale-95 transition-all"
@@ -1831,7 +1831,7 @@ export default function StationView({
               </button>
             </div>
           )}
-          {production.length === 0 && (
+          {production.length === 0 && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#572C1A' }} />
               {prodDay === 'tomorrow' && assignments.length === 0 ? (
@@ -1977,7 +1977,7 @@ export default function StationView({
           })()}
 
           {/* In-stock (skip) items — available, not produced. Collapsed, with revert. */}
-          {inStock.length > 0 && !isEmployee && (
+          {inStock.length > 0 && !isEmployee && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
             <div className="rounded-2xl overflow-hidden mt-2" style={{ border: '1px solid #D9C4A6', backgroundColor: '#F3EDE3' }}>
               <button onClick={() => setShowInStock(v => !v)}
                 className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-bold" style={{ color: '#6B4A2B' }}>
@@ -2903,7 +2903,7 @@ export default function StationView({
 
       {/* FAB — Add extra production (Production tab only, not in history view, not for employees) */}
       {activeTab === 'production' && assignments.length > 0 && !isHistoryView && !isEmployee && (
-        <div className={`fixed z-10 pointer-events-none bottom-[84px] right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center ${stockTeamNav ? 'hidden' : ''}`}
+        <div className={`fixed z-10 pointer-events-none bottom-[84px] right-4 sm:bottom-6 sm:inset-x-0 sm:right-auto sm:flex sm:justify-center ${stockTeamNav ? '!hidden' : ''}`}
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* Round FAB bottom-right on phones (never covers the last card's buttons), labelled pill on bigger screens */}
           <button
