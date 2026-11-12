@@ -1427,7 +1427,7 @@ export default function StationView({
         <div className="flex border-t fixed bottom-0 inset-x-0 z-30 pb-[env(safe-area-inset-bottom)] sm:static sm:z-auto sm:pb-0" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
           {mainTabs.map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
-              className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95"
+              className="[&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
                 : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }
@@ -1448,7 +1448,7 @@ export default function StationView({
             </button>
           ))}
           <button onClick={() => setMoreOpen(o => !o)}
-            className="flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[11px] sm:text-xs font-bold transition-all active:scale-95 relative"
+            className="[&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95 relative"
             style={moreActive || moreOpen
               ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
               : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>
@@ -1643,8 +1643,8 @@ export default function StationView({
       {/* Shared Today / Tomorrow day selector — applies to Production, Orders AND Done tabs
           so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
       {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine') && (
-        <div className="max-w-3xl mx-auto px-4 pt-4 space-y-2.5">
-          <div className="flex gap-2">
+        <div className="max-w-3xl mx-auto px-4 pt-3 space-y-2.5">
+          <div className="flex gap-1 p-1 rounded-2xl" style={{ backgroundColor: '#EADFD0' }}>
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
               const list = (d === 'tomorrow' ? tomorrowAsg : todayAssignments).filter(a => !a.is_extra);
               const handled = list.filter(a => a.status === 'done' || a.status === 'skip').length;
@@ -1653,10 +1653,10 @@ export default function StationView({
                 .toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', { day: 'numeric', month: 'numeric' });
               return (
                 <button key={d} onClick={() => { setProdDay(d); setOrderFilter(null); }}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  className="flex-1 h-10 rounded-xl text-sm font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   style={active
-                    ? { backgroundColor: '#2A1810', color: 'white' }
-                    : { backgroundColor: 'white', color: '#2A1810', border: '1px solid #E6DCCF' }}>
+                    ? { backgroundColor: '#2A1810', color: 'white', boxShadow: '0 2px 8px rgba(42,24,16,.25)' }
+                    : { backgroundColor: 'transparent', color: '#572C1A' }}>
                   <span>{label}</span>
                   <span className={active ? 'text-white/60' : 'text-ink-light'} style={{ fontSize: 11, fontWeight: 500 }}>{dateStr}</span>
                   {/* Progress badge only where progress matters — not on the Done tab (a record, not a to-do) */}
@@ -1672,7 +1672,7 @@ export default function StationView({
           </div>
           {prodDay === 'tomorrow' && (
             <div className="rounded-xl px-4 py-2 flex items-center gap-2 text-sm font-semibold"
-              style={{ backgroundColor: '#EFF6FF', color: '#1E40AF', border: '1px solid #93C5FD' }}>
+              style={{ backgroundColor: '#FBF4E1', color: '#8A6418', border: '1px solid #E9D3A4' }}>
               ⏩ {lang === 'vi'
                 ? `Đang xem NGÀY MAI — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'numeric' })}`
                 : `Viewing TOMORROW — ${new Date(tomorrow + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}`}
@@ -1683,8 +1683,10 @@ export default function StationView({
 
       {/* Celebratory banner only on the work tabs, not on Done (which is just a production record) */}
       {pct === 100 && assignments.length > 0 && activeTab !== 'termine' && (
-        <div className="text-center py-3 text-sm font-bold" style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}>
-          {lang === 'vi' ? '🎉 Hoàn thành tất cả!' : '🎉 All done!'}
+        <div className="max-w-3xl mx-auto px-4 pt-3">
+          <div className="rounded-2xl h-10 text-[13px] font-bold flex items-center justify-center gap-2 lp-pop" style={{ backgroundColor: '#F3E7C8', color: '#8A6418', border: '1px solid #E9D3A4' }}>
+            <CheckCircle2 size={16} /> {lang === 'vi' ? 'Đã hoàn thành tất cả đơn hôm nay' : 'All orders done'}
+          </div>
         </div>
       )}
 
@@ -1823,11 +1825,11 @@ export default function StationView({
             const totalUnits = items.reduce((s, r) => s + r.qty, 0);
             const cats = Array.from(new Set(items.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
             return (
-              <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
-                <button onClick={() => setShowRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#2A1810' }}>
-                  <span className="text-sm font-bold">📋 {lang === 'vi' ? 'Tổng cần làm' : 'Total to make'}</span>
+              <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
+                <button onClick={() => setShowRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
+                  <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng cần làm' : 'Total to make'}</span>
                   <span className="flex items-center gap-2">
-                    <span className="text-xs font-bold" style={{ color: '#E9D3A4' }}>{items.length} · {totalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                    <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{items.length} · {totalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                     <ChevronRight size={16} className={`transition-transform ${showRecap ? 'rotate-90' : ''}`} />
                   </span>
                 </button>
@@ -1837,7 +1839,7 @@ export default function StationView({
                         category name with no rolled-up quantity for it. */}
                     {cats.flatMap(cat => [
                       <div key={`c-${cat}`} className="col-span-2 px-3 py-1 text-[10px] font-bold uppercase tracking-wider flex items-center justify-between"
-                        style={{ backgroundColor: '#FBF6E3', color: '#92600A', borderTop: '1px solid #EFE6D8' }}>
+                        style={{ backgroundColor: '#F7F1E8', color: '#92600A', borderTop: '1px solid #EFE6D8' }}>
                         <span>{cat}</span>
                         <span>×{items.filter(r => r.cat === cat).reduce((s, r) => s + r.qty, 0)}</span>
                       </div>,
@@ -1890,7 +1892,7 @@ export default function StationView({
               <>
                 {/* Category quick-jump chips */}
                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-[102px] sm:top-[118px] z-10 py-2"
-                  style={{ backgroundColor: '#FDF8E7' }}>
+                  style={{ backgroundColor: '#F6F1EA' }}>
                   {entries.map(([cat, items]) => {
                     const qty = items.reduce((s, a) => s + qtyForFilter(a), 0);
                     return (
@@ -2001,13 +2003,13 @@ export default function StationView({
           ) : (
             <div className="space-y-3">
               {/* Point 2 (chef Entremet): switch between per-order and per-product views */}
-              <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #E6DCCF', backgroundColor: 'white' }}>
-                {([['don', lang === 'vi' ? '📦 Theo đơn' : '📦 By order'], ['sp', lang === 'vi' ? '🧺 Theo sản phẩm' : '🧺 By product']] as const).map(([v, label]) => (
+              <div className="flex gap-1 p-1 rounded-2xl bg-white" style={{ border: '1px solid #E6DCCF' }}>
+                {([['don', lang === 'vi' ? 'Theo đơn' : 'By order'], ['sp', lang === 'vi' ? 'Theo sản phẩm' : 'By product']] as const).map(([v, label]) => (
                   <button key={v} onClick={() => setOrderView(v)}
-                    className="flex-1 py-2.5 text-sm font-bold transition-all"
+                    className="flex-1 h-10 rounded-xl text-[13.5px] font-bold transition-all"
                     style={orderView === v
-                      ? { backgroundColor: '#2A1810', color: 'white' }
-                      : { backgroundColor: 'white', color: '#2A1810' }}>
+                      ? { backgroundColor: '#F3E7C8', color: '#2A1810', boxShadow: 'inset 0 0 0 1px #E9D3A4' }
+                      : { backgroundColor: 'transparent', color: '#6B5A4C' }}>
                     {label}
                   </button>
                 ))}
@@ -2090,7 +2092,7 @@ export default function StationView({
                         {prodCount > 0 && (
                           <button onClick={() => { setOrderFilter(g.ref); setActiveTab('production'); }}
                             className="w-full px-4 py-2.5 text-sm font-bold text-left flex items-center justify-between active:scale-[0.99] transition-all"
-                            style={{ backgroundColor: '#FBF6E3', color: '#2A1810', borderTop: '1px solid #E6DCCF' }}>
+                            style={{ backgroundColor: '#F7F1E8', color: '#2A1810', borderTop: '1px solid #E6DCCF' }}>
                             <span>{lang === 'vi' ? `Xem ${prodCount} thẻ trong Sản xuất` : `View ${prodCount} card(s) in Production`}</span>
                             <ChevronRight size={16} />
                           </button>
@@ -2101,21 +2103,27 @@ export default function StationView({
                 </div>
               ) : (<>
               {/* Summary header — day-aware label + completion (in-stock counts as handled) */}
-              <div className="rounded-2xl px-5 py-4 flex items-center justify-between"
-                style={{ backgroundColor: '#2A1810', color: 'white' }}>
+              <div className="rounded-3xl px-5 pt-4 pb-4 lp-rise"
+                style={{ background: 'radial-gradient(120% 90% at 100% 0%, rgba(201,168,76,.22), transparent 60%), #2A1810', color: 'white' }}>
+                <div className="flex items-end justify-between gap-3">
                 <div>
-                  <div className="font-bold text-base">
+                  <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: '#C9A84C' }}>
                     {prodDay === 'tomorrow'
                       ? (lang === 'vi' ? 'Tổng đơn hàng ngày mai' : "Tomorrow's order summary")
                       : (lang === 'vi' ? 'Tổng đơn hàng hôm nay' : "Today's order summary")}
                   </div>
-                  <div className="text-white/70 text-sm mt-0.5">
-                    {orderList.length} {lang === 'vi' ? 'sản phẩm' : 'products'} — {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="lp-display text-[34px] leading-none font-bold">{orderList.length}</span>
+                    <span className="text-[12.5px] text-white/70">{lang === 'vi' ? 'sản phẩm' : 'products'} · {totalQty} {lang === 'vi' ? 'cái cần làm' : 'units to make'}</span>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-3xl font-black" style={{ color: '#C9A84C' }}>{pct}%</div>
-                  <div className="text-white/60 text-xs">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                  <div className="lp-display text-[34px] leading-none font-bold" style={{ color: '#D9B36A' }}>{pct}%</div>
+                  <div className="text-white/60 text-[11px] mt-1">{lang === 'vi' ? 'Hoàn thành' : 'Complete'}</div>
+                </div>
+                </div>
+                <div className="h-1.5 rounded-full mt-3.5" style={{ backgroundColor: 'rgba(255,255,255,.14)' }}>
+                  <div className="h-1.5 rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
                 </div>
               </div>
 
@@ -2138,11 +2146,11 @@ export default function StationView({
                 const orderTotalUnits = orderItems.reduce((s, r) => s + r.qty, 0);
                 const orderCats = Array.from(new Set(orderItems.map(r => r.cat))).sort((x, y) => x === OTHER ? 1 : y === OTHER ? -1 : x.localeCompare(y));
                 return (
-                  <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
-                    <button onClick={() => setShowOrderRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#2A1810' }}>
-                      <span className="text-sm font-bold">🧾 {lang === 'vi' ? 'Tổng đặt hàng' : 'Total ordered'}</span>
+                  <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
+                    <button onClick={() => setShowOrderRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
+                      <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng đặt hàng' : 'Total ordered'}</span>
                       <span className="flex items-center gap-2">
-                        <span className="text-xs font-bold" style={{ color: '#E9D3A4' }}>{orderItems.length} · {orderTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{orderItems.length} · {orderTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                         <ChevronRight size={16} className={`transition-transform ${showOrderRecap ? 'rotate-90' : ''}`} />
                       </span>
                     </button>
@@ -2188,11 +2196,10 @@ export default function StationView({
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
-                          <img src={thumb(a.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+                          <img src={thumb(a.image_url, 160)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
                             style={{ border: '1px solid #E6DCCF' }} />
                         ) : (
-                          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-                            style={{ backgroundColor: '#F6F1EA' }}>🥐</div>
+                          <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm"
@@ -2227,8 +2234,8 @@ export default function StationView({
                             )}
                           </div>
                         </div>
-                        <div className="text-2xl font-black shrink-0"
-                          style={{ color: a.cancelled ? '#9CA3AF' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>
+                        <div className="lp-display text-[26px] font-bold shrink-0"
+                          style={{ color: a.cancelled ? '#9CA3AF' : '#2A1810', textDecoration: a.cancelled ? 'line-through' : undefined }}>
                           x{a.qty_to_produce}
                         </div>
                       </div>
@@ -2237,7 +2244,7 @@ export default function StationView({
                         <div className="pb-3">
                           {breakdown.map((b, bi) => (
                             <div key={bi} className="px-5 py-1.5 text-sm"
-                              style={{ backgroundColor: bi % 2 === 0 ? '#FFFDF0' : '#FBF7F0' }}>
+                              style={{ backgroundColor: '#FBF7F0', borderTop: bi > 0 ? '1px solid #F0E8DB' : undefined }}>
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-ink-light">
                                   <Store size={11} className="shrink-0" />
@@ -2303,8 +2310,8 @@ export default function StationView({
           {/* Send finished products to stock (chef only, not history view) */}
           {!isEmployee && !isHistoryView && termine.some(a => !a.transferred) && (
             <button onClick={openStockModal}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-sm active:scale-[0.99] transition-all"
-              style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+              className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl font-bold text-sm lp-press"
+              style={{ backgroundColor: '#C9A84C', color: '#2A1810', boxShadow: '0 6px 16px rgba(201,168,76,.35)' }}>
               <Package size={16} />
               {lang === 'vi' ? 'Chuyển vào kho' : 'Send to stock'}
             </button>
@@ -2346,11 +2353,11 @@ export default function StationView({
             return (
               <>
                 {doneItems.length > 0 && (
-                  <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #E6DCCF' }}>
-                    <button onClick={() => setShowDoneRecap(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-white" style={{ backgroundColor: '#572C1A' }}>
-                      <span className="text-sm font-bold">✅ {lang === 'vi' ? 'Tổng đã làm' : 'Total made'}</span>
+                  <div className="rounded-2xl overflow-hidden bg-white" style={{ border: '1px solid #E6DCCF' }}>
+                    <button onClick={() => setShowDoneRecap(v => !v)} className="w-full flex items-center justify-between px-4 h-12 bg-white" style={{ color: '#2A1810' }}>
+                      <span className="text-sm font-bold">{lang === 'vi' ? 'Tổng đã làm' : 'Total made'}</span>
                       <span className="flex items-center gap-2">
-                        <span className="text-xs font-bold" style={{ color: '#E9D3A4' }}>{doneItems.length} · {doneTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
+                        <span className="text-xs font-bold" style={{ color: '#8A6418' }}>{doneItems.length} · {doneTotalUnits} {lang === 'vi' ? 'cái' : 'u.'}</span>
                         <ChevronRight size={16} className={`transition-transform ${showDoneRecap ? 'rotate-90' : ''}`} />
                       </span>
                     </button>
@@ -2425,7 +2432,7 @@ export default function StationView({
           )}
           {!loadingDates && upcomingData.length === 0 && (
             <div className="text-center py-20">
-              <ClipboardList size={40} className="mx-auto mb-3" style={{ color: '#572C1A' }} />
+              <div className="mx-auto mb-4 w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EFE6D8' }}><ClipboardList size={26} style={{ color: '#572C1A' }} /></div>
               <p className="font-semibold" style={{ color: '#2A1810' }}>
                 {lang === 'vi' ? 'Chưa có đơn hàng sắp tới' : 'No upcoming orders'}
               </p>
@@ -2465,7 +2472,7 @@ export default function StationView({
                     style={{ color: '#C9A84C', transform: isExpanded ? 'rotate(90deg)' : 'none' }} />
                 </button>
                 {isExpanded && (
-                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
+                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#EFE6D8' }}>
                     {loadingDetails && !details && (
                       <div className="space-y-2 pt-2">
                         <div className="skeleton h-12 w-full" />
@@ -2491,7 +2498,7 @@ export default function StationView({
                       }
                       const rows = Array.from(totals.entries()).sort((a, b) => b[1].qty - a[1].qty);
                       return (
-                        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F7F1E8', border: '1px solid #A7D4B8' }}>
+                        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#F7F1E8', border: '1px solid #E6DCCF' }}>
                           <div className="text-xs font-bold mb-1.5" style={{ color: '#2A1810' }}>
                             {lang === 'vi' ? 'Tổng cần sản xuất' : 'Total to produce'}
                           </div>
@@ -2508,7 +2515,7 @@ export default function StationView({
                     })()}
                     {(details ?? []).map(order => (
                       <div key={order.id} className="rounded-xl p-3 mt-2"
-                        style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
+                        style={{ backgroundColor: '#FBF7F0', border: '1px solid #EFE6D8' }}>
                         <div className="flex items-center justify-between mb-1.5">
                           <span className="text-xs font-bold" style={{ color: '#92600A' }}>{order.order_ref}</span>
                           <span className="text-xs font-medium" style={{ color: '#2A1810' }}>{order.shop_name}</span>
@@ -2549,7 +2556,7 @@ export default function StationView({
                     <button
                       onClick={() => router.push(`/station/${teamSlug}?date=${d.delivery_date}`)}
                       className="w-full mt-2 py-2.5 rounded-xl text-xs font-bold transition-colors"
-                      style={{ backgroundColor: '#F7F1E8', color: '#2A1810', border: '1px solid #A7D4B8' }}>
+                      style={{ backgroundColor: '#F7F1E8', color: '#2A1810', border: '1px solid #E6DCCF' }}>
                       {lang === 'vi' ? 'Mở ngày này →' : 'Open this day →'}
                     </button>
                   </div>
@@ -2623,7 +2630,7 @@ export default function StationView({
                     style={{ color: '#C9A84C', transform: isExpanded ? 'rotate(90deg)' : 'none' }} />
                 </button>
                 {isExpanded && (
-                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#F0E8B0' }}>
+                  <div className="px-4 pb-4 space-y-2 border-t" style={{ borderColor: '#EFE6D8' }}>
                     {loadingDetails && !details && (
                       <div className="space-y-2 pt-2">
                         <div className="skeleton h-12 w-full" />
@@ -2645,7 +2652,7 @@ export default function StationView({
                               <span style={{ color: '#374151' }}>
                                 {g.name}
                                 {g.variant && g.variant !== 'Standard' ? <span className="ml-1 text-gray-400">· {g.variant}</span> : null}
-                                {g.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
+                                {g.is_extra ? <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded font-bold align-middle" style={{ backgroundColor: '#F3E7C8', color: '#8A6418' }}>{lang === 'vi' ? 'Thêm' : 'Extra'}</span> : null}
                               </span>
                               <span className="font-bold ml-3 shrink-0" style={{ color: '#2A1810' }}>×{g.qty}</span>
                             </div>
@@ -2682,7 +2689,7 @@ export default function StationView({
                         </div>
                         {unsent.map(g => (
                           <label key={g.key} className="rounded-xl p-3 mb-2 flex items-center gap-2.5 cursor-pointer"
-                            style={{ backgroundColor: '#FEFCE8', border: '1px solid #F0E8B0' }}>
+                            style={{ backgroundColor: '#FBF7F0', border: '1px solid #EFE6D8' }}>
                             <input type="checkbox" checked={sel.has(g.key)}
                               onChange={() => toggleHistorySel(d.delivery_date, g.key, unsent.map(u => u.key))}
                               className="w-4 h-4 shrink-0" style={{ accentColor: '#2A1810' }} />
@@ -2836,7 +2843,7 @@ export default function StationView({
             <div className="modal-sheet bg-white w-full max-w-lg rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: '1px solid #E6DCCF' }}>
                 <div className="flex items-center gap-2">
-                  <Package size={18} style={{ color: '#1D4ED8' }} />
+                  <Package size={18} style={{ color: '#8A6418' }} />
                   <span className="font-bold text-base" style={{ color: '#2A1810' }}>
                     {lang === 'vi' ? 'Chuyển vào kho' : 'Send to stock'}
                   </span>
@@ -2851,10 +2858,10 @@ export default function StationView({
                   const sel = stockSel[g.key] ?? { on: false, qty: '0' };
                   return (
                     <div key={g.key} className="flex items-center gap-3 p-2.5 rounded-xl"
-                      style={{ backgroundColor: sel.on ? '#EFF6FF' : '#F9FAFB', border: '1px solid', borderColor: sel.on ? '#BFDBFE' : '#E5E7EB' }}>
+                      style={{ backgroundColor: sel.on ? '#FBF4E1' : '#F9FAFB', border: '1px solid', borderColor: sel.on ? '#E9D3A4' : '#E5E7EB' }}>
                       <button onClick={() => setStockSel(p => ({ ...p, [g.key]: { ...sel, on: !sel.on } }))}
                         className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center"
-                        style={{ backgroundColor: sel.on ? '#1D4ED8' : 'white', border: '1px solid', borderColor: sel.on ? '#1D4ED8' : '#D1D5DB' }}>
+                        style={{ backgroundColor: sel.on ? '#8A6418' : 'white', border: '1px solid', borderColor: sel.on ? '#8A6418' : '#D1D5DB' }}>
                         {sel.on && <CheckCircle2 size={16} className="text-white" />}
                       </button>
                       <div className="flex-1 min-w-0">
@@ -2867,7 +2874,7 @@ export default function StationView({
                         <div className="text-[11px] text-ink-light">
                           {lang === 'vi' ? 'Đã làm' : 'Produced'}: {g.produced}
                           {g.remaining !== g.produced && (
-                            <span className="font-semibold" style={{ color: '#1D4ED8' }}> · {lang === 'vi' ? 'còn lại' : 'left to send'}: {g.remaining}</span>
+                            <span className="font-semibold" style={{ color: '#8A6418' }}> · {lang === 'vi' ? 'còn lại' : 'left to send'}: {g.remaining}</span>
                           )}
                           {g.parts.length > 1 && <span> · {g.parts.length} {lang === 'vi' ? 'đơn' : 'orders'}</span>}
                         </div>
@@ -2886,7 +2893,7 @@ export default function StationView({
                 </span>
                 <button onClick={submitStockTransfer} disabled={sendingStock || chosen.length === 0}
                   className="px-5 py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-50"
-                  style={{ backgroundColor: '#1D4ED8' }}>
+                  style={{ backgroundColor: '#8A6418' }}>
                   {sendingStock ? '…' : (lang === 'vi' ? 'Gửi phiếu' : 'Send transfer')}
                 </button>
               </div>
@@ -3027,7 +3034,7 @@ export default function StationView({
                       <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
                         style={extraProduct.is_lab_only
                           ? { backgroundColor: '#EDE9FE', color: '#6D28D9' }
-                          : { backgroundColor: '#DBEAFE', color: '#1D4ED8' }
+                          : { backgroundColor: '#F3E7C8', color: '#8A6418' }
                         }>
                         {extraProduct.is_lab_only ? 'Lab' : 'Catalogue'}
                       </span>
@@ -3070,7 +3077,7 @@ export default function StationView({
                               <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
                                 style={p.is_lab_only
                                   ? { backgroundColor: '#EDE9FE', color: '#6D28D9' }
-                                  : { backgroundColor: '#DBEAFE', color: '#1D4ED8' }
+                                  : { backgroundColor: '#F3E7C8', color: '#8A6418' }
                                 }>
                                 {p.is_lab_only ? 'Lab' : 'Catalogue'}
                               </span>
@@ -3437,7 +3444,7 @@ function ProductionCard({
       )}
       {/* Status stripe for in_progress */}
       {a.status === 'in_progress' && !a.cancelled && !late && (
-        <div className="h-1" style={{ backgroundColor: '#2563EB' }} />
+        <div className="h-1" style={{ backgroundColor: '#C9A84C' }} />
       )}
 
       <div className="flex flex-wrap items-start p-3 sm:p-4 gap-3">
@@ -3481,7 +3488,7 @@ function ProductionCard({
             )}
             {a.variant_label && a.variant_label !== 'Standard' && (
               <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
-                style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
+                style={{ backgroundColor: '#FBF4E1', color: '#8A6418' }}>
                 {a.variant_label}
               </span>
             )}
@@ -3502,7 +3509,7 @@ function ProductionCard({
 
           {/* Qty + status */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-xl sm:text-2xl font-black" style={{ color: a.cancelled ? '#9CA3AF' : meta.color, textDecoration: a.cancelled ? 'line-through' : undefined }}>x{a.qty_to_produce}</span>
+            <span className="text-xl sm:text-2xl font-black" style={{ color: a.cancelled ? '#9CA3AF' : '#2A1810', textDecoration: a.cancelled ? 'line-through' : undefined }}>x{a.qty_to_produce}</span>
             {a.qty_produced > 0 && a.status !== 'done' && (
               <span className="text-sm text-ink-light">(✓ {a.qty_produced})</span>
             )}
@@ -3640,7 +3647,7 @@ function ProductionCard({
           {a.status === 'blocked' && !readOnly && (
             <button onClick={() => onAdvance(a)} disabled={isUpdating}
               className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-all"
-              style={{ border: '1px solid #A7D4B8', color: '#572C1A', backgroundColor: '#F7F1E8', opacity: isUpdating ? 0.6 : 1 }}>
+              style={{ border: '1px solid #E6DCCF', color: '#572C1A', backgroundColor: '#F7F1E8', opacity: isUpdating ? 0.6 : 1 }}>
               {lang === 'vi' ? 'Mở lại' : 'Unblock'}
             </button>
           )}
@@ -3761,18 +3768,17 @@ function TermineCard({
   return (
     <div className="rounded-2xl overflow-hidden"
       style={{
-        backgroundColor: isSkip ? '#F5F3FF' : ahead ? '#EFF6FF' : 'white',
-        border: isSkip ? '1.5px solid #C4B5FD' : ahead ? '1.5px solid #93C5FD' : '1px solid #E6DCCF',
-        opacity: isSkip ? 1 : ahead ? 1 : 0.75,
+        backgroundColor: isSkip ? '#F5F3FF' : ahead ? '#FBF4E1' : 'white',
+        border: isSkip ? '1.5px solid #C4B5FD' : ahead ? '1.5px solid #E9D3A4' : '1px solid #E6DCCF',
+        opacity: 1,
       }}>
       <CorrectionLock a={a} lang={lang} />
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
-          <img src={thumb(a.image_url, 112)} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0"
+          <img src={thumb(a.image_url, 160)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
             style={{ border: '1px solid #E6DCCF' }} />
         ) : (
-          <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-xl"
-            style={{ backgroundColor: '#F6F1EA' }}>🥐</div>
+          <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
         )}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm" style={{ color: '#2A1810' }}>
@@ -3789,25 +3795,25 @@ function TermineCard({
                 {lang === 'vi' ? 'Có sẵn trong kho' : 'In stock'}
               </span>
             ) : (
-              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: ahead ? '#1E40AF' : '#059669' }}>
+              <span className="text-xs font-semibold flex items-center gap-1" style={{ color: ahead ? '#8A6418' : '#256A45' }}>
                 <CheckCircle2 size={11} />
                 {lang === 'vi' ? `Đã làm x${a.qty_produced}` : `Done x${a.qty_produced}`}
               </span>
             )}
             {ahead && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                style={{ backgroundColor: '#DBEAFE', color: '#1E40AF' }}>
+                style={{ backgroundColor: '#F3E7C8', color: '#8A6418' }}>
                 ⏩ {lang === 'vi' ? 'Làm trước' : 'Ahead'}
               </span>
             )}
             {a.transferred && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
-                style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>
+                style={{ backgroundColor: '#F3E7C8', color: '#8A6418' }}>
                 <Package size={10} />{lang === 'vi' ? 'Đã chuyển kho' : 'Sent to stock'}
               </span>
             )}
-            <span className="text-xl font-black" style={{ color: isSkip ? '#7C3AED' : meta.color }}>
-              x{a.qty_to_produce}
+            <span className="lp-display text-[22px] font-bold ml-auto" style={{ color: isSkip ? '#7C3AED' : '#2A1810' }}>
+              ×{a.qty_to_produce}
             </span>
           </div>
           {!isSkip && a.produced_by_name && (
@@ -3820,7 +3826,7 @@ function TermineCard({
                       could mean yesterday (Today tab) or today (Tomorrow tab); regular cards are
                       always "today" so the date would just be noise. */}
                   {ahead && <> {producedDayLabel(a.produced_at, lang)}</>}
-                  {' '}{lang === 'vi' ? 'lúc' : 'à'}{' '}
+                  {' '}{lang === 'vi' ? 'lúc' : 'at'}{' '}
                   <span className="font-semibold" style={{ color: '#2A1810' }}>
                     {new Date(a.produced_at).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}
                   </span>
