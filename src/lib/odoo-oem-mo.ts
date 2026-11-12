@@ -50,6 +50,14 @@ async function backdateMoTree(moId: number, moName: string, date: string): Promi
 export interface OemMoResult { ok: boolean; moId?: number; moName?: string; state?: string; error?: string }
 
 export async function createAndProduceOemMO(sku: string, qty: number, date: string): Promise<OemMoResult> {
+  return createAndProduceTeamMO(sku, qty, date, `OEM ${date}`, 'hung');
+}
+
+// Same sequence for any team MO made outside the hourly "Lab <date>" sync (Axel, 2026-11-12): a
+// chef loss of a finished product BEFORE it was sent to stock gets its own MO "Lab loss <date>"
+// (room → LAB/Stock), then the scrap — so the raw materials leave the room and the loss is valued.
+export async function createAndProduceTeamMO(sku: string, qty: number, date: string, origin: string, team: string): Promise<OemMoResult> {
+  const room = ROOMS[team];
   if (!odooWriteConfigured()) return { ok: false, error: 'Odoo write account not configured' };
   if (!(qty > 0)) return { ok: false, error: 'Quantity must be > 0' };
   let moId: number | undefined; let moName: string | undefined;
@@ -72,10 +80,10 @@ export async function createAndProduceOemMO(sku: string, qty: number, date: stri
 
     moId = await tmo(odooExecuteWrite<number>('mrp.production', 'create', [{
       product_id: p.id, product_qty: qty, product_uom_id: Array.isArray(p.uom_id) ? p.uom_id[0] : p.uom_id,
-      bom_id: bom.id, origin: `OEM ${date}`, ...(dateField ? { [dateField]: `${date} 02:00:00` } : {}),
+      bom_id: bom.id, origin, ...(dateField ? { [dateField]: `${date} 02:00:00` } : {}),
       // OEM is made by Team Hung: once rooms are linked (2026-10-29) the bulk and its raw materials
-      // come out of Room Hung, the bagged product goes to LAB/Stock.
-      ...(roomsLinkedForDay(date) ? { picking_type_id: ROOMS.hung.manufType, location_src_id: ROOMS.hung.location, location_dest_id: LAB_STOCK_ID } : {}),
+      // come out of the team's room, the finished product goes to LAB/Stock.
+      ...(room && roomsLinkedForDay(date) ? { picking_type_id: room.manufType, location_src_id: room.location, location_dest_id: LAB_STOCK_ID } : {}),
     }]), 25000, 'create');
     const [mo] = await tmo(odooExecute<any[]>('mrp.production', 'read', [[moId]], { fields: ['name', 'has_producible_component'] }), 15000, 'read');
     moName = mo?.name;
