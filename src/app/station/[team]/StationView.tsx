@@ -1497,7 +1497,7 @@ export default function StationView({
               ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
               : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }}>
             {moreActive ? moreActive.icon : <LayoutGrid size={14} />}
-            <span className="truncate max-w-full">{moreActive ? (lang === 'vi' ? moreActive.labelVi : moreActive.labelEn) : 'Menu'}</span>
+            <span className={`truncate max-w-full ${stockTeamNav ? 'tracking-[0.08em] uppercase text-[10px] sm:text-xs sm:normal-case sm:tracking-normal' : ''}`}>{moreActive ? (lang === 'vi' ? moreActive.labelVi : moreActive.labelEn) : 'Menu'}</span>
             {lowStockAlert && !moreActive && (
               <span className="absolute top-1 right-[22%] w-2 h-2 rounded-full" style={{ backgroundColor: '#C8372B' }} />
             )}
@@ -2837,7 +2837,7 @@ export default function StationView({
                       {pct === 100 ? '✓ ' : ''}{pct}% · {d.productCount} {lang === 'vi' ? 'sản phẩm' : 'products'} · {d.totalQty} {lang === 'vi' ? 'cái' : 'units'}
                       {d.stockQty > 0 && (
                         <span className="font-normal" style={{ color: '#6B4A2B' }}>
-                          {' '}({d.totalQty - d.stockQty} {lang === 'vi' ? 'làm' : 'produits'} + {d.stockQty} {lang === 'vi' ? 'từ kho' : 'du stock'})
+                          {' '}({d.totalQty - d.stockQty} {lang === 'vi' ? 'làm' : v2 ? 'made' : 'produits'} + {d.stockQty} {lang === 'vi' ? 'từ kho' : v2 ? 'from stock' : 'du stock'})
                         </span>
                       )}
                     </div>
