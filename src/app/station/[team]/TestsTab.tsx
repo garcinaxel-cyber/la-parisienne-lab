@@ -389,14 +389,14 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
         {test.stage === 'sent' && <div className="rounded-xl px-3 py-2 text-[12px] font-semibold" style={{ backgroundColor: '#FBF4E1', color: '#8A6418' }}>{L('Đã gửi văn phòng: anh Lân kiểm tra giá vốn, rồi Axel duyệt.', 'Sent to the office: Lân checks the cost, then Axel validates.')}</div>}
 
         <div className="flex items-center gap-1.5">
-          <div className="flex gap-1.5 overflow-x-auto flex-1 pb-0.5">
+          <div className="flex gap-1.5 overflow-x-auto flex-1 min-w-0 pb-0.5">
             {detail.versions.map(v => { const on = v.n === ver.n; return (
               <button key={v.n} onClick={() => { setVerN(v.n); setEdit(null); setMult(null); }} className="flex-shrink-0 rounded-full px-3.5 h-9 text-[13px] font-extrabold inline-flex items-center gap-1"
                 style={on ? { backgroundColor: GOLD, color: NAVY, border: `1px solid ${GOLD}` } : { backgroundColor: '#fff', color: NAVY, border: `1px solid ${BORDER}` }}>
                 V{v.n}{v.isFinal && <CheckCircle2 size={11} />}{v.n === lastV.n && <span className="text-[9px] opacity-70">{L('MỚI', 'LATEST')}</span>}</button>); })}
             <button onClick={() => { setNewVerNote(''); setSheet({ k: 'newVersion' }); }} className="flex-shrink-0 rounded-full px-3 h-9 text-[12.5px] font-bold" style={{ border: `1px dashed ${GOLD}`, color: GOLD_TEXT }}>+ {L('Phiên bản', 'Version')}</button>
           </div>
-          {detail.versions.length > 1 && <button onClick={() => setCompare([detail.versions[detail.versions.length - 2].n, lastV.n])} className="flex-shrink-0 inline-flex items-center gap-1 rounded-full px-3.5 h-9 text-[12.5px] font-bold text-white" style={{ backgroundColor: NAVY }}><GitCompare size={13} />{L('So sánh', 'Compare')}</button>}
+          {detail.versions.length > 1 && <button onClick={() => setCompare([detail.versions[detail.versions.length - 2].n, lastV.n])} aria-label={L('So sánh', 'Compare')} className="flex-shrink-0 inline-flex items-center justify-center gap-1 rounded-full w-9 sm:w-auto sm:px-3.5 h-9 text-[12.5px] font-bold text-white" style={{ backgroundColor: NAVY }}><GitCompare size={14} /><span className="hidden sm:inline">{L('So sánh', 'Compare')}</span></button>}
         </div>
         <div className="text-[11.5px] -mt-1.5" style={{ color: '#6B5A4C' }}>V{ver.n} · {vnDate(ver.createdAt.slice(0, 10))}{ver.note ? ` · ${ver.note}` : ''}{ver.trialCount ? ` · ${L('đã làm thử — khoá', 'made — locked')}` : ''}</div>
 
