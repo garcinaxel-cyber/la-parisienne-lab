@@ -1427,7 +1427,7 @@ export default function StationView({
         <div className="flex border-t fixed bottom-0 inset-x-0 z-30 pb-[env(safe-area-inset-bottom)] sm:static sm:z-auto sm:pb-0" style={{ borderColor: 'rgba(255,255,255,0.15)', backgroundColor: '#1F120C' }}>
           {mainTabs.map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMoreOpen(false); }}
-              className="[&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95"
+              className="relative [&>svg]:w-5 [&>svg]:h-5 sm:[&>svg]:w-3.5 sm:[&>svg]:h-3.5 flex-1 min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 min-h-[58px] sm:min-h-0 py-2 sm:py-2.5 text-[10.5px] sm:text-xs font-bold transition-all active:scale-95"
               style={activeTab === tab.id
                 ? { color: '#C9A84C', borderBottom: '2px solid #C9A84C' }
                 : { color: 'rgba(255,255,255,0.6)', borderBottom: '2px solid transparent' }
@@ -1436,7 +1436,7 @@ export default function StationView({
               <span className="flex items-center gap-1 truncate max-w-full">
                 <span className="truncate">{lang === 'vi' ? tab.labelVi : tab.labelEn}</span>
                 {tab.count > 0 && (
-                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0"
+                  <span className="rounded-full px-1.5 py-0.5 text-[9px] sm:text-[10px] font-black shrink-0 absolute top-1.5 left-1/2 ml-1.5 sm:static sm:ml-0"
                     style={activeTab === tab.id
                       ? { backgroundColor: '#C9A84C', color: '#2A1810' }
                       : { backgroundColor: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)' }
@@ -1515,19 +1515,20 @@ export default function StationView({
             { title: L2('Phân tích', 'Insights'), items: tabItem('analytics', L2('Giao hàng, tồn kho, sản lượng', 'Delivery, stock, production')) },
             { title: L2('Đội', 'Team'), items: [...tabItem('team', L2('Lịch, đơn nghỉ, tăng ca', 'Schedule, requests, overtime')), ...tabItem('me', L2('Lịch và ngày nghỉ của tôi', 'My schedule and days off'))] },
           ].filter(f => f.items.length > 0);
-          const tile = (it: Item, i: number) => {
-            const cls = 'relative rounded-2xl p-3.5 min-h-[104px] flex flex-col justify-between text-left lp-press lp-rise';
+          const tile = (it: Item, i: number, alone = false) => {
+            // A family with a single module takes the full width as a row — no half-empty line.
+            const cls = `relative rounded-2xl p-3.5 text-left lp-press lp-rise flex ${alone ? 'col-span-2 flex-row items-center gap-3 min-h-[68px]' : 'flex-col justify-between min-h-[104px]'}`;
             const style = { animationDelay: `${i * 35}ms`, ...(it.active
               ? { backgroundColor: '#C9A84C', color: '#2A1810' }
               : { backgroundColor: 'rgba(255,255,255,0.07)', color: '#F6F1EA', border: '1px solid rgba(255,255,255,0.08)' }) };
             const inner = (
               <>
-                <span className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: it.active ? 'rgba(42,24,16,0.12)' : 'rgba(201,168,76,0.16)', color: it.active ? '#2A1810' : '#D9B36A' }}>{it.icon}</span>
+                <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: it.active ? 'rgba(42,24,16,0.12)' : 'rgba(201,168,76,0.16)', color: it.active ? '#2A1810' : '#D9B36A' }}>{it.icon}</span>
                 <span>
                   <span className="block text-[14px] font-bold leading-tight">{it.label}</span>
                   <span className="block text-[11px] mt-0.5 leading-snug" style={{ opacity: 0.65 }}>{it.hint}</span>
                 </span>
-                {it.dot && <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#EF4444' }} />}
+                {it.dot && <span className="absolute top-1/2 -translate-y-1/2 right-4 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: '#EF4444' }} />}
               </>
             );
             return it.href
@@ -1549,7 +1550,7 @@ export default function StationView({
               {families.map(f => (
                 <div key={f.title} className="mt-5">
                   <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase pb-2" style={{ color: '#C9A84C' }}>{f.title}</div>
-                  <div className="grid grid-cols-2 gap-2.5">{f.items.map(it => tile(it, n++))}</div>
+                  <div className="grid grid-cols-2 gap-2.5">{f.items.map(it => tile(it, n++, f.items.length === 1))}</div>
                 </div>
               ))}
               <div className="mt-6 rounded-2xl p-1.5" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1682,14 +1683,6 @@ export default function StationView({
       )}
 
       {/* Celebratory banner only on the work tabs, not on Done (which is just a production record) */}
-      {pct === 100 && assignments.length > 0 && activeTab !== 'termine' && (
-        <div className="max-w-3xl mx-auto px-4 pt-3">
-          <div className="rounded-2xl h-10 text-[13px] font-bold flex items-center justify-center gap-2 lp-pop" style={{ backgroundColor: '#F3E7C8', color: '#8A6418', border: '1px solid #E9D3A4' }}>
-            <CheckCircle2 size={16} /> {lang === 'vi' ? 'Đã hoàn thành tất cả đơn hôm nay' : 'All orders done'}
-          </div>
-        </div>
-      )}
-
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (() => {
         // Order filter (point 2): narrow this tab's lists to one order's cards. The
@@ -2196,7 +2189,7 @@ export default function StationView({
                       {/* Product row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         {a.image_url ? (
-                          <img src={thumb(a.image_url, 160)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
+                          <img src={thumb(a.image_url, 112)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
                             style={{ border: '1px solid #E6DCCF' }} />
                         ) : (
                           <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
@@ -3775,7 +3768,7 @@ function TermineCard({
       <CorrectionLock a={a} lang={lang} />
       <div className="flex items-center gap-3 p-4">
         {a.image_url ? (
-          <img src={thumb(a.image_url, 160)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
+          <img src={thumb(a.image_url, 112)} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0"
             style={{ border: '1px solid #E6DCCF' }} />
         ) : (
           <div className="w-14 h-14 rounded-2xl shrink-0" style={{ background: 'linear-gradient(135deg,#EFE6D8,#E6DCCF)' }} />
