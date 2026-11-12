@@ -97,11 +97,11 @@ export default function StockProductionPanel({
   const shownBatches = allBatches ? batches : batches.slice(0, 3);
 
   return (
-    <div className="space-y-3">
-      {err && <div className="rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: '#FBEAE8', color: RED }}>{err}</div>}
+    <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-x-6 lg:items-start">
+      {err && <div className="lg:col-span-2 lg:mb-3 rounded-xl px-3 py-2 text-[12.5px] font-semibold" style={{ backgroundColor: '#FBEAE8', color: RED }}>{err}</div>}
 
       {/* Made today — the day's batches live here (what the Done tab used to hold for a stock team) */}
-      <section className="rounded-[26px] px-4 pt-4 pb-2 lp-rise" style={{ backgroundColor: CACAO, color: '#fff' }}>
+      <section className="rounded-[26px] px-4 pt-4 pb-2 lp-rise lg:col-start-2 lg:row-start-1 lg:sticky lg:top-[112px] lg:max-h-[calc(100vh-128px)] lg:overflow-y-auto" style={{ backgroundColor: CACAO, color: '#fff' }}>
         <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase" style={{ color: '#D9B36A' }}>{L('Làm hôm nay', 'Made today')}</div>
         <div className="mt-1 flex items-end justify-between gap-3">
           <div className="lp-display text-[46px] leading-none font-bold">{todayTotal}</div>
@@ -151,6 +151,7 @@ export default function StockProductionPanel({
         )}
       </section>
 
+      <div className="space-y-3 lg:col-start-1 lg:row-start-1 min-w-0">
       {/* One line for low stock — tap to see only those, every family together */}
       {low.length > 0 && (
         <button onClick={() => { setLowOnly(v => !v); setQuery(''); }} className="w-full rounded-2xl px-4 h-[58px] flex items-center gap-3 text-left lp-press lp-rise"
@@ -165,7 +166,7 @@ export default function StockProductionPanel({
       )}
 
       {/* Families + search — sticks under the header while the list scrolls */}
-      <div className="sticky top-[52px] sm:top-[100px] z-10 -mx-4 px-4 py-2" style={{ backgroundColor: 'rgba(246,241,234,.95)', backdropFilter: 'blur(8px)' }}>
+      <div className="sticky top-[52px] sm:top-[100px] z-10 -mx-4 px-4 py-2 lg:mx-0 lg:px-0" style={{ backgroundColor: 'rgba(246,241,234,.95)', backdropFilter: 'blur(8px)' }}>
         {searchOpen ? (
           <label className="flex items-center gap-2 rounded-full px-3.5 h-10 bg-white" style={{ border: `1px solid ${BORDER}` }}>
             <Search size={16} style={{ color: MUTED }} />
@@ -214,7 +215,7 @@ export default function StockProductionPanel({
           {q && <button onClick={() => setQuery('')} className="mt-2 text-[13px] font-bold underline" style={{ color: BROWN }}>{L('Xoá tìm kiếm', 'Clear search')}</button>}
         </div>
       ) : (
-        <div className="rounded-[26px] bg-white overflow-hidden lp-rise" style={{ border: `1px solid ${BORDER}`, boxShadow: '0 8px 24px rgba(42,24,16,.05)' }}>
+        <div className="rounded-[26px] bg-white overflow-hidden lp-rise lg:grid lg:grid-cols-2" style={{ border: `1px solid ${BORDER}`, boxShadow: '0 8px 24px rgba(42,24,16,.05)' }}>
           {shown.map((p, i) => {
             const isLow = isLowP(p);
             const hasMin = p.stock != null && p.threshold != null && p.threshold > 0;
@@ -222,7 +223,7 @@ export default function StockProductionPanel({
             const fill = hasMin ? Math.max(0, Math.min(100, (p.stock! / scale) * 100)) : 0;
             const mark = hasMin ? Math.min(100, (p.threshold! / scale) * 100) : 0;
             return (
-              <div key={p.sku} className="flex items-center gap-3 pl-3 pr-3 py-3" style={{ borderTop: i ? '1px solid #F0E8DB' : undefined }}>
+              <div key={p.sku} className="flex items-center gap-3 pl-3 pr-3 py-3 lg:odd:border-r lg:odd:border-[#F0E8DB]" style={{ borderBottom: '1px solid #F0E8DB' }}>
                 <Photo p={p} className="w-[52px] h-[52px] rounded-2xl shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
@@ -251,6 +252,8 @@ export default function StockProductionPanel({
           })}
         </div>
       )}
+
+      </div>
 
       {/* Confirmation — floats above the tab bar so it is seen wherever the list is scrolled */}
       {msg && (

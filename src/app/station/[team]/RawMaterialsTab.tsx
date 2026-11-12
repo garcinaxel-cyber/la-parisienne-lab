@@ -661,20 +661,20 @@ export default function RawMaterialsTab({ team, lang, userName, packaging = fals
 
       {/* Bottom bar */}
       {mode === 'take' && picked.length > 0 && !sheet && (
-        <button onClick={() => setSheet('take')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
+        <button onClick={() => setSheet('take')} className="fixed left-3 right-3 bottom-[70px] sm:bottom-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[min(720px,calc(100%-24px))] z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
           <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Ghi phiếu lấy', 'Record withdrawal')} ›</span></button>
       )}
       {mode === 'transfer' && picked.length > 0 && !sheet && (
-        <button onClick={() => { if (!other) { setMsg({ ok: false, text: L('Chọn team kia trước.', 'Choose the other team first.') }); return; } setSheet('transfer'); }} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
+        <button onClick={() => { if (!other) { setMsg({ ok: false, text: L('Chọn team kia trước.', 'Choose the other team first.') }); return; } setSheet('transfer'); }} className="fixed left-3 right-3 bottom-[70px] sm:bottom-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[min(720px,calc(100%-24px))] z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
           <b className="flex-1 text-left text-[13.5px]">{picked.length} {L('nguyên liệu', 'items')}{other ? ` · ${direction === 'give' ? L('cho', 'to') : L('từ', 'from')} ${TEAM_SHORT[other][lang]}` : ''}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Ghi phiếu chuyển', 'Record transfer')} ›</span></button>
       )}
       {mode === 'request' && (cart.length + newItems.length) > 0 && !sheet && (
-        <button onClick={() => setSheet('cart')} className="fixed left-3 right-3 bottom-3 z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
+        <button onClick={() => setSheet('cart')} className="fixed left-3 right-3 bottom-[70px] sm:bottom-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:w-[min(720px,calc(100%-24px))] z-20 rounded-2xl px-4 py-3 flex items-center gap-3 text-white shadow-lg max-w-xl mx-auto" style={{ backgroundColor: NAVY }}>
           <b className="flex-1 text-left text-[13.5px]">{cart.length + newItems.length} {L('dòng', 'lines')}</b><span className="text-[13px] font-extrabold" style={{ color: '#E9D3A4' }}>{L('Gửi yêu cầu', 'Send request')} ›</span></button>
       )}
 
       {sheet && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => setSheet(null)}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center lp-overlay" style={{ backgroundColor: 'rgba(26,44,36,.45)' }} onClick={() => setSheet(null)}>
           <div className="bg-white w-full max-w-xl rounded-t-2xl p-4 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             {sheet === 'take' && (<>
               <div className="text-[15px] font-extrabold">{L('Gửi phiếu lấy kho', 'Send withdrawal slip')}</div>

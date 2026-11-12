@@ -352,7 +352,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
     const lastV = detail.versions[detail.versions.length - 1];
     const canSend = detail.canValidate && test.stage === 'testing' && ver.trialCount > 0;
     return (
-      <div className="space-y-3 pb-28">
+      <div className="space-y-3 pb-28 lg:max-w-3xl lg:mx-auto">
         <input ref={photoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => onPhoto(e.target.files?.[0])} />
         {Msg}
         <div className="flex items-center gap-2">
@@ -530,7 +530,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
 
         {/* bottom bar */}
         <div className="fixed left-0 right-0 bottom-[58px] sm:bottom-0 z-20 px-4 pt-3 pb-3" style={{ background: 'linear-gradient(180deg, rgba(246,241,234,0) 0%, #F6F1EA 35%)' }}>
-          <div className="max-w-3xl mx-auto flex gap-2">
+          <div className="max-w-3xl mx-auto flex gap-2 sm:max-w-xl">
             {edit ? (<>
               <button onClick={() => { const changed = !!edit && !!ver && (JSON.stringify(edit.recipe) !== JSON.stringify(ver.recipe) || JSON.stringify(edit.steps) !== JSON.stringify(ver.steps) || edit.note !== (ver.note ?? '') || num(edit.yieldPcs) !== ver.yieldPcs); if (changed && !window.confirm(L('Bỏ các thay đổi chưa lưu?', 'Discard the changes you have not saved?'))) return; setEdit(null); setQtyDraft({}); }} className="flex-1 rounded-2xl py-3 text-[13.5px] font-extrabold bg-white" style={{ border: `1px solid ${NAVY}`, color: NAVY }}>{L('Huỷ', 'Cancel')}</button>
               <button disabled={busy} onClick={saveEdit} className="flex-[1.6] rounded-2xl py-3 text-[13.5px] font-extrabold text-white" style={{ backgroundColor: NAVY }}>{busy ? <Loader2 size={15} className="animate-spin inline" /> : `${L('Lưu', 'Save')} V${ver.n}`}</button>
@@ -706,7 +706,7 @@ export default function TestsTab({ team, lang }: { team: string; lang: 'vi' | 'e
       {[[L('ĐÃ GHIM', 'PINNED'), pinned], [pinned.length ? L('KHÁC', 'OTHERS') : '', others]].map(([label, arr]) => (arr as TestSummary[]).length > 0 && (
         <div key={String(label) || 'rest'} className="space-y-1.5">
           {label && <div className="text-[10.5px] font-extrabold tracking-wider flex items-center gap-1" style={{ color: '#92600A' }}>{label === L('ĐÃ GHIM', 'PINNED') && <Pin size={11} fill={GOLD} />}{label as string}</div>}
-          {grid ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{(arr as TestSummary[]).map(t => <Card key={t.id} t={t} />)}</div>
+          {grid ? <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 lg:gap-3">{(arr as TestSummary[]).map(t => <Card key={t.id} t={t} />)}</div>
             : <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>{(arr as TestSummary[]).map(t => <Card key={t.id} t={t} />)}</div>}
         </div>))}
 

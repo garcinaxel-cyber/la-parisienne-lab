@@ -1382,7 +1382,7 @@ export default function StationView({
     <div className="lp-station min-h-screen pb-[76px] sm:pb-0" style={{ backgroundColor: '#F6F1EA' }}>
       {/* Top bar */}
       <header className="sticky top-0 z-20 lp-station-header" style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-        <div className="max-w-3xl mx-auto px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
+        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-2.5 sm:gap-2 min-w-0 flex-1">
             <img src="/logo-laparis-brown.png" alt="la Paris" className="sm:hidden h-8 w-auto shrink-0" />
             <img src="/logo-laparis-cream.png" alt="" className="hidden sm:block h-8 w-auto shrink-0" />
@@ -1626,7 +1626,7 @@ export default function StationView({
           the close icon; not auto-cleared on tab focus, so it stays until the chef actually
           acknowledges it rather than disappearing just because the browser tab blinked active. */}
       {newOrderAlert > 0 && (
-        <div className="max-w-3xl mx-auto px-4 pt-3">
+        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3">
           <button
             onClick={() => { setNewOrderAlert(0); setActiveTab('commande'); setOrderFilter(null); }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors animate-pulse"
@@ -1660,7 +1660,7 @@ export default function StationView({
         const totalCards = unsentToday.length + unsentTomorrow.length;
         if (totalQty <= 0) return null;
         return (
-          <div className="max-w-3xl mx-auto px-4 pt-3">
+          <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3">
             <button
               onClick={() => { setActiveTab('termine'); setOrderFilter(null); setProdDay(qtyToday > 0 ? 'today' : 'tomorrow'); }}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors"
@@ -1690,7 +1690,7 @@ export default function StationView({
       {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine')
         && !(stockTeamNav && activeTab === 'production' && prodDay === 'today'
           && ![...todayAssignments, ...tomorrowAsg].some(a => !a.is_extra && !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status))) && (
-        <div className="max-w-3xl mx-auto px-4 pt-3 space-y-2.5">
+        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 pt-3 space-y-2.5">
           <div className="flex gap-1 p-1 rounded-2xl" style={{ backgroundColor: '#EADFD0' }}>
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
               const list = (d === 'tomorrow' ? tomorrowAsg : todayAssignments).filter(a => !a.is_extra);
@@ -1757,7 +1757,7 @@ export default function StationView({
         const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
         const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
         return (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-28">
+        <div className="max-w-3xl lg:max-w-6xl mx-auto px-4 py-5 space-y-3 pb-28">
           {/* Delivered before declared (Axel, 2026-10-23) — one line, tap = only those cards */}
           {lateCards.length > 0 && (
             <button onClick={() => setLateOnly(v => !v)}
@@ -2036,7 +2036,7 @@ export default function StationView({
       {activeTab === 'commande' && (() => {
         const orderList = assignments.filter(a => !a.is_extra);
         return (
-        <div className="max-w-3xl mx-auto px-4 py-5 pb-10">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 pb-10">
           {orderList.length === 0 ? (
             <div className="text-center py-20">
               <ClipboardList size={48} className="mx-auto mb-3 text-ink-light" />
@@ -2352,7 +2352,7 @@ export default function StationView({
 
       {/* ─── TERMINÉ TAB — split: from orders vs extra production ─── */}
       {activeTab === 'termine' && (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-10">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-10">
           {/* Send finished products to stock (chef only, not history view) */}
           {!isEmployee && !isHistoryView && termine.some(a => !a.transferred) && (
             <button onClick={openStockModal}
@@ -2470,7 +2470,7 @@ export default function StationView({
 
       {/* ─── UPCOMING TAB ─── */}
       {activeTab === 'upcoming' && (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
             <div className="space-y-3">
               <SkeletonRow /><SkeletonRow /><SkeletonRow />
@@ -2615,7 +2615,7 @@ export default function StationView({
 
       {/* ─── HISTORY TAB ─── */}
       {activeTab === 'history' && (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3 pb-16">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-3 pb-16">
           {loadingDates && (
             <div className="space-y-3">
               <SkeletonRow /><SkeletonRow /><SkeletonRow />
@@ -2771,7 +2771,7 @@ export default function StationView({
       {activeTab === 'analytics' && (() => {
         const stats = analyticsData;
         return (
-          <div className="max-w-3xl mx-auto px-4 py-5 space-y-4 pb-16">
+          <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-5 space-y-4 pb-16">
             {(() => {
               // Analytics sub-tabs (Axel, 2026-11-11): Delivery (today) · Stock (teams with a Lab stock)
               // · Production (month). One tab, sub-tabs instead of everything stacked.
@@ -2872,7 +2872,7 @@ export default function StationView({
       })()}
 
       {activeTab === 'team' && HR_PILOT_TEAMS.includes(team) && hrManager && (
-        <div className="max-w-3xl mx-auto px-3 py-3">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-3 py-3">
           <HrTeamTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} myToken={hrMyToken} />
         </div>
       )}
@@ -2884,19 +2884,19 @@ export default function StationView({
       )}
 
       {activeTab === 'loss' && CHEF_RD_TEAMS.includes(team) && (
-        <div className="max-w-3xl mx-auto px-4 py-4">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
           <LossTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
       {activeTab === 'tests' && CHEF_RD_TEAMS.includes(team) && (
-        <div className="max-w-3xl mx-auto px-4 py-4">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
           <TestsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} />
         </div>
       )}
 
       {activeTab === 'raw' && RAW_TEAMS.includes(team) && (
-        <div className="max-w-3xl mx-auto px-4 py-4">
+        <div className="max-w-3xl lg:max-w-4xl mx-auto px-4 py-4">
           <RawMaterialsTab team={team} lang={lang === 'vi' ? 'vi' : 'en'} userName={userName} />
         </div>
       )}
