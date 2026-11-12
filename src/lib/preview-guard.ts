@@ -27,12 +27,6 @@ export function isPreviewReadOnly(): boolean {
 // Supabase RPCs that only read (checked in pg_proc on 2026-11-12). Anything else is refused.
 export const READ_ONLY_RPCS = ['lab_dashboard_stats', 'lab_event_sales_totals', 'lab_event_sales_agg', 'lab_mm_deliveries'];
 
-// TEMPORARY write test (Axel's go, 2026-11-12 21:08): until WRITE_TEST_UNTIL, the preview may write to
-// these Supabase tables only (batch recorded then undone, loss declared then deleted, test version
-// created then deleted). Odoo stays read-only. To be removed right after the test.
-export const WRITE_TEST_UNTIL = Date.parse('2026-11-12T15:00:00Z'); // 22:00 Hanoi
-export const WRITE_TEST_TABLES = ['lab_assignments', 'lab_chef_losses', 'lab_tests', 'lab_test_versions', 'lab_test_trials'];
-
 // Odoo ORM methods that only read.
 export const ODOO_READ_METHODS = new Set([
   'search', 'read', 'search_read', 'search_count', 'read_group', 'fields_get', 'name_search', 'name_get',
@@ -49,8 +43,6 @@ export function previewAllows(method: string, url: string): boolean {
   if (u.pathname.endsWith('/jsonrpc')) return true;                          // Odoo — filtered by method in odoo.ts
   const rpc = u.pathname.match(/\/rest\/v1\/rpc\/([a-z0-9_]+)$/i);
   if (rpc) return READ_ONLY_RPCS.includes(rpc[1]);
-  const tbl = u.pathname.match(/\/rest\/v1\/([a-z0-9_]+)$/i);
-  if (tbl && Date.now() < WRITE_TEST_UNTIL && WRITE_TEST_TABLES.includes(tbl[1])) return true;
   return false;
 }
 
@@ -80,5 +72,5 @@ export function installServerPreviewGuard() {
 
 /** Inline script for the browser: same rule on window.fetch, on non-production hostnames only. */
 export function browserPreviewGuardScript(): string {
-  return `(function(){try{var P=${JSON.stringify(PROD_HOSTS)};var h=location.hostname;if(P.indexOf(h)>=0||!/\\.vercel\\.app$/.test(h))return;var R=${JSON.stringify(READ_ONLY_RPCS)};var o=window.fetch.bind(window);window.fetch=function(i,n){try{var u=new URL(typeof i==='string'?i:(i&&i.url)||String(i),location.href);var m=((n&&n.method)||(typeof i==='object'&&i&&i.method)||'GET').toUpperCase();var ok=m==='GET'||m==='HEAD'||m==='OPTIONS'||u.origin===location.origin||u.pathname.indexOf('/auth/v1/')===0;var r=u.pathname.match(/\\/rest\\/v1\\/rpc\\/([a-z0-9_]+)$/i);if(r)ok=R.indexOf(r[1])>=0;var T=u.pathname.match(/\\/rest\\/v1\\/([a-z0-9_]+)$/i);if(T&&Date.now()<${WRITE_TEST_UNTIL}&&${JSON.stringify(WRITE_TEST_TABLES)}.indexOf(T[1])>=0)ok=true;if(!ok){console.warn('[preview] refused',m,u.pathname);return Promise.resolve(new Response(JSON.stringify({message:'Preview (read-only): nothing was saved.',code:'PREVIEW_READ_ONLY'}),{status:403,headers:{'Content-Type':'application/json'}}));}}catch(e){}return o(i,n);};}catch(e){}})();`;
+  return `(function(){try{var P=${JSON.stringify(PROD_HOSTS)};var h=location.hostname;if(P.indexOf(h)>=0||!/\\.vercel\\.app$/.test(h))return;var R=${JSON.stringify(READ_ONLY_RPCS)};var o=window.fetch.bind(window);window.fetch=function(i,n){try{var u=new URL(typeof i==='string'?i:(i&&i.url)||String(i),location.href);var m=((n&&n.method)||(typeof i==='object'&&i&&i.method)||'GET').toUpperCase();var ok=m==='GET'||m==='HEAD'||m==='OPTIONS'||u.origin===location.origin||u.pathname.indexOf('/auth/v1/')===0;var r=u.pathname.match(/\\/rest\\/v1\\/rpc\\/([a-z0-9_]+)$/i);if(r)ok=R.indexOf(r[1])>=0;if(!ok){console.warn('[preview] refused',m,u.pathname);return Promise.resolve(new Response(JSON.stringify({message:'Preview (read-only): nothing was saved.',code:'PREVIEW_READ_ONLY'}),{status:403,headers:{'Content-Type':'application/json'}}));}}catch(e){}return o(i,n);};}catch(e){}})();`;
 }
