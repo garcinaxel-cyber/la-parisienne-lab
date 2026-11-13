@@ -2741,7 +2741,7 @@ export default function StationView({
             </div>
           )}
           {upcomingData.map(d => {
-            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
             const isExpanded = expandedHistoryDate === d.delivery_date;
@@ -4006,14 +4006,14 @@ function ProductionCard({
               <div className="flex sm:flex-col gap-2">
                 {a.status === 'in_progress' && !readOnly && !a.corrected_at && (
                   <button onClick={() => onPartial(a)}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold border lp-press"
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold border lp-press"
                     style={{ borderColor: '#E6DCCF', color: '#572C1A', backgroundColor: '#FFFFFF' }}>
                     {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
                   </button>
                 )}
                 {canMarkStock && (
                   <button onClick={() => leaveThen(() => onMarkInStock(a))} disabled={isUpdating || leaving}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 lp-press"
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 lp-press"
                     style={{ border: '1px solid #D9C4A6', color: '#6B4A2B', backgroundColor: '#F3EDE3', opacity: isUpdating ? 0.6 : 1 }}>
                     <Package size={12} />
                     {lang === 'vi' ? 'Có sẵn' : 'In stock'}
@@ -4021,14 +4021,14 @@ function ProductionCard({
                 )}
                 {canBlock && (
                   <button onClick={() => onBlocked(a)} disabled={isUpdating}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold lp-press"
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold lp-press"
                     style={{ border: '1px solid #FCA5A5', color: '#B42318', backgroundColor: '#FBEAE8', opacity: isUpdating ? 0.6 : 1 }}>
                     {lang === 'vi' ? 'Chặn' : 'Block'}
                   </button>
                 )}
                 {a.status === 'blocked' && !readOnly && late && (
                   <button onClick={() => onAdvance(a)} disabled={isUpdating}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold lp-press"
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold lp-press"
                     style={{ border: '1px solid #E6DCCF', color: '#572C1A', backgroundColor: '#F7F1E8', opacity: isUpdating ? 0.6 : 1 }}>
                     {lang === 'vi' ? 'Mở lại' : 'Unblock'}
                   </button>
@@ -4095,15 +4095,15 @@ function ProductionCard({
             <Store size={10} />
             {v2 && !showBreakdown ? (
               // UI v2: first client + order ref readable without opening (Axel, 2026-11-13)
-              <span className="sm:hidden normal-case tracking-normal text-[12px] font-semibold truncate" style={{ color: '#2A1810' }}>
-                {breakdown[0].shop_name}{breakdown[0].order_ref ? <span className="font-mono text-[10px] font-medium" style={{ color: '#8A6A4E' }}> {breakdown[0].order_ref}</span> : null} · ×{breakdown[0].qty}
+              <span className="sm:hidden normal-case tracking-normal text-[12px] font-semibold truncate min-w-0" style={{ color: '#2A1810' }}>
+                ×{breakdown[0].qty} · {(breakdown[0].shop_name ?? '').replace(/^La Paris\s+/i, '')}{breakdown[0].order_ref ? <span className="font-mono text-[10px] font-medium" style={{ color: '#8A6A4E' }}> {breakdown[0].order_ref.replace(/^REP\/\d{4}\//, '')}</span> : null}
                 {breakdown.length > 1 && <span className="font-bold" style={{ color: '#8A6A4E' }}> +{breakdown.length - 1}</span>}
               </span>
             ) : null}
             <span className={v2 && !showBreakdown ? 'hidden sm:inline' : ''}>{lang === 'vi' ? 'Khách hàng' : 'Clients'} · {breakdown.length}</span>
             {/* Collapsed summary: earliest delivery time hints the deadline without opening */}
             {!showBreakdown && breakdown.some(b => b.delivery_time) && (
-              <span className="sm:hidden normal-case font-bold px-1.5 py-0.5 rounded"
+              <span className="sm:hidden normal-case font-bold px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
                 style={{ backgroundColor: '#F6F1EA', color: '#C9A84C' }}>
                 ⏰ {breakdown.map(b => b.delivery_time).filter(Boolean).sort()[0]?.slice(0, 5)}
               </span>
