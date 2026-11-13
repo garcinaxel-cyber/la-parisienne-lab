@@ -358,6 +358,11 @@ export default function StationView({
   const [blockedReason, setBlockedReason] = useState('');
   const [blockedCustom, setBlockedCustom] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('production');
+  // Team Hưng (stock only): its Produce page always works on today — the Today/Tomorrow choice
+  // made on the Orders tab must not carry over to it (Axel, 2026-11-13).
+  useEffect(() => {
+    if (STOCK_PROD_TEAMS.includes(team) && !isHistoryView && activeTab === 'production' && prodDay !== 'today') setProdDay('today');
+  }, [team, isHistoryView, activeTab, prodDay]);
   // Deep link from the OEM page's bottom bar: /station/<team>?tab=commande | raw | menu …
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
@@ -1277,7 +1282,7 @@ export default function StationView({
       id: 'production',
       labelVi: 'Sản xuất',
       labelEn: 'Production',
-      count: production.length,
+      count: STOCK_PROD_TEAMS.includes(team) && !isHistoryView ? 0 : production.length,
       icon: <FlaskConical size={14} />,
     },
     {
@@ -1356,6 +1361,12 @@ export default function StationView({
   const stockTeamNav = STOCK_PROD_TEAMS.includes(team);
   // UI v2 structure switch — other teams keep main's layout with the new colours only.
   const v2 = isUiV2Team(team);
+  // Team Hưng produces for stock only (Axel, 2026-11-13): no order cards on its Produce page —
+  // orders stay readable in the Orders tab as information. Other teams are untouched.
+  const hideOrderWork = stockTeamNav && !isHistoryView;
+  const madeToday = hideOrderWork
+    ? todayAssignments.filter(a => a.is_extra && !a.cancelled && a.status === 'done').reduce((s, a) => s + (a.qty_produced || 0), 0)
+    : 0;
   const MAIN_TAB_IDS: Tab[] = stockTeamNav ? ['production', 'commande', 'raw'] : ['production', 'commande', 'termine', 'upcoming'];
   const mainTabs = tabs.filter(t => MAIN_TAB_IDS.includes(t.id));
   const moreTabs = tabs.filter(t => !MAIN_TAB_IDS.includes(t.id));
@@ -1406,7 +1417,12 @@ export default function StationView({
               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: syncState === 'error' ? '#B42318' : '#3E9B62' }} />
               {(lang === 'vi' ? meta.vi : meta.en).replace(/^Team\s+/i, '')} · {isHistoryView ? formatDate(today) : 'Live'}
             </span>
-            {totalQty > 0 && (
+            {hideOrderWork ? (
+              <div className="rounded-full px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}
+                title={lang === 'vi' ? 'Đã làm hôm nay' : 'Made today'}>
+                {madeToday} {lang === 'vi' ? 'đã làm' : 'made'}
+              </div>
+            ) : totalQty > 0 && (
               <div className="rounded-full px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#C9A84C', color: '#2A1810' }}>
                 {doneQty}/{totalQty}
               </div>
@@ -1454,7 +1470,7 @@ export default function StationView({
           </div>
         </div>
         {/* Progress bar */}
-        <div className="h-1 hidden sm:block" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+        <div className={`h-1 hidden ${hideOrderWork ? '' : 'sm:block'}`} style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
           <div className="h-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: '#C9A84C' }} />
         </div>
         {/* Tab navigation — Axel, 2026-11-06: the bar had 8-9 tabs squeezed into tiny labels.
@@ -1764,7 +1780,7 @@ export default function StationView({
       {/* New-order alert banner (2026-09-04) — dismissed by tapping it (jumps to Commande) or
           the close icon; not auto-cleared on tab focus, so it stays until the chef actually
           acknowledges it rather than disappearing just because the browser tab blinked active. */}
-      {newOrderAlert > 0 && (
+      {newOrderAlert > 0 && !hideOrderWork && (
         <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 pt-3`}>
           <button
             onClick={() => { setNewOrderAlert(0); setActiveTab('commande'); setOrderFilter(null); }}
@@ -1830,7 +1846,8 @@ export default function StationView({
           so it's always clear which day you're looking at (removes today/tomorrow confusion) */}
       {tomorrow && (activeTab === 'production' || activeTab === 'commande' || activeTab === 'termine')
         && !(v2 && stockTeamNav && activeTab === 'production' && prodDay === 'today'
-          && ![...todayAssignments, ...tomorrowAsg].some(a => !a.is_extra && !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status))) && (
+          && ![...todayAssignments, ...tomorrowAsg].some(a => !a.is_extra && !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)))
+        && !(hideOrderWork && activeTab === 'production') && (
         <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 ${v2 ? 'pt-3' : 'pt-4'} space-y-2.5`}>
           <div className={v2 ? 'flex gap-1 p-1 rounded-2xl' : 'flex gap-2'} style={v2 ? { backgroundColor: '#EADFD0' } : undefined}>
             {([['today', lang === 'vi' ? 'Hôm nay' : 'Today'], ['tomorrow', lang === 'vi' ? 'Ngày mai' : 'Tomorrow']] as const).map(([d, label]) => {
@@ -1899,13 +1916,13 @@ export default function StationView({
             .reduce((s, b) => s + (Number(b.qty) || 0), 0);
           return share > 0 ? share : a.qty_to_produce;
         };
-        const lateCards = isHistoryView ? [] : assignments.filter(isLate).filter(matchesOrder);
-        const production = assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder)
+        const lateCards = isHistoryView || hideOrderWork ? [] : assignments.filter(isLate).filter(matchesOrder);
+        const production = hideOrderWork ? [] : assignments.filter(a => !a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(a.status)).filter(matchesOrder)
           .filter(a => !lateOnly || isLate(a))
           .sort((x, y) => Number(isLate(y)) - Number(isLate(x)));
         const lateDone = lateCards.filter(a => a.status === 'done');
-        const inStock = assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
-        const cancelledCards = assignments.filter(a => a.cancelled).filter(matchesOrder);
+        const inStock = hideOrderWork ? [] : assignments.filter(a => !a.cancelled && a.status === 'skip').filter(matchesOrder);
+        const cancelledCards = hideOrderWork ? [] : assignments.filter(a => a.cancelled).filter(matchesOrder);
         return (
         <div className={`max-w-3xl ${v2 ? 'lg:max-w-6xl' : ''} mx-auto px-4 py-5 space-y-3 pb-28`}>
           {/* Delivered before declared (Axel, 2026-10-23) — one line, tap = only those cards */}
@@ -1944,7 +1961,7 @@ export default function StationView({
             </button>
           )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
-          {orderGroups.length > 1 && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
+          {orderGroups.length > 1 && !hideOrderWork && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
               <button onClick={() => setOrderFilter(null)}
                 className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap active:scale-95 transition-all"
@@ -1972,7 +1989,7 @@ export default function StationView({
               })}
             </div>
           )}
-          {orderFilter && (
+          {orderFilter && !hideOrderWork && (
             <div className="rounded-xl px-4 py-2 flex items-center justify-between text-sm font-semibold"
               style={{ backgroundColor: '#F6F1EA', color: '#92600A', border: '1px solid #C9A84C' }}>
               <span>🔎 {lang === 'vi' ? 'Đang lọc theo' : 'Filtering by'} <span className="font-mono font-bold">{orderFilter}</span></span>
@@ -1981,7 +1998,7 @@ export default function StationView({
               </button>
             </div>
           )}
-          {production.length === 0 && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
+          {production.length === 0 && !hideOrderWork && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
             <div className="text-center py-20">
               <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: '#572C1A' }} />
               {prodDay === 'tomorrow' && assignments.length === 0 ? (
