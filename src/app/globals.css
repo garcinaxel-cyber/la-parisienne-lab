@@ -74,3 +74,8 @@
 @media (max-width: 639px) {
   .lp-station input, .lp-station textarea, .lp-station select { font-size: 16px !important; }
 }
+
+/* UI v2: a card leaving the list after Mark done / In stock / Done + send (display only) */
+@keyframes lp-leave { 0% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateX(56px) scale(.98); } }
+.lp-leave { animation: lp-leave .3s cubic-bezier(.4,0,.2,1) forwards; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .lp-leave { animation: none; opacity: .4; } }

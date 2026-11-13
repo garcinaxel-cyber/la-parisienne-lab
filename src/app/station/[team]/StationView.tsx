@@ -15,6 +15,7 @@ import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh';
 import RawMaterialsTab from './RawMaterialsTab';
 import StockProductionPanel from './StockProductionPanel';
 import { isUiV2Team } from '@/lib/ui-v2';
+import { UI_THEMES, applyUiTheme, readUiTheme, type UiThemeId } from '@/lib/ui-theme';
 import HrTeamTab from './HrTeamTab';
 import MonthAnalytics from './MonthAnalytics';
 import LabStockPanel from './LabStockPanel';
@@ -346,6 +347,10 @@ export default function StationView({
   const [orderView, setOrderView] = useState<'sp' | 'don'>('sp');
   const [orderFilter, setOrderFilter] = useState<string | null>(null);
   const [lateOnly, setLateOnly] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UiThemeId>('ivoire');
+  useEffect(() => { const t = readUiTheme(); setUiTheme(t); applyUiTheme(t); }, []);
+  const pickTheme = (t: UiThemeId) => { setUiTheme(t); applyUiTheme(t, true); };
+  const [orderSheet, setOrderSheet] = useState(false); // UI v2: order list in a sheet when there are many orders
   const [todayAssignments, setTodayAssignments] = useState(initial);
   const [tomorrowAsg, setTomorrowAsg] = useState(tomorrowAssignments);
   const assignments = prodDay === 'tomorrow' ? tomorrowAsg : todayAssignments;
@@ -1618,6 +1623,20 @@ export default function StationView({
                 </div>
               ))}
               </div>
+              {/* Colours — per phone (Axel, 2026-11-13) */}
+              <div className="mt-6 sm:max-w-5xl sm:mx-auto">
+                <div className="text-[10.5px] font-bold tracking-[0.18em] uppercase pb-2" style={{ color: '#C9A84C' }}>{L2('Màu giao diện · chỉ trên máy này', 'Colours · this phone only')}</div>
+                <div className="grid grid-cols-4 gap-2 sm:flex sm:gap-2">
+                  {UI_THEMES.map(th => (
+                    <button key={th.id} onClick={() => pickTheme(th.id)} aria-pressed={uiTheme === th.id}
+                      className="rounded-2xl p-2 flex flex-col items-center gap-1.5 lp-press sm:flex-row sm:px-3"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.07)', border: uiTheme === th.id ? '2px solid #F6F1EA' : '1px solid rgba(255,255,255,0.08)' }}>
+                      <span className="flex -space-x-1.5">{th.swatch.map(c => <span key={c} className="w-4 h-4 rounded-full" style={{ background: c, boxShadow: '0 0 0 1.5px rgba(0,0,0,.25)' }} />)}</span>
+                      <span className="text-[10.5px] font-bold text-white leading-tight text-center">{lang === 'vi' ? th.vi : th.en}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="mt-6 rounded-2xl p-1.5 sm:hidden" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="flex items-center justify-between px-2.5 h-12">
                   <span className="text-[13.5px] font-semibold text-white">{L2('Ngôn ngữ', 'Language')}</span>
@@ -1896,6 +1915,36 @@ export default function StationView({
         </div>
       )}
 
+      {/* UI v2 order sheet (Axel, 2026-11-13) — same order list and filter as the chips, in a sheet */}
+      {orderSheet && (
+        <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center lp-overlay" style={{ backgroundColor: 'rgba(20,12,8,0.45)' }} onClick={() => setOrderSheet(false)}>
+          <div className="w-full sm:max-w-md max-h-[75vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white px-4 pt-3 pb-[calc(16px+env(safe-area-inset-bottom))] lp-sheet" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 rounded-full mx-auto mb-3" style={{ backgroundColor: '#E6DCCF' }} />
+            <div className="lp-display text-[20px] font-bold" style={{ color: '#2A1810' }}>{lang === 'vi' ? 'Xem một đơn' : 'Show one order'}</div>
+            <div className="mt-3 flex flex-col gap-1.5">
+              <button onClick={() => { setOrderFilter(null); setOrderSheet(false); }}
+                className="h-12 px-4 rounded-2xl text-left text-sm font-bold lp-press"
+                style={!orderFilter ? { backgroundColor: '#2A1810', color: '#FFFFFF' } : { border: '1px solid #E6DCCF', color: '#2A1810' }}>
+                {lang === 'vi' ? 'Tất cả đơn' : 'All orders'}
+              </button>
+              {orderGroups.map(g => {
+                const active = orderFilter === g.ref;
+                const n = g.items.filter(it => !it.a.cancelled && ['pending', 'in_progress', 'partial', 'blocked'].includes(it.a.status)).length;
+                return (
+                  <button key={g.ref} onClick={() => { setOrderFilter(active ? null : g.ref); setOrderSheet(false); }}
+                    className="min-h-[48px] px-4 py-2 rounded-2xl text-left text-sm lp-press flex items-center gap-2"
+                    style={active ? { backgroundColor: '#2A1810', color: '#FFFFFF' } : { border: g.boSung ? '1px solid #C9A84C' : '1px solid #E6DCCF', color: '#2A1810', backgroundColor: g.boSung ? '#FBF4E1' : '#FFFFFF' }}>
+                    <span className="font-bold font-mono text-[13px]">{g.boSung && '⚡ '}{g.ref}</span>
+                    <span className="flex-1 truncate">{g.shop}</span>
+                    <span className="text-xs font-bold" style={{ color: active ? '#FFFFFF' : n > 0 ? '#8A6418' : '#256A45' }}>{n > 0 ? (lang === 'vi' ? `còn ${n}` : `${n} left`) : '✓'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── PRODUCTION TAB ─── */}
       {activeTab === 'production' && (() => {
         // Order filter (point 2): narrow this tab's lists to one order's cards. The
@@ -1962,6 +2011,14 @@ export default function StationView({
           )}
           {/* Order-filter chips (point 2) — pick one order to see only its cards */}
           {orderGroups.length > 1 && !hideOrderWork && !(STOCK_PROD_TEAMS.includes(team) && prodDay === 'today' && production.length === 0 && !orderFilter) && (
+            v2 && orderGroups.length > 7 ? (
+              // UI v2 (Axel, 2026-11-13): many orders → one button opening the same list in a sheet
+              <button onClick={() => setOrderSheet(true)}
+                className="h-9 px-3.5 rounded-full text-xs font-bold whitespace-nowrap lp-press inline-flex items-center gap-1.5"
+                style={orderFilter ? { backgroundColor: '#2A1810', color: '#FFFFFF' } : { backgroundColor: '#FFFFFF', border: '1px solid #E6DCCF', color: '#2A1810' }}>
+                {lang === 'vi' ? 'Đơn' : 'Order'}: {orderFilter ?? (lang === 'vi' ? 'tất cả' : 'all')} · {orderGroups.length} <ChevronRight size={13} className="rotate-90" />
+              </button>
+            ) : (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
               <button onClick={() => setOrderFilter(null)}
                 className="shrink-0 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap active:scale-95 transition-all"
@@ -1988,6 +2045,7 @@ export default function StationView({
                 );
               })}
             </div>
+            )
           )}
           {orderFilter && !hideOrderWork && (
             <div className="rounded-xl px-4 py-2 flex items-center justify-between text-sm font-semibold"
@@ -2683,7 +2741,7 @@ export default function StationView({
             </div>
           )}
           {upcomingData.map(d => {
-            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
             const isExpanded = expandedHistoryDate === d.delivery_date;
@@ -2826,7 +2884,7 @@ export default function StationView({
           )}
           {historyData.map(d => {
             const pct = d.totalQty ? Math.round(d.doneQty / d.totalQty * 100) : 0;
-            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
             const isExpanded = expandedHistoryDate === d.delivery_date;
@@ -3719,6 +3777,9 @@ function ProductionCard({
   const isUpdating = updating === a.id;
   // Breakdown collapsed by default on phones (open on sm+ via CSS)
   const [showBreakdown, setShowBreakdown] = useState(false);
+  // UI v2: the card slides out before the action that removes it from the list (display only).
+  const [leaving, setLeaving] = useState(false);
+  const leaveThen = (fn: () => void) => { if (!v2) { fn(); return; } setLeaving(true); setTimeout(() => { fn(); setLeaving(false); }, 320); };
   const canAdvance = !readOnly && !a.cancelled && ['pending', 'in_progress', 'partial'].includes(a.status);
   // "Có sẵn" (served from stock) only for the families really kept in stock (Axel, 2026-10-28:
   // "les seuls produits pouvant être en stock pour la prod sont chocolat, tira, maca et biscuit").
@@ -3736,7 +3797,7 @@ function ProductionCard({
   };
 
   return (
-    <div className="rounded-2xl overflow-hidden"
+    <div className={`rounded-2xl overflow-hidden ${leaving ? 'lp-leave' : ''}`}
       style={{
         backgroundColor: a.cancelled ? '#FBF7F0' : 'white',
         border: a.cancelled ? '1px solid #E6DCCF' : late ? '2px solid #B42318' : '1px solid #E6DCCF',
@@ -3916,6 +3977,66 @@ function ProductionCard({
         </div>
 
         {/* Action buttons — horizontal row below content on phones, column on the right from sm up */}
+        {v2 ? (
+          // UI v2 (Axel, 2026-11-13): one big primary action at full width, the secondary ones
+          // underneath — same buttons, same handlers, only the layout and a short exit animation.
+          <div className="flex flex-col w-full sm:w-44 gap-2 shrink-0 order-last sm:order-none">
+            {late && (
+              <button onClick={() => leaveThen(() => onDoneAndSend!(a))} disabled={isUpdating || leaving}
+                className="w-full h-12 rounded-2xl font-bold text-white text-[15px] lp-press"
+                style={{ backgroundColor: '#B42318', opacity: isUpdating ? 0.6 : 1 }}>
+                {isUpdating ? '…' : (lang === 'vi' ? '✓ Xong + nhập kho' : '✓ Done + send to stock')}
+              </button>
+            )}
+            {canAdvance && !late && (
+              <button onClick={() => (a.status === 'pending' ? onAdvance(a) : leaveThen(() => onAdvance(a)))} disabled={isUpdating || leaving}
+                className="w-full h-12 rounded-2xl font-bold text-white text-[15px] lp-press"
+                style={{ backgroundColor: '#2A1810', opacity: isUpdating ? 0.6 : 1 }}>
+                {isUpdating ? '…' : `${a.status === 'pending' ? '' : '✓ '}${actionLabel[a.status] ?? ''}`}
+              </button>
+            )}
+            {a.status === 'blocked' && !readOnly && !late && (
+              <button onClick={() => onAdvance(a)} disabled={isUpdating}
+                className="w-full h-12 rounded-2xl font-bold text-[15px] lp-press"
+                style={{ backgroundColor: '#2A1810', color: '#FFFFFF', opacity: isUpdating ? 0.6 : 1 }}>
+                {lang === 'vi' ? 'Mở lại' : 'Unblock'}
+              </button>
+            )}
+            {(canMarkStock || (a.status === 'in_progress' && !readOnly && !a.corrected_at) || canBlock || (a.status === 'blocked' && !readOnly && late)) && (
+              <div className="flex sm:flex-col gap-2">
+                {a.status === 'in_progress' && !readOnly && !a.corrected_at && (
+                  <button onClick={() => onPartial(a)}
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold border lp-press"
+                    style={{ borderColor: '#E6DCCF', color: '#572C1A', backgroundColor: '#FFFFFF' }}>
+                    {lang === 'vi' ? 'Ghi số' : 'Enter qty'}
+                  </button>
+                )}
+                {canMarkStock && (
+                  <button onClick={() => leaveThen(() => onMarkInStock(a))} disabled={isUpdating || leaving}
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 lp-press"
+                    style={{ border: '1px solid #D9C4A6', color: '#6B4A2B', backgroundColor: '#F3EDE3', opacity: isUpdating ? 0.6 : 1 }}>
+                    <Package size={12} />
+                    {lang === 'vi' ? 'Có sẵn' : 'In stock'}
+                  </button>
+                )}
+                {canBlock && (
+                  <button onClick={() => onBlocked(a)} disabled={isUpdating}
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold lp-press"
+                    style={{ border: '1px solid #FCA5A5', color: '#B42318', backgroundColor: '#FBEAE8', opacity: isUpdating ? 0.6 : 1 }}>
+                    {lang === 'vi' ? 'Chặn' : 'Block'}
+                  </button>
+                )}
+                {a.status === 'blocked' && !readOnly && late && (
+                  <button onClick={() => onAdvance(a)} disabled={isUpdating}
+                    className="flex-1 sm:flex-none h-10 rounded-xl text-xs font-semibold lp-press"
+                    style={{ border: '1px solid #E6DCCF', color: '#572C1A', backgroundColor: '#F7F1E8', opacity: isUpdating ? 0.6 : 1 }}>
+                    {lang === 'vi' ? 'Mở lại' : 'Unblock'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="flex w-full sm:w-auto sm:flex-col gap-2 shrink-0 order-last sm:order-none">
           {late && (
             <button onClick={() => onDoneAndSend!(a)} disabled={isUpdating}
@@ -3961,6 +4082,7 @@ function ProductionCard({
             </button>
           )}
         </div>
+        )}
       </div>
 
       {/* Breakdown — tap to expand on phones, always visible from sm up */}
@@ -3971,10 +4093,17 @@ function ProductionCard({
             className="w-full px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 sm:pointer-events-none"
             style={{ color: '#572C1A', backgroundColor: '#F7F1E8' }}>
             <Store size={10} />
-            <span>{lang === 'vi' ? 'Khách hàng' : 'Clients'} · {breakdown.length}</span>
+            {v2 && !showBreakdown ? (
+              // UI v2: first client + order ref readable without opening (Axel, 2026-11-13)
+              <span className="sm:hidden normal-case tracking-normal text-[12px] font-semibold truncate min-w-0" style={{ color: '#2A1810' }}>
+                ×{breakdown[0].qty} · {(breakdown[0].shop_name ?? '').replace(/^La Paris\s+/i, '')}{breakdown[0].order_ref ? <span className="font-mono text-[10px] font-medium" style={{ color: '#8A6A4E' }}> {breakdown[0].order_ref.replace(/^REP\/\d{4}\//, '')}</span> : null}
+                {breakdown.length > 1 && <span className="font-bold" style={{ color: '#8A6A4E' }}> +{breakdown.length - 1}</span>}
+              </span>
+            ) : null}
+            <span className={v2 && !showBreakdown ? 'hidden sm:inline' : ''}>{lang === 'vi' ? 'Khách hàng' : 'Clients'} · {breakdown.length}</span>
             {/* Collapsed summary: earliest delivery time hints the deadline without opening */}
             {!showBreakdown && breakdown.some(b => b.delivery_time) && (
-              <span className="sm:hidden normal-case font-bold px-1.5 py-0.5 rounded"
+              <span className="sm:hidden normal-case font-bold px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
                 style={{ backgroundColor: '#F6F1EA', color: '#C9A84C' }}>
                 ⏰ {breakdown.map(b => b.delivery_time).filter(Boolean).sort()[0]?.slice(0, 5)}
               </span>
