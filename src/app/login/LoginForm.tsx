@@ -1,11 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') ?? '/dashboard';
   const [email, setEmail] = useState('');
@@ -20,9 +19,12 @@ export default function LoginForm() {
     const supabase = createClient();
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
     if (err) { setError(err.message); setLoading(false); return; }
-    // Redirect to original destination (e.g. /station/hung from QR code)
-    router.push(redirectTo);
-    router.refresh();
+    // Redirect to original destination (e.g. /station/hung from QR code).
+    // Full page load, not router.push (Axel, 2026-11-13): the soft navigation login → /dashboard →
+    // role redirect (e.g. /purchasing) crashed with "Application error" until a manual refresh.
+    // Same-site paths only.
+    const dest = redirectTo.startsWith('/') && !redirectTo.startsWith('//') ? redirectTo : '/dashboard';
+    window.location.assign(dest);
   }
 
   return (
