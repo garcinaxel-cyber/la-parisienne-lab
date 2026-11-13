@@ -2884,7 +2884,7 @@ export default function StationView({
           )}
           {historyData.map(d => {
             const pct = d.totalQty ? Math.round(d.doneQty / d.totalQty * 100) : 0;
-            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString('vi-VN', {
+            const dateLabel = new Date(d.delivery_date + 'T00:00:00').toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-GB', {
               weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             });
             const isExpanded = expandedHistoryDate === d.delivery_date;
