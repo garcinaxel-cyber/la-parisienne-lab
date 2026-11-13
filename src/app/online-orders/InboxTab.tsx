@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Loader2, ChevronLeft, FileText, Clock, ShoppingBag, Phone, Send, ImageIcon, Bell as AdIcon, Zap, X, Tag, Check } from 'lucide-react';
 import { createClient as createBrowserSupabase } from '@/lib/supabase-browser';
 import * as inbox from './inbox-actions';
-import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint, InboxTag, InboxConvOrder } from './inbox-actions';
+import type { InboxConversation, InboxMessage, InboxPage, InboxCustomerHint, InboxTag, InboxConvOrder, InboxOutAttachment } from './inbox-actions';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
 import type { InboxQuickReply } from './inbox-actions';
 import { useQuickReplies, filterReplies, QuickReplyPopup, QuickReplyManager } from './QuickReplies';
@@ -253,6 +253,52 @@ function Thread({ conv, readOnly, onBack, onCreateOrder, tags, onTagsChanged, on
     return () => clearInterval(t);
   }, [fetchNewer]);
 
+  // Optimistic sending (Hương, 2026-11-13: "tin nhắn load gửi đi hơi chậm"). The reply shows in the
+  // thread at once ("Đang gửi…") and the composer is free again; sends go out one by one in order,
+  // then the stored message replaces the bubble. A failed send stays red with "Thử lại".
+  const [pending, setPending] = useState<PendingSend[]>([]);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const convIdRef = useRef(conv.id);
+  convIdRef.current = conv.id;
+  const fetchNewerRef = useRef(fetchNewer);
+  fetchNewerRef.current = fetchNewer;
+  const scrollBottom = () => requestAnimationFrame(() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; });
+  const sendErr = (code?: string) => ({
+    window: tr('sendErrWindow'), unavailable: tr('sendErrUnavailable'), permission: tr('sendErrPermission'),
+    token: tr('sendErrToken'), disabled: tr('sendErrDisabled'),
+  } as Record<string, string>)[code ?? ''] ?? tr('sendErrGeneric');
+  function runSend(p: PendingSend) {
+    queue.current = queue.current.then(async () => {
+      const r = await inbox.sendInboxMessageAction(p.convId, p.text, p.payload);
+      const here = convIdRef.current === p.convId;
+      if (r.ok) {
+        if (here) await fetchNewerRef.current(true);
+        setPending(prev => prev.filter(x => x.tempId !== p.tempId));
+        return;
+      }
+      // Parts go out text first, then each attachment: drop what Meta already accepted.
+      let n = r.sent ?? 0; let text = p.text; let payload = p.payload;
+      if (n > 0 && text.trim()) { text = ''; n--; }
+      payload = payload.slice(n);
+      if ((r.sent ?? 0) > 0 && here) await fetchNewerRef.current(true);
+      setPending(prev => prev.map(x => x.tempId === p.tempId ? { ...x, text, payload, status: 'failed', error: sendErr(r.error) } : x));
+    }).catch(() => {
+      setPending(prev => prev.map(x => x.tempId === p.tempId ? { ...x, status: 'failed', error: tr('sendErrGeneric') } : x));
+    });
+  }
+  function enqueue(text: string, payload: InboxOutAttachment[]) {
+    const p: PendingSend = { tempId: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, convId: conv.id, text, payload, status: 'sending', at: new Date().toISOString() };
+    setPending(prev => [...prev, p]);
+    stickToBottom.current = true; scrollBottom();
+    runSend(p);
+  }
+  function retry(p: PendingSend) {
+    const q = { ...p, status: 'sending' as const, error: undefined };
+    setPending(prev => prev.map(x => x.tempId === p.tempId ? q : x));
+    runSend(q);
+  }
+  const shownPending = pending.filter(p => p.convId === conv.id);
+
   async function loadOlder() {
     const first = msgs[0]?.sentAt; if (!first) return;
     const el = scroller.current; const prevH = el?.scrollHeight ?? 0;
@@ -336,11 +382,34 @@ function Thread({ conv, readOnly, onBack, onCreateOrder, tags, onTagsChanged, on
               </div>
             );
           })}
+          {!loading && shownPending.map(p => (
+            <div key={p.tempId} className="flex flex-col gap-1 items-end" style={{ opacity: p.status === 'sending' ? 0.6 : 1 }}>
+              {p.payload.map((a, j) => a.type === 'image' ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={j} src={a.url} alt="" style={{ maxWidth: 220, maxHeight: 220, borderRadius: 12, border: `1px solid ${HAIR}`, objectFit: 'cover', backgroundColor: HAIR }} />
+              ) : (
+                <span key={j} className="flex items-center gap-2" style={{ background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 10, padding: '8px 10px', fontSize: 12.5, color: INK, maxWidth: 260 }}>
+                  <FileText size={16} color="#8A6D14" aria-hidden /><span className="truncate">{a.name ?? tr('inboxAttachment')}</span>
+                </span>
+              ))}
+              {p.text.trim() && (
+                <div style={{ maxWidth: '78%', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13.5, lineHeight: 1.45, padding: '8px 12px',
+                  backgroundColor: NAVY, color: '#FBF7F0', borderRadius: '14px 14px 4px 14px', outline: p.status === 'failed' ? '2px solid #B42318' : 'none' }}>{p.text}</div>
+              )}
+              {p.status === 'sending'
+                ? <div className="flex items-center gap-1" style={{ fontSize: 10.5, color: INK_LIGHT }}><Loader2 className="animate-spin" size={10} />{tr('sendSending')}</div>
+                : <div className="flex items-center gap-2" style={{ fontSize: 11, color: '#B42318' }} role="alert">
+                    <span>{p.error}</span>
+                    <button onClick={() => retry(p)} style={{ fontWeight: 700, textDecoration: 'underline' }}>{tr('sendRetry')}</button>
+                    <button onClick={() => setPending(prev => prev.filter(x => x.tempId !== p.tempId))} style={{ color: INK_LIGHT }}>{tr('sendDiscard')}</button>
+                  </div>}
+            </div>
+          ))}
         </div>
 
         <div className="px-3 lg:px-4 py-2.5 flex flex-col gap-2" style={{ backgroundColor: '#fff', borderTop: `1px solid ${HAIR}` }}>
           <div className="sm:hidden"><ReplyWindow lastInboundAt={conv.lastInboundAt} /></div>
-          <Composer readOnly={readOnly} conv={conv} onSent={() => fetchNewer(true)} />
+          <Composer readOnly={readOnly} conv={conv} onSend={enqueue} />
           {!readOnly && (
             <button onClick={createOrder} className="lg:hidden flex items-center justify-center gap-2"
               style={{ height: 46, borderRadius: 12, backgroundColor: GOLD, color: NAVY, fontWeight: 700, fontSize: 14 }}>
@@ -422,7 +491,9 @@ async function shrinkForSend(file: File): Promise<File> {
   } catch { return file; }
 }
 
-function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxConversation; onSent: () => void }) {
+type PendingSend = { tempId: string; convId: string; text: string; payload: InboxOutAttachment[]; status: 'sending' | 'failed'; error?: string; at: string };
+
+function Composer({ readOnly, conv, onSend }: { readOnly: boolean; conv: InboxConversation; onSend: (text: string, payload: InboxOutAttachment[]) => void }) {
   const { tr } = useL();
   const { replies } = useQuickReplies();
   const [text, setText] = useState('');
@@ -430,7 +501,6 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
   const [slash, setSlash] = useState<{ start: number; q: string } | null>(null);
   const [idx, setIdx] = useState(0);
   const [manage, setManage] = useState(false);
-  const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -444,7 +514,7 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
   const closed = hours >= (HUMAN_AGENT ? 24 * 7 : 24);
   const uploading = atts.some(a => a.status === 'uploading');
   const ready = atts.filter(a => a.status === 'ready');
-  const canSend = !readOnly && !closed && !sending && !uploading && (text.trim().length > 0 || ready.length > 0);
+  const canSend = !readOnly && !closed && !uploading && (text.trim().length > 0 || ready.length > 0);
 
   function autosize() {
     const el = ta.current; if (!el) return;
@@ -503,24 +573,14 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
     if (fileRef.current) fileRef.current.value = '';
   }
 
-  async function send() {
+  function send() {
     if (!canSend) return;
-    setSending(true); setErr(null);
+    setErr(null);
     const payload = ready.map(a => ({ type: a.kind === 'image' ? 'image' as const : (a.mime === 'video/mp4' ? 'video' as const : 'file' as const), url: a.url!, name: a.name, mime_type: a.mime }));
-    const r = await inbox.sendInboxMessageAction(conv.id, text, payload);
-    setSending(false);
-    if (r.ok) {
-      atts.forEach(a => a.preview?.startsWith('blob:') && URL.revokeObjectURL(a.preview));
-      setText(''); setAtts([]); onSent();
-      requestAnimationFrame(() => ta.current?.focus());
-      return;
-    }
-    if ((r.sent ?? 0) > 0) onSent();
-    const map: Record<string, string> = {
-      window: tr('sendErrWindow'), unavailable: tr('sendErrUnavailable'), permission: tr('sendErrPermission'),
-      token: tr('sendErrToken'), disabled: tr('sendErrDisabled'),
-    };
-    setErr(map[r.error ?? ''] ?? tr('sendErrGeneric'));
+    onSend(text, payload);
+    atts.forEach(a => a.preview?.startsWith('blob:') && URL.revokeObjectURL(a.preview));
+    setText(''); setAtts([]); setSlash(null);
+    requestAnimationFrame(() => ta.current?.focus());
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -577,7 +637,7 @@ function Composer({ readOnly, conv, onSent }: { readOnly: boolean; conv: InboxCo
         </label>
         <button onClick={send} disabled={!canSend} title={tr('sendBtn')} aria-label={tr('sendBtn')} className="flex items-center justify-center"
           style={{ width: 42, height: 38, borderRadius: 10, backgroundColor: NAVY, color: '#FBF7F0', flexShrink: 0, opacity: canSend ? 1 : 0.4 }}>
-          {sending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} aria-hidden />}
+          <Send size={16} aria-hidden />
         </button>
       </div>
       {manage && <QuickReplyManager readOnly={readOnly} onClose={() => setManage(false)} />}
