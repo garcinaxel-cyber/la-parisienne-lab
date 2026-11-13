@@ -49,7 +49,7 @@ export default function CustomersTab() {
       <div className="flex gap-2 mb-3 overflow-x-auto">
         {([['all', tr('fAll')], ['new', tr('custPillNew')], ['returning', tr('custPillReturning')]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
-            backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FFFAEE' : INK,
+            backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FBF7F0' : INK,
             border: filter === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}

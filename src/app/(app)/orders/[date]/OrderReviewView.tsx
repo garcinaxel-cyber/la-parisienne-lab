@@ -286,7 +286,7 @@ export default function OrderReviewView({
                           {breakdown.length > 0 && (
                             <button onClick={() => toggleBreakdown(a.id)}
                               className="flex items-center gap-1 text-[10px] font-semibold mt-0.5 transition-colors"
-                              style={{ color: '#2D6A4F' }}>
+                              style={{ color: '#572C1A' }}>
                               <Store size={9} />
                               {breakdown.length} {lang === 'vi' ? 'khách' : 'clients'}
                               <ChevronDown size={9} style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
@@ -346,12 +346,12 @@ export default function OrderReviewView({
                       </div>
                     </div>
                     {isExpanded && breakdown.length > 0 && (
-                      <div className="mx-4 mb-3 rounded-xl overflow-hidden text-xs" style={{ border: '1px solid #E0D49A' }}>
+                      <div className="mx-4 mb-3 rounded-xl overflow-hidden text-xs" style={{ border: '1px solid #E6DCCF' }}>
                         {breakdown.map((b, i) => (
                           <div key={i} className="flex items-center justify-between px-3 py-2"
-                            style={{ borderTop: i > 0 ? '1px solid #F5EFC8' : undefined, backgroundColor: i % 2 === 0 ? 'white' : '#FFFAEE' }}>
+                            style={{ borderTop: i > 0 ? '1px solid #F0E8DB' : undefined, backgroundColor: i % 2 === 0 ? 'white' : '#FBF7F0' }}>
                             <span className="text-ink font-medium">{b.shop_name}</span>
-                            <span className="font-bold" style={{ color: '#1A4731' }}>×{b.qty}</span>
+                            <span className="font-bold" style={{ color: '#2A1810' }}>×{b.qty}</span>
                           </div>
                         ))}
                       </div>

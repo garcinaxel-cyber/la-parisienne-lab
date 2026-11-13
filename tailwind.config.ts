@@ -5,16 +5,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        navy:        '#1A4731',   // Jungle
-        'navy-light':'#2D6A4F',   // Jungle light
+        navy:        '#2A1810',   // Cacao
+        'navy-light':'#572C1A',   // Brun La Paris
         gold:        '#C9A84C',
-        'gold-pale': '#FFFAEE',
-        'gold-light':'#F0D98A',
-        cream:       '#FFF4CC',   // Cream Soda
-        'cream-dark':'#F5E89A',   // Cream Soda darker
-        ink:         '#1A2C24',   // deep green-tinted text
+        'gold-pale': '#FBF7F0',
+        'gold-light':'#E9D3A4',
+        cream:       '#F6F1EA',   // Ivoire
+        'cream-dark':'#EADFD0',   // Ivoire darker
+        ink:         '#2E1B12',   // warm brown text
         'ink-light': '#6B7280',
-        'border-soft':'#E0D49A',  // warm border on cream
+        'border-soft':'#E6DCCF',  // warm border on ivory
         // Team colors
         'team-baby-mama': '#7c3aed',
         'team-hung':      '#0369a1',
@@ -30,7 +30,7 @@ const config: Config = {
       },
       fontFamily: {
         serif: ['Playfair Display', 'Georgia', 'serif'],
-        sans:  ['Inter', 'system-ui', 'sans-serif'],
+        sans:  ['Be Vietnam Pro', 'Inter', 'system-ui', 'sans-serif'],
       },
     },
   },

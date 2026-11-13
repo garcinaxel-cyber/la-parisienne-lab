@@ -314,7 +314,7 @@ export default function EventSalesView() {
               border: `1px solid ${scope === c.k ? NAVY : BORDER}`,
             }}>
             {c.dot && <span className="absolute rounded-full" style={{ top: 6, right: 7, width: 6, height: 6, backgroundColor: '#C9A84C' }} />}
-            <span className="block text-[10px] font-extrabold uppercase tracking-wide" style={{ color: scope === c.k ? '#F0D98A' : FAINT }}>{c.top}</span>
+            <span className="block text-[10px] font-extrabold uppercase tracking-wide" style={{ color: scope === c.k ? '#E9D3A4' : FAINT }}>{c.top}</span>
             <span className="block text-[15px] font-extrabold">{c.main}</span>
           </button>
         ))}

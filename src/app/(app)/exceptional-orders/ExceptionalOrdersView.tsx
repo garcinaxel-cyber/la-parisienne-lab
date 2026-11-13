@@ -304,11 +304,11 @@ Link anyway?`;
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowLink(true)}
-            className="px-3 py-2 rounded-xl font-semibold text-sm inline-flex items-center gap-1.5 border" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
+            className="px-3 py-2 rounded-xl font-semibold text-sm inline-flex items-center gap-1.5 border" style={{ borderColor: '#E6DCCF', color: '#2A1810' }}>
             <Link2 size={15} /> {vi ? 'Link shop' : 'Shop link'}
           </button>
           <button onClick={() => setShowNew(true)}
-            className="px-4 py-2 rounded-xl font-bold text-white text-sm inline-flex items-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
+            className="px-4 py-2 rounded-xl font-bold text-white text-sm inline-flex items-center gap-1.5" style={{ backgroundColor: '#2A1810' }}>
             <Plus size={15} /> {vi ? 'Đơn mới' : 'New order'}
           </button>
         </div>
@@ -323,8 +323,8 @@ Link anyway?`;
           <button key={key} onClick={() => setFilter(key)}
             className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
             style={filter === key
-              ? { backgroundColor: '#1A4731', color: 'white' }
-              : { backgroundColor: 'white', border: '1px solid #E0D49A', color: '#1A4731' }}>
+              ? { backgroundColor: '#2A1810', color: 'white' }
+              : { backgroundColor: 'white', border: '1px solid #E6DCCF', color: '#2A1810' }}>
             {label} · {count}
           </button>
         ))}
@@ -348,16 +348,16 @@ Link anyway?`;
             {byDate.get(date)!.map(o => {
               const pb = prodBadge(o);
               return (
-                <div key={o.id} className="card p-4" style={selected.has(o.id) ? { borderColor: '#2D6A4F', boxShadow: '0 0 0 1.5px #2D6A4F' } : undefined}>
+                <div key={o.id} className="card p-4" style={selected.has(o.id) ? { borderColor: '#572C1A', boxShadow: '0 0 0 1.5px #572C1A' } : undefined}>
                   <div className="flex items-start gap-3 flex-wrap">
                     {o.fromShop && o.needsOdoo && (
-                      <button onClick={() => toggleSelect(o.id)} className="shrink-0 mt-1 text-gray-300" style={selected.has(o.id) ? { color: '#2D6A4F' } : undefined} aria-label="select">
+                      <button onClick={() => toggleSelect(o.id)} className="shrink-0 mt-1 text-gray-300" style={selected.has(o.id) ? { color: '#572C1A' } : undefined} aria-label="select">
                         {selected.has(o.id) ? <CheckSquare size={20} /> : <Square size={20} />}
                       </button>
                     )}
                     {o.imageUrl
-                      ? <img src={thumb(o.imageUrl, 112)} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E0D49A' }} />
-                      : <div className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
+                      ? <img src={thumb(o.imageUrl, 112)} alt="" className="w-11 h-11 rounded-xl object-cover shrink-0" style={{ border: '1px solid #E6DCCF' }} />
+                      : <div className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center text-lg" style={{ backgroundColor: '#F6F1EA' }}>🥐</div>}
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-navy flex items-center gap-2 flex-wrap">
                         ×{o.qty} · {o.name}
@@ -414,7 +414,7 @@ Link anyway?`;
                         {vi ? 'Đơn Odoo' : 'Odoo order'} <span className="font-mono font-bold">{o.suggestedRef}</span>{o.suggestedShop ? ` · ${o.suggestedShop}` : ''} — {vi ? 'cùng SKU + ngày giao. Là đơn này?' : 'same SKU + delivery date. Is this it?'}
                       </span>
                       <button onClick={() => confirmMatch(o)} disabled={busy === o.id}
-                        className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+                        className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                         <CheckCircle2 size={13} /> {busy === o.id ? '…' : (vi ? 'Liên kết' : 'Link')}
                       </button>
                       <button onClick={() => rejectMatch(o)} disabled={busy === o.id}
@@ -438,7 +438,7 @@ Link anyway?`;
                       </button>
                     )}
                     <button onClick={() => openEdit(o)} disabled={busy === o.id}
-                      className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
+                      className="px-3 py-2 rounded-xl text-sm font-semibold border inline-flex items-center gap-1.5 disabled:opacity-40" style={{ borderColor: '#E6DCCF', color: '#2A1810' }}>
                       <PenLine size={14} /> {vi ? 'Sửa' : 'Edit'}
                     </button>
                     {o.needsOdoo && (
@@ -458,7 +458,7 @@ Link anyway?`;
       {selected.size > 0 && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 40, display: 'flex', justifyContent: 'center', padding: 16, pointerEvents: 'none' }}>
           <div className="bg-white rounded-2xl shadow-lg p-3 flex items-center gap-3 flex-wrap max-w-lg w-full"
-            style={{ border: '1px solid #E0D49A', pointerEvents: 'auto' }}>
+            style={{ border: '1px solid #E6DCCF', pointerEvents: 'auto' }}>
             <div className="flex-1 min-w-0 text-sm">
               <div className="font-bold text-navy">
                 {selected.size} {vi ? 'đơn đã chọn' : 'order(s) selected'}
@@ -480,15 +480,15 @@ Link anyway?`;
               {addOrderResult?.ok && <div className="text-xs mt-0.5" style={{ color: '#065F46' }}>{vi ? 'Đã thêm vào' : 'Added to'} {addOrderResult.orderRef}</div>}
             </div>
             <button onClick={() => { setSelected(new Set()); setOdooResult(null); setAddOrderResult(null); }} disabled={creatingOdoo || addingToOrder}
-              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#E0D49A', color: '#1A4731' }}>
+              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#E6DCCF', color: '#2A1810' }}>
               {vi ? 'Hủy' : 'Cancel'}
             </button>
             <button onClick={() => { setAddOrderResult(null); setPickExistingOrder(true); }} disabled={!selectionValid || selectedDates.length !== 1 || creatingOdoo || addingToOrder}
-              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#1A4731', color: '#1A4731' }}>
+              className="px-3 py-2 rounded-xl text-sm font-semibold border disabled:opacity-40" style={{ borderColor: '#2A1810', color: '#2A1810' }}>
               {vi ? 'Thêm vào đơn có sẵn' : 'Add to existing order'}
             </button>
             <button onClick={createOdooBatch} disabled={!selectionValid || creatingOdoo || addingToOrder}
-              className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+              className="px-4 py-2 rounded-xl text-sm font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
               <Send size={14} /> {creatingOdoo ? (vi ? 'Đang tạo…' : 'Creating…') : (vi ? 'Tạo đơn Odoo' : 'Create Odoo order')}
             </button>
           </div>
@@ -518,7 +518,7 @@ Link anyway?`;
                   <button key={c.orderRef} onClick={() => addToExisting(c.orderRef)} disabled={addingToOrder}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>{c.name}</div>
+                      <div className="text-sm font-medium truncate" style={{ color: '#2A1810' }}>{c.name}</div>
                       <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
                         <span className="font-mono font-bold">{c.orderRef}</span>
                         {c.shop && <span>· {c.shop}</span>}
@@ -544,15 +544,15 @@ Link anyway?`;
 
             <label className={labelCls}>{vi ? 'Sản phẩm (toàn bộ danh mục)' : 'Product (whole catalogue)'}</label>
             {chosen ? (
-              <div className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#F0F9F4', border: '1.5px solid #2D6A4F' }}>
+              <div className="flex items-center gap-3 rounded-xl p-2.5" style={{ backgroundColor: '#F7F1E8', border: '1.5px solid #572C1A' }}>
                 {chosen.imageUrl
                   ? <img src={thumb(chosen.imageUrl, 96)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
-                  : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
+                  : <div className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: '#F6F1EA' }}>🥐</div>}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold truncate" style={{ color: '#1A4731' }}>{chosen.nameVi}</div>
+                  <div className="text-sm font-semibold truncate" style={{ color: '#2A1810' }}>{chosen.nameVi}</div>
                   <div className="flex items-center gap-1.5">
                     {chosen.sku && <span className="text-[10px] font-mono text-ink-light">{chosen.sku}</span>}
-                    {chosen.category && <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>{chosen.category}</span>}
+                    {chosen.category && <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ backgroundColor: '#F7F1E8', color: '#572C1A' }}>{chosen.category}</span>}
                   </div>
                 </div>
                 <button onClick={() => { setChosen(null); setQuery(''); }} className="p-1 text-ink-light"><X size={16} /></button>
@@ -572,8 +572,8 @@ Link anyway?`;
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-green-50" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                         {p.imageUrl
                           ? <img src={thumb(p.imageUrl, 80)} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
-                          : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
-                        <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#1A4731' }}>{p.nameVi || p.nameEn || p.sku || '—'}</span>
+                          : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#F6F1EA' }}>🥐</div>}
+                        <span className="flex-1 min-w-0 text-sm font-medium truncate" style={{ color: '#2A1810' }}>{p.nameVi || p.nameEn || p.sku || '—'}</span>
                         {p.sku && <span className="text-[10px] font-mono text-ink-light shrink-0">{p.sku}</span>}
                       </button>
                     ))}
@@ -639,7 +639,7 @@ Link anyway?`;
             {createErr && <p className="text-xs text-red-600">{createErr}</p>}
             <div className="flex gap-2 pt-1">
               <button onClick={resetModal} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-200 text-gray-500">{vi ? 'Hủy' : 'Cancel'}</button>
-              <button onClick={createOrder} disabled={creating || !chosen} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+              <button onClick={createOrder} disabled={creating || !chosen} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                 {creating ? '…' : (vi ? 'Tạo đơn' : 'Create order')}
               </button>
             </div>
@@ -695,7 +695,7 @@ Link anyway?`;
             </div>
             <div className="flex gap-2 pt-1">
               <button onClick={() => setEditFor(null)} disabled={savingEdit} className="flex-1 py-2.5 rounded-xl font-semibold border border-gray-200 text-gray-500">{vi ? 'Hủy' : 'Cancel'}</button>
-              <button onClick={saveEdit} disabled={savingEdit} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+              <button onClick={saveEdit} disabled={savingEdit} className="flex-1 py-2.5 rounded-xl font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                 {savingEdit ? '…' : (vi ? 'Lưu' : 'Save')}
               </button>
             </div>
@@ -735,7 +735,7 @@ Link anyway?`;
                     <button key={`${c.orderRef}-${c.sku}-${i}`} onClick={() => doManualLink(c)} disabled={busy === linkFor.id}
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-green-50 disabled:opacity-40" style={{ borderTop: i > 0 ? '1px solid #F3F4F6' : undefined }}>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate" style={{ color: '#1A4731' }}>×{c.qty} · {c.name}</div>
+                        <div className="text-sm font-medium truncate" style={{ color: '#2A1810' }}>×{c.qty} · {c.name}</div>
                         <div className="text-[11px] text-ink-light flex items-center gap-2 flex-wrap">
                           <span className="font-mono font-bold">{c.orderRef}</span>
                           {c.shop && <span>· {c.shop}</span>}
@@ -769,21 +769,21 @@ Link anyway?`;
             </p>
             {shopUrl ? (
               <>
-                <div className="rounded-xl px-3 py-2.5 text-xs font-mono break-all" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB', color: '#1A4731' }}>
+                <div className="rounded-xl px-3 py-2.5 text-xs font-mono break-all" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB', color: '#2A1810' }}>
                   {shopUrl}
                 </div>
                 {qrDataUrl && (
                   <div className="flex flex-col items-center gap-2 py-1">
                     <img src={qrDataUrl} alt="QR" className="w-40 h-40 rounded-xl" style={{ border: '1px solid #E5E7EB' }} />
                     <a href={qrDataUrl} download="la-parisienne-lab-order-qr.png"
-                      className="text-xs font-semibold underline" style={{ color: '#1A4731' }}>
+                      className="text-xs font-semibold underline" style={{ color: '#2A1810' }}>
                       {vi ? 'Tải QR để in cho từng shop' : 'Download QR to print for each shop'}
                     </a>
                   </div>
                 )}
                 <div className="flex gap-2">
                   <button onClick={copyLink}
-                    className="flex-1 py-2.5 rounded-xl font-bold text-white text-sm inline-flex items-center justify-center gap-1.5" style={{ backgroundColor: '#1A4731' }}>
+                    className="flex-1 py-2.5 rounded-xl font-bold text-white text-sm inline-flex items-center justify-center gap-1.5" style={{ backgroundColor: '#2A1810' }}>
                     {copied ? <><CheckCircle2 size={14} /> {vi ? 'Đã copy!' : 'Copied!'}</> : (vi ? 'Copy link' : 'Copy link')}
                   </button>
                   <button onClick={() => setConfirmRegen(true)} disabled={regenerating}
@@ -809,7 +809,7 @@ Link anyway?`;
               <div className="space-y-2">
                 <p className="text-sm text-ink-light">{vi ? 'Chưa có link (chạy migration lab_v23) hoặc link bị tắt.' : 'No link yet (run migration lab_v23) or it was deactivated.'}</p>
                 <button onClick={regenerate} disabled={regenerating}
-                  className="w-full py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+                  className="w-full py-2.5 rounded-xl font-bold text-white text-sm disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                   {regenerating ? '…' : (vi ? 'Tạo link' : 'Create link')}
                 </button>
               </div>

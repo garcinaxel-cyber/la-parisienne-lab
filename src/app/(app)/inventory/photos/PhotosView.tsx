@@ -10,7 +10,7 @@ import { RAW_TYPES } from '@/lib/raw-materials';
 import { ChevronLeft, Loader2 } from 'lucide-react';
 import { missingPhotosAction, setPhotoStatusAction, type PhotoTodo } from '../stock-count-actions';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', BORDER = '#E0D49A', OK = '#067647';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', BORDER = '#E6DCCF', OK = '#067647';
 
 export default function PhotosView({ kinds }: { kinds: ('raw' | 'packaging')[] }) {
   const { lang } = useI18n();
@@ -57,7 +57,7 @@ export default function PhotosView({ kinds }: { kinds: ('raw' | 'packaging')[] }
         </div>}
         <div className="flex gap-1.5">
           {([['todo', L('Cần chụp', 'À faire')], ['done', L('Đã chụp', 'Faites')], ['nis', L('Hết hàng', 'Pas en stock')]] as const).map(([k, l]) =>
-            <button key={k} onClick={() => setTab(k)} className="rounded-full px-3 py-1.5 text-[12px] font-extrabold" style={tab === k ? { backgroundColor: GOLD, color: '#1A2C24' } : { backgroundColor: 'rgba(255,255,255,.14)' }}>{l} · {counts[k]}</button>)}
+            <button key={k} onClick={() => setTab(k)} className="rounded-full px-3 py-1.5 text-[12px] font-extrabold" style={tab === k ? { backgroundColor: GOLD, color: '#2E1B12' } : { backgroundColor: 'rgba(255,255,255,.14)' }}>{l} · {counts[k]}</button>)}
         </div>
       </div>
       <div className="px-3 py-3 space-y-2 pb-10">

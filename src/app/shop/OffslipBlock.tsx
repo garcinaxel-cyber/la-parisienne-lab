@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Plus, Search, Loader2, Camera, ImageIcon, X, PackagePlus } from 'lucide-react';
 import type { OffslipItem } from '@/lib/offslip';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', RED = '#B42318';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF', RED = '#B42318';
 
 async function compress(file: File, maxSide = 1280, quality = 0.8): Promise<File> {
   try {

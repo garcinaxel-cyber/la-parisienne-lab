@@ -5,14 +5,14 @@ import { useI18n } from '@/lib/i18n';
 // (Order/Track/Stats/Customers tabs). Split out of OnlineOrdersView.tsx (2026-09-11) so
 // CustomersTab.tsx can import them without a circular import between the two client components.
 
-export const NAVY = '#1A4731';
+export const NAVY = '#2A1810';
 export const GOLD = '#C9A84C';
-export const CREAM = '#FFF4CC';
-export const CREAM_DARK = '#F5E89A';
-export const INK = '#1A2C24';
+export const CREAM = '#F6F1EA';
+export const CREAM_DARK = '#EADFD0';
+export const INK = '#2E1B12';
 export const INK_LIGHT = '#6B7280';
-export const BORDER = '#E0D49A';
-export const TABBAR = '#163D29';
+export const BORDER = '#E6DCCF';
+export const TABBAR = '#1F120C';
 
 export function fmtVnd(v: number): string {
   return `${Math.round(v).toLocaleString('vi-VN')} ₫`;

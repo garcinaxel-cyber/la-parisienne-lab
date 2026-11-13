@@ -19,7 +19,7 @@ import { Track } from '@/components/raw/PurchaseTrack';
 import ItemPhoto from '@/components/raw/ItemPhoto';
 import ReceiveTab from '@/components/raw/ReceiveTab';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FFFAEE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FBF7F0', BORDER = '#E6DCCF', HAIR = '#EFE9CF', LATE = '#B42318';
 type Tab = 'requests' | 'storage' | 'history' | 'catalogue' | 'receive';
 
 // Who a slip concerns: the team for a storage withdrawal, "from → to" for a transfer (2026-10-16).
@@ -210,11 +210,11 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
       {sel.size > 0 && (
         <div className="sticky top-2 z-20 flex items-center gap-2 rounded-xl px-3 py-2.5 flex-wrap shadow-md" style={{ backgroundColor: NAVY, color: '#fff' }}>
           <b className="text-[13px] flex-1">{L(`Đã chọn ${selLines.length} dòng`, `${selLines.length} lines selected`)}</b>
-          <button onClick={() => setSel(new Set())} className="text-xs font-bold px-2" style={{ color: '#F0D98A' }}>{L('Bỏ chọn', 'Clear')}</button>
+          <button onClick={() => setSel(new Set())} className="text-xs font-bold px-2" style={{ color: '#E9D3A4' }}>{L('Bỏ chọn', 'Clear')}</button>
           <a href={`/purchase-print?lines=${selLines.map(l => l.id).join(',')}`} target="_blank" rel="noopener"
-            className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ border: '1px solid #F0D98A', color: '#F0D98A' }}>
+            className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ border: '1px solid #E9D3A4', color: '#E9D3A4' }}>
             🖨 {L('In phiếu đề xuất', 'Print purchase request')}</a>
-          <button disabled={busy || !selLines.length} onClick={() => { setPoVendor(suggested.length === 1 ? String(suggested[0].id) : ''); setPoOpen(true); }} className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ backgroundColor: '#F0D98A', color: NAVY }}>{L('Tạo PO nháp trên Odoo', 'Create draft PO in Odoo')} ›</button>
+          <button disabled={busy || !selLines.length} onClick={() => { setPoVendor(suggested.length === 1 ? String(suggested[0].id) : ''); setPoOpen(true); }} className="rounded-lg px-3 py-1.5 text-xs font-extrabold" style={{ backgroundColor: '#E9D3A4', color: NAVY }}>{L('Tạo PO nháp trên Odoo', 'Create draft PO in Odoo')} ›</button>
         </div>
       )}
       {poOpen && (
@@ -239,7 +239,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
           <div key={k} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
             <div className="flex items-center gap-2 px-4 py-2.5 flex-wrap" style={{ borderBottom: `1px solid ${HAIR}`, backgroundColor: none ? '#FFF8EC' : '#fff' }}>
               {(() => { const ids = ls.filter(l => l.tmplId != null).map(l => l.id); const on = ids.length > 0 && ids.every(i => sel.has(i)); return ids.length > 0 ? (
-                <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={on} onChange={e => toggle(ids, e.target.checked)} aria-label={L('Chọn cả NCC', 'Select the whole vendor')} title={L('Chọn cả NCC', 'Select the whole vendor')} />) : null; })()}
+                <input type="checkbox" className="w-4 h-4 accent-[#2A1810]" checked={on} onChange={e => toggle(ids, e.target.checked)} aria-label={L('Chọn cả NCC', 'Select the whole vendor')} title={L('Chọn cả NCC', 'Select the whole vendor')} />) : null; })()}
               <b className="text-sm flex-1 min-w-[200px]">{none ? <span className="inline-flex items-center gap-1.5" style={{ color: LATE }}><AlertTriangle size={14} /> {L('Chưa có nhà cung cấp', 'No vendor yet')}</span> : shortVendor(ls[0].vendorName)}</b>
               <span className="text-xs" style={{ color: '#6B7280' }}>{ls.length} {L('dòng', 'lines')}</span>
             </div>
@@ -254,7 +254,7 @@ function RequestsTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
                     const f = group[0]; const total = group.reduce((s, l) => s + l.qty, 0);
                     return (
                       <tr key={f.id} style={{ borderTop: `1px solid ${HAIR}`, backgroundColor: group.every(l => sel.has(l.id)) ? '#FFFBEF' : undefined }}>
-                        <td className="px-2 py-2 text-center">{f.tmplId != null && <input type="checkbox" className="w-4 h-4 accent-[#1A4731]" checked={group.every(l => sel.has(l.id))} onChange={e => toggle(group.map(l => l.id), e.target.checked)} aria-label="select" />}</td>
+                        <td className="px-2 py-2 text-center">{f.tmplId != null && <input type="checkbox" className="w-4 h-4 accent-[#2A1810]" checked={group.every(l => sel.has(l.id))} onChange={e => toggle(group.map(l => l.id), e.target.checked)} aria-label="select" />}</td>
                         <td className="px-3 py-2"><div className="flex items-center gap-2.5"><ItemPhoto tmplId={f.tmplId} sku={f.sku} size={40} canAdd /><div className="min-w-0"><b>{nm(f)}</b><div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{f.sku}{lang === 'vi' && nm(f) !== f.name ? ` · ${f.name}` : ''}</div></div></div></td>
                         <td className="px-3 py-2 text-right whitespace-nowrap"><b>{fmtQty(total)} {f.uom}</b>{group.length > 1 && <div className="text-[10.5px]" style={{ color: '#9CA3AF' }}>{group.map(l => fmtQty(l.qty)).join(' + ')}</div>}{group.some(l => packHint(l)) && <div className="text-[10.5px] font-semibold" style={{ color: GOLD_TEXT }}>{group.map(l => packHint(l) ?? `${fmtQty(l.qty)} ${l.uom}`).join(' + ')}</div>}</td>
                         <td className="px-3 py-2">{group.map(l => <div key={l.id} className="flex items-center gap-1 text-[11px]"><TeamBadge team={l.team} lang={lang} /> <span style={{ color: '#6B7280' }}>{l.requestedBy ?? ''} · {vnDayTime(l.createdAt).day}{l.approvedBy ? ` · ✓ ${l.approvedBy}` : ''}</span></div>)}</td>
@@ -345,7 +345,7 @@ function LinkProductPicker({ L, lang, busy, catalogue, onPick }: {
   );
   const row = (key: number, name: string, sku: string | null, sub: string, badge: string | null) => (
     <button key={key} disabled={busy} onClick={() => { onPick(key); setOpen(false); setQ(''); }}
-      className="w-full text-left px-2.5 py-1.5 hover:bg-[#FFFAEE] flex items-center gap-2" style={{ borderTop: `1px solid ${HAIR}` }}>
+      className="w-full text-left px-2.5 py-1.5 hover:bg-[#FBF7F0] flex items-center gap-2" style={{ borderTop: `1px solid ${HAIR}` }}>
       {sku && <span className="font-mono text-[11px] font-bold shrink-0" style={{ color: NAVY }}>{sku}</span>}
       <span className="text-xs flex-1 min-w-0 truncate">{name}</span>
       {sub && <span className="text-[10.5px] shrink-0" style={{ color: '#9CA3AF' }}>{sub}</span>}
@@ -475,13 +475,13 @@ function AddNeedDialog({ L, lang, catalogue, onClose, onDone }: {
           {nq && <div className="max-h-48 overflow-y-auto p-1" style={{ borderTop: `1px solid ${HAIR}` }}>
             {results.map(c => (
               <button key={c.tmplId} type="button" onClick={() => { setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '', u: c.packs?.length ? 0 : -1 }]); setQ(''); }}
-                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
+                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FBF7F0]">
                 <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{label(c)}</span><span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
               </button>
             ))}
             {odooOnly.map(c => (
               <button key={`o${c.tmplId}`} type="button" onClick={() => { setExtra(m => new Map(m).set(c.tmplId, c)); setPicks(p => [...p, { tmplId: c.tmplId, qty: '', note: '', u: -1 }]); setQ(''); }}
-                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FFFAEE]">
+                className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 text-[13px] rounded-md hover:bg-[#FBF7F0]">
                 <Plus size={13} style={{ color: NAVY }} /><span className="flex-1 truncate">{c.sku ? `[${c.sku}] ` : ''}{c.name}</span>
                 <span className="text-[10px] font-extrabold rounded px-1.5 py-0.5" style={{ backgroundColor: '#EEF2FF', color: NAVY }}>Odoo</span>
                 <span className="text-[11px]" style={{ color: '#9CA3AF' }}>{c.uom}</span>
@@ -1016,7 +1016,7 @@ function CatalogueTab({ L, lang }: { L: LFn; lang: 'vi' | 'en' }) {
     return (
       <th className={`px-3 py-2 whitespace-nowrap text-${align}`}>
         <button onMouseDown={e => e.stopPropagation()} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setOpenCol(openCol?.k === k ? null : { k, rect: { left: r.left, bottom: r.bottom }, sorts }); }}
-          className="inline-flex items-center gap-1 uppercase tracking-wide font-bold rounded px-1 -mx-1 py-0.5 hover:bg-[#FFFAEE]" style={{ color: on ? GOLD_TEXT : '#9CA3AF' }}>
+          className="inline-flex items-center gap-1 uppercase tracking-wide font-bold rounded px-1 -mx-1 py-0.5 hover:bg-[#FBF7F0]" style={{ color: on ? GOLD_TEXT : '#9CA3AF' }}>
           {label}<ListFilter size={12} strokeWidth={on ? 2.6 : 2} style={{ color: on ? GOLD : '#C0C4CC' }} />
         </button>
       </th>
@@ -1190,7 +1190,7 @@ function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort
       {sorts && sorts.length > 0 && (
         <div className="px-1.5 pb-1.5" style={{ borderBottom: `1px solid ${HAIR}` }}>
           {sorts.map(o => { const act = sort.key === o.key && sort.dir === o.dir; return (
-            <button key={`${o.key}${o.dir}`} onClick={() => onSort(o.key, o.dir)} className="w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left font-bold hover:bg-[#FFFAEE]"
+            <button key={`${o.key}${o.dir}`} onClick={() => onSort(o.key, o.dir)} className="w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left font-bold hover:bg-[#FBF7F0]"
               style={{ color: act ? GOLD_TEXT : NAVY }}><ArrowUpDown size={12} />{o.label}{act && <Check size={12} className="ml-auto" />}</button>); })}
         </div>
       )}
@@ -1201,7 +1201,7 @@ function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort
         </label>
       </div>
       <div className="px-1.5 pt-1.5">
-        <label className="flex items-center gap-2 rounded-md px-1.5 py-1 cursor-pointer font-extrabold hover:bg-[#FFFAEE]" style={{ color: NAVY }}>
+        <label className="flex items-center gap-2 rounded-md px-1.5 py-1 cursor-pointer font-extrabold hover:bg-[#FBF7F0]" style={{ color: NAVY }}>
           <input type="checkbox" checked={allShownOn} onChange={toggleAll} style={{ accentColor: NAVY }} />
           {nq ? L('Chọn tất cả kết quả', 'Select all results') : L('Chọn tất cả', 'Select all')}
         </label>
@@ -1209,7 +1209,7 @@ function ColFilterPop({ L, rect, title, options, selected, onChange, sorts, sort
       <div className="flex-1 overflow-y-auto px-1.5 pb-1.5" style={{ minHeight: 60 }}>
         {shown.length === 0 && <div className="px-1.5 py-2 text-xs" style={{ color: '#9CA3AF' }}>{L('Không có giá trị', 'No values')}</div>}
         {shown.map(o => (
-          <div key={o.key} className="group flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-[#FFFAEE]">
+          <div key={o.key} className="group flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-[#FBF7F0]">
             <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
               <input type="checkbox" checked={isOn(o.key)} onChange={() => toggle(o.key)} style={{ accentColor: NAVY }} />
               <span className="truncate" style={{ color: o.count ? '#1F2937' : '#9CA3AF' }}>{o.label}</span>

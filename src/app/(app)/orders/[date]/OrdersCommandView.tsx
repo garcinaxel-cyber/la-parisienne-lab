@@ -206,7 +206,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                         </button>
                       ) : (
                         <button onClick={() => togglePublish(o.ref, true)} disabled={busyRef === o.ref}
-                          className="text-[11px] font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-50" style={{ backgroundColor: '#1A4731' }}>
+                          className="text-[11px] font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-50" style={{ backgroundColor: '#2A1810' }}>
                           <Send size={12} />{busyRef === o.ref ? '…' : (lang === 'vi' ? 'Phát hành' : 'Publish')}
                         </button>
                       )}
@@ -242,7 +242,7 @@ export default function OrdersCommandView({ date, imports, assignments, orderLin
                             {st
                               ? <span className="badge text-white text-[10px]" style={{ backgroundColor: st.color }}>{lang === 'vi' ? st.labelVi : st.labelEn}</span>
                               : producedSet.has(`${o.ref}||${l.sku}`)
-                                ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>{lang === 'vi' ? 'Đang sản xuất' : 'In production'}</span>
+                                ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#F7F1E8', color: '#572C1A' }}>{lang === 'vi' ? 'Đang sản xuất' : 'In production'}</span>
                                 : <span className="text-[10px] text-ink-light">{lang === 'vi' ? 'Chưa giao đội' : 'Not assigned'}</span>}
                           </div>
                         </div>

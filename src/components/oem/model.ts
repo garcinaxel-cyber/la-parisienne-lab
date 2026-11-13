@@ -36,7 +36,7 @@ export type RmCount = { id: string; week_start: string; ingredient_code: string;
 export type LFn = (vi: string, en: string) => string;
 
 export const MM_CLIENT = 'Maison Mooncake';
-export const GREEN = '#1A4731';
+export const GREEN = '#2A1810';
 export const BORDER = '#E5E7EB';
 export const MUTED = '#6B7280';
 export const FAINT = '#9CA3AF';

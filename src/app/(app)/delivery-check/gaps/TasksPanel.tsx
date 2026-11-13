@@ -10,7 +10,7 @@ import GapResolver from '@/components/GapResolver';
 import type { ProdTask, RecountTask, LeftoverTask, LeftoverDone } from '@/lib/delivery-tasks';
 import { ChevronDown, ChevronRight, Camera } from 'lucide-react';
 
-const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647', NAVY = '#1A4731';
+const RED = '#B42318', AMBER = '#B54708', GREEN = '#067647', NAVY = '#2A1810';
 
 export type ReceptionTask = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; kind: string; qty: number; sent: number; received: number; deadlineAt: string | null; photos?: string[] };
 export type WaitingGap = { key: string; product: string; shop: string; orderRef: string; deliveryDate: string; qty: number; deliveriesSince: number; late: boolean; photos: string[] };

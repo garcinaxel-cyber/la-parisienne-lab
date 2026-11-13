@@ -98,8 +98,8 @@ export default function StationFichesPage() {
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#FFF4CC' }}>
-      <header style={{ backgroundColor: '#1A4731', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
+    <div className="min-h-screen" style={{ backgroundColor: '#F6F1EA' }}>
+      <header style={{ backgroundColor: '#2A1810', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
         className="sticky top-0 z-10 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
@@ -123,16 +123,16 @@ export default function StationFichesPage() {
           <button onClick={() => setSelectedCat('')}
             className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
             style={selectedCat === ''
-              ? { backgroundColor: '#1A4731', color: 'white' }
-              : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #C9A84C' }}>
+              ? { backgroundColor: '#2A1810', color: 'white' }
+              : { backgroundColor: 'white', color: '#2A1810', border: '1px solid #C9A84C' }}>
             {lang === 'vi' ? 'Tất cả' : 'All'} ({fiches.length})
           </button>
           {categories.map(cat => (
             <button key={cat} onClick={() => setSelectedCat(cat === selectedCat ? '' : cat)}
               className="px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
               style={selectedCat === cat
-                ? { backgroundColor: '#1A4731', color: 'white' }
-                : { backgroundColor: 'white', color: '#1A4731', border: '1px solid #C9A84C' }}>
+                ? { backgroundColor: '#2A1810', color: 'white' }
+                : { backgroundColor: 'white', color: '#2A1810', border: '1px solid #C9A84C' }}>
               {cat} ({fiches.filter(f => (f.category ?? 'Khác') === cat).length})
             </button>
           ))}
@@ -141,15 +141,15 @@ export default function StationFichesPage() {
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-8 pb-16">
         {loading && (
-          <div className="text-center py-20 text-sm font-semibold" style={{ color: '#1A4731' }}>
+          <div className="text-center py-20 text-sm font-semibold" style={{ color: '#2A1810' }}>
             {lang === 'vi' ? 'Đang tải…' : 'Loading…'}
           </div>
         )}
 
         {!loading && filtered.length === 0 && (
-          <div className="rounded-2xl p-12 text-center bg-white" style={{ border: '1px solid #E0D49A' }}>
+          <div className="rounded-2xl p-12 text-center bg-white" style={{ border: '1px solid #E6DCCF' }}>
             <BookOpen size={40} className="mx-auto mb-3" style={{ color: '#C9A84C' }} />
-            <p className="font-semibold" style={{ color: '#1A4731' }}>
+            <p className="font-semibold" style={{ color: '#2A1810' }}>
               {lang === 'vi' ? 'Chưa có phiếu kỹ thuật.' : 'No recipe cards yet.'}
             </p>
             <p className="text-sm mt-1 text-gray-400">
@@ -164,7 +164,7 @@ export default function StationFichesPage() {
           <section key={cat}>
             <div className="flex items-center gap-3 mb-4">
               <div className="h-px flex-1" style={{ backgroundColor: '#C9A84C', opacity: 0.3 }} />
-              <h2 className="text-xs font-bold uppercase tracking-widest px-2 shrink-0" style={{ color: '#1A4731' }}>
+              <h2 className="text-xs font-bold uppercase tracking-widest px-2 shrink-0" style={{ color: '#2A1810' }}>
                 {cat}
               </h2>
               <div className="h-px flex-1" style={{ backgroundColor: '#C9A84C', opacity: 0.3 }} />
@@ -175,24 +175,24 @@ export default function StationFichesPage() {
                   key={fiche.id}
                   href={`/station/fiche/${fiche.id}?back=/station/fiches`}
                   className="flex items-center gap-4 bg-white rounded-2xl px-4 py-3 group transition-all"
-                  style={{ border: '1px solid #E0D49A', boxShadow: '0 1px 4px rgba(26,71,49,0.07)' }}
+                  style={{ border: '1px solid #E6DCCF', boxShadow: '0 1px 4px rgba(42,24,16,0.07)' }}
                 >
                   {fiche.image_url ? (
                     <img src={thumb(fiche.image_url, 112)} alt=""
                       className="w-12 h-12 rounded-xl object-cover shrink-0"
-                      style={{ border: '1px solid #E0D49A' }} loading="lazy" />
+                      style={{ border: '1px solid #E6DCCF' }} loading="lazy" />
                   ) : (
                     <div className="w-12 h-12 rounded-xl shrink-0 flex items-center justify-center text-2xl"
-                      style={{ backgroundColor: '#FFF4CC' }}>🥐</div>
+                      style={{ backgroundColor: '#F6F1EA' }}>🥐</div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#1A4731' }}>
+                    <div className="font-semibold text-sm overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', color: '#2A1810' }}>
                       {lang === 'vi' ? fiche.name_vi : (fiche.name_en || fiche.name_vi)}
                     </div>
                     {fiche.name_en && lang === 'vi' && (
                       <div className="text-xs truncate" style={{ color: '#8a8a8a' }}>{fiche.name_en}</div>
                     )}
-                    <div className="text-xs font-medium mt-0.5" style={{ color: fiche.stepCount > 0 ? '#2D6A4F' : '#aaa' }}>
+                    <div className="text-xs font-medium mt-0.5" style={{ color: fiche.stepCount > 0 ? '#572C1A' : '#aaa' }}>
                       {fiche.stepCount > 0
                         ? `${fiche.stepCount} ${lang === 'vi' ? 'bước' : 'steps'}`
                         : (lang === 'vi' ? 'Chưa có phiếu' : 'No recipe yet')}

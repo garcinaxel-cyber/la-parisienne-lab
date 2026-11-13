@@ -78,13 +78,13 @@ export default function SetPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#FFF4CC' }}>
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#F6F1EA' }}>
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
-          <h1 className="font-serif text-3xl font-bold" style={{ color: '#1A4731' }}>La Parisienne</h1>
+          <h1 className="font-serif text-3xl font-bold" style={{ color: '#2A1810' }}>La Parisienne</h1>
           <p className="text-xs font-bold tracking-widest" style={{ color: '#C9A84C' }}>MANUFACTURING</p>
         </div>
-        <div className="bg-white rounded-2xl p-6 space-y-4" style={{ border: '1px solid #E0D49A' }}>
+        <div className="bg-white rounded-2xl p-6 space-y-4" style={{ border: '1px solid #E6DCCF' }}>
           {!ready && (
             <p className="text-sm text-center text-ink-light py-4">Đang xác thực… / Verifying…</p>
           )}
@@ -97,7 +97,7 @@ export default function SetPasswordPage() {
           {ready && sessionOk && !done && (
             <>
               <div>
-                <h2 className="font-bold text-base" style={{ color: '#1A4731' }}>
+                <h2 className="font-bold text-base" style={{ color: '#2A1810' }}>
                   Tạo mật khẩu / Set your password
                 </h2>
                 <p className="text-xs text-ink-light mt-0.5">
@@ -109,7 +109,7 @@ export default function SetPasswordPage() {
                   type={showPw ? 'text' : 'password'} value={pw1} onChange={e => setPw1(e.target.value)}
                   placeholder="Mật khẩu mới / New password"
                   className="w-full rounded-xl border pl-3 pr-10 py-3 focus:outline-none focus:ring-1"
-                  style={{ borderColor: '#E0D49A', fontSize: 16 }} autoFocus />
+                  style={{ borderColor: '#E6DCCF', fontSize: 16 }} autoFocus />
                 <button type="button" onClick={() => setShowPw(v => !v)}
                   aria-label={showPw ? 'Hide password' : 'Show password'}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-ink-light">
@@ -120,13 +120,13 @@ export default function SetPasswordPage() {
                 type={showPw ? 'text' : 'password'} value={pw2} onChange={e => setPw2(e.target.value)}
                 placeholder="Nhập lại / Confirm password"
                 className="w-full rounded-xl border px-3 py-3 focus:outline-none focus:ring-1"
-                style={{ borderColor: '#E0D49A', fontSize: 16 }} />
+                style={{ borderColor: '#E6DCCF', fontSize: 16 }} />
               {error && (
                 <p className="text-xs rounded-lg px-3 py-2" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>{error}</p>
               )}
               <button onClick={save} disabled={saving}
                 className="w-full py-3 rounded-xl font-bold text-white disabled:opacity-60"
-                style={{ backgroundColor: '#1A4731' }}>
+                style={{ backgroundColor: '#2A1810' }}>
                 {saving ? '…' : 'Lưu mật khẩu / Save password'}
               </button>
             </>

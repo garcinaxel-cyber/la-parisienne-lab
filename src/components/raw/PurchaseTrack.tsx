@@ -5,7 +5,7 @@
 import type { PurchaseLine } from '@/lib/raw-materials';
 import { vnDayTime, fmtQty } from '@/lib/raw-materials';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', HAIR = '#EFE9CF', LATE = '#B42318';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', HAIR = '#EFE9CF', LATE = '#B42318';
 type LFn = (vi: string, en: string) => string;
 
 // Lines of a team with a lead get an extra "Approved" step between Sent and Ordered (Axel, 2026-10-08).
@@ -41,7 +41,7 @@ export function Track({ l, L }: { l: PurchaseLine; L: LFn }) {
   );
 }
 function Step({ state, label, date, first }: { state: 'done' | 'cur' | 'late' | 'todo' | 'x'; label: string; date: string; first?: boolean }) {
-  const dot = state === 'done' ? { background: NAVY, borderColor: NAVY } : state === 'cur' ? { background: '#FFF4CC', borderColor: GOLD }
+  const dot = state === 'done' ? { background: NAVY, borderColor: NAVY } : state === 'cur' ? { background: '#F6F1EA', borderColor: GOLD }
     : state === 'late' ? { background: '#FEF3F2', borderColor: LATE } : state === 'x' ? { background: '#F2F4F7', borderColor: '#98A2B3' } : { background: '#fff', borderColor: '#D0D5DD' };
   const line = state === 'done' ? NAVY : state === 'cur' ? `repeating-linear-gradient(90deg, ${GOLD} 0 5px, transparent 5px 9px)` : state === 'late' ? `repeating-linear-gradient(90deg, ${LATE} 0 5px, transparent 5px 9px)` : HAIR;
   const col = state === 'done' ? NAVY : state === 'cur' ? GOLD_TEXT : state === 'late' ? LATE : '#6B7280';

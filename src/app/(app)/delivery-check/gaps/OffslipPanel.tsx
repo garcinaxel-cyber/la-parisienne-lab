@@ -106,7 +106,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
             </div>
 
             {r.suggestions.length > 0 && (
-              <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A' }}>
+              <div className="rounded-lg px-3 py-2 text-xs" style={{ backgroundColor: '#FBF7F0', border: '1px solid #E6DCCF' }}>
                 <b style={{ color: '#8A6D14' }}>{T('Gợi ý', 'Lead found')} :</b>{' '}
                 {r.suggestions.map(x => `${x.orderRef} · ${x.customer} · ${x.qty} (${x.deliveryDate.slice(8, 10)}/${x.deliveryDate.slice(5, 7)})`).join(' — ')}
               </div>
@@ -123,7 +123,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                   {causes.map(c => {
                     const on = s.cause === c.k;
                     return (
-                      <label key={c.k} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 cursor-pointer" style={{ border: `${on ? 2 : 1}px solid ${on ? '#1A4731' : '#E5E7EB'}` }}>
+                      <label key={c.k} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 cursor-pointer" style={{ border: `${on ? 2 : 1}px solid ${on ? '#2A1810' : '#E5E7EB'}` }}>
                         <input type="radio" name={`c-${r.id}`} checked={on} onChange={() => setSel(m => ({ ...m, [r.id]: { ...s, cause: c.k } }))} className="mt-1" />
                         <span className="flex-1">
                           <span className="block text-sm font-bold">{c.t}</span>
@@ -163,7 +163,7 @@ export default function OffslipPanel({ mode = 'open' }: { mode?: 'open' | 'close
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <button disabled={busy === r.id || !s.cause || (s.cause === 'customer_order' && !/^S\d+/.test(s.ref.trim())) || (s.cause === 'wrong_shop' && !/^REP\//.test(s.ref.trim())) || (s.cause !== 'shop_error' && !canSend)}
-                    onClick={() => settle(r)} className="rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+                    onClick={() => settle(r)} className="rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                     {busy === r.id ? <Loader2 size={14} className="animate-spin inline" /> : s.cause === 'shop_error' ? T('Xác nhận', 'Validate') : T('Xác nhận và gửi Odoo', 'Validate and send to Odoo')}
                   </button>
                   {s.cause && s.cause !== 'shop_error' && !canSend && <span className="text-xs text-ink-light">{T('Chỉ Trish / admin gửi được Odoo.', 'Only Trish / an admin can send to Odoo.')}</span>}

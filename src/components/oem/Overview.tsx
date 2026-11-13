@@ -6,7 +6,7 @@ import { fmt, dmy, itemKg, unitLabel, GREEN, GOLD, MUTED, FAINT, LINE, type Clie
 
 // "Progress" — one card per product with a single 3-segment bar over the order (kg):
 // delivered (dark green) · packed, not yet delivered (gold) · baked, not yet packed (light green).
-const C_DELIV = '#1A4731', C_PACK = GOLD, C_BAKED = '#A7C4B5', C_REST = '#F1ECE1';
+const C_DELIV = '#2A1810', C_PACK = GOLD, C_BAKED = '#A7C4B5', C_REST = '#F1ECE1';
 // Good bags = packed (+ surplus accepted at count) − faulty / missing at count (Axel, 2026-09-26:
 // 189 packed, 180 counted → progress must show 180).
 const goodQty = (d: Derived, sku: string) => (d.packedQty[sku] ?? 0) + (d.foundQty[sku] ?? 0) - (d.scrapFinished[sku] ?? 0);

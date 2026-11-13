@@ -77,7 +77,7 @@ export default function OrdersTabs(props: {
           </div>
           {manualMatches.map(m => (
             <div key={m.manualId} className="rounded-lg bg-white px-3 py-2.5 flex items-center gap-2 flex-wrap" style={{ border: '1px solid #FDE68A' }}>
-              <span className="text-sm flex-1 min-w-[220px]" style={{ color: '#1A4731' }}>
+              <span className="text-sm flex-1 min-w-[220px]" style={{ color: '#2A1810' }}>
                 <span className="font-semibold">×{m.qty} · {m.name}</span>
                 <span className="text-xs ml-2 inline-flex items-center gap-1" style={{ color: '#6B7280' }}>
                   {m.fromShop ? <Store size={11} /> : <User size={11} />}{m.source}
@@ -87,7 +87,7 @@ export default function OrdersTabs(props: {
                 </span>
               </span>
               <button onClick={() => confirmManualMatch(m)} disabled={matchBusy === m.manualId}
-                className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#1A4731' }}>
+                className="text-xs font-bold px-3 py-1.5 rounded-full text-white inline-flex items-center gap-1 disabled:opacity-40" style={{ backgroundColor: '#2A1810' }}>
                 <CheckCircle2 size={13} /> {matchBusy === m.manualId ? '…' : (vi ? 'Là đơn này — liên kết' : 'Same order — link')}
               </button>
               <button onClick={() => rejectManualMatch(m)} disabled={matchBusy === m.manualId}

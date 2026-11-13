@@ -8,7 +8,7 @@ import { Camera, Loader2, Search, X } from 'lucide-react';
 import { compressImage } from '@/lib/compress-image';
 import { addFgUnknownAction, resolveFgUnknownAction, type FgUnknown } from '../actions';
 
-const NAVY = '#1A4731', GOLD_TEXT = '#8A6D14', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647';
+const NAVY = '#2A1810', GOLD_TEXT = '#8A6D14', BORDER = '#E6DCCF', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647';
 const UNITS_VI = ['cái', 'hộp', 'gói', 'kg', 'g'];
 const UNITS_FR = ['pièce', 'boîte', 'sachet', 'kg', 'g'];
 

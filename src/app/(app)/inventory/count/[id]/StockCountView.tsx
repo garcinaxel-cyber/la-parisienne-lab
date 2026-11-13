@@ -14,7 +14,7 @@ import {
   type CountItem, type CountLine, type Unknown, type CountHeader, type RecapLine,
 } from '../../stock-count-actions';
 
-const NAVY = '#1A4731', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FAF7EE', BORDER = '#E0D49A', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647';
+const NAVY = '#2A1810', GOLD = '#C9A84C', GOLD_TEXT = '#8A6D14', PALE = '#FAF7EE', BORDER = '#E6DCCF', HAIR = '#EFE9CF', LATE = '#B42318', OK = '#067647';
 
 export const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
 const fmt = (n: number) => (Math.round(n * 1000) / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 3 });
@@ -162,14 +162,14 @@ export default function StockCountView({ id }: { id: string }) {
               const st = z.key === 'all' ? { done, total } : zoneStats[z.key] ?? { done: 0, total: 0 };
               const on = zone === z.key && !q;
               return <button key={z.key} onClick={() => { setZone(z.key); setQ(''); }} className="flex-none rounded-full px-3 py-1.5 text-[12px] font-extrabold"
-                style={on ? { backgroundColor: GOLD, color: '#1A2C24' } : { backgroundColor: 'rgba(255,255,255,.14)', color: '#fff' }}>
+                style={on ? { backgroundColor: GOLD, color: '#2E1B12' } : { backgroundColor: 'rgba(255,255,255,.14)', color: '#fff' }}>
                 {z.label} · {st.done === st.total && st.total ? '✓ ' : ''}{st.done}/{st.total}</button>;
             })}
           </div>
           <div className="flex gap-2">
             <label className="flex-1 min-w-0 flex items-center gap-2 bg-white rounded-lg px-2.5 py-2">
               <Search size={16} color="#5B6B63" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm: tên, mã, hiệu…', 'Chercher : nom, code, marque…')} className="flex-1 min-w-0 outline-none text-[15px] text-[#1A2C24] bg-transparent" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder={L('Tìm: tên, mã, hiệu…', 'Chercher : nom, code, marque…')} className="flex-1 min-w-0 outline-none text-[15px] text-[#2E1B12] bg-transparent" />
               {q && <button aria-label="Clear" onClick={() => setQ('')}><X size={15} color="#5B6B63" /></button>}
             </label>
             {!locked && <button onClick={() => setUnkOpen(true)} aria-label={L('Không tìm thấy — chụp ảnh', 'Introuvable — photo')} className="flex-none flex flex-col items-center justify-center rounded-lg w-[64px] text-[10px] font-extrabold leading-tight" style={{ backgroundColor: GOLD_TEXT }}>
@@ -244,7 +244,7 @@ function ItemCard({ item, line, name, vi, locked, open, onOpen, onSet, outOfList
       <button onClick={onOpen} className="w-full text-left flex items-center gap-3 p-2.5">
         <ItemPhoto tmplId={item.tmplId} sku={item.sku} size={open ? 76 : 60} canAdd={!locked} />
         <div className="flex-1 min-w-0 space-y-0.5">
-          <div className="text-[14px] font-extrabold leading-snug line-clamp-2" style={{ color: '#1A2C24' }}>{name}</div>
+          <div className="text-[14px] font-extrabold leading-snug line-clamp-2" style={{ color: '#2E1B12' }}>{name}</div>
           <div className="text-[11.5px] leading-snug line-clamp-2" style={{ color: '#5B6B63' }}>{[other, item.sku, pack ? pack.label : item.uom].filter(Boolean).join(' · ')}</div>
           {outOfList && <div className="text-[10.5px] font-bold" style={{ color: GOLD_TEXT }}>{L('Ngoài danh sách', 'Hors liste')}</div>}
           {line?.saving && <div className="text-[10.5px]" style={{ color: '#5B6B63' }}>…</div>}
@@ -260,7 +260,7 @@ function ItemCard({ item, line, name, vi, locked, open, onOpen, onSet, outOfList
             <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(3, brands.length)}, minmax(0,1fr))` }}>
               {brands.map(br => <label key={br} className="text-[11px] font-bold space-y-1" style={{ color: '#5B6B63' }}>{br}
                 <input inputMode="decimal" value={b[br] ?? ''} onChange={ev => { const nb = { ...b, [br]: ev.target.value }; setB(nb); push(n, x, nb); }} placeholder={item.uom}
-                  className="w-full rounded-lg px-2.5 py-2.5 text-[16px] font-extrabold" style={{ border: '1px solid #D1D5DB', color: '#1A2C24' }} /></label>)}
+                  className="w-full rounded-lg px-2.5 py-2.5 text-[16px] font-extrabold" style={{ border: '1px solid #D1D5DB', color: '#2E1B12' }} /></label>)}
             </div>
           ) : pack ? (
             <div className="flex items-center gap-1.5 flex-wrap">

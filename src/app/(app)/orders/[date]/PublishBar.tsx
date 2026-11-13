@@ -95,7 +95,7 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
                     </button>
                     <button onClick={() => createFiche(p.sku, p.name)} disabled={creating === p.sku || !!creating}
                       className="text-xs font-semibold px-3 py-1 rounded-full shrink-0 flex items-center gap-1 disabled:opacity-50"
-                      style={{ backgroundColor: '#1A4731', color: 'white' }}>
+                      style={{ backgroundColor: '#2A1810', color: 'white' }}>
                       <FilePlus size={11} />
                       {creating === p.sku ? '…' : (lang === 'vi' ? 'Tạo phiếu' : 'Create fiche')}
                     </button>
@@ -136,7 +136,7 @@ export default function PublishBar({ date, imports, orderLines = [], unmatchedPr
                   {lang === 'vi' ? 'Đơn mới' : 'New orders'}:
                 </span>
                 {refs.map((r: any) => (
-                  <span key={r} className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F' }}>{r}</span>
+                  <span key={r} className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: '#F7F1E8', color: '#572C1A' }}>{r}</span>
                 ))}
               </div>
             );

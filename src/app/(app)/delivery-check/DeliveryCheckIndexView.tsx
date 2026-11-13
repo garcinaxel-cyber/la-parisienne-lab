@@ -370,7 +370,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
           // Shop reception badge (Axel, 2026-10-16) — only for portal-shop orders already sent.
           const rec = recByKey.get(`${o.delivery_date}||${o.order_ref}`);
           if (!rec) return null;
-          const st = rec.state === 'received' ? { bg: '#ECF3EE', fg: '#1A4731', bd: '#2D6A4F', t: `${vi ? 'Shop đã nhận' : 'Reçu par le shop'} ${hhmm(rec.receivedAt)}` }
+          const st = rec.state === 'received' ? { bg: '#ECF3EE', fg: '#2A1810', bd: '#572C1A', t: `${vi ? 'Shop đã nhận' : 'Reçu par le shop'} ${hhmm(rec.receivedAt)}` }
             : rec.state === 'gap' ? { bg: '#FFEDD5', fg: '#9A3412', bd: '#C2410C', t: vi ? 'Shop đã nhận · có lệch' : 'Reçu · écart' }
             : rec.late ? { bg: '#FEE2E2', fg: '#991B1B', bd: '#DC2626', t: (rec.waitFrom && new Date(rec.waitFrom).getTime() > Date.now() ? (vi ? 'Chờ giao' : 'À livrer') : `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.waitFrom ?? rec.sentAt)}`) }
             : { bg: '#FEF3C7', fg: '#92400E', bd: '#D97706', t: (rec.waitFrom && new Date(rec.waitFrom).getTime() > Date.now() ? (vi ? 'Chờ giao' : 'À livrer') : `${vi ? 'Chờ shop' : 'Attente shop'} · ${ago(rec.waitFrom ?? rec.sentAt)}`) };
@@ -385,7 +385,7 @@ export default function DeliveryCheckIndexView({ today, tomorrow, orders, pendin
         )}
         {!o.prod_gap?.length && !!o.prod_short?.length && (
           <span className="inline-flex items-center gap-1 text-[11px] font-bold rounded-full px-2.5 py-1 shrink-0"
-            style={{ backgroundColor: '#FFF4D6', color: '#8A5A00', border: '1px solid #F0D98A' }}
+            style={{ backgroundColor: '#FFF4D6', color: '#8A5A00', border: '1px solid #E9D3A4' }}
             title={(vi ? 'Thẻ SX của đơn này chưa chuyển kho đủ (cả ngày vẫn đủ):\n' : 'Carte de cette commande pas entièrement transférée (journée OK) :\n') + o.prod_short.join('\n')}>
             <AlertTriangle size={12} /> {vi ? `Thẻ chưa chuyển đủ · ${o.prod_short.length}` : `Carte pas transf. · ${o.prod_short.length}`}
           </span>

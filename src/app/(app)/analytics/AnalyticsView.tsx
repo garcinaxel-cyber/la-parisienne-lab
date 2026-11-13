@@ -148,7 +148,7 @@ export default function AnalyticsView({
                       <span className="text-ink-light">{t.completion}% · {t.units.toLocaleString()} {vi ? 'cái' : 'units'}</span>
                     </div>
                     <div className="h-2 rounded-full bg-border-soft overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${t.completion}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
+                      <div className="h-full rounded-full" style={{ width: `${t.completion}%`, backgroundColor: meta?.color ?? '#2A1810' }} />
                     </div>
                   </div>
                 );
@@ -190,7 +190,7 @@ export default function AnalyticsView({
                         <span className="text-ink-light">{t.rate}% · {t.checked.toLocaleString()}/{t.expected.toLocaleString()}</span>
                       </div>
                       <div className="h-2 rounded-full bg-border-soft overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.rate)}%`, backgroundColor: meta?.color ?? '#1A4731' }} />
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(100, t.rate)}%`, backgroundColor: meta?.color ?? '#2A1810' }} />
                       </div>
                     </button>
                     {isOpen && gapProducts.length > 0 && (
@@ -434,8 +434,8 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
     const net7 = (s7?.qty ?? 0) - (d7?.qty ?? 0);
     return (
       <div className="mx-3 mb-2 rounded-xl px-3 py-2 text-[11.5px] space-y-1"
-        style={{ backgroundColor: '#FFFAEE', border: '1px solid #E0D49A', color: '#1A2C24' }}>
-        <div className="font-semibold" style={{ color: '#1A4731' }}>
+        style={{ backgroundColor: '#FBF7F0', border: '1px solid #E6DCCF', color: '#2E1B12' }}>
+        <div className="font-semibold" style={{ color: '#2A1810' }}>
           🧮 {vi ? 'Tồn Odoo' : 'Stock Odoo'} = <b>{qty}</b> — {vi ? 'tổng gửi kho (VÀO) − tổng giao hàng (RA) từ trước tới nay' : 'total des envois en stock (ENTRÉES) − total des livraisons (SORTIES) depuis toujours'}
         </div>
         <div>
@@ -564,7 +564,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
             {vi ? 'Kho dài hạn' : 'Stock long terme'}
           </h4>
           <span className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ color: '#92600A', backgroundColor: '#FFF4CC' }}>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ color: '#92600A', backgroundColor: '#F6F1EA' }}>
               💰 {fmtVnd(stockItems.reduce((s, i) => s + Math.max(0, i.qty) * (prices[i.sku] ?? 0), 0))}₫
             </span>
             <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
@@ -577,7 +577,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
           {Array.from(stockByCat.entries()).map(([cat, items]) => (
             <div key={cat}>
               <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
-                style={{ backgroundColor: '#F0F9F4', color: '#2D6A4F', borderTop: '1px solid #E5E7EB' }}>
+                style={{ backgroundColor: '#F7F1E8', color: '#572C1A', borderTop: '1px solid #E5E7EB' }}>
                 <span>{cat} · {items.length} SKU · {items.reduce((s, i) => s + i.qty, 0)} {vi ? 'cái' : 'u.'} · {fmtVnd(items.reduce((s, i) => s + Math.max(0, i.qty) * (prices[i.sku] ?? 0), 0))}₫</span>
                 {items.some(i => i.below) && (
                   <span style={{ color: '#B42318' }}>{items.filter(i => i.below).length} {vi ? 'dưới ngưỡng' : 'sous seuil'}</span>
@@ -594,7 +594,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
                       {teamChip(trace[i.sku]?.team)}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="font-bold" style={{ color: i.qty < 0 || i.below ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                      <span className="font-bold" style={{ color: i.qty < 0 || i.below ? '#B42318' : '#2A1810' }}>{i.qty}</span>
                       <span className="text-[11px] text-ink-light w-16 text-right">
                         {i.threshold != null ? `${vi ? 'ngưỡng' : 'seuil'} ${i.threshold}` : '—'}
                       </span>
@@ -647,7 +647,7 @@ function StockSection({ vi, runAt, snapshot, thresholds, initialSent, initialUpc
                         {teamChip(trace[i.sku]?.team)}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-bold" style={{ color: i.qty < 0 ? '#B42318' : '#1A4731' }}>{i.qty}</span>
+                        <span className="font-bold" style={{ color: i.qty < 0 ? '#B42318' : '#2A1810' }}>{i.qty}</span>
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={b.style}>{b.label}</span>
                         <ChevronDown size={12} className={`text-ink-light transition-transform ${openSku === i.sku ? 'rotate-180' : ''}`} />
                       </div>

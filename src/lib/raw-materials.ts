@@ -155,7 +155,7 @@ export const TEAM_SHORT: Record<string, { vi: string; en: string; color: string;
   kho: { vi: 'Kho', en: 'Storage', color: '#344054', bg: '#F2F4F7' },
   // Packaging requests from the assistants and lab managers (Axel, 2026-11-10/11). No team lead, no
   // room: received goods stay in the Lab storage, exactly like the 'kho' requests.
-  packaging: { vi: 'Bao bì', en: 'Packaging', color: '#8A6D14', bg: '#FFFAEE' },
+  packaging: { vi: 'Bao bì', en: 'Packaging', color: '#8A6D14', bg: '#FBF7F0' },
 };
 // Requesters whose goods are received into the Lab storage itself (no handover to a team room).
 export const STORAGE_TEAMS = ['kho', 'packaging'] as const;

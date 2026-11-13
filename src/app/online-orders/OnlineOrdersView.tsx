@@ -370,12 +370,12 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
   }
   const titles: Record<Tab, string> = { inbox: tr('titleInbox'), order: tr('titleOrder'), track: tr('titleTrack'), stats: tr('titleStats'), customers: tr('titleCustomers') };
   return (
-    <div style={{ backgroundColor: NAVY, color: '#FFFAEE' }} className="px-4 pt-3.5 pb-3 sticky top-0 z-10">
+    <div style={{ backgroundColor: NAVY, color: '#FBF7F0' }} className="px-4 pt-3.5 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-2.5">
         <div style={{ width: 34, height: 34, borderRadius: '50%', backgroundColor: GOLD }} className="flex items-center justify-center text-base flex-shrink-0">🛍️</div>
         <div className="flex-1 min-w-0">
           <div style={{ fontFamily: "'Playfair Display', serif", fontWeight: 700, fontSize: 16, lineHeight: 1.15 }}>{titles[tab]}</div>
-          <div style={{ fontSize: 11, color: '#F0D98A', marginTop: 1 }}>{dateLabel}{fullName ? ` · ${fullName}` : ''}</div>
+          <div style={{ fontSize: 11, color: '#E9D3A4', marginTop: 1 }}>{dateLabel}{fullName ? ` · ${fullName}` : ''}</div>
         </div>
         {tab === 'order' && count > 0 && (
           <div style={{ backgroundColor: GOLD, color: NAVY, fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999 }}>{count} {tr('items')}</div>
@@ -456,7 +456,7 @@ function OrderTab(props: any) {
           <button key={k} onClick={() => { setSource(k); if (k === 'shop_stock' && shop === LAB_SHOP) setShop(ONLINE_SHOPS[0]); }}
             style={{
               backgroundColor: source === k ? (k === 'shop_stock' ? '#B45309' : NAVY) : '#fff',
-              color: source === k ? '#FFFAEE' : INK, border: source === k ? 'none' : `1px solid ${BORDER}`,
+              color: source === k ? '#FBF7F0' : INK, border: source === k ? 'none' : `1px solid ${BORDER}`,
               fontSize: 12.5, fontWeight: source === k ? 700 : 500, padding: '9px 8px', borderRadius: 10,
             }}>{label}</button>
         ))}
@@ -471,9 +471,9 @@ function OrderTab(props: any) {
           <span key={c} className="inline-flex items-center rounded-full overflow-hidden"
             style={{ border: channel === c ? 'none' : `1px solid ${BORDER}`, backgroundColor: channel === c ? NAVY : '#fff' }}>
             <button onClick={() => setChannel(c)}
-              style={{ color: channel === c ? '#FFFAEE' : INK, fontSize: 12.5, fontWeight: channel === c ? 600 : 500, padding: '7px 6px 7px 14px' }}>{c}</button>
+              style={{ color: channel === c ? '#FBF7F0' : INK, fontSize: 12.5, fontWeight: channel === c ? 600 : 500, padding: '7px 6px 7px 14px' }}>{c}</button>
             <button onClick={() => deleteChannel(c)} aria-label="remove"
-              style={{ color: channel === c ? '#F0D98A' : INK_LIGHT, padding: '7px 9px 7px 3px', lineHeight: 0 }}><X size={11} /></button>
+              style={{ color: channel === c ? '#E9D3A4' : INK_LIGHT, padding: '7px 9px 7px 3px', lineHeight: 0 }}><X size={11} /></button>
           </span>
         ))}
         <span className="inline-flex items-center rounded-full" style={{ border: `1px dashed ${BORDER}`, backgroundColor: '#fff' }}>
@@ -492,7 +492,7 @@ function OrderTab(props: any) {
         {(isStock ? ONLINE_SHOPS : [...ONLINE_SHOPS, LAB_SHOP]).map((s: string) => (
           <button key={s} onClick={() => { setShop(s); if (s === LAB_SHOP) setDeliveryMode('direct'); }}
             style={{
-              backgroundColor: shop === s ? NAVY : '#fff', color: shop === s ? '#FFFAEE' : INK,
+              backgroundColor: shop === s ? NAVY : '#fff', color: shop === s ? '#FBF7F0' : INK,
               border: shop === s ? 'none' : `1px solid ${BORDER}`, fontSize: 12.5, fontWeight: shop === s ? 600 : 500,
               padding: '7px 14px', borderRadius: 999,
             }}>{s}</button>
@@ -506,7 +506,7 @@ function OrderTab(props: any) {
             {([['shop', tr('dmShop')], ['direct', tr('dmDirect')]] as const).map(([k, label]) => (
               <button key={k} onClick={() => setDeliveryMode(k)} disabled={shop === LAB_SHOP && k === 'shop'}
                 style={{
-                  backgroundColor: deliveryMode === k ? NAVY : '#fff', color: deliveryMode === k ? '#FFFAEE' : INK,
+                  backgroundColor: deliveryMode === k ? NAVY : '#fff', color: deliveryMode === k ? '#FBF7F0' : INK,
                   border: deliveryMode === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12.5, fontWeight: deliveryMode === k ? 700 : 500,
                   padding: '9px 8px', borderRadius: 10, opacity: shop === LAB_SHOP && k === 'shop' ? 0.4 : 1,
                 }}>{label}</button>
@@ -684,7 +684,7 @@ function OrderTab(props: any) {
               <input type="number" value={newFeePrice} onChange={(e: any) => setNewFeePrice(e.target.value)} placeholder={tr('newFeePricePh')}
                 className="px-2 py-1.5 rounded text-sm text-right" style={{ border: `1px solid ${BORDER}`, width: 84 }} />
               <button onClick={addFeeType} disabled={!newFeeLabel.trim()}
-                style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 12.5, fontWeight: 700, padding: '8px 12px', borderRadius: 8, opacity: newFeeLabel.trim() ? 1 : 0.4 }}>
+                style={{ backgroundColor: NAVY, color: '#FBF7F0', fontSize: 12.5, fontWeight: 700, padding: '8px 12px', borderRadius: 8, opacity: newFeeLabel.trim() ? 1 : 0.4 }}>
                 + {tr('addBtn')}
               </button>
             </div>
@@ -1047,7 +1047,7 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
           }}>{tr('clearDate')}</button>
         )}
         <button onClick={() => setShowExport(v => !v)} style={{
-          fontSize: 11.5, fontWeight: 700, color: showExport ? '#FFFAEE' : INK, backgroundColor: showExport ? NAVY : '#fff',
+          fontSize: 11.5, fontWeight: 700, color: showExport ? '#FBF7F0' : INK, backgroundColor: showExport ? NAVY : '#fff',
           border: showExport ? 'none' : `1px solid ${BORDER}`, padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap', marginLeft: 'auto',
         }}>📤 {tr('exportBtn')}</button>
       </div>
@@ -1072,7 +1072,7 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
       <div className="flex gap-2 mb-3 overflow-x-auto">
         {([['all', tr('fAll')], ['undelivered', tr('fUndelivered')], ['unpaid', tr('unpaid')], ['late', tr('fLate')]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
-            backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FFFAEE' : INK,
+            backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FBF7F0' : INK,
             border: filter === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}
@@ -1096,7 +1096,7 @@ function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: 
                   <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff', opacity: o.refunded ? 0.6 : 1 }}>
               <div className="flex justify-between items-start mb-2">
                 <div className="flex gap-1.5 items-center flex-wrap">
-                  <span style={{ backgroundColor: NAVY, color: '#FFFAEE', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
+                  <span style={{ backgroundColor: NAVY, color: '#FBF7F0', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
                   {o.refunded && (
                     <span style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedBadge')}</span>
                   )}
@@ -1340,7 +1340,7 @@ function StatsTab() {
   const shownIdx = activeIdx ?? (peakIdx >= 0 && series[peakIdx]?.total > 0 ? peakIdx : null);
   const shownDay = shownIdx !== null ? series[shownIdx] : null;
   const granularity = data.rangeDays <= 30 ? tr('perDay') : data.rangeDays <= 90 ? tr('perWeek') : tr('perMonth');
-  const SHOP_HUES = [NAVY, '#2D6A4F', '#5C9179', '#8CB4A2', '#BBD4C7'];
+  const SHOP_HUES = [NAVY, '#572C1A', '#5C9179', '#8CB4A2', '#BBD4C7'];
 
   return (
     <div>
@@ -1367,7 +1367,7 @@ function StatsTab() {
       <div className="flex gap-2 mb-2 overflow-x-auto">
         {([[14, tr('p14')], [30, tr('p30')], [90, tr('p90')], [365, tr('p365')]] as const).map(([d, label]) => (
           <button key={d} onClick={() => { setRange(d); setCustomFrom(null); setCustomTo(null); }} style={{
-            backgroundColor: !customFrom && !customTo && range === d ? NAVY : '#fff', color: !customFrom && !customTo && range === d ? '#FFFAEE' : INK,
+            backgroundColor: !customFrom && !customTo && range === d ? NAVY : '#fff', color: !customFrom && !customTo && range === d ? '#FBF7F0' : INK,
             border: !customFrom && !customTo && range === d ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
           }}>{label}</button>
         ))}

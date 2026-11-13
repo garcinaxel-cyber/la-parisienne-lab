@@ -338,7 +338,7 @@ export default function InventorySessionView({
           ) : (
             <>
               {unknowns.length > 0 && (
-                <div className="card p-3 space-y-2" style={{ border: `2px solid ${openUnknowns ? '#C9A84C' : '#E0D49A'}` }}>
+                <div className="card p-3 space-y-2" style={{ border: `2px solid ${openUnknowns ? '#C9A84C' : '#E6DCCF'}` }}>
                   <div className="text-[14px] font-extrabold flex items-center gap-2"><Camera size={16} color="#8A6D14" /> {vi ? 'Ảnh cần xác định' : 'Photos à identifier'} · {openUnknowns}/{unknowns.length}</div>
                   {openUnknowns > 0 && <div className="text-[12px]" style={{ color: '#6B4A00' }}>{vi ? 'Phải xử lý trước khi gửi.' : "À traiter avant l'envoi."}</div>}
                   {unknowns.map(u => <FgUnknownRow key={u.id} u={u} vi={vi} onDone={(nu, m) => {

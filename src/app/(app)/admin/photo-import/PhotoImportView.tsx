@@ -18,9 +18,9 @@ const GROUPS: { key: string; label: string }[] = [
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   pending: { label: 'Waiting', color: '#6B7280', bg: '#F3F4F6' },
-  copied: { label: 'Copied, being checked', color: '#92600A', bg: '#FFFAEE' },
-  applied: { label: 'Imported', color: '#1A4731', bg: '#E8F3EC' },
-  skipped: { label: 'Skipped', color: '#92600A', bg: '#FFFAEE' },
+  copied: { label: 'Copied, being checked', color: '#92600A', bg: '#FBF7F0' },
+  applied: { label: 'Imported', color: '#2A1810', bg: '#E8F3EC' },
+  skipped: { label: 'Skipped', color: '#92600A', bg: '#FBF7F0' },
   error: { label: 'Error', color: '#B91C1C', bg: '#FEF2F2' },
 };
 
@@ -125,21 +125,21 @@ export default function PhotoImportView() {
                 { v: status.failed + status.skipped, l: 'Errors / skipped' },
               ].map(t => (
                 <div key={t.l} className="rounded-xl px-2 py-2.5" style={{ backgroundColor: '#FAF7F0', border: '1px solid #EFE7D6' }}>
-                  <div className="text-xl font-extrabold" style={{ color: '#1A4731' }}>{t.v}</div>
+                  <div className="text-xl font-extrabold" style={{ color: '#2A1810' }}>{t.v}</div>
                   <div className="text-[11px] text-gray-500">{t.l}</div>
                 </div>
               ))}
             </div>
 
             <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#F3F4F6' }}>
-              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: '#1A4731' }} />
+              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: '#2A1810' }} />
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               {status.pending > 0 && (
                 <button onClick={run} disabled={running}
                   className="inline-flex items-center gap-2 text-sm font-bold rounded-lg px-4 py-2.5 text-white disabled:opacity-60"
-                  style={{ backgroundColor: '#1A4731' }}>
+                  style={{ backgroundColor: '#2A1810' }}>
                   {running ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                   {running ? `Importing… ${done} / ${total}` : `Import ${status.pending} photos`}
                 </button>
@@ -150,14 +150,14 @@ export default function PhotoImportView() {
                 </button>
               )}
               {!running && stuck > 0 && (
-                <button onClick={retry} className="inline-flex items-center gap-2 text-sm font-semibold rounded-lg px-3 py-2.5" style={{ border: '1px solid #E5E7EB', color: '#1A4731' }}>
+                <button onClick={retry} className="inline-flex items-center gap-2 text-sm font-semibold rounded-lg px-3 py-2.5" style={{ border: '1px solid #E5E7EB', color: '#2A1810' }}>
                   <RefreshCw size={14} /> Put {stuck} back in the queue
                 </button>
               )}
             </div>
 
             {finished && (
-              <div className="flex items-start gap-2 text-sm rounded-lg px-3 py-2" style={{ backgroundColor: '#E8F3EC', color: '#1A4731' }}>
+              <div className="flex items-start gap-2 text-sm rounded-lg px-3 py-2" style={{ backgroundColor: '#E8F3EC', color: '#2A1810' }}>
                 <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
                 <span>{status.applied} photos imported{status.skipped ? `, ${status.skipped} skipped because the recipe card photo was changed in the meantime` : ''}.</span>
               </div>

@@ -2,6 +2,8 @@
 const nextConfig = {
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
+  // Loads src/instrumentation.ts — only used to make Vercel PREVIEW deployments read-only.
+  experimental: { instrumentationHook: true },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },

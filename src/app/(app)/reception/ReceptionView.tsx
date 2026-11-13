@@ -166,8 +166,8 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
           <button key={t.key} onClick={() => setTab(t.key)}
             className="px-3.5 py-2 text-sm font-bold -mb-px"
             style={{
-              color: tab === t.key ? '#1A4731' : '#9CA3AF',
-              borderBottom: tab === t.key ? '2px solid #1A4731' : '2px solid transparent',
+              color: tab === t.key ? '#2A1810' : '#9CA3AF',
+              borderBottom: tab === t.key ? '2px solid #2A1810' : '2px solid transparent',
             }}>
             {t.label}
           </button>
@@ -308,7 +308,7 @@ export default function ReceptionView({ bons, history = [] }: { bons: Bon[]; his
                         <div className="col-span-5 flex items-center gap-2 min-w-0">
                           {l.image_url
                             ? <img src={thumb(l.image_url, 80)} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />
-                            : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#FFF4CC' }}>🥐</div>}
+                            : <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-sm" style={{ backgroundColor: '#F6F1EA' }}>🥐</div>}
                           <span className="text-sm text-navy truncate">{vi ? l.product_name_vi : (l.product_name_en || l.product_name_vi)}</span>
                         </div>
                         <div className="col-span-2 text-center font-bold text-navy">×{l.qty_sent}</div>
