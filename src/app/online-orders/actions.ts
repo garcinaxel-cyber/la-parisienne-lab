@@ -1605,3 +1605,47 @@ export async function unsubscribeOnlinePushAction(endpoint: string): Promise<{ o
   await supabase.from('lab_shop_push_subscriptions').delete().eq('endpoint', endpoint).eq('shop_name', ONLINE_PUSH_KEY);
   return { ok: true };
 }
+
+// ── Stats v2 (Axel, 2026-11-14): Ads + Customer service sub-tabs ──
+// Read-only. Both aggregations run in SQL (online_ads_attribution / online_service_stats,
+// migration online_sales_stats_v2_functions) so the page never pulls raw messages.
+export type AdsCampaignStat = { name: string; spend: number; chats: number; orders: number; revenue: number };
+export type OnlineStatsExtras = {
+  ads: { campaigns: AdsCampaignStat[]; conversations: number; conversationsWithPhone: number; chatOrders: number; chatRevenue: number; chatConversationsWithOrder: number } | null;
+  service: { hours: { h: number; n: number; median: number | null; never: number }[]; total: number; daytimeMedian: number | null; within5Pct: number | null; night: number; nightMaxHours: number | null; lateOrNever: number; never: number } | null;
+  waiting: { id: string; name: string | null; page: string | null; preview: string | null; since: string }[];
+  waitingCount: number;
+};
+
+export async function getOnlineStatsExtrasAction(from: string, to: string): Promise<{ data?: OnlineStatsExtras; error?: string }> {
+  try {
+    const auth = await requireOnlineSession();
+    if ('error' in auth) return { error: auth.error };
+    const supabase = service();
+    if (!supabase) return { error: 'Server not configured' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return { error: 'Invalid date range' };
+    const hourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
+    const weekAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    const [ads, svc, waitList, waitCount, pages] = await Promise.all([
+      supabase.rpc('online_ads_attribution', { p_from: from, p_to: to }),
+      supabase.rpc('online_service_stats', { p_from: from, p_to: to }),
+      supabase.from('inbox_conversations').select('id, customer_name, page_id, last_message_preview, last_inbound_at')
+        .eq('last_direction', 'in').lt('last_inbound_at', hourAgo).gte('last_inbound_at', weekAgo).order('last_inbound_at', { ascending: false }).limit(6),
+      supabase.from('inbox_conversations').select('id', { count: 'exact', head: true })
+        .eq('last_direction', 'in').lt('last_inbound_at', hourAgo).gte('last_inbound_at', weekAgo),
+      supabase.from('inbox_pages').select('page_id, name, channel_label'),
+    ]);
+    const pageName = new Map<string, string>();
+    for (const p of pages.data ?? []) pageName.set(p.page_id, p.channel_label || p.name);
+    return {
+      data: {
+        ads: (ads.data as any) ?? null,
+        service: (svc.data as any) ?? null,
+        waiting: (waitList.data ?? []).map((c: any) => ({ id: c.id, name: c.customer_name ?? null, page: pageName.get(c.page_id) ?? null, preview: c.last_message_preview ?? null, since: c.last_inbound_at })),
+        waitingCount: waitCount.count ?? 0,
+      },
+    };
+  } catch (e: any) {
+    return { error: e?.message ?? 'Unexpected error' };
+  }
+}

@@ -6,7 +6,8 @@
 // layout changes. Stages are derived, never stored:
 //   lab  = lab order whose Odoo delivery is not validated yet
 //   sent = Odoo delivery validated (lab sent it), or a shop-stock sale
-//   done = handed to the customer (shop_delivered, ticked by sales)
+// Axel, 2026-11-14: the "handed to customer" tick is not used by the team, so it is no longer
+// shown (the field and its action stay untouched for the payment alert and history).
 // Payment is shown beside the stage and never blocks it.
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Loader2, X, CalendarDays, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
@@ -29,14 +30,13 @@ const ST = {
   violet: { bg: '#EDE9F5', fg: '#5B4A8A' },
 };
 
-type Stage = 'lab' | 'sent' | 'done';
-type View = { kind: 'day'; date: string } | { kind: 'late' };
-type Filter = 'all' | 'notHanded' | 'unpaid' | 'latePay';
+type Stage = 'lab' | 'sent';
+type View = { kind: 'day'; date: string };
+type Filter = 'all' | 'atLab' | 'unpaid' | 'latePay';
 
 function stageOf(o: OnlineOrderSummary): Stage {
-  if (o.shopDelivered) return 'done';
-  if (o.source === 'shop_stock' || o.source === 'excel_import' || o.labDelivered) return 'sent';
-  return 'lab';
+  if (o.source === 'lab' && !o.labDelivered && !o.shopDelivered) return 'lab';
+  return 'sent';
 }
 const isLatePay = (o: OnlineOrderSummary) => o.paymentStatus !== 'paid' && (o.labDelivered || o.shopDelivered) && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000;
 const noOdoo = (o: OnlineOrderSummary) => o.source === 'lab' && !o.orderRef && !o.cancelled;
@@ -53,21 +53,19 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
   const [q, setQ] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [overdue, setOverdue] = useState(0);
   const [showExport, setShowExport] = useState(false);
   const [exportFrom, setExportFrom] = useState(isoDay(-6));
   const [exportTo, setExportTo] = useState(today);
 
   async function load(v: View = view) {
     setLoading(true);
-    const res = await actions.getMyOnlineOrdersAction(v.kind === 'late' ? { overdue: true } : { deliveryDate: v.date });
+    const res = await actions.getMyOnlineOrdersAction({ deliveryDate: v.date });
     setOrders(res.orders ?? []);
     setLoading(false);
   }
   async function loadCounts() {
     const res = await actions.getOnlineOrderDayCountsAction(isoDay(-1), isoDay(7));
     if (res.counts) setCounts(res.counts);
-    if (typeof res.overdue === 'number') setOverdue(res.overdue);
   }
   useEffect(() => { load(view); setSelectedId(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [view]);
   useEffect(() => { loadCounts(); }, []);
@@ -77,7 +75,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
     const needle = q.trim().toLowerCase();
     const digits = needle.replace(/\D/g, '');
     return (orders ?? []).filter(o => {
-      if (filter === 'notHanded' && o.shopDelivered) return false;
+      if (filter === 'atLab' && stageOf(o) !== 'lab') return false;
       if (filter === 'unpaid' && o.paymentStatus === 'paid') return false;
       if (filter === 'latePay' && !isLatePay(o)) return false;
       if (!needle) return true;
@@ -88,7 +86,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
   }, [orders, filter, q]);
 
   const byStage = useMemo(() => {
-    const m: Record<Stage, OnlineOrderSummary[]> = { lab: [], sent: [], done: [] };
+    const m: Record<Stage, OnlineOrderSummary[]> = { lab: [], sent: [] };
     for (const o of filtered) m[stageOf(o)].push(o);
     return m;
   }, [filtered]);
@@ -99,12 +97,11 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
   const watch: string[] = [];
   if (latePayN) watch.push(`${latePayN} ${tr('watchUnpaid')}`);
   if (noOdooN) watch.push(`${noOdooN} ${tr('watchNoOdoo')}`);
-  if (overdue && view.kind !== 'late') watch.push(`${overdue} ${tr('watchOverdue')}`);
 
   const days = [-1, 0, 1, 2, 3, 4, 5, 6].map(i => isoDay(i));
   const dayLabel = (d: string) => d === today ? tr('today') : d === isoDay(1) ? tr('tomorrow') : fmtDayLabel(d, lang).split(/[ ,]/)[0];
   const dayNum = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
-  const curDate = view.kind === 'day' ? view.date : null;
+  const curDate = view.date;
   const shiftDay = (n: number) => { const base = curDate ?? today; const d = new Date(base + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); setView({ kind: 'day', date: d.toISOString().slice(0, 10) }); };
 
   const chip = (active: boolean, red = false): React.CSSProperties => ({
@@ -149,9 +146,6 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
           )}
 
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-3.5 px-3.5 lg:mx-0 lg:px-0">
-            <button onClick={() => setView({ kind: 'late' })} style={dayBtn(view.kind === 'late', overdue > 0)}>
-              <span style={{ fontSize: 10.5, fontWeight: 600, opacity: 0.8 }}>{tr('late')}</span><span>{overdue}</span>
-            </button>
             <button onClick={() => shiftDay(-1)} aria-label="previous day" className="hidden lg:flex items-center justify-center" style={{ ...dayBtn(false), minWidth: 36, padding: 0 }}><ChevronLeft size={16} /></button>
             {days.map(d => (
               <button key={d} onClick={() => setView({ kind: 'day', date: d })} style={dayBtn(curDate === d)}>
@@ -168,7 +162,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-3.5 px-3.5 lg:mx-0 lg:px-0">
-            {([['all', tr('fAll')], ['notHanded', tr('fNotHanded')], ['unpaid', tr('unpaid')], ['latePay', tr('latePay')]] as const).map(([k, label]) => (
+            {([['all', tr('fAll')], ['atLab', tr('stLab')], ['unpaid', tr('unpaid')], ['latePay', tr('latePay')]] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFilter(k)} style={chip(filter === k, k === 'latePay')}>{label}</button>
             ))}
             {loading && <Loader2 size={15} className="animate-spin flex-none" color={LIGHT} />}
@@ -183,9 +177,9 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
         </div>
 
         {/* ── Desktop board ── */}
-        <div className="hidden lg:grid grid-cols-3 gap-3 px-6 pb-5 flex-1 min-h-0">
-          {(['lab', 'sent', 'done'] as Stage[]).map(st => {
-            const meta = { lab: [tr('stLab'), tr('stLabHint'), '#B08A3E'], sent: [tr('stSent'), tr('stSentHint'), ST.blue.fg], done: [tr('stDone'), tr('stDoneHint'), ST.green.fg] }[st];
+        <div className="hidden lg:grid grid-cols-2 gap-4 px-6 pb-5 flex-1 min-h-0">
+          {(['lab', 'sent'] as Stage[]).map(st => {
+            const meta = { lab: [tr('stLab'), tr('stLabHint'), '#B08A3E'], sent: [tr('stSent'), tr('stSentHint'), ST.green.fg] }[st];
             return (
               <section key={st} className="flex flex-col min-h-0 rounded-2xl" style={{ backgroundColor: COL, padding: 12 }}>
                 <div className="flex flex-col gap-0.5 px-1 pb-2.5">
@@ -195,7 +189,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
                   </div>
                   <span style={{ fontSize: 11.5, color: MUTED }}>{meta[1]}</span>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2.5 pr-0.5">
+                <div className="flex-1 min-h-0 overflow-y-auto grid grid-cols-1 xl:grid-cols-2 gap-2.5 content-start pr-0.5">
                   {byStage[st].map(o => (
                     <OrderCard key={o.orderBatchId} o={o} readOnly={readOnly} compact selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} onChanged={refresh} />
                   ))}
@@ -217,11 +211,13 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
       </div>
 
       {/* ── Detail: side panel on desktop, full screen on phone ── */}
-      <aside className="hidden lg:flex flex-col flex-none min-h-0" style={{ width: 400, backgroundColor: CARD, borderLeft: `1px solid ${LINE}` }}>
-        {selected
-          ? <OrderDetail key={selected.orderBatchId} o={selected} readOnly={readOnly} onClose={() => setSelectedId(null)} onChanged={refresh} />
-          : <div className="flex-1 flex items-center justify-center px-10 text-center" style={{ color: LIGHT, fontSize: 13 }}>{tr('selectOrder')}</div>}
-      </aside>
+      {selected && (
+        <div className="hidden lg:block fixed inset-0 z-30" onClick={() => setSelectedId(null)} style={{ backgroundColor: 'rgba(42,24,16,0.18)' }}>
+          <aside onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 flex flex-col" style={{ width: 420, backgroundColor: CARD, boxShadow: '-12px 0 32px rgba(42,24,16,0.14)' }}>
+            <OrderDetail key={selected.orderBatchId} o={selected} readOnly={readOnly} onClose={() => setSelectedId(null)} onChanged={refresh} />
+          </aside>
+        </div>
+      )}
       {selected && (
         <div className="lg:hidden fixed inset-0 z-40 flex flex-col" style={{ backgroundColor: BG }}>
           <OrderDetail key={selected.orderBatchId} o={selected} readOnly={readOnly} onClose={() => setSelectedId(null)} onChanged={refresh} fullScreen />
@@ -288,28 +284,15 @@ function OrderCard({ o, readOnly, compact = false, selected = false, onOpen, onC
   const pay = usePayBadge(o);
   const route = useRoute(o);
   const stage = stageOf(o);
-  const [busy, setBusy] = useState(false);
   const late = isLatePay(o);
-  async function handOver(e: React.MouseEvent) {
-    e.stopPropagation();
-    setBusy(true);
-    const res = await actions.setShopDeliveredAction(o.orderBatchId, true);
-    setBusy(false);
-    if (res?.error) { window.alert(res.error); return; }
-    onChanged();
-  }
+  void readOnly; void onChanged;
   const products = o.items.filter(i => !i.isFee).map(i => `${i.nameVi}${i.qty > 1 ? ` ×${i.qty}` : ''}`).join(', ') || '—';
   let action: React.ReactNode = null;
   if (o.cancelled) action = <span style={{ fontSize: 12, fontWeight: 600, color: ST.red.fg }}>{tr('cancelledBadge')}</span>;
   else if (stage === 'lab') action = noOdoo(o)
     ? <span style={{ fontSize: 12, fontWeight: 600, color: ST.red.fg }}>{tr('noOdooAdmin')}</span>
     : <span style={{ fontSize: 12, fontWeight: 600, color: LIGHT }}>{tr('labTurn')}{o.production && o.production.total > 0 ? ` · ${tr('produced')} ${o.production.produced}/${o.production.total}` : ''}</span>;
-  else if (stage === 'sent' && !readOnly) action = (
-    <button onClick={handOver} disabled={busy} style={{ minHeight: compact ? 36 : 42, borderRadius: 10, backgroundColor: DARK, color: '#FBF7F0', fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
-      {busy ? '…' : tr('markHanded')}
-    </button>
-  );
-  else if (stage === 'done') action = <span style={{ fontSize: 12, fontWeight: 600, color: late ? ST.red.fg : ST.green.fg }}>{late ? tr('latePay') : `✓ ${tr('doneShort')}`}</span>;
+  else if (late) action = <span style={{ fontSize: 12, fontWeight: 600, color: ST.red.fg }}>{tr('latePay')}</span>;
 
   return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={e => { if (e.key === 'Enter') onOpen(); }}
@@ -338,7 +321,7 @@ function OrderCard({ o, readOnly, compact = false, selected = false, onOpen, onC
       </div>
       <div className="flex items-center gap-2 min-w-0">
         <RefBadge o={o} />
-        {!compact && <Pill bg={stage === 'lab' ? ST.amber.bg : stage === 'sent' ? ST.blue.bg : ST.green.bg} fg={stage === 'lab' ? ST.amber.fg : stage === 'sent' ? ST.blue.fg : ST.green.fg}>{stage === 'lab' ? tr('stLab') : stage === 'sent' ? tr('stSent') : tr('stDone')}</Pill>}
+        {!compact && <Pill bg={stage === 'lab' ? ST.amber.bg : ST.green.bg} fg={stage === 'lab' ? ST.amber.fg : ST.green.fg}>{stage === 'lab' ? tr('stLab') : tr('stSent')}</Pill>}
         <span className="truncate" style={{ fontSize: 11, color: LIGHT }}>{o.channel}</span>
         {o.refunded && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('refundedBadge')}</Pill>}
       </div>
@@ -366,7 +349,6 @@ function OrderDetail({ o, readOnly, onClose, onChanged, fullScreen = false }: { 
     if (res && 'error' in res && res.error) { window.alert(res.error); return; }
     onChanged();
   }
-  const toggleHanded = () => run(() => actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered));
   function setPay(s: 'unpaid' | 'partial' | 'paid') {
     if (s === 'paid') return run(() => actions.setPaymentStatusAction(o.orderBatchId, 'paid', total));
     if (s === 'unpaid') return run(() => actions.setPaymentStatusAction(o.orderBatchId, 'unpaid', o.amountPaid));
@@ -407,13 +389,14 @@ function OrderDetail({ o, readOnly, onClose, onChanged, fullScreen = false }: { 
   steps.push({ label: tr('tlCreated'), who: o.source === 'excel_import' ? tr('tlImport') : o.orderRef ? `Odoo ${o.orderRef}` : o.source === 'shop_stock' ? tr('stockBadge') : tr('noOdoo'), at: fmtTime(o.createdAt), state: 'done' });
   if (o.source === 'lab') {
     const prod = o.production && o.production.total > 0 ? `${tr('produced')} ${o.production.produced}/${o.production.total}` : '';
-    steps.push({ label: tr('tlLab'), who: prod, at: '', state: o.labDelivered ? 'done' : 'now' });
+    const sent = o.labDelivered || o.shopDelivered;
+    steps.push({ label: tr('tlLab'), who: prod, at: '', state: sent ? 'done' : 'now' });
     const direct = o.shopName === 'Lab' || o.deliveryMode === 'direct';
-    steps.push({ label: direct ? tr('tlSentDirect') : `${tr('tlSentTo')} ${o.shopName}`, who: tr('tlAuto'), at: '', state: o.labDelivered ? 'done' : 'todo' });
+    steps.push({ label: direct ? tr('tlSentDirect') : `${tr('tlSentTo')} ${o.shopName}`, who: tr('tlAuto'), at: '', state: sent ? 'done' : 'todo' });
   } else if (o.source === 'shop_stock') {
     steps.push({ label: `${tr('tlStock')} ${o.shopName}`, who: '', at: '', state: 'done' });
   }
-  steps.push({ label: tr('tlHanded'), who: tr('tlBySales'), at: '', state: o.shopDelivered ? 'done' : stage === 'sent' ? 'now' : 'todo' });
+  void stage;
 
   const sectionTitle: React.CSSProperties = { fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', color: LIGHT, fontWeight: 700 };
   const box: React.CSSProperties = fullScreen ? { backgroundColor: CARD, borderRadius: 16, padding: '14px 16px' } : { border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 14px' };
@@ -543,10 +526,6 @@ function OrderDetail({ o, readOnly, onClose, onChanged, fullScreen = false }: { 
 
       {!readOnly && (
         <div className="flex flex-col gap-2" style={{ padding: fullScreen ? '10px 14px 22px' : '12px 22px 18px', borderTop: `1px solid ${LINE}`, backgroundColor: CARD }}>
-          <button onClick={toggleHanded} disabled={busy} style={{
-            minHeight: 48, borderRadius: 13, fontSize: 14.5, fontWeight: 700, opacity: busy ? 0.6 : 1,
-            ...(o.shopDelivered ? { backgroundColor: CARD, color: DARK, border: `1px solid ${SOFT}` } : { backgroundColor: DARK, color: '#FBF7F0' }),
-          }}>{o.shopDelivered ? tr('unmarkHanded') : tr('markHanded')}</button>
           {o.source !== 'excel_import' && (
             <button onClick={refund} disabled={busy} style={{ minHeight: 40, borderRadius: 11, fontSize: 13, fontWeight: 600, color: ST.red.fg, backgroundColor: CARD, border: '1px solid #EBC3BA' }}>
               {o.refundedAt ? tr('adjustRefundBtn') : tr('refundBtn')}
