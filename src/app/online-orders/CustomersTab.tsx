@@ -65,6 +65,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
     .filter(c => !q || c.name.toLowerCase().includes(q) || (qd.length >= 3 && c.phone.replace(/\D/g, '').includes(qd)))
     .sort((a, b) => seg === 'vip' ? b.totalAmount - a.totalAmount : (b.lastOrderDate || '').localeCompare(a.lastOrderDate || ''));
   const sel = selected ? customers.find(c => c.phoneKey === selected) ?? null : null;
+  const deskSel = sel ?? filtered[0] ?? null;
   const retPct = customers.length ? Math.round(derived.counts.returning / customers.length * 1000) / 10 : 0;
 
   const segs: [Seg, string, string][] = [
@@ -115,17 +116,19 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
         </select>
       </div>
 
+      {/* Desktop: list + customer card side by side (the first customer is shown until one is picked). */}
+      <div className="lg:grid lg:gap-5 lg:items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) 440px' }}>
       <section className="rounded-2xl overflow-hidden" style={{ backgroundColor: CARD, boxShadow: '0 1px 2px rgba(42,24,16,0.05)' }}>
-        <div className="hidden lg:grid gap-3 px-5 py-3" style={{ gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) 70px 110px 110px', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: LIGHT, fontWeight: 700, borderBottom: `1px solid ${PANEL}` }}>
-          <span>{t('Khách', 'Customer')}</span><span>{t('Quận', 'District')}</span><span style={{ textAlign: 'right' }}>{t('Đơn', 'Orders')}</span><span style={{ textAlign: 'right' }}>{t('Chi tiêu', 'Spent')}</span><span style={{ textAlign: 'right' }}>{t('Đơn gần nhất', 'Last order')}</span>
+        <div className="hidden lg:grid gap-3 px-5 py-3" style={{ gridTemplateColumns: 'minmax(0,1.7fr) minmax(0,1fr) 56px 118px 96px 96px', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: LIGHT, fontWeight: 700, borderBottom: `1px solid ${PANEL}` }}>
+          <span>{t('Khách', 'Customer')}</span><span>{t('Quận', 'District')}</span><span style={{ textAlign: 'right' }}>{t('Đơn', 'Orders')}</span><span style={{ textAlign: 'right' }}>{t('Chi tiêu', 'Spent')}</span><span style={{ textAlign: 'right' }}>{t('TB/đơn', 'Avg')}</span><span style={{ textAlign: 'right' }}>{t('Gần nhất', 'Last order')}</span>
         </div>
         {filtered.length === 0 && <div className="text-center py-10" style={{ color: LIGHT, fontSize: 13 }}>{tr('custNoResults')}</div>}
         {filtered.slice(0, limit).map((c, i) => {
           const tone = TONES[i % 3];
           const badge = derived.isVip(c) ? ['VIP', AMBER] as const : derived.isRet(c) ? [tr('returningCustomerBadge'), GREEN] as const : null;
           return (
-            <button key={c.phoneKey} onClick={() => setSelected(c.phoneKey)} className="w-full text-left grid gap-3 items-center px-4 lg:px-5 py-2.5"
-              style={{ borderTop: i ? `1px solid ${PANEL}` : 'none', gridTemplateColumns: 'minmax(0,1fr) auto' }}>
+            <button key={c.phoneKey} onClick={() => setSelected(c.phoneKey)} className={`w-full text-left grid gap-3 items-center px-4 lg:px-5 py-2.5 ${deskSel?.phoneKey === c.phoneKey ? 'lg:bg-[#F7F1E8]' : ''}`}
+              style={{ borderTop: i ? `1px solid ${PANEL}` : 'none', gridTemplateColumns: 'minmax(0,1fr) auto', boxShadow: deskSel?.phoneKey === c.phoneKey ? 'inset 3px 0 0 #C9A84C' : undefined }}>
               <span className="flex items-center gap-3 min-w-0 lg:hidden">
                 <span className="flex-none flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: tone[0], color: tone[1], fontSize: 12.5, fontWeight: 700 }}>{initials(c.name)}</span>
                 <span className="flex flex-col min-w-0">
@@ -137,7 +140,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
                 <b style={{ fontSize: 13.5, color: DARK }}>{c.totalAmount > 0 ? M(c.totalAmount) : '—'}</b>
                 <span style={{ fontSize: 11.5, color: LIGHT }}>{c.orderCount} {t('đơn', 'orders')} · {fmtShort(c.lastOrderDate, lang)}</span>
               </span>
-              <span className="hidden lg:grid gap-3 items-center col-span-2" style={{ gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr) 70px 110px 110px' }}>
+              <span className="hidden lg:grid gap-3 items-center col-span-2" style={{ gridTemplateColumns: 'minmax(0,1.7fr) minmax(0,1fr) 56px 118px 96px 96px' }}>
                 <span className="flex items-center gap-3 min-w-0">
                   <span className="flex-none flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: tone[0], color: tone[1], fontSize: 12, fontWeight: 700 }}>{initials(c.name)}</span>
                   <span className="flex flex-col min-w-0"><span className="flex items-center gap-1.5 min-w-0"><b className="truncate" style={{ fontSize: 13.5, color: DARK }}>{c.name}</b>{badge && <Pill c={badge[1]}>{badge[0]}</Pill>}</span><span style={{ fontSize: 11.5, color: LIGHT }}>{c.phone}</span></span>
@@ -145,6 +148,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
                 <span className="truncate" style={{ fontSize: 12.5, color: MUTED }}>{c.lastDistrict ?? '—'}</span>
                 <b style={{ textAlign: 'right', fontSize: 13 }}>{c.orderCount}</b>
                 <span style={{ textAlign: 'right', fontSize: 13 }}>{c.totalAmount > 0 ? fmtVnd(c.totalAmount) : '—'}{c.hasUnknownAmounts && c.totalAmount > 0 ? '+' : ''}</span>
+                <span style={{ textAlign: 'right', fontSize: 12.5, color: MUTED }}>{c.totalAmount > 0 && c.orderCount ? M(c.totalAmount / c.orderCount) : '—'}</span>
                 <span style={{ textAlign: 'right', fontSize: 12.5, color: MUTED }}>{fmtShort(c.lastOrderDate, lang)}</span>
               </span>
             </button>
@@ -156,9 +160,15 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
           </button>
         )}
       </section>
+      {deskSel && (
+        <aside className="hidden lg:flex flex-col sticky top-6 rounded-2xl overflow-hidden" style={{ height: 'calc(100vh - 48px)', backgroundColor: '#F6F1EA', boxShadow: '0 1px 2px rgba(42,24,16,0.05), 0 8px 24px rgba(42,24,16,0.06)' }}>
+          <Detail key={deskSel.phoneKey} c={deskSel} onClose={() => setSelected(null)} t={t} lang={lang} tr={tr} first={derived.firstOf(deskSel)} onNewOrder={onNewOrder ? () => onNewOrder({ name: deskSel.name === '—' ? '' : deskSel.name, phone: deskSel.phone, address: deskSel.lastAddress, district: deskSel.lastDistrict }) : undefined} />
+        </aside>
+      )}
+      </div>
 
       {sel && (
-        <div className="fixed inset-0 z-40 lg:z-30" onClick={() => setSelected(null)} style={{ backgroundColor: 'rgba(42,24,16,0.18)' }}>
+        <div className="lg:hidden fixed inset-0 z-40" onClick={() => setSelected(null)} style={{ backgroundColor: 'rgba(42,24,16,0.18)' }}>
           <aside onClick={e => e.stopPropagation()} className="absolute inset-0 lg:left-auto lg:w-[440px] flex flex-col" style={{ backgroundColor: '#F6F1EA', boxShadow: '-12px 0 32px rgba(42,24,16,0.14)' }}>
             <Detail c={sel} onClose={() => setSelected(null)} t={t} lang={lang} tr={tr} first={derived.firstOf(sel)} onNewOrder={onNewOrder ? () => onNewOrder({ name: sel.name === '—' ? '' : sel.name, phone: sel.phone, address: sel.lastAddress, district: sel.lastDistrict }) : undefined} />
           </aside>
