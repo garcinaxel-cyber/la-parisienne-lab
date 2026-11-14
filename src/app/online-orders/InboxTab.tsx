@@ -146,7 +146,9 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
           const on = c.id === activeId;
           return (
             <button key={c.id} onClick={() => openConv(c)} className="w-full text-left flex gap-2.5 px-3 py-2.5"
-              style={{ borderBottom: `1px solid ${HAIR}`, backgroundColor: on ? CREAM : c.unread ? '#fff' : 'transparent' }}>
+              // Unread chats stand out (Hương, 2026-11-14: "tin nhắn chưa đọc để màu khác… bị miss đơn"):
+              // warm amber background + red-orange bar on the left + red badge.
+              style={{ borderBottom: `1px solid ${HAIR}`, backgroundColor: on ? CREAM : c.unread ? '#FCEBCB' : '#fff', boxShadow: c.unread && !on ? 'inset 4px 0 0 #C2410C' : undefined }}>
               <Avatar name={c.customerName} pic={c.customerPic} />
               <span className="flex-1 min-w-0 flex flex-col gap-0.5">
                 <span className="flex items-baseline gap-1.5">
@@ -165,7 +167,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
                 </span>
               </span>
               {c.unread > 0 && (
-                <span className="self-center flex items-center justify-center" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: NAVY, color: '#FBF7F0', fontSize: 10.5, fontWeight: 700, padding: '0 5px' }}>{c.unread}</span>
+                <span className="self-center flex items-center justify-center" style={{ minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#C2410C', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '0 5px' }}>{c.unread}</span>
               )}
             </button>
           );
