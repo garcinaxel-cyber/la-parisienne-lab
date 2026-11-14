@@ -13,8 +13,8 @@ import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
 import type { InboxQuickReply } from './inbox-actions';
 import { useQuickReplies, filterReplies, QuickReplyPopup, QuickReplyManager } from './QuickReplies';
 
-const HAIR = '#EFE9CF';
-const PALE = '#FBF8EF';
+const HAIR = '#EDE4D6';
+const PALE = '#F7F1E8';
 
 export type InboxOrderPrefill = { customerName: string; customerPhone: string; deliveryAddress: string; district: string; channel: string; conversationId: string; pageName: string };
 
@@ -114,7 +114,7 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   const list = (
     <div className="flex flex-col h-full" style={{ backgroundColor: PALE }}>
       <div className="px-3 pt-3 pb-2 flex flex-col gap-2">
-        <label className="flex items-center gap-2 px-3" style={{ height: 38, background: '#fff', border: '1px solid #E8E1CC', borderRadius: 10 }}>
+        <label className="flex items-center gap-2 px-3" style={{ height: 40, background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 12 }}>
           <Search size={15} color={INK_LIGHT} aria-hidden />
           <span className="sr-only">{tr('inboxSearchPh')}</span>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={tr('inboxSearchPh')} className="flex-1 bg-transparent outline-none" style={{ fontSize: 13, color: INK }} />
@@ -183,13 +183,14 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
   );
 
   return (
-    <div className="flex h-full" style={{ minHeight: 360 }}>
+    // Computer: two floating cards on the cream background (same look as Orders); phone unchanged.
+    <div className="flex h-full lg:gap-4 lg:p-5" style={{ minHeight: 360 }}>
       {/* Column 1 — on a phone it is hidden while a thread is open */}
-      <div className={`${active ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-[330px] lg:flex-none`} style={{ borderRight: `1px solid ${HAIR}` }}>
+      <div className={`${active ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-[340px] lg:flex-none border-r lg:border-0 lg:rounded-[20px] lg:overflow-hidden lg:shadow-[0_8px_24px_rgba(42,24,16,0.07)]`} style={{ borderColor: HAIR }}>
         {list}
       </div>
       {/* Column 2 + 3 */}
-      <div className={`${active ? 'flex' : 'hidden lg:flex'} flex-1 min-w-0`}>
+      <div className={`${active ? 'flex' : 'hidden lg:flex'} flex-1 min-w-0 lg:rounded-[20px] lg:overflow-hidden lg:shadow-[0_8px_24px_rgba(42,24,16,0.07)]`}>
         {active
           ? <Thread key={active.id} conv={active} readOnly={readOnly} onBack={() => setActiveId(null)} onCreateOrder={onCreateOrder} tags={tags} onTagsChanged={(ids) => patchConv(active.id, { tagIds: ids })} onTagListChanged={reloadTags} />
           : <div className="flex-1 flex items-center justify-center" style={{ fontSize: 13.5, color: INK_LIGHT, backgroundColor: PALE }}>{tr('inboxPick')}</div>}

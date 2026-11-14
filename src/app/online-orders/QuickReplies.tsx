@@ -8,7 +8,7 @@ import * as inbox from './inbox-actions';
 import type { InboxQuickReply } from './inbox-actions';
 import { NAVY, GOLD, CREAM, INK, INK_LIGHT, BORDER, useL } from './shared';
 
-const HAIR = '#EFE9CF';
+const HAIR = '#EDE4D6';
 
 // One fetch per page load, shared by every open thread.
 let cache: InboxQuickReply[] | null = null;

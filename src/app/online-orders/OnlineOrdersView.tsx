@@ -12,6 +12,7 @@ import CustomersTab from './CustomersTab';
 import InboxTab, { type InboxOrderPrefill } from './InboxTab';
 import OrdersTab from './OrdersTab';
 import StatsV2 from './StatsV2';
+import { prefetch } from './client-cache';
 import { UI_THEMES, applyUiTheme, readUiTheme, type UiThemeId } from '@/lib/ui-theme';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
@@ -280,6 +281,12 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     if (p.district) setDistrict(p.district);
     setSubmitMsg(null); setTab('order');
   }
+  // Warm the customer base in the background a few seconds after the app opens, so the
+  // Customers tab opens instantly (it is the heaviest read of this screen).
+  useEffect(() => {
+    const t = setTimeout(() => { prefetch('customers', () => actions.getCustomerDatabaseAction(), 300_000); }, 4000);
+    return () => clearTimeout(t);
+  }, []);
   const isInbox = tab === 'inbox' && showInbox;
   return (
     <div className={isInbox ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'} style={{ backgroundColor: CREAM }}>
@@ -296,7 +303,10 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
           </div>
         ) : (
         <div className="flex-1 overflow-y-auto pb-24 lg:pb-8">
-          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-2xl' : 'max-w-xl lg:max-w-none lg:px-8'}`}>
+          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-6xl lg:px-8' : 'max-w-xl lg:max-w-none lg:px-8'}`}>
+            {tab === 'order' && !readOnly && (
+              <h1 className="hidden lg:block" style={{ margin: '0 0 16px', fontFamily: "'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, color: NAVY }}>{tr('navNew')}</h1>
+            )}
             {tab === 'order' && !readOnly && inboxLink && (
               <div className="flex items-center gap-2 mb-3" style={{ fontSize: 12.5, color: '#1F6B45', backgroundColor: '#EAF2EC', border: '1px solid #C9D9CF', borderRadius: 10, padding: '8px 12px' }}>
                 <span className="flex-1">💬 {tr('inboxLinkedTo')} <b>{inboxLink.customerName || '—'}</b> · {inboxLink.pageName}</span>
@@ -542,8 +552,12 @@ function OrderTab(props: any) {
   const { tr } = useL();
 
   const isStock = source === 'shop_stock';
+  // UI v2 (2026-11-14): same form, same handlers — only laid out in two columns on a computer
+  // (what is sold on the left; customer, payment and the submit button on the right, sticky).
   return (
-    <div>
+    <div className="lg:grid lg:gap-6 lg:items-start" style={{ gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr)' }}>
+    <div className="flex flex-col lg:gap-5">
+      <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('sourceLabel')}</SectionLabel>
       <div className="grid grid-cols-2 gap-2 mb-1.5">
         {([['lab', tr('srcLab')], ['shop_stock', tr('srcStock')]] as const).map(([k, label]) => (
@@ -611,7 +625,9 @@ function OrderTab(props: any) {
           </div>
         </>
       )}
+      </div>
 
+      <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('addProduct')}</SectionLabel>
       <div className="relative mb-3">
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
@@ -702,7 +718,9 @@ function OrderTab(props: any) {
           ))}
         </div>
       )}
+      </div>
 
+      <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <div className="flex items-center justify-between mb-2">
         <SectionLabel>{tr('feesLabel')}</SectionLabel>
         <button onClick={() => setManageFeesOpen(true)} className="inline-flex items-center gap-1 rounded-full"
@@ -786,6 +804,11 @@ function OrderTab(props: any) {
         </div>
       )}
 
+      </div>
+    </div>
+
+    <div className="flex flex-col lg:gap-5 lg:sticky lg:top-6">
+      <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('customerInfo')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4 space-y-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder={tr('custName')}
@@ -809,6 +832,9 @@ function OrderTab(props: any) {
           className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
       </div>
 
+      </div>
+
+      <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('payment')}</SectionLabel>
       <div className="rounded-xl p-3 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
         <div className="flex justify-between items-center mb-2">
@@ -889,6 +915,8 @@ function OrderTab(props: any) {
         className="w-full text-center text-[15px] font-bold py-3.5 rounded-xl mb-4">
         {submitting ? (isStock ? tr('savingStock') : tr('creating')) : (isStock ? tr('submitStock') : tr('submit'))}
       </button>
+      </div>
+    </div>
     </div>
   );
 }

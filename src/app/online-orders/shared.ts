@@ -334,6 +334,7 @@ export const L = {
     notesLabel: 'Ghi chú',
     stockShort: 'Kho shop',
     selectOrder: 'Chọn một đơn để xem chi tiết',
+    labClear: 'Không còn đơn nào ở lab',
   },
   en: {
     titleOrder: 'Online orders',
@@ -637,6 +638,7 @@ export const L = {
     notesLabel: 'Notes',
     stockShort: 'Shop stock',
     selectOrder: 'Select an order to see its details',
+    labClear: 'Nothing waiting at the lab',
   },
 } as const;
 export type LKey = keyof typeof L.vi;

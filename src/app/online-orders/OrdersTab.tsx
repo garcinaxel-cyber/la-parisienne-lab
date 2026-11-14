@@ -192,7 +192,8 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
         </div>
 
         {/* ── Desktop board ── */}
-        <div className="hidden lg:grid grid-cols-2 gap-4 px-6 pb-5 flex-1 min-h-0">
+        {/* An empty column shrinks to a narrow strip so the other one gets the room. */}
+        <div className="hidden lg:grid gap-4 px-6 pb-5 flex-1 min-h-0" style={{ gridTemplateColumns: byStage.lab.length === 0 && byStage.sent.length > 0 ? '260px minmax(0,1fr)' : byStage.sent.length === 0 && byStage.lab.length > 0 ? 'minmax(0,1fr) 260px' : 'repeat(2, minmax(0,1fr))' }}>
           {(['lab', 'sent'] as Stage[]).map(st => {
             const meta = { lab: [tr('stLab'), tr('stLabHint'), '#B08A3E'], sent: [tr('stSent'), tr('stSentHint'), ST.green.fg] }[st];
             return (
@@ -204,11 +205,11 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
                   </div>
                   <span style={{ fontSize: 11.5, color: MUTED }}>{meta[1]}</span>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto grid grid-cols-1 xl:grid-cols-2 gap-2.5 content-start pr-0.5">
+                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                   {byStage[st].map(o => (
                     <OrderCard key={o.orderBatchId} o={o} readOnly={readOnly} compact selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} onChanged={refresh} />
                   ))}
-                  {byStage[st].length === 0 && <div style={{ fontSize: 12.5, color: LIGHT, textAlign: 'center', padding: '18px 0' }}>—</div>}
+                  {byStage[st].length === 0 && <div style={{ fontSize: 13, color: st === 'lab' ? ST.green.fg : LIGHT, fontWeight: 600, textAlign: 'center', padding: '22px 8px', gridColumn: '1 / -1' }}>{st === 'lab' ? `✓ ${tr('labClear')}` : tr('noOrdersDay')}</div>}
                 </div>
               </section>
             );
