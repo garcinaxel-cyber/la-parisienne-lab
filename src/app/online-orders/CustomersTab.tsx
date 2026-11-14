@@ -49,7 +49,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
     const vipCut = amounts[Math.max(0, Math.floor(amounts.length * 0.05) - 1)] ?? Infinity;
     const isNew = (c: CustomerRecord) => now - firstOf(c) <= 30 * dayMs;
     const isRet = (c: CustomerRecord) => c.orderCount >= 2;
-    const isVip = (c: CustomerRecord) => c.totalAmount > 0 && c.totalAmount >= vipCut;
+    const isVip = (c: CustomerRecord) => c.orderCount >= 2 && c.totalAmount > 0 && c.totalAmount >= vipCut;
     const isDormant = (c: CustomerRecord) => now - toTime(c.lastOrderDate) > 60 * dayMs;
     const counts = { all: list.length, new: list.filter(isNew).length, returning: list.filter(isRet).length, vip: list.filter(isVip).length, dormant: list.filter(isDormant).length };
     return { isNew, isRet, isVip, isDormant, counts, firstOf };
@@ -72,7 +72,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
     ['all', t('Tất cả', 'All'), t('có số điện thoại', 'with a phone number')],
     ['new', t('Mới', 'New'), t('đơn đầu trong 30 ngày', 'first order in the last 30 days')],
     ['returning', t('Quay lại', 'Returning'), t('từ 2 đơn trở lên', 'two orders or more')],
-    ['vip', 'VIP', t('top 5% theo chi tiêu', 'top 5% by amount spent')],
+    ['vip', 'VIP', t('≥ 2 đơn và top 5% chi tiêu', '2+ orders and top 5% by amount spent')],
     ['dormant', t('Lâu không mua', 'Dormant'), t('không mua từ 60 ngày', 'no order for 60 days or more')],
   ];
 
@@ -87,9 +87,9 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
           [t('Quay lại mua', 'Ordered again'), `${retPct}%`, `${derived.counts.returning} ${t('khách', 'customers')}`],
           [t('Khách mới', 'New'), String(derived.counts.new), t('30 ngày qua', 'last 30 days')],
         ].map(([l, v, s]) => (
-          <div key={l} className="rounded-2xl flex flex-col gap-0.5" style={{ backgroundColor: CARD, padding: '12px 14px', boxShadow: '0 1px 2px rgba(42,24,16,0.05)' }}>
+          <div key={l} className="rounded-2xl flex flex-col gap-0.5 lg:gap-1 lg:!px-6 lg:!py-5" style={{ backgroundColor: CARD, padding: '12px 14px', boxShadow: '0 1px 2px rgba(42,24,16,0.05)' }}>
             <span style={{ fontSize: 11.5, color: MUTED, fontWeight: 600 }}>{l}</span>
-            <span style={{ fontSize: 22, fontWeight: 700, color: DARK, letterSpacing: '-0.02em' }}>{v}</span>
+            <span className="text-[22px] lg:text-[34px]" style={{ fontFamily: "'Playfair Display', Georgia, serif", fontFeatureSettings: '"lnum" 1, "tnum" 1', fontWeight: 700, color: DARK, lineHeight: 1.15 }}>{v}</span>
             <span style={{ fontSize: 11, color: LIGHT }}>{s}</span>
           </div>
         ))}
@@ -117,9 +117,9 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
       </div>
 
       {/* Desktop: list + customer card side by side (the first customer is shown until one is picked). */}
-      <div className="lg:grid lg:gap-5 lg:items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) 440px' }}>
+      <div className="lg:grid lg:gap-5 lg:items-start" style={{ gridTemplateColumns: 'minmax(0,1fr) clamp(400px, 30vw, 560px)' }}>
       <section className="rounded-2xl overflow-hidden" style={{ backgroundColor: CARD, boxShadow: '0 1px 2px rgba(42,24,16,0.05)' }}>
-        <div className="hidden lg:grid gap-3 px-5 py-3" style={{ gridTemplateColumns: 'minmax(0,1.7fr) minmax(0,1fr) 56px 118px 96px 96px', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: LIGHT, fontWeight: 700, borderBottom: `1px solid ${PANEL}` }}>
+        <div className="hidden lg:grid gap-3 px-5 py-3" style={{ gridTemplateColumns: 'minmax(200px,1.5fr) minmax(120px,1fr) 64px 120px 96px 96px', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: LIGHT, fontWeight: 700, borderBottom: `1px solid ${PANEL}` }}>
           <span>{t('Khách', 'Customer')}</span><span>{t('Quận', 'District')}</span><span style={{ textAlign: 'right' }}>{t('Đơn', 'Orders')}</span><span style={{ textAlign: 'right' }}>{t('Chi tiêu', 'Spent')}</span><span style={{ textAlign: 'right' }}>{t('TB/đơn', 'Avg')}</span><span style={{ textAlign: 'right' }}>{t('Gần nhất', 'Last order')}</span>
         </div>
         {filtered.length === 0 && <div className="text-center py-10" style={{ color: LIGHT, fontSize: 13 }}>{tr('custNoResults')}</div>}
@@ -140,7 +140,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
                 <b style={{ fontSize: 13.5, color: DARK }}>{c.totalAmount > 0 ? M(c.totalAmount) : '—'}</b>
                 <span style={{ fontSize: 11.5, color: LIGHT }}>{c.orderCount} {t('đơn', c.orderCount === 1 ? 'order' : 'orders')} · {fmtShort(c.lastOrderDate, lang)}</span>
               </span>
-              <span className="hidden lg:grid gap-3 items-center col-span-2" style={{ gridTemplateColumns: 'minmax(0,1.7fr) minmax(0,1fr) 56px 118px 96px 96px' }}>
+              <span className="hidden lg:grid gap-3 items-center col-span-2" style={{ gridTemplateColumns: 'minmax(200px,1.5fr) minmax(120px,1fr) 64px 120px 96px 96px' }}>
                 <span className="flex items-center gap-3 min-w-0">
                   <span className="flex-none flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: tone[0], color: tone[1], fontSize: 12, fontWeight: 700 }}>{initials(c.name)}</span>
                   <span className="flex flex-col min-w-0"><span className="flex items-center gap-1.5 min-w-0"><b className="truncate" style={{ fontSize: 13.5, color: DARK }}>{c.name}</b>{badge && <Pill c={badge[1]}>{badge[0]}</Pill>}</span><span style={{ fontSize: 11.5, color: LIGHT }}>{c.phone}</span></span>

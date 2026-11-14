@@ -303,7 +303,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
           </div>
         ) : (
         <div className="flex-1 overflow-y-auto pb-24 lg:pb-8">
-          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-6xl lg:px-8' : 'max-w-xl lg:max-w-none lg:px-8'}`}>
+          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-[1360px] lg:px-8' : 'max-w-xl lg:max-w-none lg:px-8'}`}>
             {tab === 'order' && !readOnly && (
               <h1 className="hidden lg:block" style={{ margin: '0 0 16px', fontFamily: "'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, color: NAVY }}>{tr('navNew')}</h1>
             )}
@@ -810,33 +810,33 @@ function OrderTab(props: any) {
     <div className="flex flex-col lg:gap-5 lg:sticky lg:top-6">
       <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('customerInfo')}</SectionLabel>
-      <div className="rounded-xl p-3 mb-4 space-y-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+      <div className="rounded-xl p-3 mb-4 lg:p-0 lg:mb-0 space-y-2 border lg:border-0" style={{ borderColor: BORDER, backgroundColor: '#fff' }}>
         <input value={customerName} onChange={(e: any) => setCustomerName(e.target.value)} placeholder={tr('custName')}
-          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          className="w-full px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
         <input type="tel" inputMode="numeric" value={customerPhone} onChange={(e: any) => setCustomerPhone(e.target.value)} placeholder={tr('custPhone')}
-          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          className="w-full px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
         <input value={deliveryAddress} onChange={(e: any) => setDeliveryAddress(e.target.value)} placeholder={tr('address')}
-          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          className="w-full px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
         <select value={district} onChange={(e: any) => setDistrict(e.target.value)}
-          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', color: district ? INK : INK_LIGHT }}>
+          className="w-full px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff', color: district ? INK : INK_LIGHT }}>
           <option value="">{tr('districtPlaceholder')}</option>
           {HANOI_DISTRICTS.map((d: string) => <option key={d} value={d}>{d}</option>)}
         </select>
         <div className="flex gap-2">
           <input type="date" value={deliveryDate} onChange={(e: any) => setDeliveryDate(e.target.value)}
-            className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+            className="flex-1 px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
           {!isStock && <input type="time" value={readyTime} onChange={(e: any) => setReadyTime(e.target.value)}
-            className="flex-1 px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />}
+            className="flex-1 px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />}
         </div>
         <textarea value={notes} onChange={(e: any) => setNotes(e.target.value)} placeholder={tr('extraNotes')} rows={2}
-          className="w-full px-2 py-1.5 rounded text-sm" style={{ border: `1px solid ${BORDER}` }} />
+          className="w-full px-2 py-1.5 lg:px-3 lg:py-2.5 rounded lg:rounded-lg text-sm" style={{ border: `1px solid ${BORDER}` }} />
       </div>
 
       </div>
 
       <div className="lg:rounded-[20px] lg:bg-white lg:p-5 lg:shadow-[0_1px_2px_rgba(42,24,16,0.04),0_8px_24px_rgba(42,24,16,0.05)]">
       <SectionLabel>{tr('payment')}</SectionLabel>
-      <div className="rounded-xl p-3 mb-4" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
+      <div className="rounded-xl p-3 mb-4 lg:p-0 border lg:border-0" style={{ borderColor: BORDER, backgroundColor: '#fff' }}>
         <div className="flex justify-between items-center mb-2">
           <span style={{ fontSize: 13, color: INK_LIGHT }}>{tr('subtotal')}</span>
           <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtVnd(cartGross)}</span>
@@ -890,8 +890,9 @@ function OrderTab(props: any) {
             <button key={s} onClick={() => setPaymentStatus(s)}
               style={{
                 flex: 1, textAlign: 'center', fontSize: 12, fontWeight: 700, padding: '8px 0', borderRadius: 8,
-                backgroundColor: paymentStatus === s ? '#047857' : CREAM, color: paymentStatus === s ? '#fff' : INK_LIGHT,
-                border: paymentStatus === s ? 'none' : `1px solid ${BORDER}`,
+                backgroundColor: paymentStatus !== s ? CREAM : s === 'paid' ? '#1F5235' : s === 'unpaid' ? '#F1E3C4' : '#24425A',
+                color: paymentStatus !== s ? INK_LIGHT : s === 'unpaid' ? '#5F4A10' : '#fff',
+                border: paymentStatus !== s ? `1px solid ${BORDER}` : s === 'unpaid' ? '1px solid #D9B36A' : 'none',
               }}>
               {s === 'paid' ? tr('paid') : s === 'unpaid' ? tr('unpaid') : tr('partial')}
             </button>

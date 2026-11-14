@@ -26,6 +26,7 @@ type T = (vi: string, en: string) => string;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * 86400000));
 const M = (v: number) => `${(v / 1e6).toFixed(1)}M`;
+const MK = (v: number) => v < 1e6 ? `${Math.round(v / 1000)}k` : M(v);
 const K = (v: number) => (Math.abs(v) >= 1e6 ? M(v) : `${Math.round(v / 1000)}k`);
 const N = (v: number) => Math.round(v).toLocaleString('vi-VN');
 
@@ -396,6 +397,19 @@ function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAna
                 <div className="flex flex-col"><span className="flex items-center gap-2"><span style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: GOLD }} />{t('Khách quay lại', 'Returning')}</span><b style={{ fontSize: 16 }}>{ov.returningCustomers} · {M(ov.returningRevenue)} ₫</b></div>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                [t('Chi tiêu / khách mới', 'Spend per new customer'), ov.newCustomers ? `${MK(ov.newRevenue / ov.newCustomers)} ₫` : '—'],
+                [t('Chi tiêu / khách quay lại', 'Spend per returning one'), ov.returningCustomers ? `${MK(ov.returningRevenue / ov.returningCustomers)} ₫` : '—'],
+              ].map(([l, v]) => (
+                <div key={l} className="rounded-xl flex flex-col" style={{ backgroundColor: PANEL, padding: '10px 12px' }}>
+                  <span style={{ fontSize: 11.5, color: MUTED }}>{l}</span><b style={{ fontSize: 17, color: DARK }}>{v}</b>
+                </div>
+              ))}
+            </div>
+            <span style={{ fontSize: 12, color: MUTED }}>
+              {t('Khách quay lại mang', 'Returning customers bring')} <b style={{ color: DARK }}>{Math.round(ov.returningRevenue / Math.max(1, ov.newRevenue + ov.returningRevenue) * 100)}%</b> {t('doanh thu', 'of revenue')}
+            </span>
           </Card>
         )}
         {ov && (
@@ -425,17 +439,23 @@ function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAna
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card title={t('Theo kênh', 'By channel')} sub={t('Bấm để xem sản phẩm', 'Tap to see products')}>
           <div className="flex items-center gap-4">
-            <Donut size={128} center={`${data.byChannel.length}`} centerSub={t('kênh', 'channels')} items={data.byChannel.map((c, i) => ({ label: c.channel, value: c.total, color: PALETTE[i % PALETTE.length] }))} />
+            <Donut size={140} center={`${data.byChannel.length}`} centerSub={t('kênh', 'channels')} items={data.byChannel.map((c, i) => ({ label: c.channel, value: c.total, color: PALETTE[i % PALETTE.length] }))} />
             <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-              {data.byChannel.slice(0, 6).map((c, i) => (
+              {data.byChannel.filter(c => c.total / sumCh >= 0.01).slice(0, 6).map((c, i) => (
                 <div key={c.channel} className="flex flex-col gap-1">
                   <button onClick={() => toggleCh(c.channel)} className="flex items-center gap-2 text-left" style={{ fontSize: 12.5 }}>
                     <span className="flex-none" style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: PALETTE[i % PALETTE.length] }} />
                     <span className="flex-1 truncate">{c.channel}</span>
-                    <b className="flex-none">{Math.round(c.total / sumCh * 100)}%</b>
+                    <span className="flex-none" style={{ color: LIGHT }}>{M(c.total)}</span>
+                    <b className="flex-none text-right" style={{ width: 40 }}>{Math.round(c.total / sumCh * 100)}%</b>
                   </button>
                 </div>
               ))}
+              {data.byChannel.some(c => c.total / sumCh < 0.01) && (
+                <span style={{ fontSize: 11.5, color: LIGHT }}>
+                  + {data.byChannel.filter(c => c.total / sumCh < 0.01).map(c => c.channel).join(', ')} · {'<'} 1%
+                </span>
+              )}
             </div>
           </div>
           {openCh && <div className="flex flex-col gap-1"><span style={{ fontSize: 12, fontWeight: 700 }}>{openCh}</span><ProductList items={chProducts[openCh]} /></div>}

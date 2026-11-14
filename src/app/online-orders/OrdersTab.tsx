@@ -205,7 +205,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
                   </div>
                   <span style={{ fontSize: 11.5, color: MUTED }}>{meta[1]}</span>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
+                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))' }}>
                   {byStage[st].map(o => (
                     <OrderCard key={o.orderBatchId} o={o} readOnly={readOnly} compact selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} onChanged={refresh} />
                   ))}
@@ -328,7 +328,7 @@ function OrderCard({ o, readOnly, compact = false, selected = false, onOpen, onC
           <div className="flex items-baseline justify-between gap-2">
             <span className="flex items-center gap-1.5 min-w-0">
               <b className="truncate" style={{ fontSize: 14.5, color: DARK }}>{o.customerName || tr('walkIn')}</b>
-              {o.customerPhone && <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '1px 7px', flex: 'none', backgroundColor: o.isReturningCustomer ? ST.green.bg : PANEL, color: o.isReturningCustomer ? ST.green.fg : '#7A5A12' }}>{o.isReturningCustomer ? tr('returningCustomerBadge') : tr('newCustomerBadge')}</span>}
+              {o.customerPhone && o.isReturningCustomer && <span title={tr('returningCustomerBadge')} style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '1px 7px', flex: 'none', backgroundColor: ST.green.bg, color: ST.green.fg }}>↻ {tr('returningShort')}</span>}
             </span>
             <b style={{ fontSize: 13.5, color: DARK, flex: 'none' }}>{fmtCompactVnd(grand(o)).replace(' ₫', '')}</b>
           </div>
