@@ -11,6 +11,7 @@ import { Loader2 } from 'lucide-react';
 import * as actions from './actions';
 import type { OnlineAnalytics, OnlineStatsExtras, ChannelProductDetail } from './actions';
 import { useL } from './shared';
+import { swr } from './client-cache';
 
 const BG = '#F6F1EA', CARD = '#FFFFFF', LINE = '#E6DCCF', PANEL = '#F7F1E8', COL = '#EDE4D6';
 const DARK = '#2A1810', INK = '#2E1B12', MUTED = '#6B5A4C', LIGHT = '#8A7A66', GOLD = '#C9A84C', BAR = '#572C1A', SOFT = '#D9CBB8';
@@ -37,13 +38,14 @@ export default function StatsV2({ onOpenInbox }: { onOpenInbox?: () => void }) {
     if (!from || !to || to < from) return;
     let alive = true;
     setLoading(true); setError(false);
-    Promise.all([actions.getOnlineAnalyticsAction({ from, to }), actions.getOnlineStatsExtrasAction(from, to)])
-      .then(([a, x]) => {
-        if (!alive) return;
-        if (a.error) { setError(true); setLoading(false); return; }
-        setData(a.data ?? null); setExtras(x.data ?? null); setLoading(false);
-      })
-      .catch(() => { if (alive) { setError(true); setLoading(false); } });
+    // Overview figures and the Ads/Service figures load independently and are cached per period
+    // (5 min): coming back to Stats or to a period already seen is instant.
+    const a = swr(`stats:a:${from}:${to}`, () => actions.getOnlineAnalyticsAction({ from, to }), r => {
+      if (!alive) return;
+      if (r.error) setError(true); else setData(r.data ?? null);
+    }, 300_000);
+    const x = swr(`stats:x:${from}:${to}`, () => actions.getOnlineStatsExtrasAction(from, to), r => { if (alive) setExtras(r.data ?? null); }, 300_000);
+    Promise.all([a, x]).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [from, to]);
 

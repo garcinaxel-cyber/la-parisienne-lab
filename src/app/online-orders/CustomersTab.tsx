@@ -5,6 +5,7 @@ import * as actions from './actions';
 import type { CustomerRecord, CustomerOrderHistoryItem } from './actions';
 import { useL, fmtVnd } from './shared';
 import { HANOI_DISTRICTS } from '@/lib/hanoi-districts';
+import { swr } from './client-cache';
 
 // "Base de données client" (Axel, 2026-09-11), UI v2 (2026-11-14): merges customers from
 // shop-placed orders (public /order/[token] link) and online-sales orders, grouped by phone
@@ -34,7 +35,11 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
   const [selected, setSelected] = useState<string | null>(null);
   const [limit, setLimit] = useState(80);
 
-  useEffect(() => { actions.getCustomerDatabaseAction().then(res => setCustomers(res.customers ?? [])); }, []);
+  useEffect(() => {
+    let alive = true;
+    swr('customers', () => actions.getCustomerDatabaseAction(), res => { if (alive) setCustomers(res.customers ?? []); }, 300_000);
+    return () => { alive = false; };
+  }, []);
 
   const derived = useMemo(() => {
     const list = customers ?? [];

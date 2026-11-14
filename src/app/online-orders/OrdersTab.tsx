@@ -9,12 +9,13 @@
 // Axel, 2026-11-14: the "handed to customer" tick is not used by the team, so it is no longer
 // shown (the field and its action stay untouched for the payment alert and history).
 // Payment is shown beside the stage and never blocks it.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Loader2, X, CalendarDays, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { thumb } from '@/lib/img-thumb';
 import * as actions from './actions';
 import type { OnlineOrderSummary } from './actions';
 import { compressImage, ReconstructPanel } from './order-widgets';
+import { swr, prefetch, invalidate } from './client-cache';
 import { fmtVnd, fmtCompactVnd, fmtDayLabel, useL } from './shared';
 
 // Neutral colours are taken from the staff-theme palette (scripts/gen-ui-themes.py) so the
@@ -47,6 +48,8 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
   const { tr, lang } = useL();
   const today = isoDay(0);
   const [view, setView] = useState<View>({ kind: 'day', date: today });
+  const viewRef = useRef(today);
+  viewRef.current = view.date;
   const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
@@ -57,19 +60,31 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
   const [exportFrom, setExportFrom] = useState(isoDay(-6));
   const [exportTo, setExportTo] = useState(today);
 
-  async function load(v: View = view) {
+  // Cached per day: a day already seen shows instantly and refreshes quietly; the next days are
+  // prefetched so tapping them is instant too.
+  const dayFetcher = (d: string) => () => actions.getMyOnlineOrdersAction({ deliveryDate: d }).then(r => r.orders ?? []);
+  async function load(v: View = view, force = false) {
+    if (force) invalidate(`orders:${v.date}`);
     setLoading(true);
-    const res = await actions.getMyOnlineOrdersAction({ deliveryDate: v.date });
-    setOrders(res.orders ?? []);
-    setLoading(false);
+    await swr(`orders:${v.date}`, dayFetcher(v.date), (list) => { if (viewRef.current === v.date) setOrders(list); }, 20_000);
+    if (viewRef.current === v.date) setLoading(false);
   }
-  async function loadCounts() {
-    const res = await actions.getOnlineOrderDayCountsAction(isoDay(-1), isoDay(7));
-    if (res.counts) setCounts(res.counts);
+  async function loadCounts(force = false) {
+    if (force) invalidate('orders:counts');
+    await swr('orders:counts', () => actions.getOnlineOrderDayCountsAction(isoDay(-1), isoDay(7)), res => { if (res.counts) setCounts(res.counts); }, 60_000);
   }
-  useEffect(() => { load(view); setSelectedId(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [view]);
+  useEffect(() => {
+    setOrders(null);
+    load(view); setSelectedId(null);
+    const base = new Date(view.date + 'T00:00:00Z').getTime();
+    const t = setTimeout(() => {
+      for (const n of [1, -1, 2]) { const d = new Date(base + n * 86400000).toISOString().slice(0, 10); prefetch(`orders:${d}`, dayFetcher(d), 20_000); }
+    }, 600);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [view]);
   useEffect(() => { loadCounts(); }, []);
-  const refresh = () => { load(); loadCounts(); };
+  const refresh = () => { load(view, true); loadCounts(true); };
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

@@ -570,6 +570,14 @@ export type OnlineOrderSummary = {
   production?: { produced: number; total: number } | null;
 };
 
+let phoneIndexCache: { at: number; rows: any[] } | null = null;
+async function phoneIndex(supabase: NonNullable<ReturnType<typeof service>>): Promise<any[]> {
+  if (phoneIndexCache && Date.now() - phoneIndexCache.at < 60_000) return phoneIndexCache.rows;
+  const rows = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at').order('order_batch_id').range(f, t));
+  phoneIndexCache = { at: Date.now(), rows: rows ?? [] };
+  return phoneIndexCache.rows;
+}
+
 export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string; overdue?: boolean }): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
@@ -640,7 +648,9 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string; ov
   // window. See normalizePhoneKey above for why this isn't a raw string match.
   // Paged (Axel, 2026-11-14): the table passed 1000 rows after the Excel import -- PostgREST
   // silently truncated this select, so returning customers were missed.
-  const allForPhones = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at').order('order_batch_id').range(f, t));
+  // Cached for 60 s in the warm server instance (UI v2: every day tap reads the orders list, the
+  // whole-table phone scan was the slowest part of it).
+  const allForPhones = await phoneIndex(supabase);
   const byPhoneKey = new Map<string, { order_batch_id: string; created_at: string }[]>();
   for (const r of allForPhones ?? []) {
     const key = normalizePhoneKey(r.customer_phone);
