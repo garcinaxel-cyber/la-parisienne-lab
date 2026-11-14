@@ -171,7 +171,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
             </label>
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mx-3.5 px-3.5 lg:mx-0 lg:px-0">
+          <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto no-scrollbar -mx-3.5 px-3.5">
             {([['all', tr('fAll')], ['atLab', tr('stLab')], ['unpaid', tr('unpaid')], ['latePay', tr('latePay')]] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFilter(k)} style={chip(filter === k, k === 'latePay')}>{label}</button>
             ))}
@@ -200,7 +200,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
             const tiles: { k: Filter; label: string; value: string; sub: string; color: string; bg: string }[] = [
               { k: 'all', label: tr('sumOrders'), value: String(live.length), sub: fmtVnd(revenue), color: DARK, bg: CARD },
               { k: 'atLab', label: tr('stLab'), value: String(labN), sub: labN ? tr('sumLabSub') : `✓ ${tr('labClear')}`, color: labN ? ST.amber.fg : ST.green.fg, bg: labN ? ST.amber.bg : CARD },
-              { k: 'unpaid', label: tr('sumToCollect'), value: toCollect ? fmtCompactVnd(toCollect) : '0', sub: `${unpaidN} ${tr('sumOrdersUnit')}`, color: toCollect ? ST.red.fg : DARK, bg: CARD },
+              { k: 'unpaid', label: tr('sumToCollect'), value: toCollect ? fmtCompactVnd(toCollect) : '0', sub: unpaidN ? `${unpaidN} ${tr(unpaidN === 1 ? 'sumOrderUnit1' : 'sumOrdersUnit')}` : `✓ ${tr('paidFull')}`, color: toCollect ? ST.red.fg : DARK, bg: CARD },
               { k: 'latePay', label: tr('latePay'), value: String(latePayN), sub: tr('sumLateSub'), color: latePayN ? ST.red.fg : DARK, bg: latePayN ? ST.red.bg : CARD },
             ];
             return (
@@ -324,9 +324,11 @@ function DeskCard({ o, selected, onOpen }: { o: OnlineOrderSummary; selected: bo
         {imgs.length
           ? <img src={thumb(imgs[0], 400)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           : <span className="absolute inset-0 flex items-center justify-center" style={{ fontSize: 46 }}>🎂</span>}
-        <span className="absolute" style={{ left: 10, top: 10, backgroundColor: 'rgba(42,24,16,0.86)', color: '#FBF7F0', borderRadius: 10, padding: '4px 10px', fontSize: 15, fontWeight: 700, fontFeatureSettings: '"tnum" 1' }}>
-          {o.readyTime ? o.readyTime.slice(0, 5) : '—'}
-        </span>
+        {o.readyTime && (
+          <span className="absolute" style={{ left: 10, top: 10, backgroundColor: 'rgba(42,24,16,0.86)', color: '#FBF7F0', borderRadius: 10, padding: '4px 10px', fontSize: 15, fontWeight: 700, fontFeatureSettings: '"tnum" 1' }}>
+            {o.readyTime.slice(0, 5)}
+          </span>
+        )}
         <span className="absolute" style={{ right: 10, top: 10 }}><Pill bg={pay.bg} fg={pay.fg}>{pay.label}</Pill></span>
         {imgs.length > 1 && (
           <span className="absolute flex gap-1.5" style={{ right: 10, bottom: 10 }}>
@@ -342,17 +344,17 @@ function DeskCard({ o, selected, onOpen }: { o: OnlineOrderSummary; selected: bo
         </div>
         <div className="line-clamp-2" style={{ fontSize: 13, color: MUTED, lineHeight: 1.35, minHeight: 35 }}>{products}</div>
         <div className="flex items-center gap-1.5 flex-wrap" style={{ marginTop: 2 }}>
-          <Pill bg={stage === 'lab' ? ST.amber.bg : ST.green.bg} fg={stage === 'lab' ? ST.amber.fg : ST.green.fg}>{stage === 'lab' ? tr('stLab') : tr('stSentShort')}</Pill>
+          {o.source === 'shop_stock'
+            ? <Pill bg={ST.orange.bg} fg={ST.orange.fg}>{tr('stockBadge')}</Pill>
+            : <Pill bg={stage === 'lab' ? ST.amber.bg : ST.green.bg} fg={stage === 'lab' ? ST.amber.fg : ST.green.fg}>{stage === 'lab' ? tr('stLab') : tr('stSentShort')}</Pill>}
           {o.customerPhone && o.isReturningCustomer && <Pill bg={ST.green.bg} fg={ST.green.fg}>↻ {tr('returningShort')}</Pill>}
           {o.cancelled && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('cancelledBadge')}</Pill>}
           {o.refunded && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('refundedBadge')}</Pill>}
           {noOdoo(o) && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('noOdoo')}</Pill>}
         </div>
-        <div className="flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: LIGHT, borderTop: `1px solid ${PANEL}`, paddingTop: 8, marginTop: 2 }}>
-          <span className="truncate" style={{ fontWeight: 600, color: INK }}>{route}</span>
-          <span className="flex-none">·</span>
-          <RefBadge o={o} />
-          <span className="truncate">{o.channel}</span>
+        <div className="flex items-center justify-between gap-2 min-w-0" style={{ fontSize: 12.5, borderTop: `1px solid ${PANEL}`, paddingTop: 8, marginTop: 2 }}>
+          <span className="truncate" style={{ fontWeight: 600, color: INK }}>{o.source === 'shop_stock' ? o.shopName : route}</span>
+          {o.source !== 'shop_stock' && <span className="flex-none"><RefBadge o={o} /></span>}
         </div>
       </div>
     </div>
