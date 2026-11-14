@@ -308,7 +308,7 @@ function OrderCard({ o, readOnly, compact = false, selected = false, onOpen, onC
   else if (stage === 'lab') action = noOdoo(o)
     ? <span style={{ fontSize: 12, fontWeight: 600, color: ST.red.fg }}>{tr('noOdooAdmin')}</span>
     : <span style={{ fontSize: 12, fontWeight: 600, color: LIGHT }}>{tr('labTurn')}{o.production && o.production.total > 0 ? ` · ${tr('produced')} ${o.production.produced}/${o.production.total}` : ''}</span>;
-  else if (late) action = <span style={{ fontSize: 12, fontWeight: 600, color: ST.red.fg }}>{tr('latePay')}</span>;
+  // A late payment is already shown by the red pill at the top of the card (and its red edge).
 
   return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={e => { if (e.key === 'Enter') onOpen(); }}

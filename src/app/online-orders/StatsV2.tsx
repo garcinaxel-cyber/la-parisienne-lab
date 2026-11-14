@@ -282,6 +282,7 @@ const DOW = (t: T) => [t('T2', 'Mon'), t('T3', 'Tue'), t('T4', 'Wed'), t('T5', '
 
 function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAnalytics; extras: OnlineStatsExtras | null; span: number; t: T; goAds: () => void; goService: () => void }) {
   const [openCat, setOpenCat] = useState<string | null>(null);
+  const [allCat, setAllCat] = useState(false);
   const [openCh, setOpenCh] = useState<string | null>(null);
   const [chProducts, setChProducts] = useState<Record<string, ChannelProductDetail[]>>({});
   async function toggleCh(ch: string) {
@@ -438,8 +439,8 @@ function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAna
       {/* Channels / shops / categories */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card title={t('Theo kênh', 'By channel')} sub={t('Bấm để xem sản phẩm', 'Tap to see products')}>
-          <div className="flex items-center gap-4">
-            <Donut size={140} center={`${data.byChannel.length}`} centerSub={t('kênh', 'channels')} items={data.byChannel.map((c, i) => ({ label: c.channel, value: c.total, color: PALETTE[i % PALETTE.length] }))} />
+          <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row items-center gap-5">
+            <Donut size={150} center={`${data.byChannel.length}`} centerSub={t('kênh', 'channels')} items={data.byChannel.map((c, i) => ({ label: c.channel, value: c.total, color: PALETTE[i % PALETTE.length] }))} />
             <div className="flex-1 min-w-0 flex flex-col gap-1.5">
               {data.byChannel.filter(c => c.total / sumCh >= 0.01).slice(0, 6).map((c, i) => (
                 <div key={c.channel} className="flex flex-col gap-1">
@@ -470,7 +471,7 @@ function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAna
             {data.byCategory.map((c, i) => <span key={c.category} title={c.category} style={{ width: `${c.total / sumCat * 100}%`, backgroundColor: PALETTE[i % PALETTE.length] }} />)}
           </div>
           <div className="flex flex-col gap-1.5">
-            {data.byCategory.map((c, i) => (
+            {(allCat ? data.byCategory : data.byCategory.slice(0, 8)).map((c, i) => (
               <div key={c.category} className="flex flex-col gap-1">
                 <button onClick={() => setOpenCat(openCat === c.category ? null : c.category)} className="flex items-center gap-2 text-left" style={{ fontSize: 12.5 }}>
                   <span className="flex-none" style={{ width: 9, height: 9, borderRadius: 3, backgroundColor: PALETTE[i % PALETTE.length] }} />
@@ -480,6 +481,11 @@ function Overview({ data, extras, span, t, goAds, goService }: { data: OnlineAna
                 {openCat === c.category && <ProductList items={c.products} />}
               </div>
             ))}
+            {data.byCategory.length > 8 && (
+              <button onClick={() => setAllCat(v => !v)} className="self-start" style={{ fontSize: 12, fontWeight: 600, color: '#7A5A12' }}>
+                {allCat ? t('Thu gọn', 'Show less') : `+ ${data.byCategory.length - 8} ${t('danh mục khác', 'more categories')}`}
+              </button>
+            )}
           </div>
         </Card>
       </div>
