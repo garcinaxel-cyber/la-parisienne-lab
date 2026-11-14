@@ -20,7 +20,7 @@ import { fmtVnd, fmtCompactVnd, fmtDayLabel, useL } from './shared';
 
 // Neutral colours are taken from the staff-theme palette (scripts/gen-ui-themes.py) so the
 // Caramel / Pistache / Bleu themes re-tint this screen too. Status colours never change.
-const BG = '#F6F1EA', COL = '#EDE4D6', LINE = '#E6DCCF', CARD = '#FFFFFF', PANEL = '#F7F1E8';
+const BG = '#F6F1EA', LINE = '#E6DCCF', CARD = '#FFFFFF', PANEL = '#F7F1E8';
 const DARK = '#2A1810', INK = '#2E1B12', MUTED = '#6B5A4C', LIGHT = '#8A7A66', GOLD = '#C9A84C', SOFT = '#D9CBB8';
 const ST = {
   red: { bg: '#F5E1DC', fg: '#9A3324' },
@@ -100,11 +100,6 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
     }).sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || '') || (a.readyTime || '99').localeCompare(b.readyTime || '99') || a.createdAt.localeCompare(b.createdAt));
   }, [orders, filter, q]);
 
-  const byStage = useMemo(() => {
-    const m: Record<Stage, OnlineOrderSummary[]> = { lab: [], sent: [] };
-    for (const o of filtered) m[stageOf(o)].push(o);
-    return m;
-  }, [filtered]);
   const selected = (orders ?? []).find(o => o.orderBatchId === selectedId) ?? null;
 
   const latePayN = (orders ?? []).filter(isLatePay).length;
@@ -191,29 +186,43 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
           )}
         </div>
 
-        {/* ── Desktop board ── */}
-        {/* An empty column shrinks to a narrow strip so the other one gets the room. */}
-        <div className="hidden lg:grid gap-4 px-6 pb-5 flex-1 min-h-0" style={{ gridTemplateColumns: byStage.lab.length === 0 && byStage.sent.length > 0 ? '260px minmax(0,1fr)' : byStage.sent.length === 0 && byStage.lab.length > 0 ? 'minmax(0,1fr) 260px' : 'repeat(2, minmax(0,1fr))' }}>
-          {(['lab', 'sent'] as Stage[]).map(st => {
-            const meta = { lab: [tr('stLab'), tr('stLabHint'), '#B08A3E'], sent: [tr('stSent'), tr('stSentHint'), ST.green.fg] }[st];
+        {/* ── Desktop (UI v2.1, Axel 2026-11-14: "espace très mal organisé, peu visible") ──
+            One summary strip for the day (each tile filters the list), then one grid of large
+            photo-first cards sorted by time. The stage is a pill on each card instead of two
+            columns, so an empty stage no longer wastes half the screen. */}
+        <div className="hidden lg:flex flex-col gap-4 px-6 pb-6 flex-1 min-h-0 overflow-y-auto">
+          {orders && (() => {
+            const live = orders.filter(o => !o.cancelled && !o.refunded);
+            const revenue = live.reduce((a, o) => a + grand(o), 0);
+            const toCollect = live.reduce((a, o) => a + (o.paymentStatus === 'paid' ? 0 : Math.max(0, grand(o) - (o.amountPaid || 0))), 0);
+            const unpaidN = live.filter(o => o.paymentStatus !== 'paid').length;
+            const labN = live.filter(o => stageOf(o) === 'lab').length;
+            const tiles: { k: Filter; label: string; value: string; sub: string; color: string; bg: string }[] = [
+              { k: 'all', label: tr('sumOrders'), value: String(live.length), sub: fmtVnd(revenue), color: DARK, bg: CARD },
+              { k: 'atLab', label: tr('stLab'), value: String(labN), sub: labN ? tr('sumLabSub') : `✓ ${tr('labClear')}`, color: labN ? ST.amber.fg : ST.green.fg, bg: labN ? ST.amber.bg : CARD },
+              { k: 'unpaid', label: tr('sumToCollect'), value: toCollect ? fmtCompactVnd(toCollect) : '0', sub: `${unpaidN} ${tr('sumOrdersUnit')}`, color: toCollect ? ST.red.fg : DARK, bg: CARD },
+              { k: 'latePay', label: tr('latePay'), value: String(latePayN), sub: tr('sumLateSub'), color: latePayN ? ST.red.fg : DARK, bg: latePayN ? ST.red.bg : CARD },
+            ];
             return (
-              <section key={st} className="flex flex-col min-h-0 rounded-2xl" style={{ backgroundColor: COL, padding: 12 }}>
-                <div className="flex flex-col gap-0.5 px-1 pb-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-2" style={{ fontSize: 13.5, fontWeight: 700, color: DARK }}><span style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: meta[2] }} />{meta[0]}</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: MUTED, backgroundColor: CARD, borderRadius: 999, padding: '2px 9px' }}>{byStage[st].length}</span>
-                  </div>
-                  <span style={{ fontSize: 11.5, color: MUTED }}>{meta[1]}</span>
-                </div>
-                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))' }}>
-                  {byStage[st].map(o => (
-                    <OrderCard key={o.orderBatchId} o={o} readOnly={readOnly} compact selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} onChanged={refresh} />
-                  ))}
-                  {byStage[st].length === 0 && <div style={{ fontSize: 13, color: st === 'lab' ? ST.green.fg : LIGHT, fontWeight: 600, textAlign: 'center', padding: '22px 8px', gridColumn: '1 / -1' }}>{st === 'lab' ? `✓ ${tr('labClear')}` : tr('noOrdersDay')}</div>}
-                </div>
-              </section>
+              <div className="grid grid-cols-4 gap-3">
+                {tiles.map(t => (
+                  <button key={t.k} onClick={() => setFilter(filter === t.k ? 'all' : t.k)} className="text-left flex flex-col gap-1 rounded-2xl"
+                    style={{ backgroundColor: t.bg, padding: '14px 18px', boxShadow: '0 1px 2px rgba(42,24,16,0.05)', outline: filter === t.k && t.k !== 'all' ? `2px solid ${DARK}` : 'none', outlineOffset: -2 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: MUTED }}>{t.label}</span>
+                    <span style={{ fontFamily: "'Playfair Display', Georgia, serif", fontFeatureSettings: '"lnum" 1, "tnum" 1', fontSize: 30, fontWeight: 700, lineHeight: 1.1, color: t.color }}>{t.value}</span>
+                    <span style={{ fontSize: 12, color: LIGHT }}>{t.sub}</span>
+                  </button>
+                ))}
+              </div>
             );
-          })}
+          })()}
+          {!orders && <div className="text-center py-16" style={{ color: LIGHT }}><Loader2 className="animate-spin inline" /></div>}
+          {orders && filtered.length === 0 && <div className="rounded-2xl text-center" style={{ backgroundColor: CARD, color: LIGHT, fontSize: 14, padding: '48px 0' }}>{tr('noOrdersDay')}</div>}
+          <div className="grid gap-4 content-start" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))' }}>
+            {filtered.map(o => (
+              <DeskCard key={o.orderBatchId} o={o} selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} />
+            ))}
+          </div>
         </div>
 
         {/* ── Phone list ── */}
@@ -229,7 +238,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
       {/* ── Detail: side panel on desktop, full screen on phone ── */}
       {selected && (
         <div className="hidden lg:block fixed inset-0 z-30" onClick={() => setSelectedId(null)} style={{ backgroundColor: 'rgba(42,24,16,0.18)' }}>
-          <aside onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 flex flex-col" style={{ width: 420, backgroundColor: CARD, boxShadow: '-12px 0 32px rgba(42,24,16,0.14)' }}>
+          <aside onClick={e => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 flex flex-col" style={{ width: 480, backgroundColor: CARD, boxShadow: '-12px 0 32px rgba(42,24,16,0.14)' }}>
             <OrderDetail key={selected.orderBatchId} o={selected} readOnly={readOnly} onClose={() => setSelectedId(null)} onChanged={refresh} />
           </aside>
         </div>
@@ -292,6 +301,61 @@ function Photos({ o, size }: { o: OnlineOrderSummary; size: number }) {
       <img src={thumb(uniq[0], size * 2 <= 96 ? 96 : 128)} alt="" loading="lazy" style={{ position: 'relative', width: size, height: size, borderRadius: 12, objectFit: 'cover', backgroundColor: PANEL }} />
       {uniq.length > 1 && <span style={{ position: 'absolute', right: -6, bottom: -6, backgroundColor: DARK, color: '#FBF7F0', fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '1px 6px' }}>+{uniq.length - 1}</span>}
     </span>
+  );
+}
+
+// Desktop card: the cake photo first (that is how the team recognises an order), then who / how much,
+// then where it goes. Time and payment sit on the photo so they are seen at a glance.
+function DeskCard({ o, selected, onOpen }: { o: OnlineOrderSummary; selected: boolean; onOpen: () => void }) {
+  const { tr } = useL();
+  const pay = usePayBadge(o);
+  const route = useRoute(o);
+  const stage = stageOf(o);
+  const late = isLatePay(o);
+  const items = o.items.filter(i => !i.isFee);
+  const imgs = Array.from(new Set(items.filter(i => i.imageUrl).map(i => i.imageUrl as string)));
+  const products = items.map(i => `${i.nameVi}${i.qty > 1 ? ` ×${i.qty}` : ''}`).join(', ') || '—';
+  return (
+    <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={e => { if (e.key === 'Enter') onOpen(); }}
+      className="text-left flex flex-col cursor-pointer overflow-hidden transition-shadow hover:shadow-[0_10px_28px_rgba(42,24,16,0.12)]"
+      style={{ backgroundColor: CARD, borderRadius: 18, boxShadow: '0 1px 2px rgba(42,24,16,0.06), 0 4px 14px rgba(42,24,16,0.05)',
+        outline: selected ? `2px solid ${GOLD}` : late ? `2px solid ${ST.red.fg}` : 'none', outlineOffset: -2, opacity: o.refunded || o.cancelled ? 0.6 : 1 }}>
+      <div className="relative" style={{ height: 170, backgroundColor: PANEL }}>
+        {imgs.length
+          ? <img src={thumb(imgs[0], 400)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          : <span className="absolute inset-0 flex items-center justify-center" style={{ fontSize: 46 }}>🎂</span>}
+        <span className="absolute" style={{ left: 10, top: 10, backgroundColor: 'rgba(42,24,16,0.86)', color: '#FBF7F0', borderRadius: 10, padding: '4px 10px', fontSize: 15, fontWeight: 700, fontFeatureSettings: '"tnum" 1' }}>
+          {o.readyTime ? o.readyTime.slice(0, 5) : '—'}
+        </span>
+        <span className="absolute" style={{ right: 10, top: 10 }}><Pill bg={pay.bg} fg={pay.fg}>{pay.label}</Pill></span>
+        {imgs.length > 1 && (
+          <span className="absolute flex gap-1.5" style={{ right: 10, bottom: 10 }}>
+            {imgs.slice(1, 3).map(u => <img key={u} src={thumb(u, 96)} alt="" loading="lazy" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', border: '2px solid #fff' }} />)}
+            {imgs.length > 3 && <span className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: DARK, color: '#FBF7F0', fontSize: 12, fontWeight: 700, border: '2px solid #fff' }}>+{imgs.length - 3}</span>}
+          </span>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5" style={{ padding: '12px 14px 14px' }}>
+        <div className="flex items-baseline justify-between gap-2">
+          <b className="truncate" style={{ fontSize: 16, color: DARK }}>{o.customerName || tr('walkIn')}</b>
+          <b style={{ fontSize: 16, color: DARK, flex: 'none' }}>{fmtCompactVnd(grand(o)).replace(' ₫', '')}</b>
+        </div>
+        <div className="line-clamp-2" style={{ fontSize: 13, color: MUTED, lineHeight: 1.35, minHeight: 35 }}>{products}</div>
+        <div className="flex items-center gap-1.5 flex-wrap" style={{ marginTop: 2 }}>
+          <Pill bg={stage === 'lab' ? ST.amber.bg : ST.green.bg} fg={stage === 'lab' ? ST.amber.fg : ST.green.fg}>{stage === 'lab' ? tr('stLab') : tr('stSentShort')}</Pill>
+          {o.customerPhone && o.isReturningCustomer && <Pill bg={ST.green.bg} fg={ST.green.fg}>↻ {tr('returningShort')}</Pill>}
+          {o.cancelled && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('cancelledBadge')}</Pill>}
+          {o.refunded && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('refundedBadge')}</Pill>}
+          {noOdoo(o) && <Pill bg={ST.red.bg} fg={ST.red.fg}>{tr('noOdoo')}</Pill>}
+        </div>
+        <div className="flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: LIGHT, borderTop: `1px solid ${PANEL}`, paddingTop: 8, marginTop: 2 }}>
+          <span className="truncate" style={{ fontWeight: 600, color: INK }}>{route}</span>
+          <span className="flex-none">·</span>
+          <RefBadge o={o} />
+          <span className="truncate">{o.channel}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 

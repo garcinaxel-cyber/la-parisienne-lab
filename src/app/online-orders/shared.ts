@@ -336,6 +336,12 @@ export const L = {
     selectOrder: 'Chọn một đơn để xem chi tiết',
     labClear: 'Không còn đơn nào ở lab',
     returningShort: 'Khách cũ',
+    sumOrders: 'Số đơn',
+    sumLabSub: 'đang làm ở lab',
+    sumToCollect: 'Cần thu',
+    sumOrdersUnit: 'đơn chưa trả đủ',
+    sumLateSub: 'đã giao, chưa trả > 24h',
+    stSentShort: 'Lab đã gửi',
   },
   en: {
     titleOrder: 'Online orders',
@@ -641,6 +647,12 @@ export const L = {
     selectOrder: 'Select an order to see its details',
     labClear: 'Nothing waiting at the lab',
     returningShort: 'Returning',
+    sumOrders: 'Orders',
+    sumLabSub: 'being made at the lab',
+    sumToCollect: 'To collect',
+    sumOrdersUnit: 'orders not fully paid',
+    sumLateSub: 'delivered, unpaid > 24h',
+    stSentShort: 'Sent by lab',
   },
 } as const;
 export type LKey = keyof typeof L.vi;
