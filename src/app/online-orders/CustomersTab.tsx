@@ -189,7 +189,7 @@ function Detail({ c, onClose, t, lang, tr, first, onNewOrder }: { c: CustomerRec
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex flex-col gap-3" style={{ backgroundColor: CARD, padding: '14px 18px', borderBottom: `1px solid ${LINE}` }}>
-        <button onClick={onClose} className="flex items-center gap-1 w-fit" style={{ fontSize: 14, fontWeight: 600, color: DARK, minHeight: 34 }}><ChevronLeft size={18} />{t('Khách hàng', 'Customers')}</button>
+        <button onClick={onClose} className="lg:hidden flex items-center gap-1 w-fit" style={{ fontSize: 14, fontWeight: 600, color: DARK, minHeight: 34 }}><ChevronLeft size={18} />{t('Khách hàng', 'Customers')}</button>
         <div className="flex items-center gap-3">
           <span className="flex-none flex items-center justify-center" style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#F1E3C4', color: '#5F4A10', fontWeight: 700 }}>{initials(c.name)}</span>
           <div className="flex flex-col min-w-0">

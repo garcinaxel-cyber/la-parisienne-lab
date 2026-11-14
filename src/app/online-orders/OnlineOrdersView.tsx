@@ -296,7 +296,7 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
           </div>
         ) : (
         <div className="flex-1 overflow-y-auto pb-24 lg:pb-8">
-          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-2xl' : 'max-w-xl lg:max-w-[1680px] lg:px-8'}`}>
+          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-2xl' : 'max-w-xl lg:max-w-none lg:px-8'}`}>
             {tab === 'order' && !readOnly && inboxLink && (
               <div className="flex items-center gap-2 mb-3" style={{ fontSize: 12.5, color: '#1F6B45', backgroundColor: '#EAF2EC', border: '1px solid #C9D9CF', borderRadius: 10, padding: '8px 12px' }}>
                 <span className="flex-1">💬 {tr('inboxLinkedTo')} <b>{inboxLink.customerName || '—'}</b> · {inboxLink.pageName}</span>
