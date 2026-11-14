@@ -127,8 +127,8 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
           const tone = TONES[i % 3];
           const badge = derived.isVip(c) ? ['VIP', AMBER] as const : derived.isRet(c) ? [tr('returningCustomerBadge'), GREEN] as const : null;
           return (
-            <button key={c.phoneKey} onClick={() => setSelected(c.phoneKey)} className={`w-full text-left grid gap-3 items-center px-4 lg:px-5 py-2.5 ${deskSel?.phoneKey === c.phoneKey ? 'lg:bg-[#F7F1E8]' : ''}`}
-              style={{ borderTop: i ? `1px solid ${PANEL}` : 'none', gridTemplateColumns: 'minmax(0,1fr) auto', boxShadow: deskSel?.phoneKey === c.phoneKey ? 'inset 3px 0 0 #C9A84C' : undefined }}>
+            <button key={c.phoneKey} onClick={() => setSelected(c.phoneKey)} className={`w-full text-left grid gap-3 items-center px-4 lg:px-5 py-2.5 ${deskSel?.phoneKey === c.phoneKey ? 'lg:bg-[#F7F1E8] lg:shadow-[inset_3px_0_0_#C9A84C]' : ''}`}
+              style={{ borderTop: i ? `1px solid ${PANEL}` : 'none', gridTemplateColumns: 'minmax(0,1fr) auto' }}>
               <span className="flex items-center gap-3 min-w-0 lg:hidden">
                 <span className="flex-none flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: tone[0], color: tone[1], fontSize: 12.5, fontWeight: 700 }}>{initials(c.name)}</span>
                 <span className="flex flex-col min-w-0">
@@ -138,7 +138,7 @@ export default function CustomersTab({ onNewOrder }: { onNewOrder?: (p: Customer
               </span>
               <span className="flex flex-col items-end lg:hidden">
                 <b style={{ fontSize: 13.5, color: DARK }}>{c.totalAmount > 0 ? M(c.totalAmount) : '—'}</b>
-                <span style={{ fontSize: 11.5, color: LIGHT }}>{c.orderCount} {t('đơn', 'orders')} · {fmtShort(c.lastOrderDate, lang)}</span>
+                <span style={{ fontSize: 11.5, color: LIGHT }}>{c.orderCount} {t('đơn', c.orderCount === 1 ? 'order' : 'orders')} · {fmtShort(c.lastOrderDate, lang)}</span>
               </span>
               <span className="hidden lg:grid gap-3 items-center col-span-2" style={{ gridTemplateColumns: 'minmax(0,1.7fr) minmax(0,1fr) 56px 118px 96px 96px' }}>
                 <span className="flex items-center gap-3 min-w-0">
@@ -198,7 +198,7 @@ function Detail({ c, onClose, t, lang, tr, first, onNewOrder }: { c: CustomerRec
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2 text-center">
-          {[[String(c.orderCount), t('đơn', 'orders')], [c.totalAmount > 0 ? M(c.totalAmount) : '—', t('chi tiêu', 'spent')], [rhythmLabel, t('giữa 2 đơn', 'between orders')]].map(([v, l]) => (
+          {[[String(c.orderCount), t('đơn', c.orderCount === 1 ? 'order' : 'orders')], [c.totalAmount > 0 ? M(c.totalAmount) : '—', t('chi tiêu', 'spent')], [rhythmLabel, t('giữa 2 đơn', 'between orders')]].map(([v, l]) => (
             <div key={l} className="rounded-xl" style={{ backgroundColor: PANEL, padding: '9px 4px' }}><b style={{ fontSize: 17, color: DARK }}>{v}</b><div style={{ fontSize: 11, color: MUTED }}>{l}</div></div>
           ))}
         </div>
