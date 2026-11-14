@@ -205,7 +205,7 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
                   </div>
                   <span style={{ fontSize: 11.5, color: MUTED }}>{meta[1]}</span>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+                <div className="flex-1 min-h-0 overflow-y-auto grid gap-2.5 content-start pr-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))' }}>
                   {byStage[st].map(o => (
                     <OrderCard key={o.orderBatchId} o={o} readOnly={readOnly} compact selected={o.orderBatchId === selectedId} onOpen={() => setSelectedId(o.orderBatchId)} onChanged={refresh} />
                   ))}

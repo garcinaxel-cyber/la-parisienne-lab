@@ -193,7 +193,10 @@ export default function InboxTab({ readOnly, onCreateOrder, onUnreadChange }: { 
       <div className={`${active ? 'flex' : 'hidden lg:flex'} flex-1 min-w-0 lg:rounded-[20px] lg:overflow-hidden lg:shadow-[0_8px_24px_rgba(42,24,16,0.07)]`}>
         {active
           ? <Thread key={active.id} conv={active} readOnly={readOnly} onBack={() => setActiveId(null)} onCreateOrder={onCreateOrder} tags={tags} onTagsChanged={(ids) => patchConv(active.id, { tagIds: ids })} onTagListChanged={reloadTags} />
-          : <div className="flex-1 flex items-center justify-center" style={{ fontSize: 13.5, color: INK_LIGHT, backgroundColor: PALE }}>{tr('inboxPick')}</div>}
+          : <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ fontSize: 13.5, color: INK_LIGHT, backgroundColor: '#fff' }}>
+              <span className="flex items-center justify-center" style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: PALE, color: NAVY }}><Send size={22} aria-hidden /></span>
+              {tr('inboxPick')}
+            </div>}
       </div>
     </div>
   );
