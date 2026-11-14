@@ -9,6 +9,7 @@ import { canonicalizePhone } from '@/lib/phone-format';
 import { isKnownHanoiDistrict } from '@/lib/hanoi-districts';
 import { isOemSku } from '@/lib/oem';
 import { selectInChunks } from '@/lib/select-in-chunks';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 // district (Axel, 2026-09-15): optional, free client input validated against the known list —
 // never blocks the order if it's missing or garbage, just silently stored as null so a stale
@@ -624,7 +625,9 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   // New-vs-returning: the whole table (order_batch_id, phone, created_at) — cheap, ~150 rows —
   // so a customer's first order can be found even when it falls outside today's/this-page's
   // window. See normalizePhoneKey above for why this isn't a raw string match.
-  const { data: allForPhones } = await supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at');
+  // Paged (Axel, 2026-11-14): the table passed 1000 rows after the Excel import -- PostgREST
+  // silently truncated this select, so returning customers were missed.
+  const allForPhones = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at').order('order_batch_id').range(f, t));
   const byPhoneKey = new Map<string, { order_batch_id: string; created_at: string }[]>();
   for (const r of allForPhones ?? []) {
     const key = normalizePhoneKey(r.customer_phone);
@@ -713,15 +716,17 @@ export async function getCustomerDatabaseAction(): Promise<{ customers?: Custome
   const supabase = service();
   if (!supabase) return { error: 'Server not configured' };
 
-  const [{ data: onlineOrders }, { data: mcRows }] = await Promise.all([
+  // Both selects paged (Axel, 2026-11-14): orders (1158) and ledger rows (1310) passed the
+  // 1000-row PostgREST cap, so the customer base silently lost its newest customers.
+  const [onlineOrders, mcRows] = await Promise.all([
     // event_stock excluded (Axel, 2026-09-14) — same reasoning as getMyOnlineOrdersAction: an
     // event sale isn't a shop customer relationship, it has its own tracking in the event tab.
-    supabase.from('lab_online_orders')
+    fetchAllPages<any>((f, t) => supabase.from('lab_online_orders')
       .select('order_batch_id, source, shop_name, channel, delivery_date, customer_name, customer_phone, delivery_address, district, payment_status, shop_delivered, refunded_at, refund_amount, refunded_by_name, created_at')
-      .not('source', 'in', '(event_stock,event_void)'),
-    supabase.from('lab_manual_cake_ledger')
-      .select('order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
-      .not('shop_name', 'is', null),
+      .not('source', 'in', '(event_stock,event_void)').order('order_batch_id').range(f, t)),
+    fetchAllPages<any>((f, t) => supabase.from('lab_manual_cake_ledger')
+      .select('id, order_batch_id, product_name_vi, product_sku, qty, unit_price, shop_name, delivery_date, customer_name, customer_phone, delivery_address, district, matched_order_ref, cancelled_at, created_at')
+      .not('shop_name', 'is', null).order('id').range(f, t)),
   ]);
   if (!onlineOrders?.length && !mcRows?.length) return { customers: [] };
 
@@ -1209,9 +1214,9 @@ export async function getOnlineAnalyticsAction(opts?: number | AnalyticsRangeOpt
   // grand total) ends up netted to exactly 0, the same as the old full exclusion.
   // Axel, 2026-09-14: event_stock excluded — event sales have their own revenue summary
   // (getEventSalesSummaryAction) and shouldn't be mixed into the online-sales channel's figures.
-  const oq = supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').not('source', 'in', '(event_stock,event_void)').gte('created_at', since).limit(5000);
+  // .limit(5000) never beat the server's 1000-row cap -- paged instead (Axel, 2026-11-14).
   void auth.isAdmin;
-  const { data: orders } = await oq;
+  const orders = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('order_batch_id, created_by, created_at, delivery_date, source, shop_name, channel, delivery_fee, refund_amount').not('source', 'in', '(event_stock,event_void)').gte('created_at', since).order('order_batch_id').range(f, t));
   const batchIds = (orders ?? []).map((o: any) => o.order_batch_id);
 
   const todayStr0 = new Date().toISOString().slice(0, 10);

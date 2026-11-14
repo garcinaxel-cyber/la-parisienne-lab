@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient, getSafeSession } from '@/lib/supabase-server';
 import { selectInChunks } from '@/lib/select-in-chunks';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 // Tracking export by date range (Axel, 2026-09-11) — reproduces the columns of her old
 // Excel tracker ("QUẢN LÝ ĐƠN HÀNG ONLINE"), rebuilt from lab_online_orders + its line
@@ -63,16 +64,16 @@ export async function GET(req: NextRequest) {
 
   // event_stock excluded (Axel, 2026-09-14) — same as the Suivi/Analytic tabs this export
   // mirrors: an event's mini-caisse sale has no delivery/payment tracking to export here.
-  const { data: orders } = await supabase.from('lab_online_orders').select('*')
+  // Paged (Axel, 2026-11-14): 1000-row PostgREST cap.
+  const rows = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('*')
     .not('source', 'in', '(event_stock,event_void)')
-    .gte('delivery_date', from).lte('delivery_date', to).order('delivery_date');
-  const rows = orders ?? [];
+    .gte('delivery_date', from).lte('delivery_date', to).order('delivery_date').order('order_batch_id').range(f, t));
 
   // Whole-table phone history for new/returning, same logic as getMyOnlineOrdersAction —
   // the table is small (order-level, not per-line), so one extra unfiltered select is cheap
   // and lets an order's "first ever" status be found even if its previous order falls
   // outside this export's date range.
-  const { data: allForPhones } = await supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at');
+  const allForPhones = await fetchAllPages<any>((f, t) => supabase.from('lab_online_orders').select('order_batch_id, customer_phone, created_at').order('order_batch_id').range(f, t));
   const byPhoneKey = new Map<string, { order_batch_id: string; created_at: string }[]>();
   for (const r of allForPhones ?? []) {
     const key = normalizePhoneKey(r.customer_phone);
