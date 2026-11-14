@@ -25,7 +25,9 @@ export function isPreviewReadOnly(): boolean {
 }
 
 // Supabase RPCs that only read (checked in pg_proc on 2026-11-12). Anything else is refused.
-export const READ_ONLY_RPCS = ['lab_dashboard_stats', 'lab_event_sales_totals', 'lab_event_sales_agg', 'lab_mm_deliveries'];
+export const READ_ONLY_RPCS = ['lab_dashboard_stats', 'lab_event_sales_totals', 'lab_event_sales_agg', 'lab_mm_deliveries',
+  // Online-sales Stats v2 (2026-11-14): pure SELECT aggregations (supabase/lab_v155_online_stats_v2.sql).
+  'online_ads_attribution', 'online_service_stats', 'online_overview_extras'];
 
 // Odoo ORM methods that only read.
 export const ODOO_READ_METHODS = new Set([

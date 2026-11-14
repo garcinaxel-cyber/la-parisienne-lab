@@ -10,6 +10,9 @@ import * as actions from './actions';
 import type { OnlineProduct, OnlineOrderItem, OnlineOrderSummary, OnlineAnalytics, ExtraFeeType, ChannelProductDetail } from './actions';
 import CustomersTab from './CustomersTab';
 import InboxTab, { type InboxOrderPrefill } from './InboxTab';
+import OrdersTab from './OrdersTab';
+import StatsV2 from './StatsV2';
+import { UI_THEMES, applyUiTheme, readUiTheme, type UiThemeId } from '@/lib/ui-theme';
 import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, fmtDayLabel, fmtCompactVnd, useL } from './shared';
 
 // Shops that can handle an online order. 'Lab' (Axel, 2026-10-10) is offered for Lab orders only,
@@ -19,23 +22,7 @@ import { NAVY, GOLD, CREAM, CREAM_DARK, INK, INK_LIGHT, BORDER, TABBAR, fmtVnd, 
 const ONLINE_SHOPS = SHOP_NAMES_ALL.filter(s => s !== 'Lab');
 const LAB_SHOP = 'Lab';
 
-// Client-side downscale before any upload (design photo or payment screenshot): a phone
-// screenshot is 2–5 MB, the same picture at 1200px JPEG is ~100–250 KB. Keeps Supabase
-// storage/egress flat and the upload instant on shop wifi. Falls back to the original file
-// if the browser can't decode it.
-async function compressImage(file: File, maxSide = 1200, quality = 0.72): Promise<File> {
-  try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
-    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d'); if (!ctx) return file;
-    ctx.drawImage(bmp, 0, 0, w, h);
-    const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
-    if (!blob) return file;
-    return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
-  } catch { return file; }
-}
+import { compressImage } from './order-widgets';
 
 type CartLine = OnlineOrderItem & { key: string; nameVi: string; imageUrl: string | null; isCake: boolean; listPrice: number | null };
 // Same rounding as the server's netUnitPrice (online-orders/actions.ts).
@@ -280,68 +267,88 @@ export default function OnlineOrdersView({ fullName, isAdmin, readOnly = false }
     setTab('order');
   }
 
+  // Staff colour theme (same 4 themes and the same per-browser storage as the chefs' screens).
+  const [uiTheme, setUiTheme] = useState<UiThemeId>('ivoire');
+  useEffect(() => { const t = readUiTheme(); setUiTheme(t); applyUiTheme(t); }, []);
+  const pickTheme = (t: UiThemeId) => { setUiTheme(t); applyUiTheme(t, true); };
+
+  const goNewOrder = () => { setSubmitMsg(null); setTab('order'); };
+  // "New order for this customer" from the Customers tab: pre-fill name/phone/address only.
+  function prefillCustomer(p: { name: string; phone: string; address: string | null; district: string | null }) {
+    setCustomerName(p.name); setCustomerPhone(p.phone);
+    if (p.address) setDeliveryAddress(p.address);
+    if (p.district) setDistrict(p.district);
+    setSubmitMsg(null); setTab('order');
+  }
+  const isInbox = tab === 'inbox' && showInbox;
   return (
-    <div className={tab === 'inbox' && showInbox ? 'h-[100dvh] flex flex-col overflow-hidden' : 'min-h-screen flex flex-col'} style={{ backgroundColor: CREAM }}>
-      <Header fullName={fullName} count={cart.length} tab={tab} />
-      {tab === 'inbox' && showInbox ? (
-        <div className="flex-1 min-h-0" style={{ paddingBottom: 58 }}>
-          <InboxTab readOnly={readOnly} onCreateOrder={prefillFromInbox} onUnreadChange={setInboxUnread} />
+    <div className={isInbox ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'} style={{ backgroundColor: CREAM }}>
+      <Sidebar fullName={fullName} tab={tab} setTab={setTab} readOnly={readOnly} showInbox={showInbox} inboxUnread={inboxUnread} uiTheme={uiTheme} pickTheme={pickTheme} />
+      <div className={`lg:pl-56 flex flex-col ${isInbox ? 'h-full' : tab === 'track' ? 'min-h-screen lg:h-[100dvh]' : 'min-h-screen'}`}>
+        <Header fullName={fullName} count={cart.length} tab={tab} uiTheme={uiTheme} pickTheme={pickTheme} />
+        {isInbox ? (
+          <div className="flex-1 min-h-0 pb-[58px] lg:pb-0">
+            <InboxTab readOnly={readOnly} onCreateOrder={prefillFromInbox} onUnreadChange={setInboxUnread} />
+          </div>
+        ) : tab === 'track' ? (
+          <div className="flex-1 lg:min-h-0">
+            <OrdersTab readOnly={readOnly} onNewOrder={readOnly ? undefined : goNewOrder} />
+          </div>
+        ) : (
+        <div className="flex-1 overflow-y-auto pb-24 lg:pb-8">
+          <div className={`mx-auto px-4 py-4 lg:py-6 ${tab === 'order' ? 'max-w-xl lg:max-w-2xl' : 'max-w-xl lg:max-w-6xl lg:px-6'}`}>
+            {tab === 'order' && !readOnly && inboxLink && (
+              <div className="flex items-center gap-2 mb-3" style={{ fontSize: 12.5, color: '#1F6B45', backgroundColor: '#EAF2EC', border: '1px solid #C9D9CF', borderRadius: 10, padding: '8px 12px' }}>
+                <span className="flex-1">💬 {tr('inboxLinkedTo')} <b>{inboxLink.customerName || '—'}</b> · {inboxLink.pageName}</span>
+                <button onClick={() => setInboxLink(null)} style={{ fontSize: 12, fontWeight: 600, color: '#8A6D14' }}>{tr('inboxUnlink')}</button>
+              </div>
+            )}
+            {tab === 'order' && !readOnly && (
+              <OrderTab
+                source={source} setSource={setSource}
+                shop={shop} setShop={setShop} channel={channel} setChannel={setChannel}
+                channels={channels} newChannel={newChannel} setNewChannel={setNewChannel} addChannel={addChannel} deleteChannel={deleteChannel}
+                deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
+                readyTime={readyTime} setReadyTime={setReadyTime}
+                customerName={customerName} setCustomerName={setCustomerName}
+                customerPhone={customerPhone} setCustomerPhone={setCustomerPhone}
+                deliveryAddress={deliveryAddress} setDeliveryAddress={setDeliveryAddress}
+                district={district} setDistrict={setDistrict}
+                deliveryMode={deliveryMode} setDeliveryMode={setDeliveryMode}
+                notes={notes} setNotes={setNotes}
+                deliveryFee={deliveryFee} setDeliveryFee={setDeliveryFee}
+                paymentStatus={paymentStatus} setPaymentStatus={setPaymentStatus}
+                amountPaid={amountPaid} setAmountPaid={setAmountPaid}
+                cart={cart} updateLine={updateLine} removeLine={removeLine} onDesignPhoto={onDesignPhoto}
+                query={query} setQuery={setQuery} results={results} searching={searching} addToCart={addToCart}
+                searchOpen={searchOpen} setSearchOpen={setSearchOpen}
+                feeTypes={feeTypes} feeCart={feeCart} addFeeToCart={addFeeToCart} updateFeeLine={updateFeeLine} removeFeeLine={removeFeeLine}
+                manageFeesOpen={manageFeesOpen} setManageFeesOpen={setManageFeesOpen}
+                newFeeEmoji={newFeeEmoji} setNewFeeEmoji={setNewFeeEmoji} newFeeLabel={newFeeLabel} setNewFeeLabel={setNewFeeLabel}
+                newFeePrice={newFeePrice} setNewFeePrice={setNewFeePrice} addFeeType={addFeeType}
+                updateFeeTypePrice={updateFeeTypePrice} updateFeeTypeLabel={updateFeeTypeLabel} deleteFeeType={deleteFeeType}
+                cartTotal={cartTotal} feesTotal={feesTotal} grandTotal={grandTotal}
+                cartGross={cartGross} lineDiscountTotal={lineDiscountTotal} orderDiscountAmt={orderDiscountAmt} hasDiscount={hasDiscount}
+                orderDiscKind={orderDiscKind} setOrderDiscKind={setOrderDiscKind} orderDiscValue={orderDiscValue} setOrderDiscValue={setOrderDiscValue}
+                discountReason={discountReason} setDiscountReason={setDiscountReason}
+                submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
+              />
+            )}
+            {tab === 'stats' && <StatsV2 onOpenInbox={showInbox ? () => setTab('inbox') : undefined} />}
+            {tab === 'customers' && <CustomersTab onNewOrder={readOnly ? undefined : prefillCustomer} />}
+          </div>
         </div>
-      ) : (
-      <div className="flex-1 overflow-y-auto pb-20">
-        <div className="max-w-xl mx-auto px-4 py-4">
-          {tab === 'order' && !readOnly && inboxLink && (
-            <div className="flex items-center gap-2 mb-3" style={{ fontSize: 12.5, color: '#1F6B45', backgroundColor: '#EAF2EC', border: '1px solid #C9D9CF', borderRadius: 10, padding: '8px 12px' }}>
-              <span className="flex-1">💬 {tr('inboxLinkedTo')} <b>{inboxLink.customerName || '—'}</b> · {inboxLink.pageName}</span>
-              <button onClick={() => setInboxLink(null)} style={{ fontSize: 12, fontWeight: 600, color: '#8A6D14' }}>{tr('inboxUnlink')}</button>
-            </div>
-          )}
-          {tab === 'order' && !readOnly && (
-            <OrderTab
-              source={source} setSource={setSource}
-              shop={shop} setShop={setShop} channel={channel} setChannel={setChannel}
-              channels={channels} newChannel={newChannel} setNewChannel={setNewChannel} addChannel={addChannel} deleteChannel={deleteChannel}
-              deliveryDate={deliveryDate} setDeliveryDate={setDeliveryDate}
-              readyTime={readyTime} setReadyTime={setReadyTime}
-              customerName={customerName} setCustomerName={setCustomerName}
-              customerPhone={customerPhone} setCustomerPhone={setCustomerPhone}
-              deliveryAddress={deliveryAddress} setDeliveryAddress={setDeliveryAddress}
-              district={district} setDistrict={setDistrict}
-              deliveryMode={deliveryMode} setDeliveryMode={setDeliveryMode}
-              notes={notes} setNotes={setNotes}
-              deliveryFee={deliveryFee} setDeliveryFee={setDeliveryFee}
-              paymentStatus={paymentStatus} setPaymentStatus={setPaymentStatus}
-              amountPaid={amountPaid} setAmountPaid={setAmountPaid}
-              cart={cart} updateLine={updateLine} removeLine={removeLine} onDesignPhoto={onDesignPhoto}
-              query={query} setQuery={setQuery} results={results} searching={searching} addToCart={addToCart}
-              searchOpen={searchOpen} setSearchOpen={setSearchOpen}
-              feeTypes={feeTypes} feeCart={feeCart} addFeeToCart={addFeeToCart} updateFeeLine={updateFeeLine} removeFeeLine={removeFeeLine}
-              manageFeesOpen={manageFeesOpen} setManageFeesOpen={setManageFeesOpen}
-              newFeeEmoji={newFeeEmoji} setNewFeeEmoji={setNewFeeEmoji} newFeeLabel={newFeeLabel} setNewFeeLabel={setNewFeeLabel}
-              newFeePrice={newFeePrice} setNewFeePrice={setNewFeePrice} addFeeType={addFeeType}
-              updateFeeTypePrice={updateFeeTypePrice} updateFeeTypeLabel={updateFeeTypeLabel} deleteFeeType={deleteFeeType}
-              cartTotal={cartTotal} feesTotal={feesTotal} grandTotal={grandTotal}
-              cartGross={cartGross} lineDiscountTotal={lineDiscountTotal} orderDiscountAmt={orderDiscountAmt} hasDiscount={hasDiscount}
-              orderDiscKind={orderDiscKind} setOrderDiscKind={setOrderDiscKind} orderDiscValue={orderDiscValue} setOrderDiscValue={setOrderDiscValue}
-              discountReason={discountReason} setDiscountReason={setDiscountReason}
-              submitting={submitting} submitMsg={submitMsg} onSubmit={handleSubmit}
-            />
-          )}
-          {tab === 'track' && <TrackTab isAdmin={isAdmin} readOnly={readOnly} />}
-          {tab === 'stats' && <StatsTab />}
-          {tab === 'customers' && <CustomersTab />}
-        </div>
+        )}
       </div>
-      )}
       <TabBar tab={tab} setTab={setTab} readOnly={readOnly} showInbox={showInbox} inboxUnread={inboxUnread} />
     </div>
   );
 }
 
-function Header({ fullName, count, tab }: { fullName: string; count: number; tab: Tab }) {
-  const { tr, lang, setLang } = useL();
+// Bell / language / logout, shared by the phone header and the desktop sidebar.
+function useAccountControls() {
+  const { tr } = useL();
   const router = useRouter();
-  const dateLabel = new Date().toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
   const [bellState, setBellState] = useState<'off' | 'on' | 'busy'>('off');
   useEffect(() => {
     getExistingPushSubscription().then(sub => setBellState(sub ? 'on' : 'off'));
@@ -368,18 +375,96 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
     if (result.ok) { await actions.subscribeOnlinePushAction(result.subscription); setBellState('on'); }
     else setBellState('off');
   }
-  const titles: Record<Tab, string> = { inbox: tr('titleInbox'), order: tr('titleOrder'), track: tr('titleTrack'), stats: tr('titleStats'), customers: tr('titleCustomers') };
+  return { bellState, toggleBell, logout };
+}
+
+function ThemeSwatches({ uiTheme, pickTheme, size = 26 }: { uiTheme: UiThemeId; pickTheme: (t: UiThemeId) => void; size?: number }) {
+  const { lang } = useL();
   return (
-    <div style={{ backgroundColor: NAVY, color: '#FBF7F0' }} className="px-4 pt-3.5 pb-3 sticky top-0 z-10">
+    <div className="flex items-center gap-2">
+      {UI_THEMES.map(th => (
+        <button key={th.id} onClick={() => pickTheme(th.id)} aria-pressed={uiTheme === th.id} title={lang === 'en' ? th.en : th.vi} aria-label={lang === 'en' ? th.en : th.vi}
+          style={{ width: size, height: size, borderRadius: size / 2, background: `linear-gradient(135deg, ${th.swatch[0]} 50%, ${th.swatch[2]} 50%)`, outline: uiTheme === th.id ? '2px solid #FBF7F0' : '1px solid rgba(255,255,255,0.15)', outlineOffset: uiTheme === th.id ? 2 : 0 }} />
+      ))}
+    </div>
+  );
+}
+
+function navItems(tr: (k: any) => string, readOnly: boolean, showInbox: boolean) {
+  return [
+    ...(showInbox ? [{ key: 'inbox' as Tab, icon: '💬', label: tr('tabInbox') }] : []),
+    { key: 'track' as Tab, icon: '📦', label: tr('navOrders') },
+    ...(readOnly ? [] : [{ key: 'order' as Tab, icon: '＋', label: tr('navNew') }]),
+    { key: 'customers' as Tab, icon: '👥', label: tr('tabCustomers') },
+    { key: 'stats' as Tab, icon: '📊', label: tr('tabStats') },
+  ];
+}
+
+function Sidebar({ fullName, tab, setTab, readOnly, showInbox, inboxUnread, uiTheme, pickTheme }: { fullName: string; tab: Tab; setTab: (t: Tab) => void; readOnly: boolean; showInbox: boolean; inboxUnread: number; uiTheme: UiThemeId; pickTheme: (t: UiThemeId) => void }) {
+  const { tr, lang, setLang } = useL();
+  const { bellState, toggleBell, logout } = useAccountControls();
+  return (
+    <aside className="hidden lg:flex fixed left-0 top-0 bottom-0 w-56 z-20 flex-col gap-6 px-3.5 py-5" style={{ backgroundColor: NAVY, color: '#E8DCCB' }}>
+      <div className="px-2.5 flex flex-col gap-0.5">
+        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 700, color: '#FBF7F0' }}>La Paris</div>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#D9C48A', fontWeight: 600 }}>Online sales</div>
+      </div>
+      <nav className="flex flex-col gap-1" aria-label="Main">
+        {navItems(tr, readOnly, showInbox).map(it => {
+          const on = tab === it.key;
+          return (
+            <button key={it.key} onClick={() => setTab(it.key)} className="flex items-center justify-between text-left"
+              style={{ minHeight: 42, borderRadius: 10, padding: '0 12px', fontSize: 14, fontWeight: on ? 700 : 500, color: on ? NAVY : '#E8DCCB', backgroundColor: on ? '#F6F1EA' : 'transparent' }}>
+              <span className="flex items-center gap-3"><span style={{ width: 18, textAlign: 'center' }}>{it.icon}</span>{it.label}</span>
+              {it.key === 'inbox' && inboxUnread > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, borderRadius: 999, padding: '2px 8px', backgroundColor: on ? NAVY : '#9A3324', color: '#FBF7F0' }}>{inboxUnread > 99 ? '99+' : inboxUnread}</span>}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mt-auto flex flex-col gap-4 px-2">
+        <div className="flex flex-col gap-2">
+          <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#D9C48A', fontWeight: 700 }}>{tr('colours')}</span>
+          <ThemeSwatches uiTheme={uiTheme} pickTheme={pickTheme} />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.25)' }} aria-label="Language">
+            {(['vi', 'en'] as const).map(lg => (
+              <button key={lg} onClick={() => setLang(lg)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', backgroundColor: lang === lg ? GOLD : 'transparent', color: lang === lg ? NAVY : 'rgba(255,255,255,0.7)' }}>{lg.toUpperCase()}</button>
+            ))}
+          </div>
+          {pushSupport() !== 'unsupported' && (
+            <button onClick={toggleBell} style={{ color: bellState === 'on' ? GOLD : 'rgba(255,255,255,0.5)', marginLeft: 'auto' }} aria-label={tr('bell')}>
+              {bellState === 'busy' ? <Loader2 size={17} className="animate-spin" /> : <Bell size={17} fill={bellState === 'on' ? GOLD : 'none'} />}
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center justify-center flex-none" style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#572C1A', color: '#FBF7F0', fontSize: 12, fontWeight: 700 }}>{(fullName || '?').trim().split(/\s+/).pop()?.[0]?.toUpperCase()}</div>
+          <div className="flex-1 min-w-0 truncate" style={{ fontSize: 13 }}>{fullName}</div>
+          <button onClick={logout} title={tr('logout')} aria-label={tr('logout')} style={{ color: 'rgba(255,255,255,0.55)' }}><LogOut size={16} /></button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Header({ fullName, count, tab, uiTheme, pickTheme }: { fullName: string; count: number; tab: Tab; uiTheme: UiThemeId; pickTheme: (t: UiThemeId) => void }) {
+  const { tr, lang, setLang } = useL();
+  const { bellState, toggleBell, logout } = useAccountControls();
+  const [themeOpen, setThemeOpen] = useState(false);
+  const dateLabel = new Date().toLocaleDateString(lang === 'en' ? 'en-GB' : 'vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+  const titles: Record<Tab, string> = { inbox: tr('titleInbox'), order: tr('titleOrder'), track: tr('navOrders'), stats: tr('titleStats'), customers: tr('titleCustomers') };
+  return (
+    <div style={{ backgroundColor: NAVY, color: '#FBF7F0' }} className="lg:hidden px-4 pt-3.5 pb-3 sticky top-0 z-10">
       <div className="flex items-center gap-2.5">
-        <div style={{ width: 34, height: 34, borderRadius: '50%', backgroundColor: GOLD }} className="flex items-center justify-center text-base flex-shrink-0">🛍️</div>
         <div className="flex-1 min-w-0">
-          <div style={{ fontFamily: "'Playfair Display', serif", fontWeight: 700, fontSize: 16, lineHeight: 1.15 }}>{titles[tab]}</div>
-          <div style={{ fontSize: 11, color: '#E9D3A4', marginTop: 1 }}>{dateLabel}{fullName ? ` · ${fullName}` : ''}</div>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontWeight: 700, fontSize: 18, lineHeight: 1.15 }}>{titles[tab]}</div>
+          <div style={{ fontSize: 11, color: '#E9D3A4', marginTop: 1 }} className="truncate">{dateLabel}{fullName ? ` · ${fullName}` : ''}</div>
         </div>
         {tab === 'order' && count > 0 && (
           <div style={{ backgroundColor: GOLD, color: NAVY, fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999 }}>{count} {tr('items')}</div>
         )}
+        <button onClick={() => setThemeOpen(v => !v)} aria-label={tr('colours')} style={{ fontSize: 16, lineHeight: 1 }}>🎨</button>
         {pushSupport() !== 'unsupported' && (
           <button onClick={toggleBell} style={{ color: bellState === 'on' ? GOLD : 'rgba(255,255,255,0.5)' }} aria-label={tr('bell')}>
             {bellState === 'busy' ? <Loader2 size={18} className="animate-spin" /> : <Bell size={18} fill={bellState === 'on' ? GOLD : 'none'} />}
@@ -397,31 +482,40 @@ function Header({ fullName, count, tab }: { fullName: string; count: number; tab
           <LogOut size={18} />
         </button>
       </div>
+      {themeOpen && (
+        <div className="flex items-center gap-3 mt-3" style={{ fontSize: 12, color: '#E9D3A4' }}>
+          <span>{tr('colours')}</span>
+          <ThemeSwatches uiTheme={uiTheme} pickTheme={t => { pickTheme(t); setThemeOpen(false); }} size={30} />
+        </div>
+      )}
     </div>
   );
 }
 
 function TabBar({ tab, setTab, readOnly = false, showInbox = false, inboxUnread = 0 }: { tab: Tab; setTab: (t: Tab) => void; readOnly?: boolean; showInbox?: boolean; inboxUnread?: number }) {
   const { tr } = useL();
-  const items: { key: Tab; icon: string; label: string }[] = [
-    ...(showInbox ? [{ key: 'inbox' as const, icon: '💬', label: tr('tabInbox') }] : []),
-    ...(readOnly ? [] : [{ key: 'order' as const, icon: '🧾', label: tr('tabOrder') }]),
-    { key: 'track', icon: '📦', label: tr('tabTrack') },
-    { key: 'stats', icon: '📊', label: tr('tabStats') },
-    { key: 'customers', icon: '👥', label: tr('tabCustomers') },
-  ];
+  const items = navItems(tr, readOnly, showInbox);
   return (
-    <div style={{ backgroundColor: TABBAR }} className="flex fixed bottom-0 left-0 right-0 z-10">
-      {items.map(it => (
-        <button key={it.key} onClick={() => setTab(it.key)} className="flex-1 text-center py-2.5"
-          style={{ color: tab === it.key ? GOLD : '#8FAE9E', fontWeight: tab === it.key ? 700 : 500, fontSize: 11.5, borderTop: `2px solid ${tab === it.key ? GOLD : 'transparent'}` }}>
-          <div className="relative w-fit mx-auto">{it.icon}
-            {it.key === 'inbox' && inboxUnread > 0 && (
-              <span className="absolute -top-1 -right-3" style={{ backgroundColor: GOLD, color: NAVY, fontSize: 9.5, fontWeight: 700, borderRadius: 8, padding: '0 5px', lineHeight: '15px' }}>{inboxUnread > 99 ? '99+' : inboxUnread}</span>
-            )}
-          </div>{it.label}
-        </button>
-      ))}
+    <div className="lg:hidden flex items-end fixed bottom-0 left-0 right-0 z-10" style={{ backgroundColor: '#FFFFFF', borderTop: '1px solid #E6DCCF', paddingBottom: 'max(6px, env(safe-area-inset-bottom))' }}>
+      {items.map(it => {
+        const on = tab === it.key;
+        if (it.key === 'order') return (
+          <button key={it.key} onClick={() => setTab('order')} aria-label={it.label} className="flex-1 flex justify-center">
+            <span className="flex items-center justify-center" style={{ width: 50, height: 50, borderRadius: 25, marginTop: -16, marginBottom: 4, backgroundColor: on ? GOLD : NAVY, color: on ? NAVY : '#FBF7F0', fontSize: 26, boxShadow: '0 6px 16px rgba(42,24,16,0.25)' }}>+</span>
+          </button>
+        );
+        return (
+          <button key={it.key} onClick={() => setTab(it.key)} className="flex-1 text-center pt-2 pb-1 relative"
+            style={{ color: on ? NAVY : '#8A7A66', fontWeight: on ? 700 : 500, fontSize: 11 }}>
+            <div className="relative w-fit mx-auto" style={{ fontSize: 17, opacity: on ? 1 : 0.75 }}>{it.icon}
+              {it.key === 'inbox' && inboxUnread > 0 && (
+                <span className="absolute -top-1 -right-3" style={{ backgroundColor: '#9A3324', color: '#fff', fontSize: 9.5, fontWeight: 700, borderRadius: 8, padding: '0 5px', lineHeight: '15px' }}>{inboxUnread > 99 ? '99+' : inboxUnread}</span>
+              )}
+            </div>{it.label}
+            {on && <span style={{ position: 'absolute', top: 0, left: '30%', right: '30%', height: 2, backgroundColor: GOLD, borderRadius: 2 }} />}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -795,456 +889,6 @@ function OrderTab(props: any) {
         className="w-full text-center text-[15px] font-bold py-3.5 rounded-xl mb-4">
         {submitting ? (isStock ? tr('savingStock') : tr('creating')) : (isStock ? tr('submitStock') : tr('submit'))}
       </button>
-    </div>
-  );
-}
-
-// Reconstruction panel (Axel, 2026-09-08): lets the seller replace a historical import's single
-// generic no-SKU revenue line with real catalog items, if she still remembers the order. Reuses
-// the same product search as the order-creation tab; deliberately minimal (no delivery-date,
-// shop, cake-message fields -- this only ever edits WHAT was sold, never re-triggers anything).
-type ReconstructLine = { key: string; ficheId: string; variantId: string | null; sku: string | null; nameVi: string; qty: number; unitPrice: number };
-
-function ReconstructPanel({ order, onDone, onCancel }: { order: OnlineOrderSummary; onDone: () => void; onCancel: () => void }) {
-  const { tr } = useL();
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<OnlineProduct[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [lines, setLines] = useState<ReconstructLine[]>([]);
-  const [saving, setSaving] = useState(false);
-  const originalText = order.items.map(i => i.nameVi).join(', ');
-  // Preserve the revenue the historical row already carried -- excel_import orders land with
-  // exactly one generic no-SKU line, so order.total IS that original amount. Used both to
-  // prefill a sane price (instead of a catalog price that may not exist) and to flag any
-  // mismatch before saving (Axel, 2026-09-08: a reconstruction silently zeroed an order's total
-  // because the picked product had no catalog price and nothing caught it).
-  const originalTotal = order.total;
-  const newTotal = lines.reduce((s, l) => s + l.qty * (Number(l.unitPrice) || 0), 0);
-  const mismatch = lines.length > 0 && newTotal !== originalTotal;
-
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) { setResults([]); return; }
-    setSearching(true);
-    const t = setTimeout(async () => {
-      const res = await actions.searchOnlineProductsAction(q);
-      setResults(res.products ?? []);
-      setSearching(false);
-    }, 200);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  function addLine(p: OnlineProduct) {
-    setLines(ls => {
-      // First line and no catalog price to go on -- default to the original order's total
-      // rather than 0, so leaving the price field untouched can't silently zero the order.
-      const fallback = ls.length === 0 ? originalTotal : 0;
-      const unitPrice = p.price ?? fallback;
-      return [...ls, { key: `${p.ficheId}:${p.variantId}:${ls.length}`, ficheId: p.ficheId, variantId: p.variantId, sku: p.sku, nameVi: p.nameVi, qty: 1, unitPrice }];
-    });
-    setQuery('');
-  }
-  function removeLine(key: string) { setLines(ls => ls.filter(l => l.key !== key)); }
-  function updateQty(key: string, qty: number) { setLines(ls => ls.map(l => l.key === key ? { ...l, qty: Math.max(1, qty) } : l)); }
-  function updatePrice(key: string, unitPrice: number) { setLines(ls => ls.map(l => l.key === key ? { ...l, unitPrice: Math.max(0, unitPrice) } : l)); }
-
-  async function save() {
-    if (!lines.length) return;
-    setSaving(true);
-    await actions.replaceOnlineOrderLinesAction(order.orderBatchId, lines.map(l => ({ ficheId: l.ficheId, variantId: l.variantId, sku: l.sku, nameVi: l.nameVi, qty: l.qty, unitPrice: l.unitPrice })));
-    setSaving(false);
-    onDone();
-  }
-
-  return (
-    <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: '#F5F3FF', border: '1px solid #DDD6FE' }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#6D28D9', marginBottom: 4 }}>{tr('reconstructTitle')}</div>
-      <div style={{ fontSize: 11.5, color: INK_LIGHT, marginBottom: 8, fontStyle: 'italic' }}>{tr('reconstructHint')}{originalText}</div>
-
-      <div style={{ fontSize: 11, color: INK_LIGHT, marginBottom: 6 }}>{tr('reconstructAddMore')}</div>
-      <div className="relative mb-2">
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-          <Search size={13} color={INK_LIGHT} />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('reconstructSearchPh')}
-            className="flex-1 text-sm outline-none" style={{ fontSize: 12.5 }} />
-          {searching && <Loader2 size={13} className="animate-spin" color={INK_LIGHT} />}
-        </div>
-        {query.trim() && results.length > 0 && (
-          <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg shadow-lg max-h-56 overflow-y-auto" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
-            {results.map(p => (
-              <button key={`${p.ficheId}:${p.variantId}`} onMouseDown={e => e.preventDefault()} onClick={() => addLine(p)}
-                className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-gray-50" style={{ borderBottom: `1px solid ${CREAM_DARK}`, fontSize: 12.5 }}>
-                {p.nameVi}{p.isCake ? ' 🎂' : ''}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {lines.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: INK_LIGHT, marginBottom: 8 }}>{tr('reconstructEmpty')}</div>
-      ) : (
-        <div className="space-y-1.5 mb-2">
-          {lines.map(l => (
-            <div key={l.key} className="flex items-center gap-2 rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff', border: `1px solid ${BORDER}` }}>
-              <span className="flex-1 min-w-0 overflow-x-auto whitespace-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', fontSize: 12 }}>{l.nameVi}</span>
-              <input type="number" min={1} value={l.qty} onChange={e => updateQty(l.key, Number(e.target.value))}
-                className="text-center rounded" style={{ width: 36, fontSize: 12, border: `1px solid ${BORDER}`, padding: '2px 0' }} />
-              <input type="number" min={0} value={l.unitPrice} onChange={e => updatePrice(l.key, Number(e.target.value))}
-                className="text-right rounded" style={{ width: 76, fontSize: 12, border: `1px solid ${BORDER}`, padding: '2px 4px' }} />
-              <button onClick={() => removeLine(l.key)}><X size={13} color={INK_LIGHT} /></button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ fontSize: 11.5, marginBottom: 6, fontWeight: mismatch ? 700 : 400, color: mismatch ? '#B91C1C' : INK_LIGHT }}>
-        {tr('reconstructOriginalTotal')}{fmtCompactVnd(originalTotal)} · {fmtCompactVnd(newTotal)}
-        {mismatch ? ` — ${tr('reconstructMismatch')}` : ''}
-      </div>
-      <div className="flex gap-2">
-        <button onClick={onCancel} style={{ fontSize: 12, fontWeight: 600, color: INK_LIGHT, padding: '6px 12px' }}>{tr('reconstructCancel')}</button>
-        <button onClick={save} disabled={!lines.length || saving}
-          style={{ fontSize: 12, fontWeight: 700, color: '#fff', backgroundColor: mismatch ? '#B91C1C' : '#6D28D9', padding: '6px 14px', borderRadius: 8, opacity: !lines.length || saving ? 0.5 : 1 }}>
-          {saving ? tr('reconstructSaving') : tr('reconstructSave')}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TrackTab({ isAdmin, readOnly = false }: { isAdmin: boolean; readOnly?: boolean }) {
-  const { tr, lang } = useL();
-  const [orders, setOrders] = useState<OnlineOrderSummary[] | null>(null);
-  const [filter, setFilter] = useState<'all' | 'undelivered' | 'unpaid' | 'late'>('all');
-  // Every hook stays above the early `if (!orders) return` below (Rules of Hooks — the payment
-  // proof hook briefly sat after it and crashed the tab once orders loaded, 2026-09-06).
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
-  // Calendar jump (Axel, 2026-09-08): default view stays the last-200-by-created_at list exactly
-  // as before; picking a date here re-queries that single delivery_date only, so finding a given
-  // day no longer means scrolling past a long, growing history (imports included).
-  const [jumpDate, setJumpDate] = useState('');
-  const [reconstructing, setReconstructing] = useState<string | null>(null);
-  // Excel export by period (Axel, 2026-09-11) — mirrors her old tracker's columns; defaults to
-  // a 7-day window ending today so opening the panel already has a sensible range picked.
-  const [showExport, setShowExport] = useState(false);
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const weekAgoIso = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
-  const [exportFrom, setExportFrom] = useState(weekAgoIso);
-  const [exportTo, setExportTo] = useState(todayIso);
-
-  async function load(deliveryDate?: string) {
-    const res = await actions.getMyOnlineOrdersAction(deliveryDate ? { deliveryDate } : undefined);
-    setOrders(res.orders ?? []);
-  }
-  useEffect(() => { load(jumpDate || undefined); }, [jumpDate]);
-
-  if (!orders) return <div className="text-center py-10" style={{ color: INK_LIGHT }}><Loader2 className="animate-spin inline" /></div>;
-
-  const isLate = (o: OnlineOrderSummary) => o.paymentStatus !== 'paid' && (o.labDelivered || o.shopDelivered) && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000;
-  const filtered = orders.filter(o => {
-    if (filter === 'undelivered') return !o.labDelivered || !o.shopDelivered;
-    if (filter === 'unpaid') return o.paymentStatus !== 'paid';
-    if (filter === 'late') return isLate(o);
-    return true;
-  });
-
-  // Group by delivery date so orders shipping on different days are never mixed in one
-  // undifferentiated list — the tracking tab was previously sorted only by created_at, which
-  // hid which day each order actually needs to go out.
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const tomorrowKey = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
-  const groups = new Map<string, OnlineOrderSummary[]>();
-  for (const o of filtered) {
-    const key = (o.deliveryDate || '').slice(0, 10);
-    const arr = groups.get(key) ?? [];
-    arr.push(o); groups.set(key, arr);
-  }
-  const groupKeys = Array.from(groups.keys()).sort((a, b) => {
-    if (!a && !b) return 0;
-    if (!a) return 1; // no-date group always last
-    if (!b) return -1;
-    return a.localeCompare(b);
-  });
-  function groupLabel(key: string): string {
-    if (!key) return tr('noDeliveryDate');
-    if (key === todayKey) return `${tr('today')} · ${fmtDayLabel(key, lang)}`;
-    if (key === tomorrowKey) return `${tr('tomorrow')} · ${fmtDayLabel(key, lang)}`;
-    if (key < todayKey) return `${tr('overdue')} · ${fmtDayLabel(key, lang)}`;
-    return fmtDayLabel(key, lang);
-  }
-
-  async function toggleShopDelivered(o: OnlineOrderSummary) {
-    await actions.setShopDeliveredAction(o.orderBatchId, !o.shopDelivered);
-    load(jumpDate || undefined);
-  }
-  async function toggleReturningOverride(o: OnlineOrderSummary) {
-    // Clicking a manual confirmation clears it (back to auto); clicking an auto "new customer"
-    // read confirms it as returning (the phone-match can't see pre-app history). An
-    // auto-detected returning customer needs no correction, so its badge isn't clickable.
-    const next = o.returningManual ? null : true;
-    await actions.setCustomerReturningOverrideAction(o.orderBatchId, next);
-    load(jumpDate || undefined);
-  }
-  async function onProof(o: OnlineOrderSummary, file: File | undefined) {
-    if (!file || !file.type.startsWith('image/')) return;
-    setUploadingFor(o.orderBatchId);
-    const fd = new FormData(); fd.append('file', await compressImage(file));
-    await actions.uploadPaymentProofAction(o.orderBatchId, fd);
-    setUploadingFor(null);
-    load(jumpDate || undefined);
-  }
-  async function cyclePayment(o: OnlineOrderSummary) {
-    const next = o.paymentStatus === 'unpaid' ? 'partial' : o.paymentStatus === 'partial' ? 'paid' : 'unpaid';
-    await actions.setPaymentStatusAction(o.orderBatchId, next, next === 'paid' ? o.total + o.deliveryFee : o.amountPaid);
-    load(jumpDate || undefined);
-  }
-  // Axel, 2026-09-14: "je veux jamais d'ecriture odoo ... seulement l'option remboursement qui
-  // cancel la commande" — order-level, no line-level return. Partial amount added same day
-  // ("des fois on rembourse qu'une partie"): window.prompt pre-filled with the order's grand
-  // total — staff validates as-is for a full refund, or edits the number down for a partial one.
-  // Same window.prompt/confirm pattern this file already uses for logout — a browser dialog is
-  // fine here (unlike the shop portal).
-  async function refundOrder(o: OnlineOrderSummary) {
-    const max = Math.round(o.total + o.deliveryFee);
-    // Adjusting an existing refund (Axel, 2026-09-14): pre-fill with the amount already on file
-    // instead of the order total, so fixing a mis-keyed or pre-amount-feature (0đ) refund starts
-    // from what's there rather than resetting to a full refund by default.
-    const prefill = o.refundAmount > 0 ? o.refundAmount : max;
-    const raw = window.prompt(tr('refundPrompt'), String(prefill));
-    if (raw == null) return; // cancelled
-    const amount = Math.round(Number(raw.replace(/[^\d.-]/g, '')));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    const res = await actions.refundOnlineOrderAction(o.orderBatchId, amount);
-    if (res?.error) { window.alert(res.error); return; }
-    load(jumpDate || undefined);
-  }
-  // Fix a delivery fee forgotten at order creation (staff request, 2026-09-20) — same
-  // window.prompt pattern as refundOrder above, pre-filled with the fee currently on file.
-  async function editDeliveryFee(o: OnlineOrderSummary) {
-    const raw = window.prompt(tr('deliveryFeePrompt'), String(o.deliveryFee || 0));
-    if (raw == null) return; // cancelled
-    const fee = Math.round(Number(raw.replace(/[^\d.-]/g, '')));
-    if (!Number.isFinite(fee) || fee < 0) return;
-    const res = await actions.updateDeliveryFeeAction(o.orderBatchId, fee);
-    if (res?.error) { window.alert(res.error); return; }
-    load(jumpDate || undefined);
-  }
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-          <CalendarDays size={14} style={{ color: INK_LIGHT, flexShrink: 0 }} />
-          <input type="date" value={jumpDate} onChange={e => setJumpDate(e.target.value)}
-            aria-label={tr('jumpToDate')}
-            style={{ border: 'none', outline: 'none', fontSize: 12.5, fontWeight: 600, color: INK, background: 'transparent' }} />
-        </div>
-        {jumpDate && (
-          <button onClick={() => setJumpDate('')} style={{
-            fontSize: 11.5, fontWeight: 700, color: '#8a7326', backgroundColor: CREAM, border: `1px solid ${BORDER}`,
-            padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap',
-          }}>{tr('clearDate')}</button>
-        )}
-        <button onClick={() => setShowExport(v => !v)} style={{
-          fontSize: 11.5, fontWeight: 700, color: showExport ? '#FBF7F0' : INK, backgroundColor: showExport ? NAVY : '#fff',
-          border: showExport ? 'none' : `1px solid ${BORDER}`, padding: '6px 10px', borderRadius: 8, whiteSpace: 'nowrap', marginLeft: 'auto',
-        }}>📤 {tr('exportBtn')}</button>
-      </div>
-      {showExport && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap rounded-lg px-2.5 py-2" style={{ border: `1px solid ${BORDER}`, backgroundColor: '#fff' }}>
-          <label className="flex items-center gap-1.5" style={{ fontSize: 11.5, color: INK_LIGHT }}>
-            {tr('exportFrom')}
-            <input type="date" value={exportFrom} max={exportTo} onChange={e => setExportFrom(e.target.value)}
-              style={{ border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: INK, padding: '3px 6px' }} />
-          </label>
-          <label className="flex items-center gap-1.5" style={{ fontSize: 11.5, color: INK_LIGHT }}>
-            {tr('exportTo')}
-            <input type="date" value={exportTo} min={exportFrom} onChange={e => setExportTo(e.target.value)}
-              style={{ border: `1px solid ${BORDER}`, borderRadius: 6, fontSize: 12, fontWeight: 600, color: INK, padding: '3px 6px' }} />
-          </label>
-          <a href={`/api/lab/online-orders-export?from=${exportFrom}&to=${exportTo}&lang=${lang}`} style={{
-            fontSize: 11.5, fontWeight: 700, color: '#fff', backgroundColor: '#6D28D9',
-            padding: '6px 12px', borderRadius: 8, whiteSpace: 'nowrap', textDecoration: 'none',
-          }}>{tr('exportBtn')}</a>
-        </div>
-      )}
-      <div className="flex gap-2 mb-3 overflow-x-auto">
-        {([['all', tr('fAll')], ['undelivered', tr('fUndelivered')], ['unpaid', tr('unpaid')], ['late', tr('fLate')]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setFilter(k)} style={{
-            backgroundColor: filter === k ? NAVY : '#fff', color: filter === k ? '#FBF7F0' : INK,
-            border: filter === k ? 'none' : `1px solid ${BORDER}`, fontSize: 12, fontWeight: 600, padding: '6px 13px', borderRadius: 999, whiteSpace: 'nowrap',
-          }}>{label}</button>
-        ))}
-      </div>
-      {filtered.length === 0 && <div className="text-center py-10 text-sm" style={{ color: INK_LIGHT }}>{tr('noOrders')}</div>}
-      <div className="space-y-4">
-        {groupKeys.map(key => (
-          <div key={key || '__none__'}>
-            <div className="flex items-center gap-2 mb-2 px-0.5">
-              <span style={{
-                fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase',
-                color: key && key < todayKey ? '#dc2626' : INK_LIGHT,
-              }}>{groupLabel(key)}</span>
-              <span style={{ height: 1, flex: 1, backgroundColor: CREAM_DARK }} />
-              <span style={{ fontSize: 11, fontWeight: 700, color: INK_LIGHT }}>{groups.get(key)!.length}</span>
-            </div>
-            <div className="space-y-2.5">
-              {groups.get(key)!.map(o => {
-                const late = isLate(o);
-                return (
-                  <div key={o.orderBatchId} className="rounded-xl p-3" style={{ border: `1px solid ${late ? '#f3b8b8' : BORDER}`, backgroundColor: '#fff', opacity: o.refunded ? 0.6 : 1 }}>
-              <div className="flex justify-between items-start mb-2">
-                <div className="flex gap-1.5 items-center flex-wrap">
-                  <span style={{ backgroundColor: NAVY, color: '#FBF7F0', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.shopName}</span>
-                  {o.refunded && (
-                    <span style={{ backgroundColor: '#FEE2E2', color: '#B91C1C', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedBadge')}</span>
-                  )}
-                  {!o.refunded && o.refundAmount > 0 && (
-                    <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('refundedPartialBadge')}: {fmtVnd(o.refundAmount)}</span>
-                  )}
-                  {o.source === 'excel_import' ? (
-                    <span style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('importBadge')}</span>
-                  ) : o.source === 'shop_stock' ? (
-                    <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('stockBadge')}</span>
-                  ) : o.orderRef ? (
-                    <span style={{ backgroundColor: CREAM, color: '#8a7326', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{o.orderRef}</span>
-                  ) : (
-                    <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('noOdoo')}</span>
-                  )}
-                  {o.channel && <span style={{ color: INK_LIGHT, fontSize: 10.5 }}>{o.channel}</span>}
-                </div>
-                {late && <span style={{ backgroundColor: '#FDECEC', color: '#dc2626', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6 }}>{tr('latePay')}</span>}
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 2 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{o.customerName || tr('walkIn')}{o.customerPhone ? ` · ${o.customerPhone}` : ''}</span>
-                {o.customerPhone && (() => {
-                  const label = o.isReturningCustomer
-                    ? `${tr('returningCustomerBadge')}${o.returningManual ? ` (${tr('returningManualTag')})` : o.priorOrderCount > 0 ? ` (${o.priorOrderCount} ${tr('priorOrdersSuffix')})` : ''}`
-                    : tr('newCustomerBadge');
-                  const style = {
-                    backgroundColor: o.isReturningCustomer ? '#DCFCE7' : CREAM,
-                    color: o.isReturningCustomer ? '#166534' : '#8a7326',
-                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, border: 'none', whiteSpace: 'nowrap' as const,
-                  };
-                  // Clickable only where a human can usefully act: confirm a "new" read, or undo
-                  // their own earlier confirmation. An auto-detected repeat needs no correction.
-                  const clickable = !readOnly && (!o.isReturningCustomer || o.returningManual);
-                  return clickable ? (
-                    <button onClick={() => toggleReturningOverride(o)} title={o.returningManual ? tr('clearReturningOverride') : tr('markReturning')} style={style}>{label}</button>
-                  ) : (
-                    <span style={style}>{label}</span>
-                  );
-                })()}
-              </div>
-              <div style={{ fontSize: 12, color: INK_LIGHT, marginBottom: 9 }}>{o.items.map(i => `${i.nameVi} ×${i.qty}`).join(', ')}</div>
-              {!readOnly && o.source === 'excel_import' && o.items.length > 0 && o.items.every(i => !i.sku) && (
-                <button onClick={() => setReconstructing(reconstructing === o.orderBatchId ? null : o.orderBatchId)}
-                  className="mb-2" style={{
-                    display: 'inline-flex', alignItems: 'center', backgroundColor: '#EDE9FE', color: '#6D28D9',
-                    fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, border: 'none',
-                  }}>{tr('needsItemsBadge')}</button>
-              )}
-              {reconstructing === o.orderBatchId && (
-                <ReconstructPanel order={o} onDone={() => { setReconstructing(null); load(jumpDate || undefined); }} onCancel={() => setReconstructing(null)} />
-              )}
-              <div className="flex justify-between items-center mb-2">
-                <span className="flex items-center gap-1.5">
-                  <span style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{fmtVnd(o.total + o.deliveryFee)}</span>
-                  {!readOnly && o.source !== 'excel_import' && (
-                    <button onClick={() => editDeliveryFee(o)} title={tr('editDeliveryFeeBtn')} style={{
-                      fontSize: 10, fontWeight: 700, color: '#8a7326', backgroundColor: CREAM,
-                      border: 'none', borderRadius: 999, padding: '2px 7px', flexShrink: 0,
-                    }}>🚚 {tr('editDeliveryFeeBtn')}</button>
-                  )}
-                </span>
-                {readOnly ? (
-                  <span style={{
-                    backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
-                    color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
-                  }}>
-                    {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
-                  </span>
-                ) : (
-                  <button onClick={() => cyclePayment(o)} style={{
-                    backgroundColor: o.paymentStatus === 'paid' ? '#F0FDF4' : CREAM, border: o.paymentStatus === 'paid' ? 'none' : `1px solid ${BORDER}`,
-                    color: o.paymentStatus === 'paid' ? '#047857' : '#b45309', fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
-                  }}>
-                    {o.paymentStatus === 'paid' ? tr('paidFull') : o.paymentStatus === 'partial' ? tr('partial') : tr('unpaidFull')}
-                  </button>
-                )}
-              </div>
-              {o.paymentProofUrl || !readOnly ? (
-                <div className="flex items-center gap-2 mb-2"
-                  onDragOver={readOnly ? undefined : e => e.preventDefault()}
-                  onDrop={readOnly ? undefined : e => { e.preventDefault(); onProof(o, e.dataTransfer.files?.[0]); }}>
-                  {o.paymentProofUrl && (
-                    <a href={o.paymentProofUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                      <img src={thumb(o.paymentProofUrl, 128)} alt={tr('payProof')} loading="lazy" className="w-10 h-10 rounded-md object-cover" style={{ border: `1px solid ${BORDER}` }} />
-                    </a>
-                  )}
-                  {!readOnly && (
-                    <label className="flex-1 text-center py-1.5 rounded-lg cursor-pointer" style={{ border: `1px dashed ${BORDER}`, color: INK_LIGHT, fontSize: 11.5, backgroundColor: '#FFFDF5' }}>
-                      {uploadingFor === o.orderBatchId ? tr('uploading') : (o.paymentProofUrl ? `✓ ${tr('payProof')}` : tr('payProofDrop'))}
-                      <input type="file" accept="image/*" className="hidden" onChange={e => onProof(o, e.target.files?.[0])} />
-                    </label>
-                  )}
-                </div>
-              ) : null}
-              <div style={{ height: 1, backgroundColor: CREAM_DARK, marginBottom: 9 }} />
-              <div className="flex gap-2">
-                {o.source !== 'shop_stock' && <div className="flex-1 text-center py-1.5 rounded-lg" style={{
-                  backgroundColor: o.labDelivered ? '#F0FDF4' : CREAM, color: o.labDelivered ? '#047857' : INK_LIGHT,
-                  border: o.labDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.labDelivered ? 700 : 600,
-                }}>{o.labDelivered ? tr('labDelivered') : tr('labNot')}</div>}
-                {readOnly ? (
-                  <div className="flex-1 text-center py-1.5 rounded-lg" style={{
-                    backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
-                    border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                  }}>{o.shopName === LAB_SHOP ? (o.shopDelivered ? tr('custDelivered') : tr('custNot')) : (o.shopDelivered ? tr('shopDelivered') : tr('shopNot'))}</div>
-                ) : (
-                  <button onClick={() => toggleShopDelivered(o)} className="flex-1 text-center py-1.5 rounded-lg" style={{
-                    backgroundColor: o.shopDelivered ? '#F0FDF4' : CREAM, color: o.shopDelivered ? '#047857' : INK_LIGHT,
-                    border: o.shopDelivered ? 'none' : `1px solid ${BORDER}`, fontSize: 11.5, fontWeight: o.shopDelivered ? 700 : 600,
-                  }}>{o.shopName === LAB_SHOP ? (o.shopDelivered ? tr('custDelivered') : tr('custNot')) : (o.shopDelivered ? tr('shopDelivered') : tr('shopNot'))}</button>
-                )}
-                    </div>
-                    {/* Refund (Axel, 2026-09-14): order-level only, 'lab'/'shop_stock' sources only
-                        (excel_import refused server-side too), any write-access staff — see
-                        refundOnlineOrderAction. Once refunded_at is set (full OR partial amount —
-                        Axel: "des fois on rembourse qu'une partie"), the trace line replaces the
-                        button. Bug fix 2026-09-14: the amount was only ever shown for a PARTIAL
-                        refund — a full refund's trace line said only "Hoàn tiền bởi X" with no
-                        figure, which is what the online-sales manager flagged ("elle voit pas le
-                        montant du refund"). Now always shown. Adjustable (Axel, same day): "faut
-                        laisser la possibilite d'ajuster le refund" — some orders were refunded
-                        before the amount field existed (stuck at 0đ) and staff can mis-key a
-                        number, so the trace line keeps a small edit action that re-opens the same
-                        prompt, pre-filled with the current amount, and overwrites it. */}
-                    {o.refundedAt ? (
-                      <div className="flex items-center justify-between gap-2" style={{ marginTop: 7 }}>
-                        <div style={{ fontSize: 10.5, color: '#B91C1C' }}>
-                          {tr('refundedAmountLabel')} {fmtVnd(o.refundAmount)} · {tr('refundedByShort')}{o.refundedByName ?? '—'} · {new Date(o.refundedAt).toLocaleString(lang === 'en' ? 'en-GB' : 'vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        {!readOnly && o.source !== 'excel_import' && (
-                          <button onClick={() => refundOrder(o)} style={{
-                            fontSize: 10.5, fontWeight: 700, color: '#B91C1C', backgroundColor: '#FEE2E2',
-                            border: 'none', borderRadius: 6, padding: '2px 8px', flexShrink: 0,
-                          }}>{tr('adjustRefundBtn')}</button>
-                        )}
-                      </div>
-                    ) : !readOnly && o.source !== 'excel_import' && (
-                      <button onClick={() => refundOrder(o)} className="w-full text-center py-1.5 rounded-lg mt-2" style={{
-                        border: `1px solid #f3b8b8`, color: '#B91C1C', fontSize: 11.5, fontWeight: 600, backgroundColor: '#fff',
-                      }}>{tr('refundBtn')}</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
