@@ -547,7 +547,7 @@ export type OnlineOrderSummary = {
   paymentProofUrl: string | null;
   createdAt: string; deliveryDate: string;
   customerName: string | null; customerPhone: string | null;
-  items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null }[];
+  items: { nameVi: string; qty: number; unitPrice: number | null; sku: string | null; imageUrl?: string | null; isFee?: boolean }[];
   total: number; deliveryFee: number; paymentStatus: 'paid' | 'unpaid' | 'partial'; amountPaid: number;
   labDelivered: boolean; shopDelivered: boolean; cancelled: boolean;
   // Local refund (Axel, 2026-09-14, partial amount added same day) — distinct from `cancelled`
@@ -562,9 +562,15 @@ export type OnlineOrderSummary = {
   // pre-app history); priorOrderCount is however many earlier orders that phone number has, for
   // context even when a manual override is set.
   isReturningCustomer: boolean; returningManual: boolean; priorOrderCount: number;
+  // UI v2 (Axel, 2026-11-14) — read-only extras for the new Orders screen. All optional, filled
+  // best-effort: a failure resolving any of them never fails the list itself.
+  deliveryMode?: 'shop' | 'direct' | null; readyTime?: string | null;
+  address?: string | null; district?: string | null; notes?: string | null;
+  cakeMessage?: string | null; designPhotoUrl?: string | null;
+  production?: { produced: number; total: number } | null;
 };
 
-export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
+export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string; overdue?: boolean }): Promise<{ orders?: OnlineOrderSummary[]; error?: string }> {
   const auth = await requireOnlineSession();
   if ('error' in auth) return { error: auth.error };
   const supabase = service();
@@ -580,6 +586,13 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   let oq = supabase.from('lab_online_orders').select('*').not('source', 'in', '(event_stock,event_void)');
   if (opts?.deliveryDate) {
     oq = oq.eq('delivery_date', opts.deliveryDate).order('created_at', { ascending: false });
+  } else if (opts?.overdue) {
+    // UI v2 "Late" view: past delivery day, not handed to the customer yet, last 30 days only,
+    // historical imports excluded (they were never tracked here).
+    const today = new Date().toISOString().slice(0, 10);
+    const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    oq = oq.lt('delivery_date', today).gte('delivery_date', since).eq('shop_delivered', false)
+      .neq('source', 'excel_import').order('delivery_date', { ascending: false }).limit(300);
   } else {
     oq = oq.order('created_at', { ascending: false }).limit(200);
   }
@@ -598,11 +611,11 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
   const [{ data: lines }, { data: stockLines }] = await Promise.all([
     labBatchIds.length
       ? selectInChunks(labBatchIds, c => supabase.from('lab_manual_cake_ledger')
-          .select('order_batch_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, customer_name, customer_phone, matched_order_ref, cancelled_at, created_at')
+          .select('id, order_batch_id, fiche_id, variant_id, product_name_vi, qty, unit_price, shop_name, channel, delivery_date, ready_time, customer_name, customer_phone, message, design_photo_url, matched_order_ref, cancelled_at, created_at')
           .in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
     allBatchIds.length
-      ? selectInChunks(allBatchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, product_name_vi, qty, unit_price, sku').in('order_batch_id', c))
+      ? selectInChunks(allBatchIds, c => supabase.from('lab_online_sale_lines').select('order_batch_id, fiche_id, variant_id, product_name_vi, qty, unit_price, sku, is_fee, is_discount').in('order_batch_id', c))
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -635,6 +648,39 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
     const arr = byPhoneKey.get(key) ?? []; arr.push(r); byPhoneKey.set(key, arr);
   }
 
+  // UI v2 extras: product photos (variant image, else fiche image) and lab production progress
+  // (lab_manual_cakes → lab_assignments). Read-only, best-effort.
+  const imageByVariant = new Map<string, string>();
+  const imageByFiche = new Map<string, string>();
+  const progressByBatch = new Map<string, { produced: number; total: number }>();
+  try {
+    const allLines = [...(lines ?? []), ...(stockLines ?? [])];
+    const variantIds = Array.from(new Set(allLines.map((l: any) => l.variant_id).filter(Boolean))) as string[];
+    const ficheIds = Array.from(new Set(allLines.map((l: any) => l.fiche_id).filter(Boolean))) as string[];
+    const [{ data: vImgs }, { data: fImgs }, { data: mcs }] = await Promise.all([
+      variantIds.length ? selectInChunks(variantIds, c => supabase.from('lab_fiche_variants').select('id, image_url').in('id', c)) : Promise.resolve({ data: [] as any[] }),
+      ficheIds.length ? selectInChunks(ficheIds, c => supabase.from('lab_fiche_meta').select('id, image_url').in('id', c)) : Promise.resolve({ data: [] as any[] }),
+      labBatchIds.length ? selectInChunks(labBatchIds, c => supabase.from('lab_manual_cakes').select('order_batch_id, assignment_id').in('order_batch_id', c)) : Promise.resolve({ data: [] as any[] }),
+    ]);
+    for (const v of vImgs ?? []) if (v.image_url) imageByVariant.set(v.id, v.image_url);
+    for (const f of fImgs ?? []) if (f.image_url) imageByFiche.set(f.id, f.image_url);
+    const asgIds = Array.from(new Set((mcs ?? []).map((m: any) => m.assignment_id).filter(Boolean))) as string[];
+    const { data: asgs } = asgIds.length
+      ? await selectInChunks(asgIds, c => supabase.from('lab_assignments').select('id, qty_to_produce, qty_produced').in('id', c))
+      : { data: [] as any[] };
+    const asgById = new Map<string, any>();
+    for (const a of asgs ?? []) asgById.set(a.id, a);
+    for (const m of mcs ?? []) {
+      const a = m.assignment_id ? asgById.get(m.assignment_id) : null;
+      if (!a) continue;
+      const p = progressByBatch.get(m.order_batch_id) ?? { produced: 0, total: 0 };
+      p.total += Number(a.qty_to_produce ?? 0);
+      p.produced += Math.min(Number(a.qty_produced ?? 0), Number(a.qty_to_produce ?? 0));
+      progressByBatch.set(m.order_batch_id, p);
+    }
+  } catch { /* extras are optional */ }
+  const imageOf = (l: any): string | null => (l.variant_id && imageByVariant.get(l.variant_id)) || (l.fiche_id && imageByFiche.get(l.fiche_id)) || null;
+
   const result: OnlineOrderSummary[] = orders.map((o: any) => {
     const ls = linesByBatch.get(o.order_batch_id) ?? [];
     const first = ls[0];
@@ -653,7 +699,7 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
       shopName: o.shop_name ?? first?.shop_name ?? '', channel: o.channel ?? first?.channel ?? null,
       orderRef, createdAt: o.created_at, deliveryDate: o.delivery_date ?? first?.delivery_date ?? '',
       customerName: o.customer_name ?? first?.customer_name ?? null, customerPhone: o.customer_phone ?? first?.customer_phone ?? null,
-      items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price, sku: l.sku ?? null })),
+      items: ls.map((l: any) => ({ nameVi: l.product_name_vi, qty: l.qty, unitPrice: l.unit_price, sku: l.sku ?? null, imageUrl: imageOf(l), isFee: !!l.is_fee || !!l.is_discount })),
       total, deliveryFee: o.delivery_fee ?? 0, paymentStatus: o.payment_status, amountPaid: o.amount_paid ?? 0,
       labDelivered: source === 'shop_stock' ? true : (orderRef ? labDeliveredRefs.has(orderRef) : false),
       shopDelivered: o.shop_delivered, cancelled: (() => { const mcLines = ls.filter((l: any) => l._mc); return source === 'lab' && mcLines.length > 0 && mcLines.every((l: any) => l.cancelled_at); })(),
@@ -661,9 +707,35 @@ export async function getMyOnlineOrdersAction(opts?: { deliveryDate?: string }):
       refundAmount: Number(o.refund_amount ?? 0), refundedAt: o.refunded_at ?? null, refundedByName: o.refunded_by_name ?? null,
       paymentProofUrl: o.payment_proof_url ?? null,
       isReturningCustomer, returningManual: override != null, priorOrderCount,
+      deliveryMode: o.delivery_mode ?? null,
+      readyTime: ls.find((l: any) => l.ready_time)?.ready_time ?? null,
+      address: o.delivery_address ?? null, district: o.district ?? null, notes: o.notes ?? null,
+      cakeMessage: ls.find((l: any) => l.message)?.message ?? null,
+      designPhotoUrl: ls.find((l: any) => l.design_photo_url)?.design_photo_url ?? null,
+      production: progressByBatch.get(o.order_batch_id) ?? null,
     };
   });
   return { orders: result };
+}
+
+// UI v2 day strip (Axel, 2026-11-14): order count per delivery day, read-only.
+export async function getOnlineOrderDayCountsAction(from: string, to: string): Promise<{ counts?: Record<string, number>; overdue?: number; error?: string }> {
+  const auth = await requireOnlineSession();
+  if ('error' in auth) return { error: auth.error };
+  const supabase = service();
+  if (!supabase) return { error: 'Server not configured' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return { error: 'Invalid range' };
+  const today = new Date().toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const [{ data }, { count }] = await Promise.all([
+    supabase.from('lab_online_orders').select('delivery_date').not('source', 'in', '(event_stock,event_void)')
+      .gte('delivery_date', from).lte('delivery_date', to).limit(1000),
+    supabase.from('lab_online_orders').select('order_batch_id', { count: 'exact', head: true }).not('source', 'in', '(event_stock,event_void,excel_import)')
+      .lt('delivery_date', today).gte('delivery_date', since).eq('shop_delivered', false),
+  ]);
+  const counts: Record<string, number> = {};
+  for (const r of data ?? []) { const d = String(r.delivery_date ?? '').slice(0, 10); if (d) counts[d] = (counts[d] ?? 0) + 1; }
+  return { counts, overdue: count ?? 0 };
 }
 
 // ── Customer database (Axel, 2026-09-11): "onglet base de donnée client" — merges customers
