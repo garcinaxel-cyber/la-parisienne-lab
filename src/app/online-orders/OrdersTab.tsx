@@ -179,7 +179,8 @@ export default function OrdersTab({ readOnly, onNewOrder }: { readOnly: boolean;
           </div>
 
           {watch.length > 0 && (
-            <div className="flex items-center gap-x-3 gap-y-1 flex-wrap rounded-xl px-3.5 py-2" style={{ backgroundColor: '#FBF3DF', border: '1px solid #EAD7A4', color: '#5F4A10', fontSize: 12.5 }}>
+            // On a computer the late-payment count is already a tile; the bar stays only for "no Odoo".
+            <div className={`${noOdooN ? 'flex' : 'flex lg:hidden'} items-center gap-x-3 gap-y-1 flex-wrap rounded-xl px-3.5 py-2`} style={{ backgroundColor: '#FBF3DF', border: '1px solid #EAD7A4', color: '#5F4A10', fontSize: 12.5 }}>
               <b>✦ {tr('watchTitle')}</b>
               {watch.map(w => <span key={w}>· {w}</span>)}
             </div>
