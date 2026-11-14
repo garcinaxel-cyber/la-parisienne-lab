@@ -1619,10 +1619,18 @@ export async function unsubscribeOnlinePushAction(endpoint: string): Promise<{ o
 // ── Stats v2 (Axel, 2026-11-14): Ads + Customer service sub-tabs ──
 // Read-only. Both aggregations run in SQL (online_ads_attribution / online_service_stats,
 // migration online_sales_stats_v2_functions) so the page never pulls raw messages.
-export type AdsCampaignStat = { name: string; spend: number; chats: number; orders: number; revenue: number };
+export type AdsCampaignStat = { name: string; spend: number; chats: number; orders: number; revenue: number; impressions?: number; reach?: number; clicks?: number; linkClicks?: number; firstDay?: string; lastDay?: string };
+export type OverviewExtras = {
+  bySource: { source: string; orders: number; revenue: number }[]; unpaidOrders: number; unpaidAmount: number; refunds: number; refundOrders: number;
+  deliveryFees: number; withPhone: number; newCustomers: number; returningCustomers: number; newRevenue: number; returningRevenue: number;
+  weekdays: { dow: number; orders: number; revenue: number }[];
+};
 export type OnlineStatsExtras = {
-  ads: { campaigns: AdsCampaignStat[]; conversations: number; conversationsWithPhone: number; chatOrders: number; chatRevenue: number; chatConversationsWithOrder: number } | null;
-  service: { hours: { h: number; n: number; median: number | null; never: number }[]; total: number; daytimeMedian: number | null; within5Pct: number | null; night: number; nightMaxHours: number | null; lateOrNever: number; never: number } | null;
+  overview: OverviewExtras | null;
+  ads: { campaigns: AdsCampaignStat[]; daily?: { date: string; spend: number; chats: number; revenue: number }[]; conversations: number; conversationsWithPhone: number; chatOrders: number; chatRevenue: number; chatConversationsWithOrder: number } | null;
+  service: { hours: { h: number; n: number; median: number | null; never: number }[];
+    pages?: { page: string; n: number; conversations: number; median: number | null; within5Pct: number | null; never: number }[];
+    weekdays?: { dow: number; n: number }[]; daily?: { date: string; n: number; conversations: number }[]; conversations?: number; total: number; daytimeMedian: number | null; within5Pct: number | null; night: number; nightMaxHours: number | null; lateOrNever: number; never: number } | null;
   waiting: { id: string; name: string | null; page: string | null; preview: string | null; since: string }[];
   waitingCount: number;
 };
@@ -1636,7 +1644,8 @@ export async function getOnlineStatsExtrasAction(from: string, to: string): Prom
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return { error: 'Invalid date range' };
     const hourAgo = new Date(Date.now() - 3600 * 1000).toISOString();
     const weekAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
-    const [ads, svc, waitList, waitCount, pages] = await Promise.all([
+    const [ov, ads, svc, waitList, waitCount, pages] = await Promise.all([
+      supabase.rpc('online_overview_extras', { p_from: from, p_to: to }),
       supabase.rpc('online_ads_attribution', { p_from: from, p_to: to }),
       supabase.rpc('online_service_stats', { p_from: from, p_to: to }),
       supabase.from('inbox_conversations').select('id, customer_name, page_id, last_message_preview, last_inbound_at')
@@ -1649,6 +1658,7 @@ export async function getOnlineStatsExtrasAction(from: string, to: string): Prom
     for (const p of pages.data ?? []) pageName.set(p.page_id, p.channel_label || p.name);
     return {
       data: {
+        overview: (ov.data as any) ?? null,
         ads: (ads.data as any) ?? null,
         service: (svc.data as any) ?? null,
         waiting: (waitList.data ?? []).map((c: any) => ({ id: c.id, name: c.customer_name ?? null, page: pageName.get(c.page_id) ?? null, preview: c.last_message_preview ?? null, since: c.last_inbound_at })),

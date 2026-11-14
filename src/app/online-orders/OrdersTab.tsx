@@ -288,7 +288,7 @@ function Photos({ o, size }: { o: OnlineOrderSummary; size: number }) {
   return (
     <span className="flex-none relative" style={{ width: size, height: size }}>
       {uniq.length > 1 && <span style={{ position: 'absolute', left: 4, top: 4, width: size, height: size, borderRadius: 12, backgroundColor: SOFT }} />}
-      <img src={thumb(uniq[0], size * 2)} alt="" loading="lazy" style={{ position: 'relative', width: size, height: size, borderRadius: 12, objectFit: 'cover', backgroundColor: PANEL }} />
+      <img src={thumb(uniq[0], size * 2 <= 96 ? 96 : 128)} alt="" loading="lazy" style={{ position: 'relative', width: size, height: size, borderRadius: 12, objectFit: 'cover', backgroundColor: PANEL }} />
       {uniq.length > 1 && <span style={{ position: 'absolute', right: -6, bottom: -6, backgroundColor: DARK, color: '#FBF7F0', fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '1px 6px' }}>+{uniq.length - 1}</span>}
     </span>
   );
